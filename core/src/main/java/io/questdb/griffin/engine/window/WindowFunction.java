@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
@@ -43,6 +44,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -81,6 +83,119 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * The compiled argument whose value this function's accumulator absorbs, or
+     * {@code null} when it has none - {@code count(*)} being the shape that
+     * deliberately answers null even though it does maintain a counter.
+     * <p>
+     * The reference is <b>non-owning</b>: the window function owns its argument and
+     * frees it, and the compiler only reads the argument's identity off it. Only a
+     * direct compiled column reference produces a usable argument key today; an
+     * expression - including an implicit cast a signature match inserted - is not one,
+     * because a component's identity carries its argument as a
+     * {@code (column index, column type)} pair and nothing narrower would fit in it.
+     * A PARTITION BY term is no longer in the same position - see
+     * {@link WindowKeyExpressionIdentity}, which names one - and widening the argument
+     * key to the same identity is work of its own rather than a consequence of that.
+     * <p>
+     * Null is <b>required</b> rather than merely permitted of a function declaring a
+     * family {@link WindowAccumulatorDescriptor#familyTakesArgument} says takes none:
+     * such a family's identity has no room for an argument, so a function that both
+     * declared it and handed one over would be persisting state under an identity that
+     * does not describe it. The compiler declines that combination.
+     *
+     * @see #windowAccumulatorFamily()
+     */
+    @Nullable
+    default Function windowAccumulatorArgument() {
+        return null;
+    }
+
+    /**
+     * The accumulator family this function's per-partition state belongs to, as one of
+     * the {@link WindowAccumulatorDescriptor} {@code FAMILY_*} constants, or
+     * {@link WindowAccumulatorDescriptor#FAMILY_NONE} when the function keeps state
+     * a fused group cannot share.
+     * <p>
+     * The family names the <b>mathematics</b>, not the SELECT-list call: a DOUBLE
+     * {@code sum} and a DOUBLE {@code avg} both report
+     * {@link WindowAccumulatorDescriptor#FAMILY_DOUBLE_SUM_COUNT} because both
+     * maintain exactly {@code (sum, nonNullCount)}, and {@code count(*)} beside
+     * {@code row_number()} both report
+     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} because both maintain one
+     * counter of rows. Declaring a family is a claim about
+     * the whole-state image, so it may only be made where
+     * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
+     * checks the two against each other and declines the projection when they disagree.
+     */
+    default int windowAccumulatorFamily() {
+        return WindowAccumulatorDescriptor.FAMILY_NONE;
+    }
+
+    /**
+     * Which value this output reads off its family's state, as one of the
+     * {@link WindowAccumulatorProjection} {@code PROJECTION_*} constants.
+     * <p>
+     * Separate from {@link #windowAccumulatorFamily()} because the two answer
+     * different questions: the family says what state exists, the projection says what
+     * this particular call emits from it. {@code sum} and {@code avg} share the first
+     * and differ in the second, which is the whole reason one component can serve both.
+     */
+    default int windowAccumulatorProjection() {
+        return WindowAccumulatorProjection.PROJECTION_NONE;
+    }
+
+    /**
+     * Absorbs one row into this function's accumulator, which lives in the group's
+     * fused map value rather than in a map of its own.
+     * <p>
+     * Called once per row by whichever runtime owns the group's map -
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} is the only one today - and
+     * only on the one function the plan chose as a component's <b>contributor</b>.
+     * Every other projection on the same component reads the state this call updates
+     * and writes nothing, which is what stops {@code sum(x)} beside {@code avg(x)}
+     * counting the row twice.
+     *
+     * @param record the current base row
+     * @param value  the partition's fused window-state value, already loaded and reset
+     *               for the current bucket
+     */
+    default void accumulateWindowState(Record record, MapValue value) {
+        throw CairoException.critical(0)
+                .put("window function does not contribute a fused accumulator [function=")
+                .put(getName()).put(']');
+    }
+
+    /**
+     * Adopts the fused slots this output reads out of the group's map value, or clears
+     * them when {@code projection} is null.
+     * <p>
+     * A bound function is one whose per-partition state the group's owner holds: its
+     * {@code computeNext}, {@code resetPartition}, {@code markPartitionAlive},
+     * {@code retainPartitions} and per-function freeze/restore participation all become
+     * no-ops, and its getters return whatever {@link #projectWindowState} last
+     * materialized. Binding is the plan's to do - see
+     * {@code LiveViewWindowStatePlan.bindProjectionFunctions} - because the plan is the
+     * single owner of which accumulator is whose.
+     * <p>
+     * The parameter is the runtime projection rather than the durable one a live view
+     * persists: a bound function reads map value slots, and where a component's image
+     * sits in a persisted payload is no business of the hot path.
+     * <p>
+     * The whole projection rather than a pair of slots, because a family's field set is
+     * the family's business: {@code (sum, nonNullCount)} covers the DOUBLE accumulators
+     * and the counters, and Welford's {@code (mean, m2, nonNullCount)} does not. An
+     * implementation reads the fields it needs through
+     * {@link WindowAccumulatorProjection#getFieldSlot(int)} - naming the field with a
+     * {@link WindowAccumulatorDescriptor} {@code FIELD_*} constant - and caches them, so
+     * the per-row path still touches plain int fields.
+     *
+     * @param projection this output's binding onto its component, or null to hand the
+     *                   state back to the map this function owns outside a fused group
+     */
+    default void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+    }
+
+    /**
      * Returns the compiler-produced localized-repair dependency descriptor, or
      * {@code null} outside a live-view compile / for a function that does not
      * support checkpoint state.
@@ -95,6 +210,25 @@ public interface WindowFunction extends Function {
      */
     @Nullable
     default LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+        return null;
+    }
+
+    /**
+     * The compiled PARTITION BY terms this function keys its per-partition state by, or
+     * null when it keeps no keyed state.
+     * <p>
+     * The reference is <b>non-owning</b>, exactly as
+     * {@link #windowAccumulatorArgument()}'s is: the window function owns its
+     * partition-by functions and frees them, and the compiler only reads their identity.
+     * What it reads them for is the one relation that holds between a call's argument and
+     * the window rather than between two calls - a {@code count(k)} over the column its
+     * own window partitions by, whose value is the partition's row count wherever
+     * {@code k} is present. Resolving the terms to base columns is the same proof
+     * {@code directColumnIndex} applies to an argument, so an expression term proves
+     * nothing and the relation is declined.
+     */
+    @Nullable
+    default ObjList<? extends Function> checkpointPartitionByFunctions() {
         return null;
     }
 
@@ -357,6 +491,24 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Exposes the arena holding this function's per-partition ring slabs, or {@code null} when
+     * it keeps no ring. A bounded ROWS or RANGE frame carries one resizable slab per partition
+     * in a {@code MemoryARW} of its own, addressed by a {@code (startOffset, capacity)} pair in
+     * the partition's map value rather than by a Java reference, so nothing but the function
+     * itself can find a slab from the map.
+     * <p>
+     * The live-view frontier sweep reads this to compact the arena down to the partitions that
+     * survived; see {@code BasePartitionedWindowFunction.compactRingArena()}. Because the arena
+     * only ever appends, its footprint would otherwise track the view's LIFETIME partition
+     * cardinality rather than its live one, and both the arena and the function's map are
+     * charged to {@code cairo.live.view.refresh.memory.limit.bytes}.
+     */
+    @Nullable
+    default MemoryARW getRingArena() {
+        return null;
+    }
+
     @Override
     default short getShort(Record rec) {
         throw new UnsupportedOperationException();
@@ -533,6 +685,44 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Reports whether a window-state group owns this function's per-partition state, so
+     * every walk of the runtime has to read it off the group's fused map rather than
+     * off this function.
+     * <p>
+     * True only between {@link #bindWindowStateSlots} adopting a plan and the group's
+     * owner handing the state back. It is deliberately not the same question as
+     * {@link #isCheckpointStateless()}: a fused projection still depends on every row
+     * its component absorbed, and still carries its real
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointDependency} for repair planning. What
+     * it no longer has is state of its own to freeze, restore or capture.
+     */
+    default boolean isWindowStateOwned() {
+        return false;
+    }
+
+    /**
+     * Records that the frontier sweep has dropped the partition {@code record} names, so
+     * the next seal can freeze the removal instead of re-deriving the whole live domain
+     * to find it. {@code keySink} reads the partition-by columns off the ANCHOR map's
+     * record, exactly as {@link #retainPartitions(Map, RecordSink)}'s sink does - the
+     * sweep calls the two with the same pair.
+     * <p>
+     * The marker must survive until the seal consumes it and must lose to a later row
+     * on the same key: an implementation writes it into the same dirty set
+     * {@link #getCheckpointDirtyPartitionMap()} exposes, and the ordinary dirty marking
+     * clears it, which turns "evicted, then re-created" back into an upsert.
+     * <p>
+     * Must succeed for every evicted key or the function must full-scan: a partial
+     * record leaves the root holding an entry the runtime has dropped, and a restore
+     * resurrects it. False means this function cannot record the key, and the sweep then
+     * hands {@code false} to {@link #retainPartitions(Map, RecordSink, boolean)}, which
+     * puts the function back on the conservative complete freeze.
+     */
+    default boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
+        return false;
+    }
+
+    /**
      * Clears the per-function tombstone bit for the partition the supplied record
      * belongs to, if currently set. Called once per row by
      * {@link io.questdb.cairo.lv.LiveViewWindow#processRow(Record)} (post-projection,
@@ -554,13 +744,19 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Adopts the state the seal just published as this function's incremental
-     * baseline. Called only after the checkpoint superblock is durably published, so
-     * a seal that fails anywhere before that leaves the dirty set and the previous
-     * baseline intact and the next seal repeats the work.
+     * Adopts a durable root's state as this function's incremental baseline. Two
+     * callers reach it:
+     * <ul>
+     *     <li>the seal, only after the checkpoint superblock is durably published, so
+     *     a seal that fails anywhere before that leaves the dirty set and the previous
+     *     baseline intact and the next seal repeats the work;</li>
+     *     <li>the restore, once it has rehydrated this function's partition map from
+     *     the generation's head root - the map then equals that root entry for entry,
+     *     which is the same position a seal leaves it in.</li>
+     * </ul>
      *
-     * @param logicalStateBytes what the published root charges for this function
-     * @param generation        the generation the publication produced. The next seal
+     * @param logicalStateBytes what the root charges for this function
+     * @param generation        the generation the root belongs to. The next seal
      *                          freezes incrementally only when it is sealing on top of
      *                          exactly this generation
      */
@@ -583,6 +779,11 @@ public interface WindowFunction extends Function {
      * in again - a full re-grow per replay on the live-view refresh loop.
      * Rewinding leaves stale bytes above the append offset, which is safe because
      * every restore path writes each slot before reading it.
+     * <p>
+     * The function is left on the full scan, which is what a restore that abandons
+     * midway or reads a root other than the timeline head needs. A restore from the
+     * head calls {@link #onCheckpointPersisted(long, long)} once the map is whole to
+     * put the function back on the incremental path.
      */
     default void onCheckpointRestoreBegin() {
     }
@@ -606,9 +807,52 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Materializes this output's current value from the group's fused map value, so the
+     * getters can answer without a map probe of their own.
+     * <p>
+     * Called once per row by whichever runtime owns the group's map -
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} is the only one today - on
+     * every projection of the group and after every contributor has run. Running it
+     * there rather than from {@code computeNext} is what removes the ordering dependency
+     * on the SELECT list: the accumulators are whole before the first output reads one,
+     * however the outputs happen to be ordered.
+     * <p>
+     * {@code record} is the base row the value was loaded for. Almost every projection
+     * ignores it and reads the slots alone; the one that does not is a
+     * {@link WindowAccumulatorProjection#isPartitionKeyGuarded() guarded} count, whose
+     * output is the component's counter corrected by a test on the partition key. The
+     * key is constant across a partition, so reading it off the current row answers for
+     * the whole of it and the result stays independent of SELECT-list order.
+     */
+    default void projectWindowState(Record record, MapValue value) {
+        throw CairoException.critical(0)
+                .put("window function does not project a fused accumulator [function=")
+                .put(getName()).put(']');
+    }
+
+    /**
      * Prepares state before the optional secondary cached traversal.
      */
     default void preparePass2() {
+    }
+
+    /**
+     * Ends the incremental baseline this function's own root is built on, so its next
+     * seal walks its whole live key domain instead of the keys
+     * {@link #getCheckpointDirtyPartitionMap()} names.
+     * <p>
+     * What calls this is a change of owner: a function joining or leaving a window-state
+     * group keeps a root of its own on both sides of the move, but while the group owns
+     * its state the keys that move are recorded in the group's dirty set and not in this
+     * function's. An incremental seal taken after the move would therefore name only the
+     * keys touched since it and leave the rest of the root standing on state that has
+     * moved - a stale entry a restart reads back as live.
+     * <p>
+     * Fail-safe by construction: a function that does not implement this keeps
+     * {@link #isCheckpointFullScanRequired()} answering true, which is the same complete
+     * freeze this asks for.
+     */
+    default void requireCheckpointFullScan() {
     }
 
     /**
@@ -685,6 +929,36 @@ public interface WindowFunction extends Function {
      * implementations itself. Default no-op for functions without per-partition state.
      */
     default void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
+    }
+
+    /**
+     * The sweep's own entry point into {@link #retainPartitions(Map, RecordSink)}, carrying
+     * whether {@link #markCheckpointPartitionEvicted(Record, RecordSink)} accepted every key
+     * this sweep dropped.
+     * <p>
+     * A function that keeps an incremental checkpoint baseline may keep it across the sweep
+     * only when {@code checkpointRemovalsRecorded} is true: the seal then freezes the
+     * recorded removals, and the root stops naming the evicted keys. False means the
+     * removals are not in the dirty set, so the implementation must go back to the complete
+     * freeze - only a full scan finds a key the root still holds and the runtime no longer
+     * does.
+     * <p>
+     * The default is fail-safe rather than lenient: a function that keeps a baseline but
+     * implements neither this overload nor the recording hook would silently publish a root
+     * holding evicted keys, so it raises here instead. A function on the complete freeze
+     * already (the interface default, and every function that tracks no dirty set) is
+     * unaffected and delegates.
+     */
+    default void retainPartitions(
+            Map survivingKeys,
+            RecordSink survivingKeySink,
+            boolean checkpointRemovalsRecorded
+    ) {
+        if (!checkpointRemovalsRecorded && !isCheckpointFullScanRequired()) {
+            throw CairoException.critical(0)
+                    .put("window function cannot retain partitions without checkpoint removal tracking");
+        }
+        retainPartitions(survivingKeys, survivingKeySink);
     }
 
     /*
@@ -795,6 +1069,36 @@ public interface WindowFunction extends Function {
      */
     default long checkpointRowsStateExtentOverride() {
         return Long.MIN_VALUE;
+    }
+
+    /**
+     * The exact byte length {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}
+     * emits for <b>every</b> partition of this function, or {@code -1} when the image is not
+     * fixed width. The default declines.
+     * <p>
+     * A fixed width is what lets the checkpoint seal carry the image in the partition-map
+     * leaf's scalar slot instead of writing a data page and naming it with a 40-byte
+     * reference. The leaf holds no per-entry length of its own beyond the scalar's, so a
+     * decoder has only the declaration to size a slice by, and the declaration is therefore a
+     * hard invariant rather than a hint: the framework verifies every frozen image against it
+     * and treats a mismatch as a critical implementation failure
+     * ({@link LiveViewStatePageWriter#freeze(WindowFunction, MapValue)}).
+     * <p>
+     * Declare it only where the <b>complete</b> image is fixed. An unbounded partitioned
+     * accumulator qualifies - a DOUBLE {@code sum}/{@code avg} freezes
+     * {@code (sum, nonNullCount)} and nothing else, a {@code count} freezes one counter - and
+     * a bounded ring or ROWS-buffer variant does not, however fixed its scalar tail is: its
+     * image carries the live rows behind that tail. A
+     * {@link #supportsCheckpointRingState() ring-shaped} function never declares one at all,
+     * since its root entry names chunk pages rather than a whole-state image.
+     * <p>
+     * Declaring a width does not by itself mean the state gets inlined. The seal admits a
+     * declaration into the leaf only within
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES},
+     * and a wider fixed state keeps the page-backed shape.
+     */
+    default int checkpointStateFixedLength() {
+        return -1;
     }
 
     /**

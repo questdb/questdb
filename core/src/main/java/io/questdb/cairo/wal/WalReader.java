@@ -60,6 +60,16 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
+    // Per-column size of the base table's committed ("clean") symbol dictionary as of the
+    // open segment, keyed by segment column index; 0 when the column carries no clean band.
+    // Keys below this bound resolve through cleanSymbolReaders, keys at or above it through
+    // symbolMaps. Reset per segment, so a stale entry cannot outlive its dictionary.
+    private final IntList cleanSymbolCounts = new IntList();
+    // Per-column reader over the base table's clean dictionary, hardlinked into the WAL
+    // directory. Opened on the first clean-band resolution rather than at bind time: a
+    // workload whose every row carries a symbol new to the current transaction resolves
+    // entirely out of the per-txn diff overlay and never opens these at all.
+    private final ObjList<SymbolMapReaderImpl> cleanSymbolReaders = new ObjList<>();
     private final ObjList<MemoryCMR> columns = new ObjList<>();
     private final CairoConfiguration configuration;
     private final WalDataCursor dataCursor = new WalDataCursor();
@@ -127,6 +137,7 @@ public class WalReader implements Closeable {
         Misc.free(walEventReader);
         Misc.free(metadata);
         Misc.freeObjList(columns);
+        resetCleanSymbolBands();
         Misc.freeObjList(symbolMaps);
         Misc.free(path);
         // Invalidate the same-segment fast path: a reused instance must take the
@@ -177,16 +188,16 @@ public class WalReader implements Closeable {
     }
 
     /**
-     * Returns the number of symbol keys accumulated for column {@code col} in the open
-     * segment, or 0 when the column has no symbol map. {@link #openSymbolMaps} seeds the
-     * map with the base table's clean dictionary keys {@code [0, cleanSymbolCount)} and
-     * then applies every data transaction's diff entries, whose keys continue from
-     * {@code cleanSymbolCount}. The resulting key space is therefore dense, so the count
-     * doubles as an exclusive upper bound for a {@code 0..count-1} enumeration.
+     * Returns the number of symbol keys reachable for column {@code col} in the open
+     * segment, or 0 when the column has no symbols. The key space is the base table's
+     * clean dictionary {@code [0, cleanSymbolCount)} followed by every data transaction's
+     * diff entries, whose keys continue from {@code cleanSymbolCount}. It is therefore
+     * dense, so the count doubles as an exclusive upper bound for a {@code 0..count-1}
+     * enumeration.
      */
     public int getSymbolCount(int col) {
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
-        return symbolMap != null ? symbolMap.size() : 0;
+        return cleanSymbolCountOf(col) + (symbolMap != null ? symbolMap.size() : 0);
     }
 
     /**
@@ -203,11 +214,31 @@ public class WalReader implements Closeable {
      * caller's own new symbols come from its per-txn diff overlay.
      */
     public int getSymbolKey(int col, CharSequence value, int hiExclusive) {
-        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
-        if (symbolMap == null || value == null) {
+        if (value == null || hiExclusive <= 0) {
             return SymbolTable.VALUE_NOT_FOUND;
         }
-        final int key = symbolMap.keyOf(value, 0, Math.min(symbolMap.size(), hiExclusive));
+        final int cleanSymbolCount = cleanSymbolCountOf(col);
+        if (cleanSymbolCount > 0) {
+            // The clean band answers through the dictionary's own on-disk hash index, which
+            // is bounded by the count the reader mapped - so a hit is already below
+            // cleanSymbolCount and only hiExclusive can cut it shorter.
+            final SymbolMapReaderImpl cleanReader = cleanSymbolReader(col);
+            if (cleanReader != null) {
+                final int key = cleanReader.keyOf(value);
+                if (key > -1 && key < hiExclusive) {
+                    return key;
+                }
+            }
+        }
+        final DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        if (symbolMap == null || hiExclusive <= cleanSymbolCount) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        final int key = symbolMap.keyOf(
+                value,
+                cleanSymbolCount,
+                Math.min(cleanSymbolCount + symbolMap.size(), hiExclusive)
+        );
         return key > -1 ? key : SymbolTable.VALUE_NOT_FOUND;
     }
 
@@ -223,15 +254,25 @@ public class WalReader implements Closeable {
     }
 
     /**
-     * Binds {@code view} to the bytes stored for {@code key} in column {@code col}.
-     * The underlying bytes are stable for the current segment (the column's
-     * {@link DirectSymbolMap} is populated once per {@link #of} call and is read-only
-     * thereafter), so the returned view stays valid until the next {@link #of}
-     * rebinds this reader, until {@link #close()}, or until the caller rebinds the
-     * view itself via another call. Callers that need two simultaneous views on the
+     * Binds {@code view} to the bytes stored for {@code key} in column {@code col}. A key
+     * below the clean-dictionary bound reads the base table's mapped symbol files; the rest
+     * read the column's {@link DirectSymbolMap} of segment diff entries.
+     * <p>
+     * The underlying bytes are stable for the current segment - the diff map is populated
+     * once per {@link #of} call and read-only thereafter, and the clean dictionary is
+     * append-only below the bound - so the returned view stays valid until the next
+     * {@link #of} rebinds this reader, until {@link #close()}, or until the caller rebinds
+     * the view itself via another call. Callers that need two simultaneous views on the
      * same column must supply two distinct {@link DirectString} instances.
      */
     public CharSequence getSymbolValue(int col, int key, DirectString view) {
+        if (key < 0) {
+            return null;
+        }
+        if (key < cleanSymbolCountOf(col)) {
+            final SymbolMapReaderImpl cleanReader = cleanSymbolReader(col);
+            return cleanReader != null ? cleanReader.valueOf(key, view) : null;
+        }
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
         return symbolMap != null ? symbolMap.valueOf(key, view) : null;
     }
@@ -362,9 +403,9 @@ public class WalReader implements Closeable {
             final long resumeOffset;
             if (incrementalSymbols) {
                 walEventCursor.resumeFrom(symbolResumeFrom);
-                resumeOffset = openSymbolMaps(walEventCursor, configuration, false);
+                resumeOffset = openSymbolMaps(walEventCursor, false);
             } else {
-                resumeOffset = openSymbolMaps(walEventCursor, configuration, true);
+                resumeOffset = openSymbolMaps(walEventCursor, true);
             }
             path.slash().put(segmentId);
             // The symbol-map fold above leaves the event cursor at the trailing marker; its
@@ -464,6 +505,43 @@ public class WalReader implements Closeable {
         }
     }
 
+    private int cleanSymbolCountOf(int col) {
+        return col < cleanSymbolCounts.size() ? cleanSymbolCounts.getQuick(col) : 0;
+    }
+
+    /**
+     * Returns the reader over the base table's clean symbol dictionary for column
+     * {@code col}, opening it on first use, or null when the column has no clean band in
+     * the open segment. The clean symbol files are hardlinked into the WAL directory, which
+     * is where {@code path} rests between binds - {@link #openSegment} trims back to
+     * {@code rootLen} - so this must not be called from inside {@link #of} while the path
+     * still carries a segment suffix.
+     * <p>
+     * Opening by path this late is safe because the WAL directory outlives the scan that
+     * needs it: {@code WalPurgeJob} clamps its purge floor to every live view's consumed
+     * seqTxn, and a view resolving symbols for a transaction has by definition not consumed
+     * it yet. The only other caller of this class is test-only.
+     */
+    private SymbolMapReaderImpl cleanSymbolReader(int col) {
+        SymbolMapReaderImpl cleanReader = col < cleanSymbolReaders.size() ? cleanSymbolReaders.getQuick(col) : null;
+        if (cleanReader != null) {
+            return cleanReader;
+        }
+        final int cleanSymbolCount = cleanSymbolCountOf(col);
+        if (cleanSymbolCount == 0) {
+            return null;
+        }
+        cleanReader = new SymbolMapReaderImpl(
+                configuration,
+                path.trimTo(rootLen),
+                metadata.getColumnName(col),
+                COLUMN_NAME_TXN_NONE,
+                cleanSymbolCount
+        );
+        cleanSymbolReaders.extendAndSet(col, cleanReader);
+        return cleanReader;
+    }
+
     private void loadColumnAt(int columnIndex) {
         final int pathLen = path.size();
         try {
@@ -538,11 +616,15 @@ public class WalReader implements Closeable {
      * rebuild from the header for a new segment / column-count change); when false the
      * caller has already positioned {@code eventCursor} at the saved resume offset and
      * only newly-appended events are folded. Folding is append-only and idempotent
-     * within a segment (local symbol keys are never remapped), and the clean-dictionary
-     * band is loaded once via the {@code size() == 0} guard below, so an incremental
-     * fold produces the same clean-band resolution as a full rebuild.
+     * within a segment (local symbol keys are never remapped).
+     * <p>
+     * Only the diff entries land in the maps. The base table's clean dictionary - which
+     * scales with the base table's total symbol cardinality rather than with the segment -
+     * stays on disk and resolves through {@link #cleanSymbolReader}; this records its bound
+     * per column instead. The bound is taken from the first diff that carries one, matching
+     * the map state the fold would otherwise have built.
      */
-    private long openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration, boolean clear) {
+    private long openSymbolMaps(WalEventCursor eventCursor, boolean clear) {
         if (clear) {
             // Preserve off-heap buffers but drop entries carried over from a prior segment.
             for (int i = 0, n = symbolMaps.size(); i < n; i++) {
@@ -551,6 +633,9 @@ public class WalReader implements Closeable {
                     m.clear();
                 }
             }
+            // The clean band belongs to the segment being replaced: a prior segment's bound
+            // would route this one's diff keys into the wrong dictionary.
+            resetCleanSymbolBands();
         }
         while (eventCursor.hasNext()) {
             if (WalTxnType.isDataType(eventCursor.getType())) {
@@ -566,20 +651,11 @@ public class WalReader implements Closeable {
                         symbolMap = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                         symbolMaps.extendAndSet(columnIndex, symbolMap);
                     }
-                    if (cleanSymbolCount > 0 && symbolMap.size() == 0) {
-                        try (
-                                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(
-                                        configuration,
-                                        path,
-                                        this.metadata.getColumnName(columnIndex),
-                                        COLUMN_NAME_TXN_NONE,
-                                        cleanSymbolCount
-                                )
-                        ) {
-                            for (int key = 0; key < cleanSymbolCount; key++) {
-                                symbolMap.put(key, symbolMapReader.valueOf(key));
-                            }
-                        }
+                    // Both halves of the guard together mean "nothing resolves for this column
+                    // yet", which is what the eager load's `size() == 0` tested back when the
+                    // clean band shared the map with the diff entries.
+                    if (cleanSymbolCount > 0 && symbolMap.size() == 0 && cleanSymbolCountOf(columnIndex) == 0) {
+                        cleanSymbolCounts.extendAndSet(columnIndex, cleanSymbolCount);
                     }
 
                     SymbolMapDiffEntry entry = symbolDiff.nextEntry();
@@ -595,6 +671,18 @@ public class WalReader implements Closeable {
         // Where the walk stopped: the trailing end-of-events marker (the next appended
         // record overwrites it), so it is the resume point for the next same-segment bind.
         return eventCursor.resumeOffset();
+    }
+
+    /**
+     * Drops every column's clean-dictionary binding. Zeroes the bounds in place rather than
+     * clearing the list: {@link IntList#extendAndSet} leaves the slots it skips untouched,
+     * so a cleared list would hand back a stale bound for a column whose diff arrives later.
+     */
+    private void resetCleanSymbolBands() {
+        for (int i = 0, n = cleanSymbolCounts.size(); i < n; i++) {
+            cleanSymbolCounts.setQuick(i, 0);
+        }
+        Misc.freeObjListAndClear(cleanSymbolReaders);
     }
 
     static int getPrimaryColumnIndex(int index) {

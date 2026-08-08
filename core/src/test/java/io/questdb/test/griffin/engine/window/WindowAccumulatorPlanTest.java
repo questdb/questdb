@@ -1,0 +1,1155 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.window;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.ObjList;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * The window Map groups an ordinary streaming query compiles, end to end from SQL.
+ * <p>
+ * Nothing binds them yet - the cursor still drives every function through the private map it
+ * owns - so these cases are the whole of what the groups promise today, and they are the
+ * promises everything built on them later rests on:
+ * <ul>
+ *     <li><b>sharing is proved, not guessed.</b> Two calls collapse onto one component when
+ *     their identities match outright, and a third folds onto that component when its whole
+ *     state is provably a slice of it - but never across arguments or contribution
+ *     predicates. {@code sum(x)} beside {@code count(y)} is the required negative control:
+ *     one map, two counters, because the two disagree on every row where exactly one column
+ *     is null;</li>
+ *     <li><b>the layout is deterministic.</b> Components are ordered by identity and never by
+ *     SELECT-list order, so reordering the outputs of one query must not move a slot;</li>
+ *     <li><b>the group is the exact window.</b> Two spellings of one window are one group and
+ *     two windows differing anywhere are two, whatever they are named.</li>
+ * </ul>
+ * The identity's own discriminations - including the ones a streaming query cannot reach,
+ * since the fast path admits only ZERO_PASS functions - are {@code WindowMapSpecTest}'s.
+ */
+public class WindowAccumulatorPlanTest extends AbstractCairoTest {
+
+    @Test
+    public void testAGuardedCountNeedsAnUnguardedRowCountToJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // No row count in the group, so count(k) is an ordinary non-null count over its
+            // own argument and keeps a component of its own. The guard exists to correct a
+            // row count somebody else maintains; with nobody maintaining one there is
+            // nothing to correct and no counter to share.
+            assertPlans("select ts, sum(x) over w, count(k) over w from base " + window(), plans -> {
+                final WindowAccumulatorPlan plan = onlyPlan(plans);
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                for (int i = 0; i < plan.getProjectionCount(); i++) {
+                    Assert.assertFalse(plan.getProjection(i).isPartitionKeyGuarded());
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testALiveViewCompileProducesNoGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A compatible live-view function is already owned by LiveViewWindow through the
+            // fused window-state plan. Compiling a second owner over the same accumulators
+            // would be two sources of truth for one piece of state, so the generic compiler
+            // stays out of a live-view compile entirely.
+            sqlExecutionContext.setLiveViewCompile(true);
+            try {
+                assertPlans(
+                        "select ts, k, sum(x) over w, avg(x) over w, count(x) over w from base "
+                                + "window w as (partition by k order by ts anchor daily '00:00')",
+                        Assert::assertNull
+                );
+            } finally {
+                sqlExecutionContext.setLiveViewCompile(false);
+            }
+        });
+    }
+
+    @Test
+    public void testAnExpressionPartitionKeyGroupsOnItsIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // One expression, two spellings of it, and a second reference to the name - the
+            // same test two direct-column spellings get, over a key no column carries. The
+            // inline one differs in case throughout, which is what a resolved-column identity
+            // normalizes and a rendering of the SQL would not.
+            assertPlans(
+                    "select ts, sum(x) over w, "
+                            + "count(y) over (partition by CONCAT(K, 'z') order by ts "
+                            + "rows between unbounded preceding and current row), "
+                            + "avg(x) over w from base " + expressionWindow("concat(k, 'z')"),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(3, plan.getProjectionCount());
+                        // The key is an expression: no term names a column, and the group has
+                        // to evaluate the compiled terms to write it.
+                        Assert.assertTrue(plan.getSpec().hasExpressionPartitionKey());
+                        Assert.assertEquals(-1, plan.getSpec().getPartitionColumnIndex(0));
+                        Assert.assertNotNull(plan.getSpec().getPartitionByFunctions());
+                    }
+            );
+            // Two expressions that differ anywhere are two key domains, exactly as two columns
+            // are. The pair here differs in one constant, which is the whole difference
+            // between two partitions of the same rows.
+            assertPlans(
+                    "select ts, sum(x) over w1, avg(x) over w1, sum(x) over w2, avg(x) over w2 from base "
+                            + "window w1 as (partition by concat(k, 'z') order by ts "
+                            + "rows between unbounded preceding and current row), "
+                            + "w2 as (partition by concat(k, 'y') order by ts "
+                            + "rows between unbounded preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testAPartitionKeyWithNoCanonicalIdentityProducesNoGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A tree the identity renders and a function that answers differently on every
+            // evaluation. Two calls over it partition the rows two different ways, and one
+            // shared evaluation would be neither of them.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w from base "
+                            + expressionWindow("rnd_int()"),
+                    Assert::assertNull
+            );
+            // A node kind the identity does not name. It could be given one later; it cannot
+            // be given one by omission.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "z");
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w from base "
+                            + expressionWindow("concat(k, $1)"),
+                    Assert::assertNull
+            );
+        });
+    }
+
+    @Test
+    public void testAnUnpartitionedWindowProducesNoGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Such a function keeps its state in scalar fields and owns no map at all, so a
+            // group would remove nothing and add a probe.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w from base "
+                            + "window w as (order by ts rows between unbounded preceding and current row)",
+                    Assert::assertNull
+            );
+        });
+    }
+
+    @Test
+    public void testCountOverThePartitionKeyReadsTheRowCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Every row of a partition carries the same k, so count(k) is the partition's
+            // row count wherever k is present and zero where it is not: a guarded reading of
+            // the component count(*) and row_number() already maintain, rather than a
+            // counter of its own. The guarded projection deliberately comes first in the
+            // SELECT list, because whether it fuses must not depend on that.
+            assertPlans(
+                    "select ts, count(k) over w, count(*) over w, row_number() over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(3, plan.getProjectionCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_ROW_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(1, plan.getSlotCount());
+                        // The guarded one is the count(k) at output position 1, and the
+                        // contributor is the count(*) that follows it - the lowest output
+                        // position among the projections that keep a true row count.
+                        Assert.assertTrue(projectionAt(plan, 1).isPartitionKeyGuarded());
+                        Assert.assertEquals(2, plan.getProjection(plan.getContributorIndex(0)).getOutputPosition());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testDifferentWindowsDoNotJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A different partition column is a different key domain.
+            assertPlans(
+                    "select ts, sum(x) over w1, avg(x) over w1, sum(x) over w2, avg(x) over w2 from base "
+                            + "window w1 as (partition by k order by ts rows between unbounded preceding and current row), "
+                            + "w2 as (partition by k2 order by ts rows between unbounded preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        Assert.assertEquals(1, plans.getQuick(0).getComponentCount());
+                        Assert.assertEquals(2, plans.getQuick(0).getProjectionCount());
+                        Assert.assertEquals(1, plans.getQuick(1).getComponentCount());
+                        Assert.assertEquals(2, plans.getQuick(1).getProjectionCount());
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
+                    }
+            );
+            // A different frame over one key domain is a different traversal, so the two
+            // still keep separate maps even though the partitions coincide.
+            assertPlans(
+                    "select ts, sum(x) over w1, avg(x) over w1, sum(x) over w2, avg(x) over w2 from base "
+                            + "window w1 as (partition by k order by ts rows between unbounded preceding and current row), "
+                            + "w2 as (partition by k order by ts rows between 3 preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        // Both windows form a group and neither pair reaches the other's: a
+                        // cumulative (sum, count) and a bounded frame's are two state shapes, and
+                        // the group they belong to is what says so - the components never meet to
+                        // be compared.
+                        Assert.assertEquals(2, plans.size());
+                        Assert.assertEquals(2, plans.getQuick(0).getProjectionCount());
+                        Assert.assertEquals(2, plans.getQuick(1).getProjectionCount());
+                        Assert.assertNotEquals(
+                                "one group is the bounded one",
+                                plans.getQuick(0).getComponent(0).isRingBacked(),
+                                plans.getQuick(1).getComponent(0).isRingBacked()
+                        );
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testOneFusibleFunctionIsNotAGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A single-function group moves a map rather than removing one, so binding a
+            // runtime through it would cost the query an abstraction and buy it nothing.
+            assertPlans("select ts, sum(x) over w from base " + window(), Assert::assertNull);
+            // ... and neither does a second function that cannot join it. rank() is the one
+            // used here because its state is the previous row's whole ORDER BY tuple beside its
+            // counters, written into its own map value at slot zero by a generated
+            // RecordValueSink - a shape no component describes and no slot base can be handed
+            // to, which is why the ranking calls declare no family.
+            assertPlans(
+                    "select ts, sum(x) over w, rank() over w from base " + window(),
+                    Assert::assertNull
+            );
+        });
+    }
+
+    @Test
+    public void testSelectListOrderMovesNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            final String[] layouts = new String[2];
+            assertPlans(
+                    "select ts, sum(x) over w, count(y) over w, avg(x) over w, count(x) over w from base " + window(),
+                    plans -> layouts[0] = componentLayout(onlyPlan(plans))
+            );
+            assertPlans(
+                    "select ts, count(x) over w, avg(x) over w, count(y) over w, sum(x) over w from base " + window(),
+                    plans -> layouts[1] = componentLayout(onlyPlan(plans))
+            );
+            // Same components, same order, same slot bases. A layout that followed the
+            // SELECT list would make two spellings of one query two different maps, and
+            // would move a slot under a live view's persisted manifest once step 5 has the
+            // two plans sharing this builder.
+            //
+            // Which of two equivalent functions maintains a component does move with the
+            // SELECT list, and is meant to: the rule is the lowest output position among the
+            // candidates that keep the whole component, so reordering sum and avg swaps
+            // them. What the reorder must not touch is the layout, and nothing persists the
+            // contributor. That it is always an honest one is assertContributorsAreHonest's,
+            // which every case here runs through.
+            Assert.assertEquals(layouts[0], layouts[1]);
+        });
+    }
+
+    @Test
+    public void testAWideGroupsLayoutFollowsTheIdentitiesRatherThanTheSelectList() throws Exception {
+        assertMemoryLeak(() -> {
+            // Wide enough that the compile's component lookup, containment fold and two
+            // orderings all run over a set no eyeball case reaches. Each of the three used
+            // to compare every component against every other, so this is the shape whose
+            // cost grew with the square of the SELECT list.
+            final int arguments = 48;
+            final StringBuilder ddl = new StringBuilder();
+            for (int i = 1; i <= arguments; i++) {
+                ddl.append(", q").append(i).append(" double");
+            }
+            execute("create table wide (ts timestamp, k symbol" + ddl + ") timestamp(ts) partition by day wal");
+
+            final StringBuilder forward = new StringBuilder();
+            final StringBuilder reverse = new StringBuilder();
+            for (int i = 1; i <= arguments; i++) {
+                forward.append(", sum(q").append(i).append(") over w, count(q").append(i).append(") over w");
+                reverse.insert(0, ", count(q" + i + ") over w").insert(0, ", sum(q" + i + ") over w");
+            }
+
+            final String[] layouts = new String[2];
+            assertPlans(
+                    "select ts" + forward + " from wide " + window(),
+                    plans -> layouts[0] = componentLayout(onlyPlan(plans))
+            );
+            assertPlans(
+                    "select ts" + reverse + " from wide " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        layouts[1] = componentLayout(plan);
+                        // One component per argument: each count(qN) folds onto the counter
+                        // the sum(qN) beside it already keeps. Asserted here so a fold that
+                        // stopped finding its host - the hazard in bucketing candidates
+                        // rather than scanning them all - shows up as a component count
+                        // rather than only as a slower compile.
+                        Assert.assertEquals(arguments, plan.getComponentCount());
+                        Assert.assertEquals(2 * arguments, plan.getProjectionCount());
+                    }
+            );
+            // The layout is the identities' order, not the SELECT list's, so reversing the
+            // list must move nothing. Reversal is what a hash-bucketed lookup or a
+            // reordered sort would break: both are fed the components in the opposite
+            // sequence and have to reach the same numbering anyway.
+            Assert.assertEquals(layouts[0], layouts[1]);
+
+            // Every projection above named a distinct component, so the lookup answered
+            // "no" every time. avg(qN) beside sum(qN) is the other answer: it merges onto
+            // the component already there, so this run drives the lookup's hit path across
+            // the same widths - and past the point where the table has been re-slotted,
+            // which is where a merge that stopped being found would silently split a
+            // component in two.
+            final StringBuilder merging = new StringBuilder();
+            for (int i = 1; i <= arguments; i++) {
+                merging.append(", sum(q").append(i).append(") over w, avg(q").append(i).append(") over w");
+            }
+            assertPlans(
+                    "select ts" + merging + " from wide " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(arguments, plan.getComponentCount());
+                        Assert.assertEquals(2 * arguments, plan.getProjectionCount());
+                        Assert.assertEquals(layouts[0], componentLayout(plan));
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testSumAndCountOverDifferentArgumentsShareAMapButNotACounter() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // The required negative control. sum(x) counts finite x values and count(y)
+            // counts non-null y values, and those disagree on every row where exactly one is
+            // absent - so the key and the lookup fuse and the counters do not.
+            assertPlans("select ts, sum(x) over w, count(y) over w from base " + window(), plans -> {
+                final WindowAccumulatorPlan plan = onlyPlan(plans);
+                Assert.assertEquals(2, plan.getComponentCount());
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertEquals(3, plan.getSlotCount());
+                Assert.assertEquals(0, plan.getSlotPrefix());
+                for (int i = 0; i < plan.getProjectionCount(); i++) {
+                    Assert.assertFalse(plan.getProjection(i).isDerived());
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testSumAvgCountOverOneArgumentIsOneComponent() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(3, plan.getProjectionCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        // Two slots for three outputs: sum and avg merge outright, and the
+                        // count folds onto the counter the pair already keeps.
+                        Assert.assertEquals(2, plan.getSlotCount());
+                        Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(2, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        // The sum is the lowest output position among the two that keep the
+                        // whole component, so it is the one that updates it.
+                        Assert.assertEquals(1, plan.getProjection(plan.getContributorIndex(0)).getOutputPosition());
+                        Assert.assertFalse(projectionAt(plan, 1).isDerived());
+                        Assert.assertFalse(projectionAt(plan, 2).isDerived());
+                        Assert.assertTrue(projectionAt(plan, 3).isDerived());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheDecimalExtremumFamiliesKeepAWidthEach() throws Exception {
+        assertMemoryLeak(() -> {
+            createDecimalBaseTable();
+            // A DECIMAL extremum keeps its argument's own payload, so this group is where the
+            // fused value stops being a list of 64-bit words: the two narrow calls take a LONG
+            // slot each and the wide one takes a DECIMAL128, in the middle of the value rather
+            // than at either end of it.
+            //
+            // Nothing merges here either. max and min over one column are two directions of
+            // one reading, two widths of one direction are two states, and a count over the
+            // same column keeps a counter no extremum carries - so four calls are four
+            // components and the count is not derived.
+            assertPlans(
+                    "select ts, max(d64) over w, min(d64) over w, max(d128) over w, count(d64) over w "
+                            + "from dbase " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(4, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        Assert.assertEquals(4, plan.getSlotCount());
+                        // Canonical order is by family id, so the counter leads and the two
+                        // DECIMAL_MAX components follow in argument order, the DECIMAL_MIN last.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MAX,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DECIMAL_MIN,
+                                plan.getComponent(3).getFamily()
+                        );
+                        Assert.assertTrue(
+                                "the two DECIMAL_MAX components must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex()
+                                        > plan.getComponent(1).getArgumentColumnIndex()
+                        );
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(4, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        Assert.assertEquals(ColumnType.DECIMAL128, types.getColumnType(2));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(3));
+                        for (int output = 1; output <= 4; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheExtremumFamiliesNeitherMergeNorFold() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Five extremum calls and an accumulating pair over one window. Nothing about an
+            // extremum can be read out of anything else, and nothing out of it, so every one
+            // of them keeps a slot: max and min over one column are two directions of one
+            // reading and merge no more than max over two columns do, and a sum's first slot
+            // is a running total rather than the largest thing ever added to it. What does
+            // still fold is the count onto the sum's counter, which is what says admitting a
+            // family left the proved relations alone.
+            //
+            // ts is here for the other half of the split: the extremum families are separated
+            // by the state's type as well as by direction, and a timestamp argument keeps a
+            // raw 64-bit word where x keeps a DOUBLE.
+            assertPlans(
+                    "select ts, max(x) over w, min(x) over w, max(y) over w, max(ts) over w, "
+                            + "sum(x) over w, count(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(5, plan.getComponentCount());
+                        Assert.assertEquals(6, plan.getProjectionCount());
+                        Assert.assertEquals(6, plan.getSlotCount());
+                        // Canonical order is by family id first, so the (sum, count) pair leads
+                        // and the four extrema follow it in family order, ties broken by the
+                        // argument column. The two DOUBLE_MAX components are the tie: they sit
+                        // adjacent, in argument order, and the x one is also the argument the
+                        // sum and the DOUBLE_MIN carry.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_MIN,
+                                plan.getComponent(3).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
+                                plan.getComponent(4).getFamily()
+                        );
+                        final int xColumn = plan.getComponent(0).getArgumentColumnIndex();
+                        Assert.assertEquals(xColumn, plan.getComponent(1).getArgumentColumnIndex());
+                        Assert.assertEquals(xColumn, plan.getComponent(3).getArgumentColumnIndex());
+                        Assert.assertTrue(
+                                "the two DOUBLE_MAX components must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex() > xColumn
+                        );
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(6, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(2));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(3));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(4));
+                        // The 64-bit extremum's slot is a LONG whatever unit the timestamp
+                        // subclass hands its own answer back in.
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(5));
+                        for (int output = 1; output <= 5; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                        Assert.assertTrue(projectionAt(plan, 6).isDerived());
+                        Assert.assertEquals(1, projectionAt(plan, 6).getNonNullCountSlot());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheCaptureFamiliesMergeOnlyWithTheirOwnSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Six capture calls over one window: three spellings over x, one over y, one over a
+            // timestamp for the other state width, and a sum for company. Every one of them
+            // keeps a component. The three spellings over x are the point: they read one column
+            // under one predicate each and capture the partition's first row, its first finite
+            // one and its most recent finite one, which are three states and not three readings
+            // of one. Nothing folds either - a captured value is one row's own, so no capture is
+            // a run inside another however alike two slices look.
+            assertPlans(
+                    "select ts, first_value(x) over w, first_value(x) ignore nulls over w, "
+                            + "last_value(x) ignore nulls over w, first_value(y) over w, "
+                            + "first_value(ts) over w, sum(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(6, plan.getComponentCount());
+                        Assert.assertEquals(6, plan.getProjectionCount());
+                        // [sum, count] + [value, captured] twice + [value] + [value, captured]
+                        // + [value, captured].
+                        Assert.assertEquals(11, plan.getSlotCount());
+                        // Canonical order is by family id first, so the accumulating pair leads
+                        // and the captures follow in family order - the DOUBLE trio, then the
+                        // 64-bit one - with the two same-family ones tied on the argument.
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE,
+                                plan.getComponent(2).getFamily()
+                        );
+                        Assert.assertTrue(
+                                "the two capture components must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex()
+                                        > plan.getComponent(1).getArgumentColumnIndex()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                                plan.getComponent(3).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE,
+                                plan.getComponent(4).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE,
+                                plan.getComponent(5).getFamily()
+                        );
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(11, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(1));
+                        // Two flagged DOUBLE captures, the flat one, the last value's pair, and
+                        // the timestamp capture's - which is two LONGs, the payload and the flag.
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(2));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(3));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(4));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(5));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(6));
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(7));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(8));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(9));
+                        Assert.assertEquals(ColumnType.LONG, types.getColumnType(10));
+                        for (int output = 1; output <= 6; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should read its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheRingBackedFamiliesMergeWithinAFrameAndNeverAcrossOne() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A bounded ROWS window carrying both ring-backed families twice over. The merge is
+            // by identity as everywhere else - sum(x) and avg(x) are one component, and so are
+            // the two count(x) calls if a query writes them - and what does not happen is a fold:
+            // count(x)'s answer is the counter sum(x) keeps, and it still gets a component of its
+            // own, because its state continues into a ring of its own shape.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w, count(y) over w "
+                            + "from base " + rowsFrameWindow(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        // [sum, count, ringIndex, ringOffset] then a three-slot counter per
+                        // argument: the layout is canonical by family id, and the sum family's is
+                        // the lower.
+                        Assert.assertEquals(10, plan.getSlotCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT,
+                                plan.getComponent(2).getFamily()
+                        );
+                        final int xColumn = plan.getComponent(0).getArgumentColumnIndex();
+                        Assert.assertEquals(xColumn, plan.getComponent(1).getArgumentColumnIndex());
+                        Assert.assertTrue(
+                                "the two counters must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex() > xColumn
+                        );
+                        Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                        Assert.assertEquals(4, plan.getComponentSlotBase(1));
+                        Assert.assertEquals(7, plan.getComponentSlotBase(2));
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(10, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        for (int slot = 1; slot < 10; slot++) {
+                            // Every other slot is a 64-bit word, the two ring addresses included.
+                            Assert.assertEquals("slot " + slot, ColumnType.LONG, types.getColumnType(slot));
+                        }
+                        // No output reads a component wider than its own function's.
+                        for (int output = 1; output <= 4; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                        Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                        Assert.assertTrue(plan.getComponent(1).isRingBacked());
+                    }
+            );
+            // The same calls over a cumulative frame and a bounded one. Two groups: a component
+            // only ever merges inside a group and the frame is part of the group's identity, so
+            // the ring-backed state and the cumulative one cannot meet however alike the calls
+            // look - and the cumulative pair still folds its count where the bounded pair does
+            // not.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w, "
+                            + "sum(x) over c, avg(x) over c, count(x) over c from base "
+                            + "window w as (partition by k order by ts rows between 3 preceding and current row), "
+                            + "c as (partition by k order by ts rows between unbounded preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        int bounded = 0;
+                        int cumulative = 0;
+                        for (int i = 0; i < 2; i++) {
+                            final WindowAccumulatorPlan plan = plans.getQuick(i);
+                            Assert.assertEquals(3, plan.getProjectionCount());
+                            if (plan.getComponent(0).isRingBacked()) {
+                                bounded++;
+                                Assert.assertEquals(2, plan.getComponentCount());
+                                Assert.assertEquals(7, plan.getSlotCount());
+                            } else {
+                                cumulative++;
+                                Assert.assertEquals(1, plan.getComponentCount());
+                                Assert.assertEquals(2, plan.getSlotCount());
+                            }
+                        }
+                        Assert.assertEquals(1, bounded);
+                        Assert.assertEquals(1, cumulative);
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheBoundedRangeFamiliesKeepTheirRingsGeometry() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // The RANGE spelling of the case above, and the two things that differ. The components
+            // are two slots wider each, because a RANGE ring grows with the data and the slice has
+            // to carry its length and capacity as well as its address; and the layout puts the
+            // wider family first for the same reason it always does - the canonical order is by
+            // family id, and the (sum, count) family's is the lower of the two.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, count(x) over w, count(y) over w "
+                            + "from base " + rangeFrameWindow(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(3, plan.getComponentCount());
+                        Assert.assertEquals(4, plan.getProjectionCount());
+                        // [sum, count, ringIndex, ringOffset, ringSize, ringCapacity] then a
+                        // five-slot counter per argument.
+                        Assert.assertEquals(16, plan.getSlotCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                                plan.getComponent(1).getFamily()
+                        );
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT,
+                                plan.getComponent(2).getFamily()
+                        );
+                        final int xColumn = plan.getComponent(0).getArgumentColumnIndex();
+                        Assert.assertEquals(xColumn, plan.getComponent(1).getArgumentColumnIndex());
+                        Assert.assertTrue(
+                                "the two counters must be ordered by argument",
+                                plan.getComponent(2).getArgumentColumnIndex() > xColumn
+                        );
+                        Assert.assertEquals(0, plan.getComponentSlotBase(0));
+                        Assert.assertEquals(6, plan.getComponentSlotBase(1));
+                        Assert.assertEquals(11, plan.getComponentSlotBase(2));
+                        final ArrayColumnTypes types = new ArrayColumnTypes();
+                        plan.buildMapValueTypes(types);
+                        Assert.assertEquals(16, types.getColumnCount());
+                        Assert.assertEquals(ColumnType.DOUBLE, types.getColumnType(0));
+                        for (int slot = 1; slot < 16; slot++) {
+                            // Every other slot is a 64-bit word, the ring geometry included.
+                            Assert.assertEquals("slot " + slot, ColumnType.LONG, types.getColumnType(slot));
+                        }
+                        for (int output = 1; output <= 4; output++) {
+                            Assert.assertFalse(
+                                    "output " + output + " should keep its own component",
+                                    projectionAt(plan, output).isDerived()
+                            );
+                        }
+                        for (int c = 0; c < 3; c++) {
+                            Assert.assertTrue("component " + c, plan.getComponent(c).isRingBacked());
+                        }
+                    }
+            );
+            // The two bounded frames side by side. Both are ring-backed and neither reaches the
+            // other: the framing mode is part of a group's identity, so a RANGE (sum, count) and a
+            // ROWS one are never compared however alike the calls look - which is the thing that
+            // would silently answer a span of time with a count of rows if it stopped holding.
+            assertPlans(
+                    "select ts, sum(x) over w, avg(x) over w, sum(x) over r, avg(x) over r from base "
+                            + "window w as (partition by k order by ts rows between 3 preceding and current row), "
+                            + "r as (partition by k order by ts "
+                            + "range between 3000000 microseconds preceding and current row)",
+                    plans -> {
+                        Assert.assertNotNull(plans);
+                        Assert.assertEquals(2, plans.size());
+                        int rows = 0;
+                        int range = 0;
+                        for (int i = 0; i < 2; i++) {
+                            final WindowAccumulatorPlan plan = plans.getQuick(i);
+                            Assert.assertEquals(1, plan.getComponentCount());
+                            Assert.assertEquals(2, plan.getProjectionCount());
+                            Assert.assertTrue(plan.getComponent(0).isRingBacked());
+                            if (plan.getComponent(0).getFamily()
+                                    == WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT) {
+                                range++;
+                                Assert.assertEquals(6, plan.getSlotCount());
+                            } else {
+                                rows++;
+                                Assert.assertEquals(4, plan.getSlotCount());
+                            }
+                        }
+                        Assert.assertEquals(1, rows);
+                        Assert.assertEquals(1, range);
+                        Assert.assertFalse(
+                                plans.getQuick(0).getSpec().isSameSpec(plans.getQuick(1).getSpec())
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTheGenericAndLiveViewPlansAgreeOnTheAnchoredShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // The two builders decide the same things from the same descriptor tables, and
+            // step 5 makes the live-view one compose this plan rather than repeat it. Until
+            // then, the drift these compare is what a persisted manifest would move: same
+            // components, same canonical order, same folds, same contributor - with the
+            // live-view layout shifted by the anchor slots its own value carries.
+            //
+            // The anchor clause is what makes the shape a live view's and contributes
+            // nothing to the component identities, so the two SELECTs below differ only in
+            // the frame's spelling.
+            assertPlansAgree("sum(x) over w, count(k) over w");
+            assertPlansAgree("sum(x) over w, avg(x) over w, count(x) over w");
+            assertPlansAgree("count(*) over w, row_number() over w, count(k) over w");
+        });
+    }
+
+    @Test
+    public void testTheWelfordFamilyIsOneComponent() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // Four dispersion projections differ only in the arithmetic they read off
+            // (m2, nonNullCount), and a count over the same argument reads the counter
+            // Welford's accumulator keeps behind its running mean.
+            assertPlans(
+                    "select ts, stddev_samp(x) over w, stddev_pop(x) over w, var_samp(x) over w, "
+                            + "var_pop(x) over w, count(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(1, plan.getComponentCount());
+                        Assert.assertEquals(5, plan.getProjectionCount());
+                        Assert.assertEquals(
+                                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                                plan.getComponent(0).getFamily()
+                        );
+                        Assert.assertEquals(3, plan.getSlotCount());
+                        Assert.assertTrue(projectionAt(plan, 5).isDerived());
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTwoSpellingsOfOneWindowAreOneGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // A named window and an inline one that resolves to the same specification, plus
+            // a second reference to the name. Names and SQL rendering are not semantic
+            // identity, and neither is the absence of a name.
+            assertPlans(
+                    "select ts, sum(x) over w, "
+                            + "count(y) over (partition by k order by ts rows between unbounded preceding and current row), "
+                            + "avg(x) over w from base " + window(),
+                    plans -> {
+                        final WindowAccumulatorPlan plan = onlyPlan(plans);
+                        Assert.assertEquals(2, plan.getComponentCount());
+                        Assert.assertEquals(3, plan.getProjectionCount());
+                    }
+            );
+        });
+    }
+
+    /**
+     * Compiles {@code sql} and hands the window Map groups it produced to {@code check},
+     * with the factory still open so the groups' non-owning references are live.
+     */
+    private static void assertPlans(String sql, PlanCheck check) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+            // A projection wrapper can sit above the window factory - two calls sharing a
+            // rendered expression are computed once and selected twice - so the search walks
+            // the whole chain rather than unwrapping only QueryProgress.
+            RecordCursorFactory root = factory;
+            while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull(sql, root);
+            final ObjList<WindowAccumulatorPlan> plans =
+                    ((WindowRecordCursorFactory) root).getWindowAccumulatorPlans();
+            if (plans != null) {
+                for (int i = 0, n = plans.size(); i < n; i++) {
+                    assertContributorsAreHonest(plans.getQuick(i));
+                }
+            }
+            check.run(plans);
+        }
+    }
+
+    /**
+     * No component may be left maintained by a projection that does not keep the whole of
+     * it: a derived one keeps a narrower state, and a guarded one keeps a different number
+     * on the NULL-key partition. Asserted for every group every case compiles, because it is
+     * the one property whose failure is silent - the group would still have a contributor
+     * and would still update something.
+     */
+    private static void assertContributorsAreHonest(WindowAccumulatorPlan plan) {
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            final WindowAccumulatorProjection contributor = plan.getProjection(plan.getContributorIndex(i));
+            Assert.assertEquals(i, contributor.getComponentIndex());
+            Assert.assertFalse("component " + i + " has a derived contributor", contributor.isDerived());
+            Assert.assertFalse("component " + i + " has a guarded contributor", contributor.isPartitionKeyGuarded());
+            Assert.assertSame(plan.getContributor(i), plan.getProjectionFunction(plan.getContributorIndex(i)));
+        }
+    }
+
+    /**
+     * Compiles {@code outputs} twice - once as an ordinary streaming query and once as the
+     * live view whose fused state plan is the reference implementation - and requires the
+     * two to describe the same components in the same order, with the same folds and the
+     * same contributors.
+     */
+    private static void assertPlansAgree(String outputs) throws Exception {
+        final String[] generic = new String[1];
+        assertPlans(
+                "select ts, " + outputs + " from base " + window(),
+                plans -> generic[0] = layout(onlyPlan(plans))
+        );
+        sqlExecutionContext.setLiveViewCompile(true);
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(
+                     compiler,
+                     "select ts, " + outputs + " from base "
+                             + "window w as (partition by k order by ts anchor daily '00:00')",
+                     sqlExecutionContext
+             )) {
+            RecordCursorFactory root = factory;
+            while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull(outputs, root);
+            final WindowRecordCursorFactory windowFactory = (WindowRecordCursorFactory) root;
+            // Belt and braces on the exclusion: a live-view compile produces the fused plan
+            // and no generic group, which is also what testALiveViewCompileProducesNoGroup
+            // asserts on its own.
+            Assert.assertNull(windowFactory.getWindowAccumulatorPlans());
+            final LiveViewWindowStatePlan plan = windowFactory.getCheckpointWindowStatePlan();
+            Assert.assertNotNull(outputs, plan);
+            Assert.assertEquals(outputs, generic[0], liveViewLayout(plan));
+        } finally {
+            sqlExecutionContext.setLiveViewCompile(false);
+        }
+    }
+
+    /**
+     * Renders the layout alone - the components in canonical order with their slot bases -
+     * which is the part that must not depend on the SELECT list. Deliberately a rendering
+     * rather than a field-by-field walk: a part of the decision added later and not
+     * asserted is the way this stops testing what it says it tests.
+     */
+    private static String componentLayout(WindowAccumulatorPlan plan) {
+        final StringBuilder sink = new StringBuilder();
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            final WindowAccumulatorDescriptor component = plan.getComponent(i);
+            sink.append("component ").append(i)
+                    .append(" family=").append(component.getFamily())
+                    .append(" contribution=").append(component.getContributionKind())
+                    .append(" arg=").append(component.getArgumentColumnIndex())
+                    .append(':').append(component.getArgumentColumnType())
+                    .append(" slotBase=").append(plan.getComponentSlotBase(i) - plan.getSlotPrefix())
+                    .append(" slots=").append(component.getSlotCount())
+                    .append('\n');
+        }
+        return sink.toString();
+    }
+
+    /**
+     * The whole of a group's decision: {@link #componentLayout} plus the contributor choice
+     * and every projection's binding. What two compilers of one shape must agree on.
+     */
+    private static String layout(WindowAccumulatorPlan plan) {
+        final StringBuilder sink = new StringBuilder(componentLayout(plan));
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            sink.append("contributor on ").append(i)
+                    .append(" out=").append(plan.getProjection(plan.getContributorIndex(i)).getOutputPosition())
+                    .append('\n');
+        }
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            final WindowAccumulatorProjection projection = plan.getProjection(i);
+            sink.append("projection out=").append(projection.getOutputPosition())
+                    .append(" kind=").append(projection.getKind())
+                    .append(" component=").append(projection.getComponentIndex())
+                    .append(" derived=").append(projection.isDerived())
+                    .append(" guarded=").append(projection.isPartitionKeyGuarded())
+                    .append(" functionSlot=").append(projection.getFunctionSlotBase() - plan.getSlotPrefix())
+                    .append('\n');
+        }
+        return sink.toString();
+    }
+
+    /**
+     * The same rendering off the live-view plan, whose projections wrap the runtime ones and
+     * whose slot bases carry the anchor prefix this subtracts back out.
+     */
+    private static String liveViewLayout(LiveViewWindowStatePlan plan) {
+        final StringBuilder sink = new StringBuilder();
+        final int prefix = LiveViewWindowStatePlan.WINDOW_VALUE_SLOT_COUNT;
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            sink.append("component ").append(i)
+                    .append(" family=").append(plan.getComponent(i).getFamily())
+                    .append(" contribution=").append(plan.getComponent(i).getContributionKind())
+                    .append(" arg=").append(plan.getComponent(i).getArgumentColumnIndex())
+                    .append(':').append(plan.getComponent(i).getArgumentColumnType())
+                    .append(" slotBase=").append(plan.getComponentSlotBase(i) - prefix)
+                    .append(" slots=").append(plan.getComponent(i).getSlotCount())
+                    .append('\n');
+        }
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            sink.append("contributor on ").append(i)
+                    .append(" out=").append(contributorOutputPosition(plan, i))
+                    .append('\n');
+        }
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            final WindowAccumulatorProjection projection = plan.getProjection(i).getRuntime();
+            sink.append("projection out=").append(projection.getOutputPosition())
+                    .append(" kind=").append(projection.getKind())
+                    .append(" component=").append(projection.getComponentIndex())
+                    .append(" derived=").append(projection.isDerived())
+                    .append(" guarded=").append(projection.isPartitionKeyGuarded())
+                    .append(" functionSlot=").append(projection.getFunctionSlotBase() - prefix)
+                    .append('\n');
+        }
+        return sink.toString();
+    }
+
+    private static int contributorOutputPosition(LiveViewWindowStatePlan plan, int componentIndex) {
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (plan.getProjection(i).getComponentIndex() == componentIndex
+                    && plan.getProjectionFunction(i) == plan.getContributor(componentIndex)) {
+                return plan.getProjection(i).getRuntime().getOutputPosition();
+            }
+        }
+        throw new AssertionError("no contributing projection on component " + componentIndex);
+    }
+
+    private static WindowAccumulatorPlan onlyPlan(ObjList<WindowAccumulatorPlan> plans) {
+        Assert.assertNotNull(plans);
+        Assert.assertEquals(1, plans.size());
+        return plans.getQuick(0);
+    }
+
+    private static WindowAccumulatorProjection projectionAt(WindowAccumulatorPlan plan, int outputPosition) {
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (plan.getProjection(i).getOutputPosition() == outputPosition) {
+                return plan.getProjection(i);
+            }
+        }
+        throw new AssertionError("no projection at output position " + outputPosition);
+    }
+
+    /**
+     * The reference window every case above shares: partitioned, cumulative, and ordered by
+     * the designated timestamp the base is already scanned in, so the query stays on the
+     * streaming path the group compiler runs under.
+     */
+    private static String window() {
+        return "window w as (partition by k order by ts rows between unbounded preceding and current row)";
+    }
+
+    /**
+     * The reference window keyed by {@code term} rather than by a column, which is the same
+     * cumulative shape every case above runs over: what changes is only how the key is written.
+     */
+    private static String expressionWindow(String term) {
+        return "window w as (partition by " + term + " order by ts "
+                + "rows between unbounded preceding and current row)";
+    }
+
+    /**
+     * The same window with a bounded low bound, which is what the ring-backed families need: their
+     * state is the frame's own values, so a frame that never gives one back reaches a different
+     * set of implementations entirely.
+     */
+    private static String rowsFrameWindow() {
+        return "window w as (partition by k order by ts rows between 3 preceding and current row)";
+    }
+
+    /**
+     * The RANGE spelling of the same thing, whose frame is a span of time rather than a count of
+     * rows. Its ORDER BY has to be the designated timestamp in the direction the base is already
+     * scanned in - a RANGE frame is compiled only where the order was dismissed - which is what
+     * {@code order by ts} over this base is.
+     */
+    private static String rangeFrameWindow() {
+        return "window w as (partition by k order by ts "
+                + "range between 3000000 microseconds preceding and current row)";
+    }
+
+    private void createBaseTable() throws Exception {
+        execute("create table base (ts timestamp, k symbol, k2 symbol, x double, y double) "
+                + "timestamp(ts) partition by day wal");
+    }
+
+    /**
+     * The same shape with two DECIMAL columns, one of each state width a DECIMAL extremum can
+     * keep: {@code d64} lands in a LONG slot and {@code d128} in a {@code DECIMAL128} one.
+     */
+    private void createDecimalBaseTable() throws Exception {
+        execute("create table dbase (ts timestamp, k symbol, d64 decimal(18, 2), d128 decimal(38, 6)) "
+                + "timestamp(ts) partition by day wal");
+    }
+
+    @FunctionalInterface
+    private interface PlanCheck {
+        void run(ObjList<WindowAccumulatorPlan> plans);
+    }
+}

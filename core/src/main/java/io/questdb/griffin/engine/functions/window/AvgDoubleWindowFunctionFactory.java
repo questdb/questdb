@@ -51,6 +51,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -179,7 +181,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -356,14 +359,33 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // handles avg() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
     static class AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+        // What this output projects out of the group's shared component, materialized by
+        // projectWindowState in the pass-2 traversal and written to the row by pass2 a moment
+        // later. Untouched while the function owns its own map, where the answer never leaves
+        // the Map value.
+        protected double windowStateResult;
 
         public AvgOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
         }
 
         @Override
@@ -374,6 +396,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator before the bucket's
+                // pass-1 loop reached this function, and nothing reads an output until pass 2.
+                return;
+            }
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
                 partitionByRecord.of(record);
@@ -398,6 +425,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group's projection loop ran over this row's entry immediately before
+                // this call, so the write is all that is left to do.
+                Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), windowStateResult);
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -408,8 +441,19 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
 
+        /**
+         * Replaces the partition's running sum with its average, which is the destructive
+         * finalization a shared component cannot carry: a {@code sum} over the same argument
+         * still needs the sum this would overwrite. A bound function has nothing to finalize -
+         * the group keeps the raw {@code (sum, nonNullCount)} pair and every output computes
+         * its own result from it at projection time - so the whole of it is skipped, and an
+         * unbound one keeps it byte for byte.
+         */
         @Override
         public void preparePass2() {
+            if (isWindowStateOwned()) {
+                return;
+            }
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
@@ -420,6 +464,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putDouble(0, sum / count);
                 }
             }
+        }
+
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            final long count = value.getLong(windowStateNonNullCountSlot);
+            windowStateResult = count != 0 ? value.getDouble(windowStateSumSlot) / count : Double.NaN;
         }
 
         @Override
@@ -437,6 +487,28 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putLong(1, 0L);
             }
         }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The same {@code (sum, nonNullCount)} pair the cumulative
+         * {@link AvgOverUnboundedPartitionRowsFrameFunction} keeps, absorbed over the whole
+         * partition rather than up to the current row. The frame is the window's own business
+         * and the traversal's; what the component describes is the arithmetic, and the two
+         * frames run identical arithmetic over different row sets.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_AVG;
+        }
     }
 
     // Handles avg() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
@@ -446,6 +518,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static class AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -468,6 +543,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
         private double avg;
+        // The four ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way. A RANGE ring is
+        // resizable, so its geometry is two more slots than a ROWS one's: the address and the read
+        // cursor, plus how many pairs it holds and how many it can hold.
+        private int windowStateRingCapacitySlot = -1;
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
+        private int windowStateRingSizeSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public AvgOverPartitionRangeFrameFunction(
@@ -481,12 +564,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
             maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE; // maxDiff must be used only if frameLoBounded
             minDiff = Math.abs(rangeHi);
+            this.configuration = configuration;
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
@@ -513,6 +598,166 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Absorbs one row into the group's bounded RANGE frame, leaving the frame's own total and
+         * count in the slice for every projection on it to read.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s, operation for operation and in the same
+         * order, against the group's slots instead of this function's own six - the pairs the frame
+         * has passed are dropped, the current row is buffered, the pairs the frame has reached are
+         * added. No schedule moves, unlike the bounded ROWS family's: a RANGE row already ends with
+         * the frame's own total in its slots, because what leaves the frame is decided by the
+         * timestamps at the top of the row rather than by a position at the bottom of it.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long timestamp = record.getTimestamp(timestampIndex);
+            final double d = arg.getDouble(record);
+
+            double sum;
+            long frameSize;
+            long startOffset = value.getLong(windowStateRingOffsetSlot);
+            long size;
+            long capacity;
+            long firstIdx;
+
+            if (startOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. Nothing initializes the cells: a RANGE ring holds only the pairs that
+                // contributed, and the length slot is what says how many that is.
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+
+                if (Numbers.isFinite(d)) {
+                    memory.putLong(startOffset, timestamp);
+                    memory.putDouble(startOffset + Long.BYTES, d);
+
+                    if (frameIncludesCurrentValue) {
+                        sum = d;
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        sum = 0.0;
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    sum = 0.0;
+                    frameSize = 0;
+                }
+            } else {
+                sum = value.getDouble(windowStateSumSlot);
+                frameSize = value.getLong(windowStateNonNullCountSlot);
+                size = value.getLong(windowStateRingSizeSlot);
+                capacity = value.getLong(windowStateRingCapacitySlot);
+                firstIdx = value.getLong(windowStateRingIndexSlot);
+
+                long newFirstIdx = firstIdx;
+
+                if (frameLoBounded) {
+                    // find new bottom border of range frame and remove unneeded elements
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
+                            // if rangeHi < 0, some elements from the window can be not in the frame
+                            if (frameSize > 0) {
+                                double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                                sum -= val;
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                // add new element if not null
+                if (Numbers.isFinite(d)) {
+                    if (size == capacity) { //buffer full
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+
+                    // add element to buffer
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                    size++;
+                }
+
+                // find new top border of range frame and add new elements
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
+
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum += val;
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum += val;
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    firstIdx = newFirstIdx;
+                }
+            }
+
+            value.putDouble(windowStateSumSlot, sum);
+            value.putLong(windowStateNonNullCountSlot, frameSize);
+            value.putLong(windowStateRingIndexSlot, firstIdx);
+            value.putLong(windowStateRingOffsetSlot, startOffset);
+            value.putLong(windowStateRingSizeSlot, size);
+            value.putLong(windowStateRingCapacitySlot, capacity);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+            this.windowStateRingSizeSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_SIZE);
+            this.windowStateRingCapacitySlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_CAPACITY);
+        }
+
         @Override
         public void close() {
             super.close();
@@ -520,8 +765,49 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             freeList.clear();
         }
 
+        /**
+         * Enrols this function in the live-view frontier sweep. The value layout the two indices
+         * name is the one {@link #computeNext(Record)} documents: slot 2 is the ring's start
+         * offset, slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             // map stores
             // 0 - sum, never a NaN
             // 1 - current number of non-null rows in in-memory frame (equals to frame size because we don't store nulls)
@@ -596,7 +882,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             // if rangeHi < 0, some elements from the window can be not in the frame
                             if (frameSize > 0) {
                                 double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -633,7 +919,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -648,7 +934,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum += val;
                             frameSize++;
@@ -693,6 +979,26 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reads the frame the group's contributor left in the slice. The same two fields and the
+         * same empty test a cumulative {@code avg} reads, because a bounded RANGE contributor
+         * leaves the current frame's total and count there exactly as an unfused row does.
+         * <p>
+         * Both scalars are materialized because {@code sum} over the same frame is this class with
+         * a different reading of them, exactly as it is on the unfused path.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            final long count = value.getLong(windowStateNonNullCountSlot);
+            if (count != 0) {
+                sum = value.getDouble(windowStateSumSlot);
+                avg = sum / count;
+            } else {
+                sum = Double.NaN;
+                avg = Double.NaN;
+            }
         }
 
         @Override
@@ -969,9 +1275,33 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the arena goes back to the start: the group's map is cleared by the
+            // same toTop, so every partition allocates a ring again on its first row and nothing
+            // addresses what this drops.
             memory.truncate();
             freeList.clear();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The bounded-RANGE running {@code (sum, count)} over the frame's own values. Separate from
+         * the bounded-ROWS family and from the cumulative one for the reason its javadoc gives -
+         * the ring it addresses is resizable and holds timestamps beside the values - and reported
+         * by {@code sum} over the same frame too, which is this class with a different output.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_RANGE_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_AVG;
         }
     }
 
@@ -986,6 +1316,17 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Where the value entering the frame sits, counted from the ring's oldest cell, when the
+        // frame's high bound lags the current row. One more than the unfused reading of the same
+        // thing for a bounded low bound, because the fused ring holds one cell more - see
+        // fusedRingSize.
+        private final int fusedEnteringOffset;
+        // The fused ring's length. It is the unfused bufferSize plus the one cell a deferred
+        // subtraction needs: a bound contributor leaves the current frame's total in the map
+        // value and drops the value leaving the frame on the row that actually drops it, so that
+        // value has to survive one row longer than the unfused ring keeps it. Only where the low
+        // bound is bounded - with nothing ever leaving the frame there is nothing to defer.
+        private final int fusedRingSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         // Deep copy of the partition-by key column types. The factory's
@@ -999,6 +1340,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
         private double avg;
+        // The two ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public AvgOverPartitionRowsFrameFunction(
@@ -1024,6 +1369,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 frameLoBounded = false;
             }
             frameIncludesCurrentValue = rowsHi == 0;
+            fusedRingSize = bufferSize + (frameLoBounded ? 1 : 0);
+            fusedEnteringOffset = frameSize - 1 + (frameLoBounded ? 1 : 0);
 
             this.memory = memory;
             this.liveView = liveView;
@@ -1046,6 +1393,91 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Absorbs one row into the group's bounded frame, leaving the frame's own total and
+         * count in the slice for every projection on it to read.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s with the subtraction moved: where the
+         * unfused row ends by dropping the value that leaves the frame <b>next</b> - which is
+         * what leaves its slot holding a total no output ever emits - this one starts by
+         * dropping the value that has just left. The two operations and their order are
+         * identical, so the fused and unfused answers agree bit for bit, and the price is the one
+         * extra ring cell that lets the departing value survive the row it is needed on.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            long ringOffset = value.getLong(windowStateRingOffsetSlot);
+            final long loIdx;
+            double sum;
+            long count;
+            if (ringOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. NaN in every cell is "no value here yet", which the contribution
+                // predicate refuses exactly as it refuses a null argument.
+                ringOffset = memory.appendAddressFor((long) fusedRingSize * Double.BYTES) - memory.getPageAddress(0);
+                for (int i = 0; i < fusedRingSize; i++) {
+                    memory.putDouble(ringOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+                value.putLong(windowStateRingOffsetSlot, ringOffset);
+                loIdx = 0;
+                if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
+                    // Assigned rather than added to the identity zero, which is what the unfused
+                    // first row does - and the difference is observable: 0.0 + -0.0 is 0.0.
+                    sum = d;
+                    count = 1;
+                } else {
+                    sum = 0.0;
+                    count = 0;
+                }
+            } else {
+                loIdx = value.getLong(windowStateRingIndexSlot);
+                sum = value.getDouble(windowStateSumSlot);
+                count = value.getLong(windowStateNonNullCountSlot);
+                if (frameLoBounded) {
+                    // The oldest cell holds the value the frame dropped between the previous row
+                    // and this one. Nothing leaves an unbounded low bound, which is why such a
+                    // frame needs no extra cell either.
+                    final double leaving = memory.getDouble(ringOffset + loIdx * Double.BYTES);
+                    if (Numbers.isFinite(leaving)) {
+                        sum -= leaving;
+                        count--;
+                    }
+                }
+                final double entering = frameIncludesCurrentValue
+                        ? d
+                        : memory.getDouble(
+                        ringOffset + ((loIdx + fusedEnteringOffset) % fusedRingSize) * Double.BYTES
+                );
+                if (Numbers.isFinite(entering)) {
+                    sum += entering;
+                    count++;
+                }
+            }
+            value.putDouble(windowStateSumSlot, sum);
+            value.putLong(windowStateNonNullCountSlot, count);
+            // The current row's value takes the cell the departing one has now been accounted
+            // for, and the oldest cell moves on to what the next row will drop.
+            memory.putDouble(ringOffset + loIdx * Double.BYTES, d);
+            value.putLong(windowStateRingIndexSlot, (loIdx + 1) % fusedRingSize);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+        }
+
         @Override
         public void close() {
             super.close();
@@ -1054,6 +1486,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             // map stores:
             // 0 - sum, never store NaN in it
             // 1 - current number of non-null rows in frame
@@ -1146,6 +1583,26 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        /**
+         * Reads the frame the group's contributor left in the slice. The same two fields and the
+         * same empty test a cumulative {@code avg} reads, because the contributor leaves the
+         * current frame's total and count there rather than the carry the unfused row ends on.
+         * <p>
+         * Both scalars are materialized because {@code sum} over the same frame is this class
+         * with a different reading of them, exactly as it is on the unfused path.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            final long count = value.getLong(windowStateNonNullCountSlot);
+            if (count != 0) {
+                sum = value.getDouble(windowStateSumSlot);
+                avg = sum / count;
+            } else {
+                sum = Double.NaN;
+                avg = Double.NaN;
+            }
         }
 
         @Override
@@ -1321,8 +1778,32 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the ring goes back to the start of the arena: the group's map is
+            // cleared by the same toTop, so every partition allocates a ring again on its first
+            // row and nothing addresses what this drops.
             memory.truncate();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The bounded-ROWS running {@code (sum, count)} over the frame's own values. Separate
+         * from the cumulative family for the reason its javadoc gives - the state continues into
+         * a ring this function owns - and reported by {@code sum} over the same frame too, which
+         * is this class with a different output.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_ROWS_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_AVG;
         }
     }
 
@@ -1411,7 +1892,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         // if rangeHi < 0, some elements from the window can be not in the frame
                         if (frameSize > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1460,7 +1941,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1475,7 +1956,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum += val;
                         frameSize++;
@@ -1787,7 +2268,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1834,6 +2329,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void projectWindowState(Record record, MapValue value) {
+            final long count = value.getLong(windowStateNonNullCountSlot);
+            avg = count != 0 ? value.getDouble(windowStateSumSlot) / count : Double.NaN;
+        }
+
+        @Override
         public Map getPartitionMap() {
             return map;
         }
@@ -1848,21 +2349,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : AVG_COLUMN_TYPES.getColumnCount();
-        }
-
-        @Override
-        public void markPartitionAlive(Record record) {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.findValue();
-            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1885,6 +2371,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Zero the [sum, count] slots; next
             // computeNext reads sum=0, count=0 and re-anchors on the post-reset row.
             partitionByRecord.of(record);
@@ -1911,6 +2402,35 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running {@code (sum, nonNullCount)} pair, which is the same accumulator a
+         * DOUBLE {@code sum} over the same window and argument maintains. The two differ
+         * only in what they project out of it.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_AVG;
+        }
+
+        /**
+         * The whole image is {@code (sum, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Double.BYTES + Long.BYTES;
         }
 
         @Override

@@ -545,6 +545,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewPartitionCompactStalePercent() {
+        return getDelegate().getLiveViewPartitionCompactStalePercent();
+    }
+
+    @Override
     public int getLiveViewPartitionCompactThreshold() {
         return getDelegate().getLiveViewPartitionCompactThreshold();
     }
@@ -1837,6 +1842,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlWindowCachedLightEnabled() {
         return getDelegate().isSqlWindowCachedLightEnabled();
+    }
+
+    @Override
+    public boolean isSqlWindowMapFusionEnabled() {
+        return getDelegate().isSqlWindowMapFusionEnabled();
     }
 
     @Override

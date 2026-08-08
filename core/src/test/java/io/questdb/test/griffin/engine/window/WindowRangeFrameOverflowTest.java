@@ -24,21 +24,134 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
+ * The two places a bounded RANGE frame overflows: converting the width the user wrote, and
+ * measuring the distance between two rows at runtime.
+ * <p>
  * A RANGE frame bound carries a time unit, and the runtime converts it into the designated
  * timestamp's own units before it builds the frame. That conversion multiplies by a per-unit
  * constant without checking the result, so a width the units cannot carry used to come back as
  * a different width - and the query then computed over a frame nobody wrote, silently.
  * <p>
- * These tests cover the three ways it went wrong, one per shape at each end of the frame, on
+ * These tests cover the three ways that went wrong, one per shape at each end of the frame, on
  * both timestamp resolutions, and pin the widest width that must keep compiling at each end.
  * The widths involved are far outside real time-series use; what makes them worth a test is
  * that two of the three failed without a word.
+ * <p>
+ * The runtime side is the {@code testABoundedRangeFrame...} pair. Every bounded RANGE family
+ * decides what has left the frame by measuring the current row against a buffered one, and it
+ * measured with {@code Math.abs(timestamp - ts)} - which wraps once the two rows straddle zero
+ * far enough apart, because {@code Math.abs(Long.MIN_VALUE)} is itself negative. The furthest
+ * apart two rows can be then reads as the closest possible pair, and the row the frame has
+ * passed stays in the aggregate. A table cannot reach it - {@code TimestampDriver.validateBounds}
+ * confines a designated timestamp to 1970..9999 - but {@code generate_series} is a designated
+ * timestamp source that bounds-checks nothing, so an ordinary SELECT can.
  */
 public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
+
+    // Five rows at -2^62, -2^61, 0, 2^61 and 2^62. The span between the first and the last is
+    // exactly 2^63, the one distance whose subtraction lands on Long.MIN_VALUE, and every
+    // adjacent pair is far enough apart that the frame below admits some rows and not others.
+    private static final String SERIES =
+            "(SELECT generate_series ts, 1 k, generate_series::long x" +
+                    " FROM generate_series((-4611686018427387904)::timestamp, 4611686018427387904::timestamp, 2305843009213693952L))";
+    // 7e18 reaches back over three of the four steps but not over all four, so the last row's
+    // frame must drop the first row and keep the other three.
+    private static final String WINDOW = " RANGE BETWEEN 7000000000000000000 PRECEDING AND CURRENT ROW)";
+    // The lagging shape, whose low bound is unbounded and whose high bound is what each row is
+    // measured against. 8e18 is wider than the three steps between the first row and the fourth,
+    // so the first row does not reach any frame until the last one - where the distance is the
+    // 2^63 that overflows. Every other case here measures against the frame's low bound; this is
+    // the one that measures against its high bound.
+    private static final String LAGGING_WINDOW = " RANGE BETWEEN UNBOUNDED PRECEDING AND 8000000000000000000 PRECEDING)";
+
+    @Test
+    public void testABoundedRangeFrameDropsTheRowItPassedAcrossTheWholeLongRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // Unpartitioned first: no map, no group, and the class the partitioned spelling
+            // inherits its frame arithmetic from. Then the partitioned one, which is what the
+            // window Map group fuses. Both measured the same way, so both were wrong.
+            for (String over : new String[]{"(ORDER BY ts", "(PARTITION BY k ORDER BY ts"}) {
+                assertQuery(
+                        "SELECT ts::long v, count(*) OVER w c, sum(x) OVER w s, min(x) OVER w mn, first_value(x) OVER w fv" +
+                                " FROM " + SERIES + " WINDOW w AS " + over + WINDOW
+                )
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                v\tc\ts\tmn\tfv
+                                -4611686018427387904\t1\t-4.611686018427388E18\t-4611686018427387904\t-4611686018427387904
+                                -2305843009213693952\t2\t-6.917529027641082E18\t-4611686018427387904\t-4611686018427387904
+                                0\t3\t-6.917529027641082E18\t-4611686018427387904\t-4611686018427387904
+                                2305843009213693952\t4\t-4.611686018427388E18\t-4611686018427387904\t-4611686018427387904
+                                4611686018427387904\t4\t4.611686018427388E18\t-2305843009213693952\t-2305843009213693952
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testABoundedRangeFrameDropsTheRowItPassedOnBothCachedCursors() throws Exception {
+        assertMemoryLeak(() -> {
+            // The same frame on the cached cursors, where the rows reach the functions through a
+            // sorted record chain rather than off the base cursor. Both cached factories and both
+            // fusion modes, because the physical plan a query lands on must not decide what the
+            // frame answers. The leading avg is only there to force a cached cursor; its own
+            // partition spans every row, and they sum to zero.
+            final String sql = "SELECT ts::long v, avg(x) OVER (PARTITION BY k) forced," +
+                    " count(*) OVER w c, sum(x) OVER w s, min(x) OVER w mn, first_value(x) OVER w fv" +
+                    " FROM " + SERIES + " WINDOW w AS (PARTITION BY k ORDER BY ts" + WINDOW;
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                for (int fusion = 0; fusion < 2; fusion++) {
+                    setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, fusion == 0 ? "true" : "false");
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    v\tforced\tc\ts\tmn\tfv
+                                    -4611686018427387904\t0.0\t1\t-4.611686018427388E18\t-4611686018427387904\t-4611686018427387904
+                                    -2305843009213693952\t0.0\t2\t-6.917529027641082E18\t-4611686018427387904\t-4611686018427387904
+                                    0\t0.0\t3\t-6.917529027641082E18\t-4611686018427387904\t-4611686018427387904
+                                    2305843009213693952\t0.0\t4\t-4.611686018427388E18\t-4611686018427387904\t-4611686018427387904
+                                    4611686018427387904\t0.0\t4\t4.611686018427388E18\t-2305843009213693952\t-2305843009213693952
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testALaggingRangeFrameAdmitsTheRowItReachesAcrossTheWholeLongRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // The mirror of the case above, on the other bound. Here the overflow drops a row
+            // the frame should have admitted rather than keeping one it should have dropped:
+            // the wrapped distance is negative, so it fails the "far enough behind" test and
+            // the loop stops before the row is ever added.
+            for (String over : new String[]{"(ORDER BY ts", "(PARTITION BY k ORDER BY ts"}) {
+                assertQuery(
+                        "SELECT ts::long v, count(*) OVER w c, sum(x) OVER w s, first_value(x) OVER w fv" +
+                                " FROM " + SERIES + " WINDOW w AS " + over + LAGGING_WINDOW
+                )
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                v\tc\ts\tfv
+                                -4611686018427387904\t0\tnull\tnull
+                                -2305843009213693952\t0\tnull\tnull
+                                0\t0\tnull\tnull
+                                2305843009213693952\t0\tnull\tnull
+                                4611686018427387904\t1\t-4.611686018427388E18\t-4611686018427387904
+                                """);
+            }
+        });
+    }
 
     @Test
     public void testFrameEndNarrowingToZeroOnMicrosIsRejected() throws Exception {

@@ -1114,8 +1114,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             wf.getWindowFunctions(),
                             anchoredFunctions
                     ),
+                    wf.getCheckpointWindowStatePlan(),
                     instance.getMemoryTracker()
             );
+            // The plan is compiled against the factory's window functions and keyed by
+            // their partition-by layout; the window is what decides whether that layout is
+            // the anchor map's, so binding is where the two meet. Adopting it moves the
+            // group's runtime state into the window's own map value and leaves each
+            // grouped function a read-only projection of it; a declined plan leaves every
+            // function on the private map and the legacy root it has outside a group.
+            window.bindCheckpointWindowStatePlan(wf.getCheckpointWindowStatePlan());
             // Commit the anchor Function and window together, only after the full
             // machinery builds. A failure before this point must not leave a
             // half-built anchor (function set, window null): the per-row reset
@@ -3510,43 +3518,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 persistState(instance);
             }
-            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh (the
-            // lead path) and drainAppliedBase's overlap branch (the coupled dedup path,
-            // where an ALTER ... DEDUP ENABLE flip can leave a pre-dedup RAM lead) zero
-            // it explicitly first, and the remaining coupled-forward and replay-to-applied
-            // callers carry no un-flushed lead so it is already 0. The capable path
+            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh and
+            // drainAppliedBase's overlap branch (where an ALTER ... DEDUP ENABLE flip can
+            // leave a pre-dedup RAM lead) zero it explicitly, and the coupled-forward and
+            // replay-to-applied callers carry no un-flushed lead. The capable path
             // rebuilds the tier as a pure disk subset (leadRowCount 0).
-            // This branch rewrote nothing on disk and left the published slot
-            // untouched, so a slot that is STILL a current un-flushed lead keeps its
-            // stamped leadRowCount as the true lead. Resync instance.leadRowCount to it:
-            // leaving it at 0 desyncs the two, so the next publish would reclassify those
-            // L never-flushed rows as overlap (size() under-reports, iteration serves
-            // them as phantoms) and flushLead's overlapCount would skip them entirely.
+            // This branch rewrote nothing on disk and left the published slot untouched,
+            // so a slot that is STILL a current un-flushed lead keeps its stamped
+            // leadRowCount as the true lead. Resync instance.leadRowCount to it: leaving
+            // it at 0 would reclassify those never-flushed rows as overlap, so size()
+            // under-reports, iteration serves them as phantoms, and flushLead's
+            // overlapCount skips them entirely.
             //
             // But re-arm ONLY from a slot whose stamped LV-table seqTxn still matches the
             // applied disk seqTxn. A slot whose stamp has fallen behind disk holds rows
-            // that are already durable, so its leadRowCount is NOT an un-flushed lead and
-            // the correct value is the 0 the caller left. Two paths leave such a
-            // stale-stamped slot, and both must be excluded:
-            //   - an emergency flush wrote the lead to disk, set tierStale, and left the
-            //     slot's now-durable leadRowCount stamped (isTierStale() would catch it); and
-            //   - a normal flush wrote the lead to disk but its restampSlot 0 -> -1 CAS
-            //     lost to a reader pin, so the slot kept its now-durable stamp while
-            //     tierStale stayed FALSE (restampSlotAfterFlush ignores the CAS result) --
-            //     an isTierStale() guard MISSES this one.
-            // Re-arming from either would make the finishLeadRefresh flush path trust a
-            // stale non-zero leadRowCount and re-flush the already-durable rows as on-disk
+            // that are already durable, so the 0 the caller left is correct. Two paths
+            // leave such a stale stamp: an emergency flush that set tierStale
+            // (isTierStale() would catch it), and a normal flush whose restampSlot
+            // 0 -> -1 CAS lost to a reader pin, leaving tierStale FALSE because
+            // restampSlotAfterFlush ignores the CAS result -- an isTierStale() guard
+            // MISSES that one. Re-arming from either would make finishLeadRefresh trust a
+            // stale non-zero leadRowCount and re-flush already-durable rows as on-disk
             // duplicates. The seqTxn-match check below subsumes both (both leave
             // slot.lvSeqTxn() != applied) and needs no reader open: the applied seqTxn is
             // the same coordinate flushLead / publishToInMemoryTier stamp the slot from,
             // and nothing has applied to the LV table since (this branch does not commit).
             //
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
-            // WindowFunction.supportsCheckpointState() folds in the anchor key type check),
-            // and o3Replay recomputes capability above, so a freshly-validated view
-            // never reaches this branch. It fires only for a view that is
-            // non-capable at runtime (e.g. a restored view whose function lost
-            // snapshot support); the resync keeps its bookkeeping correct if so.
+            // WindowFunction.supportsCheckpointState() folds in the anchor key type check)
+            // and o3Replay recomputes capability above, so a freshly-validated view never
+            // reaches this branch. It fires only for a view that is non-capable at runtime
+            // (e.g. a restored view whose function lost snapshot support); the resync
+            // keeps its bookkeeping correct if so.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
             if (ncTier != null) {
                 final LiveViewInMemoryBuffer ncSlot = ncTier.getSlot(ncTier.getPublishedIdx());
@@ -4064,10 +4067,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // inside LiveViewWindow.restore() (it clears before
                             // reinserting), so no explicit wipe is needed here.
                             // Order matters: function maps clear -> restore root.
+                            // isOpen() rather than a null test: a function whose state the
+                            // window owns keeps a closed map, and its accumulator is
+                            // cleared with the anchor map's own entry instead.
                             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                             for (int i = 0, n = functions.size(); i < n; i++) {
                                 Map m = functions.getQuick(i).getPartitionMap();
-                                if (m != null) {
+                                if (m != null && m.isOpen()) {
                                     m.clear();
                                 }
                             }
@@ -5083,39 +5089,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 repairPublication.watermarkAdvanced();
                 if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
-                    // Post-replay head: retireCheckpointStateOnO3 cleared the head
-                    // metadata above, so force seals a fresh boundary reflecting the
-                    // post-replay state (firstCp is already true here; force keeps the
-                    // intent explicit and robust). A subsequent O3 above it can then
-                    // resume from it instead of paying for another full rebuild.
+                    // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
+                    // above, so force seals a fresh boundary reflecting the post-replay state
+                    // (firstCp is already true here; force keeps the intent explicit). A
+                    // subsequent O3 above it resumes from there instead of rebuilding in full.
                     //
                     // The head's maxTs has to describe the state the checkpoint is about to
-                    // serialise. That is replayMaxTs for a rebuild that ran to the end of the
-                    // base table, but the runtime frontier for one that stopped at a finite H
-                    // and put its own state back - the restore just rewound the functions past
+                    // serialise: replayMaxTs for a rebuild that ran to the end of the base
+                    // table, but the runtime frontier for one that stopped at a finite H and
+                    // put its own state back - the restore just rewound the functions past
                     // replayMaxTs, so sealing them under it would claim a boundary the state
                     // does not sit at, and the next O3 would resume from it and re-read rows
                     // the state already holds. The frontier is a real timestamp whenever the
                     // plan tagged a finite H (it had to be at or above H to do so), so this
-                    // seals even when the replacement emitted nothing at all - the retire above
+                    // seals even when the replacement emitted nothing at all - the retire
                     // dropped every boundary, and a view left with none rebuilds from scratch
                     // on the next restart.
                     //
-                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
-                    // from the on-disk size above), so adding them again would
-                    // double-count lvRowPosition. Mirrors the seed-completion path.
+                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced from the
+                    // on-disk size above), so adding them again would double-count
+                    // lvRowPosition. Mirrors the seed-completion path.
                     //
-                    // A published splice already IS this repair's timeline publication,
-                    // and it appended no root. That is enough only while the newest
-                    // root it kept still sits at the frontier: the splice moved the
-                    // generation's normalizedBaseSeqTxn up to E, and restart replays
-                    // (E, durableBase] alone, so any row above that root came from a
-                    // base transaction the replay will not walk and the restored state
-                    // would never see it. Seal the frontier as a root of its own
-                    // whenever it has run past the splice's head key - the convergence
-                    // that let the repair keep the primary runtime is exactly what
-                    // makes that runtime the correct state there - and leave the seal
-                    // to re-stamp the head metadata alone when the two already agree.
+                    // A published splice already IS this repair's timeline publication and
+                    // appended no root, which is enough only while the newest root it kept
+                    // still sits at the frontier: the splice moved the generation's
+                    // normalizedBaseSeqTxn up to E, and restart replays (E, durableBase]
+                    // alone, so any row above that root came from a base transaction the
+                    // replay will not walk and the restored state would never see it. Seal
+                    // the frontier as a root of its own whenever it has run past the splice's
+                    // head key - the convergence that let the repair keep the primary runtime
+                    // is exactly what makes that runtime the correct state there - and leave
+                    // the seal to re-stamp the head metadata alone when the two agree.
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
@@ -6201,7 +6205,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final Map map = functions.getQuick(i).getPartitionMap();
-                if (map != null) {
+                if (map != null && map.isOpen()) {
                     map.clear();
                 }
             }

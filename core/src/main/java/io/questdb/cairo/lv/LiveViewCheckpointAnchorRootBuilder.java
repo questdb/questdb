@@ -176,11 +176,17 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         mutationCount = 0;
         putKeys.clear();
         segmentUseCounts.clear();
-        oldRootPageSegmentId = oldAnchorRootRef.isNull() ? NO_SEGMENT : oldAnchorRootRef.getSegmentId();
-        if (oldAnchorRootRef.isNull()) {
+        // A predecessor that is not an anchor root at all is the fused window root, and
+        // this build is the conversion away from it: nothing of it can be shared, so the
+        // tree starts empty and every live key is imaged, exactly as the first anchor
+        // root of a timeline does. Its pages are not this root's to release either -
+        // they retire with the boundary that still names them.
+        final boolean hasAnchorPredecessor = !oldAnchorRootRef.isNull()
+                && oldAnchorRoot.ofIfAnchorRoot(checkpointsDir, oldAnchorRootRef);
+        oldRootPageSegmentId = hasAnchorPredecessor ? oldAnchorRootRef.getSegmentId() : NO_SEGMENT;
+        if (!hasAnchorPredecessor) {
             oldPartitionMapRoot.clear();
         } else {
-            oldAnchorRoot.of(checkpointsDir, oldAnchorRootRef);
             if (!Arrays.equals(windowName, oldAnchorRoot.getWindowName())
                     || !Arrays.equals(keySchema, oldAnchorRoot.getKeySchema())
                     || anchorValueType != oldAnchorRoot.getAnchorValueType()) {
@@ -209,6 +215,22 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
                 LiveViewCheckpointAnchorRoot.encodeAnchorValue(anchorValue),
                 NO_STATE_PAGES
         );
+    }
+
+    /**
+     * Drops one entry the predecessor map holds. A forward freeze needs this because its
+     * puts are not the whole truth: the frontier sweep takes keys out of the anchor map
+     * without the seal walking what remains, so the removals arrive named rather than by
+     * omission. A key the tree does not hold is a no-op, which is what a key created and
+     * evicted inside one cadence lands on.
+     * <p>
+     * A complete snapshot removes by omission in {@link #build}, so pairing that mode
+     * with this call risks two mutations naming one key, which the partition-map writer
+     * rejects.
+     */
+    public void removePartition(@NotNull byte[] key) {
+        ensureInitialized();
+        mutationAt(mutationCount++).remove(key);
     }
 
     private void ensureInitialized() {

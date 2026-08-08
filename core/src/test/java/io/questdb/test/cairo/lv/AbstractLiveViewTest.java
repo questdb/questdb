@@ -31,12 +31,18 @@ import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -114,6 +120,44 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected static long ts(String timestamp) {
         return MicrosTimestampDriver.floor(timestamp);
+    }
+
+    /**
+     * Walks the view's compiled factory down to its {@link WindowRecordCursorFactory} and returns
+     * that factory's window function list. Mirrors the unwrap {@code LiveViewRefreshJob} does, and
+     * is how a test reaches a non-anchored window - {@code LiveViewInstance.getAnchorWindow()} does
+     * not surface one.
+     */
+    protected static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
+        RecordCursorFactory factory = instance.getCompiledFactory();
+        while (factory != null) {
+            if (factory instanceof WindowRecordCursorFactory windowFactory) {
+                return windowFactory.getWindowFunctions();
+            }
+            if (factory instanceof QueryProgress) {
+                factory = factory.getBaseFactory();
+                continue;
+            }
+            break;
+        }
+        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        // The tests hand-drive the clock, and CairoTestConfiguration derives the millisecond clock
+        // the engine's spin deadlines run on from that same simulated clock. So a soak whose refresh
+        // driver advances the clock by CLOCK_ADVANCE_MICROS per tick, on its own thread, fast-forwards
+        // every concurrent reader's deadline with it: a reader that loses one benign race in
+        // TableReader.readTxnSlow - the writer commits between its txn read and its scoreboard acquire -
+        // re-checks a deadline the driver has already blown by tens of simulated seconds and throws
+        // "Transaction read timeout" milliseconds after entering the loop. Raising the budget past any
+        // span a test can simulate takes the simulated clock out of the spin loops. It costs no real
+        // liveness cover: the clock is simulated, so the timeout never measured real time here anyway,
+        // and AbstractTest's JUnit timeout rule still fails a genuinely stuck reader.
+        spinLockTimeout = 365L * 24 * 60 * 60 * 1000; // a simulated year
     }
 
     /**

@@ -244,6 +244,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES("cairo.live.view.in.memory.buffer.growth.bytes"),
     CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES("cairo.live.view.in.memory.buffer.initial.bytes"),
     CAIRO_LIVE_VIEW_IN_MEMORY_MAX("cairo.live.view.in.memory.max"),
+    CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT("cairo.live.view.partition.compact.stale.percent"),
     CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD("cairo.live.view.partition.compact.threshold"),
     CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.live.view.refresh.memory.limit.bytes"),
     CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS("cairo.live.view.refresh.turn.max.commits"),
@@ -290,6 +291,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
     CAIRO_SQL_WINDOW_TREE_MAX_BYTES("cairo.sql.window.tree.max.bytes"),
     CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED("cairo.sql.window.cached.light.enabled"),
+    CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED("cairo.sql.window.map.fusion.enabled"),
     CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH("cairo.sql.interval.max.bracket.depth"),
     CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE("cairo.sql.interval.max.intervals.after.merge"),
     CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD("cairo.sql.interval.incremental.merge.threshold"),

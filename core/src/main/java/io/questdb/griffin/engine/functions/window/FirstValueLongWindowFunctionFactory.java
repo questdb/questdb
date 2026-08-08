@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -234,7 +236,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -465,7 +468,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -722,10 +726,22 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
+        }
+
+        /**
+         * IGNORE NULLS drops the frame-size slot the parent carries, so every geometry slot
+         * shifts down by one: slot 0 is the ring's start offset, slot 2 its capacity. Declared
+         * here rather than inherited, because inheriting the parent's pair would read
+         * {@code size} as an offset and {@code firstIdx} as a capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
         }
 
         /**
@@ -799,7 +815,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 if (!frameLoBounded && size > 0) {
                     if (firstIdx == 0) { // use firstIdx as a flag
                         long ts = memory.getLong(startOffset);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             firstIdx = 1;
                             firstValue = memory.getLong(startOffset + Long.BYTES);
                             mapValue.putLong(3, firstIdx);
@@ -819,11 +835,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             findNewFirstValue = true;
                             this.firstValue = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         }
@@ -1195,7 +1211,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             if (!frameLoBounded && size > 0) {
                 if (firstIdx == 0) { // use firstIdx as a flag firstValue has in frame.
                     long ts = memory.getLong(startOffset);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         firstIdx = 1;
                         firstValue = memory.getLong(startOffset + Long.BYTES);
                     } else {
@@ -1214,11 +1230,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) > maxDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                     newFirstIdx = (idx + 1) % capacity;
                     size--;
                 } else {
-                    if (Math.abs(timestamp - ts) >= minDiff) { // find the first not null value
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) { // find the first not null value
                         findNewFirstValue = true;
                         this.firstValue = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                     }
@@ -1428,6 +1444,30 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Captures the first row the predicate admits and leaves the slot alone afterwards. The
+         * empty test is the slot's own {@code LONG_NULL} rather than a flag: this family writes
+         * only payloads its predicate admits, so no captured state can be mistaken for an empty
+         * one - which is what lets it keep one slot where its respect-nulls superclass keeps two.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (value.getLong(windowStateValueSlot) == Numbers.LONG_NULL) {
+                final long d = arg.getLong(record);
+                if (d != Numbers.LONG_NULL) {
+                    value.putLong(windowStateValueSlot, d);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            // The family carries no flag, so the superclass's binding of it answers -1 here and
+            // nothing reads it.
+            assert projection == null || windowStateCapturedSlot < 0;
+        }
+
+        /**
          * Advances computation for the given record: looks up the partition key and sets this.value
          * to the first seen non-null long for that partition.
          * <p>
@@ -1441,6 +1481,9 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1494,6 +1537,16 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public boolean isIgnoreNulls() {
             return true;
+        }
+
+        /**
+         * The first payload the partition offered that is not {@code LONG_NULL} - a state of its
+         * own and not a reading of the respect-nulls one, which holds whatever the first row
+         * carried.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE;
         }
     }
 
@@ -1794,6 +1847,9 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
     public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -1822,7 +1878,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1831,6 +1888,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
 
             frameIncludesCurrentValue = rangeHi == 0;
 
@@ -1865,6 +1923,43 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity. The IGNORE NULLS subclass shifts both down by one and overrides
+         * this with its own pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         /**
@@ -1937,7 +2032,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 frameSize--;
                             }
@@ -1969,7 +2064,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             frameSize++;
@@ -1981,7 +2076,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     if (size > 0) {
                         long idx = firstIdx % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             frameSize++;
                             newFirstIdx = idx;
                         }
@@ -2712,7 +2807,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             frameSize--;
                         }
@@ -2755,7 +2850,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         frameSize++;
@@ -2767,7 +2862,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 if (size > 0) {
                     long idx = firstIdx % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         frameSize++;
                         newFirstIdx = idx;
                     }
@@ -3153,6 +3248,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         protected final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected long value;
+        // The captured value's and the flag's slots in the group's fused map value, or -1 when
+        // this function owns its state.
+        protected int windowStateCapturedSlot = -1;
+        protected int windowStateValueSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, ColumnTypes partitionByKeyTypes, boolean liveView, CairoConfiguration configuration) {
@@ -3181,8 +3280,38 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Captures the first row of the partition into the group's slice and leaves every later
+         * row alone. The flag is what says which of the two this row is: a private map answers
+         * that with {@code isNew()}, and a group's value cannot, because it was created and put
+         * to identity before any contributor ran.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (value.getLong(windowStateCapturedSlot) == 0) {
+                value.putLong(windowStateValueSlot, arg.getLong(record));
+                value.putLong(windowStateCapturedSlot, 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateValueSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED_VALUE);
+            this.windowStateCapturedSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group captured this row where it had to and materialized the projection
+                // before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -3242,6 +3371,16 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        /**
+         * Reads the value the group captured. No empty-state test: the component's identity is
+         * {@code LONG_NULL}, which is what this window emits for a partition it has seen no row
+         * of - and a partition it has seen a row of has captured that row, whatever it held.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            this.value = value.getLong(windowStateValueSlot);
         }
 
         @Override
@@ -3326,6 +3465,26 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The value the partition's first row held, kept as its raw 64-bit payload. The IGNORE
+         * NULLS subclass overrides this with a family of its own: the two capture different rows
+         * and so keep different states.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE;
         }
     }
 

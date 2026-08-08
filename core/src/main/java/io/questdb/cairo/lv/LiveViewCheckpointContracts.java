@@ -150,7 +150,72 @@ public final class LiveViewCheckpointContracts {
      */
     public static final double FLOATING_RELATIVE_TOLERANCE = 1e-9;
 
+    /**
+     * Widest fixed-width state one accumulator component may carry in a
+     * partition-map leaf's scalar slot instead of a data page it names with a
+     * 40-byte reference. A component declaring more than this keeps the
+     * page-backed shape.
+     * <p>
+     * This is a <b>format constant</b>, deliberately not configuration. A
+     * configurable threshold would let two nodes compile the same live view into
+     * different durable layouts, so the same checkpoint would be inline on one
+     * and page-backed on the other with nothing in the entry to say which.
+     * <p>
+     * 64 is what a RANGE ring entry already inlines at its widest
+     * ({@code LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4)}), so a
+     * component admitted here is no wider than one the leaf format has carried in
+     * production already. It clears every fixed width the accumulator families
+     * declare today with room to spare - the widest is a DECIMAL sum's 33 bytes,
+     * a {@code Decimal256} accumulator beside its null-state flag.
+     *
+     * @see io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
+     */
+    public static final int MAX_INLINE_COMPONENT_STATE_BYTES = 64;
+
+    /**
+     * Widest complete scalar payload one leaf entry may inline, anchor value
+     * included. A component group whose whole layout does not fit keeps its
+     * legacy page-backed roots.
+     * <p>
+     * The budget exists because the B-tree splits on entry count rather than
+     * encoded byte size, so an unbounded "fixed width means inline" rule would
+     * build very large 64-entry leaves and make every CRC and decode along the
+     * path more expensive. Its <b>value</b> was settled by measurement rather
+     * than argument, because the two sides of the trade are not comparable a
+     * priori. Over 1M retained keys with 100k dirty per seal, widening the fused
+     * entry from 24 to 152 bytes moved the seal from 69 ms to 102 ms, the
+     * metadata written per seal from 6.4 MB to 19.2 MB and the restore of 800k
+     * keys from 319 ms to 485 ms - linear in the width throughout, with no knee.
+     * Falling off the budget instead is a cliff: the same shape declined whole
+     * seals in 359 ms and publishes 8 metadata segments per seal rather than 4,
+     * because every function goes back to a root of its own. On a small dirty set,
+     * where the per-seal fixed cost dominates, the same fallback is 17.2 ms
+     * against 4.9 ms.
+     * <p>
+     * So the budget is set well clear of any shape a view plausibly compiles -
+     * 256 bytes admits fifteen 16-byte components beside the anchor - and its job
+     * is to bound a pathological leaf rather than to arbitrate the ordinary case.
+     * A full 64-entry leaf then holds at most 16 KB of scalar payload, four times
+     * what a leaf of RANGE ring entries already holds.
+     */
+    public static final int MAX_INLINE_LEAF_STATE_BYTES = 256;
+
     private LiveViewCheckpointContracts() {
+    }
+
+    /**
+     * Returns whether a window function's declared
+     * {@link io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
+     * fixed state width} may be inlined into a partition-map leaf.
+     * <p>
+     * A declining function reports {@code -1} and lands here as false, as does a
+     * fixed width past {@link #MAX_INLINE_COMPONENT_STATE_BYTES}. Zero is
+     * excluded on purpose: a function holding no state at all declares that
+     * through {@code isCheckpointStateless()}, and an empty scalar beside no page
+     * reference is the one leaf shape that cannot be told from a corrupt entry.
+     */
+    public static boolean isInlineableStateLength(int fixedStateLength) {
+        return fixedStateLength > 0 && fixedStateLength <= MAX_INLINE_COMPONENT_STATE_BYTES;
     }
 
     /**

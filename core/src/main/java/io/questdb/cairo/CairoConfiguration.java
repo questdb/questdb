@@ -446,10 +446,24 @@ public interface CairoConfiguration {
     long getLiveViewInMemoryMaxMicros();
 
     /**
-     * Anchor-map tombstone count threshold above which {@code LiveViewWindow}
-     * fires compaction. The compaction also fires when
-     * {@code tombstoneCount > 0.5 * anchorMap.size()}, regardless of this
-     * absolute threshold.
+     * The share of the anchor map, in percent, a frontier sweep must be able to reclaim
+     * before {@code LiveViewWindow} fires one. It is one of three arms of the trigger and
+     * the only one that scales with the map, so at large partition counts it is the arm
+     * that decides: at the 50 default a sweep evicts at least half the map, which makes
+     * sweeps rare and each one large. Lowering it sweeps more often and evicts less each
+     * time, which caps the checkpoint dirty set's peak - the seal has to carry one removal
+     * per evicted key - at the cost of paying the sweep's own walk more often. {@code 0}
+     * turns this arm off and leaves {@link #getLiveViewPartitionCompactThreshold()} to
+     * decide alone.
+     */
+    int getLiveViewPartitionCompactStalePercent();
+
+    /**
+     * Absolute stale-partition count a frontier sweep needs before {@code LiveViewWindow}
+     * fires one, and the floor the anchor map's size must also clear. It keeps the sweep
+     * off small maps, where the walk costs more than the entries it would reclaim.
+     * {@link #getLiveViewPartitionCompactStalePercent()} is the other arm and the one that
+     * binds once the map is large.
      */
     int getLiveViewPartitionCompactThreshold();
 
@@ -1298,6 +1312,19 @@ public interface CairoConfiguration {
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isSqlWindowCachedLightEnabled();
+
+    /**
+     * When true (the default), several window functions over one identical window may share a
+     * single partition Map: the group keeps one key domain and makes one lookup per row where
+     * each function would otherwise keep and probe a Map of its own.
+     * <p>
+     * The switch changes no answer - a group co-locates state that stays each member's own - so
+     * it is an operational escape hatch for a shape whose Map implementation or key distribution
+     * regresses in the field, and the control the differential tests compare against. It gates
+     * the runtime binding only; the group is compiled either way, and nothing user-visible,
+     * {@code EXPLAIN} included, differs between the two settings.
+     */
+    boolean isSqlWindowMapFusionEnabled();
 
     boolean isTableTypeConversionEnabled();
 

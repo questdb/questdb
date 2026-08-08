@@ -154,6 +154,7 @@ import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.BoolList;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
@@ -501,6 +502,18 @@ public class CairoEngine implements Closeable, WriterSource {
         if (f.checkpointFunctionIdentity() == null || f.checkpointDependency() == null) {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
+        }
+        final int fixedStateLength = f.checkpointStateFixedLength();
+        if (fixedStateLength != -1
+                && (fixedStateLength <= 0 || !f.supportsCheckpointState() || f.supportsCheckpointRingState())) {
+            // Defensive: a declared fixed width is what a leaf-inlined entry is sized by, so
+            // only a positive width on a whole-state function says anything. A ring-shaped
+            // function's root entry names chunk pages instead of a whole-state image, a
+            // stateless one freezes nothing to measure, and a zero width is the one shape an
+            // empty scalar cannot be told apart from.
+            throw SqlException.$(position, "live view window function ")
+                    .put(f.getName())
+                    .put("() declares an invalid fixed checkpoint state width");
         }
     }
 
@@ -1384,6 +1397,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // referenced base column invalidates the view instead of re-reading the new
         // bytes through the stale compile-time stride.
         final IntList dependencyColumnTypes = new IntList();
+        // Per output column, the SYMBOL cache flag the view's table is created
+        // with: positionally parallel to the view's own metadata, and carrying
+        // the server default for a column that does not project a base SYMBOL
+        // column. See LiveViewTableStructure.
+        final BoolList outputSymbolCacheFlags = new BoolList();
         try (SqlCompiler compiler = getSqlCompiler()) {
             // Arm the shared non-determinism guard for the LV body, mirroring the
             // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
@@ -1427,6 +1445,27 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                         dependencyColumnNames.add(Chars.toString(colName));
                         dependencyColumnTypes.add(baseColumn.getType());
+                    }
+
+                    // A SYMBOL column the view projects straight out of the base
+                    // inherits the base column's cache flag, so a base that asked
+                    // for NOCACHE does not get writer and reader caching turned
+                    // back on through its view. The projection does not carry
+                    // the flag
+                    // (SqlCodeGenerator mints a fresh TableColumnMetadata for a
+                    // SYMBOL output column), so resolve it here by name. That is
+                    // exact rather than heuristic: a live view admits no projection
+                    // between the window and the base scan, so a plain column
+                    // cannot be aliased, and no window function returns SYMBOL.
+                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                        boolean isCached = configuration.getDefaultSymbolCacheFlag();
+                        if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                            final CairoColumn baseColumn = baseTable.getColumnQuiet(metadata.getColumnName(i));
+                            if (baseColumn != null && ColumnType.isSymbol(baseColumn.getType())) {
+                                isCached = baseColumn.isSymbolCached();
+                            }
+                        }
+                        outputSymbolCacheFlags.add(isCached);
                     }
                 }
 
@@ -1564,7 +1603,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 dependencyColumnTypes,
                 metadata
         );
-        LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata, definition);
+        LiveViewTableStructure struct = new LiveViewTableStructure(
+                configuration,
+                op.getViewName(),
+                partitionBy,
+                metadata,
+                definition,
+                outputSymbolCacheFlags
+        );
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());

@@ -66,12 +66,14 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     private final LiveViewCheckpointRoot resultRoot;
     private final LongList segmentIds = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
+    private final LiveViewCheckpointWindowRoot windowRoot;
 
     public LiveViewCheckpointRootBuilder(@NotNull CairoConfiguration configuration) {
         anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
         functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
         resultRoot = new LiveViewCheckpointRoot(configuration);
         segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
+        windowRoot = new LiveViewCheckpointWindowRoot(configuration);
     }
 
     public void addFunction(@NotNull LiveViewCheckpointPageRef functionRootRef) {
@@ -93,12 +95,12 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     }
 
     /**
-     * Starts one checkpoint root. The anchor root reference may be null when the
+     * Starts one checkpoint root. The state root reference may be null when the
      * live view has no anchored WINDOW; it contributes no data segment, because
-     * an anchor entry's whole state is scalar metadata inside its own map pages.
-     * It does contribute metadata segments - its own page and the anchor-map pages
+     * every entry either kind of state root holds is scalar metadata inside its own
+     * map pages. It does contribute metadata segments - its own page and the map pages
      * below it, which older seals may have written - so a non-null reference is
-     * read here for the set it names.
+     * read here for the set it names, decoded by the page kind it turns out to be.
      */
     public void begin(
             @Transient @NotNull Path checkpointsDir,
@@ -120,9 +122,15 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         functionCount = 0;
         segmentIds.clear();
         if (!anchorRootRef.isNull()) {
-            anchorRoot.of(checkpointsDir, anchorRootRef);
-            for (int i = 0, n = anchorRoot.getSegmentUseCountSize(); i < n; i++) {
-                addSegmentId(anchorRoot.getSegmentId(i));
+            if (windowRoot.ofIfWindowRoot(checkpointsDir, anchorRootRef)) {
+                for (int i = 0, n = windowRoot.getSegmentUseCountSize(); i < n; i++) {
+                    addSegmentId(windowRoot.getSegmentId(i));
+                }
+            } else {
+                anchorRoot.of(checkpointsDir, anchorRootRef);
+                for (int i = 0, n = anchorRoot.getSegmentUseCountSize(); i < n; i++) {
+                    addSegmentId(anchorRoot.getSegmentId(i));
+                }
             }
         }
         initialized = true;
@@ -174,6 +182,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         Misc.free(functionRoot);
         Misc.free(resultRoot);
         Misc.free(segmentWriter);
+        Misc.free(windowRoot);
         Misc.free(checkpointsDir);
     }
 

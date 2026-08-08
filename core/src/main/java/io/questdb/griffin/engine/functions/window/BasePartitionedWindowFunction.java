@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -33,15 +34,22 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
+public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
+        implements Reopenable, PartitionStateEvictor.EntryCopier {
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
     // Generation of the checkpoint root checkpointLogicalStateBytes and
@@ -65,6 +73,23 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // sweep never allocates. Null until the first sweep, or for functions that opt
     // out (newCompactionScratch returns null).
     protected Map compactionScratch;
+    // Scratch arena the frontier sweep re-homes surviving ring slabs into, before one bulk
+    // copy puts them back over the truncated primary arena. Null until the first sweep of a
+    // ring-holding function; the instance outlives each sweep but its pages do not - see
+    // compactRingArena for why the sweep hands them back rather than keeping them.
+    protected MemoryARW compactionRingScratch;
+    // True once markCheckpointPartitionDirty has built the dirty set, which is the one
+    // thing that says this function names every key its own rows move. The sweep reads
+    // it before recording an eviction: a subclass whose markPartitionAlive override
+    // never marks dirty has to keep the complete freeze, and a dirty set holding
+    // nothing but the sweep's own eviction markers would hand it the incremental path
+    // instead - freezing the removals and leaving every advanced accumulator at its
+    // stale durable image.
+    protected boolean hasCheckpointDirtyTracking;
+    // True once a sweep has put evicted keys into checkpointDirtyPartitions and the seal
+    // has not consumed them yet. What it decides is whether dropping the dirty set also
+    // hands the backing memory back - see clearCheckpointDirtyPartitions.
+    protected boolean hasCheckpointEvictionsRecorded;
     protected boolean isCheckpointFullScanRequired = true;
     // Non-final so retainPartitions can swap the partition state Map during
     // the anchor-driven frontier sweep.
@@ -83,6 +108,18 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // Single-writer (refresh worker), not volatile.
     protected long tombstoneCount;
     protected int tombstoneValueIndex = -1;
+    // The fused window-state slots this function reads out of the group owner's one map
+    // value, or -1 when it owns its state as it always has. Installed by the plan through
+    // bindWindowStateSlots and cleared the same way, both on the refresh worker.
+    //
+    // The component's base is the "am I fused" answer because every binding has one: the
+    // counter used to serve, and stopped when the extremum families arrived - they carry a
+    // single slot and no counter at all. The two named slots are -1 wherever the bound
+    // component does not carry the field, which is the sum for a bare counter and both of
+    // them for an extremum.
+    protected int windowStateComponentSlotBase = -1;
+    protected int windowStateNonNullCountSlot = -1;
+    protected int windowStateSumSlot = -1;
 
     public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
         super(arg);
@@ -99,12 +136,37 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         }
     }
 
+    /**
+     * Records the binding itself and caches the two slots this base class has a name for. A
+     * subclass whose family carries other fields - Welford's mean and m2, an extremum -
+     * overrides, calls super and reads its own off the same projection.
+     */
+    @Override
+    public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+        this.windowStateComponentSlotBase = projection == null ? -1 : projection.getComponentSlotBase();
+        this.windowStateSumSlot = projection == null
+                ? -1
+                : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM);
+        this.windowStateNonNullCountSlot = projection == null
+                ? -1
+                : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
+    }
+
+    @Override
+    public @Nullable ObjList<? extends Function> checkpointPartitionByFunctions() {
+        return partitionByRecord == null ? null : partitionByRecord.getFunctions();
+    }
+
     @Override
     public void close() {
         super.close();
         Misc.free(map);
         Misc.free(compactionScratch);
+        Misc.free(compactionRingScratch);
         Misc.free(checkpointDirtyPartitions);
+        // Goes with the map here for the same reason it does in reset(): the flag is an
+        // invariant of a live dirty set, and this one is no longer live.
+        hasCheckpointDirtyTracking = false;
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -150,6 +212,46 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         return isCheckpointFullScanRequired;
     }
 
+    @Override
+    public boolean isWindowStateOwned() {
+        return windowStateComponentSlotBase >= 0;
+    }
+
+    /**
+     * Records the sweep's eviction of {@code record}'s partition in the same dirty map
+     * the ordinary marking writes to, reusing the state layout's tombstone slot as the
+     * per-key eviction marker. Per-key is what makes the seal's relaxed
+     * missing-live-value branch safe: a dirty key that lost its state to anything other
+     * than this sweep still carries a {@code 0} there and still raises.
+     * <p>
+     * Declines - returning false - when the function tracks no tombstone slot or does not
+     * maintain a dirty set of its own, which is exactly the population that never freezes
+     * incrementally anyway. It never creates the dirty set: only
+     * {@link #markCheckpointPartitionDirty(Record)} does, so a function whose
+     * {@link #markPartitionAlive(Record)} never marks cannot be handed the incremental
+     * path by the sweep alone.
+     */
+    @Override
+    public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
+        if (isWindowStateOwned()) {
+            // The window holds this function's state in its own map, so the sweep drops
+            // the accumulator by dropping the fused entry and records the removal in the
+            // window's one dirty set. There is nothing of this function's left to record,
+            // and true is the honest answer: the removal is tracked, just not here.
+            return true;
+        }
+        if (tombstoneValueIndex < 0 || !hasCheckpointDirtyTracking) {
+            return false;
+        }
+        hasCheckpointEvictionsRecorded = true;
+        // The key columns come off the anchor map's own record, so this writes through
+        // the caller's sink rather than partitionBySink.
+        final MapKey key = checkpointDirtyPartitions.withKey();
+        key.put(record, keySink);
+        key.createValue().putByte(tombstoneValueIndex, (byte) 1);
+        return true;
+    }
+
     /**
      * Generic markPartitionAlive impl shared across every partitioned window
      * function that carries a tombstone bit. The hot-path early-exit
@@ -165,6 +267,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public void markPartitionAlive(Record record) {
+        if (isWindowStateOwned()) {
+            // Nothing of this function's is tombstoned or marked dirty any more: the
+            // window loads the one value this row touches, keeps it alive and marks it
+            // once, for the group.
+            return;
+        }
         markCheckpointPartitionDirty(record);
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;
@@ -184,9 +292,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         checkpointBaselineGeneration = generation;
         checkpointLogicalStateBytes = logicalStateBytes;
         isCheckpointFullScanRequired = false;
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
-        }
+        clearCheckpointDirtyPartitions();
     }
 
     /**
@@ -197,7 +303,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public void onCheckpointRestoreBegin() {
-        if (map != null) {
+        // A fused function's map stays closed, for the reason reopen() leaves it closed:
+        // the window owns the group's one value layout, and the state a restore replaces is
+        // in that map rather than in this one. The legacy-checkpoint adapter is the single
+        // path that does restore into the private map, and it opens the map itself first -
+        // see LiveViewWindowStatePlan.reopenProjectionMaps - so the clear below is its.
+        if (map != null && (!isWindowStateOwned() || map.isOpen())) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
             // of()/ofIncremental reopens it. reopen() allocates the backing when
@@ -211,23 +322,69 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
         isCheckpointFullScanRequired = true;
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
-        }
+        clearCheckpointDirtyPartitions();
+    }
+
+    /**
+     * Re-homes one surviving partition's ring slab into the sweep's scratch arena and points the
+     * rebuilt entry at where it landed. {@link MapValue#copyFrom(MapValue)} has already carried
+     * the geometry across verbatim, so without this the rebuilt entry would name an offset into
+     * the arena the sweep is about to compact out from under it.
+     */
+    @Override
+    public void onEntryRetained(MapValue srcValue, MapValue dstValue) {
+        copyRingSlab(srcValue, dstValue, compactionRingScratch);
     }
 
     @Override
     public void reopen() {
-        if (map != null) {
+        // A fused function's map stays closed: the window allocated one value layout for
+        // the whole group and reopening this one would charge the per-view tracker for a
+        // map no row ever writes to. The legacy-checkpoint adapter is the one path that
+        // reopens it, and it closes it again as soon as it has hoisted the state across.
+        if (map != null && !isWindowStateOwned()) {
             map.reopen();
         }
         tombstoneCount = 0;
     }
 
+    /**
+     * Drops the baseline and the dirty set the next seal would have built on. The two go
+     * together: a full scan reads neither, and leaving the set standing would make the
+     * seal after that one freeze keys whose entries it already wrote.
+     */
+    @Override
+    public void requireCheckpointFullScan() {
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        checkpointLogicalStateBytes = 0;
+        isCheckpointFullScanRequired = true;
+        clearCheckpointDirtyPartitions();
+    }
+
     @Override
     public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
-        checkpointBaselineGeneration = Numbers.LONG_NULL;
-        isCheckpointFullScanRequired = true;
+        // Every caller other than the frontier sweep removes keys without naming them,
+        // so it gets the conservative complete freeze.
+        retainPartitions(survivingKeys, survivingKeySink, false);
+    }
+
+    @Override
+    public void retainPartitions(
+            Map survivingKeys,
+            RecordSink survivingKeySink,
+            boolean checkpointRemovalsRecorded
+    ) {
+        if (isWindowStateOwned()) {
+            // The sweep rebuilt the window's fused map, and this function's accumulator
+            // rode across inside the entries it kept. There is no second map to prune.
+            return;
+        }
+        if (!checkpointRemovalsRecorded) {
+            // The removals are nowhere the seal can read them, so only a complete freeze
+            // finds the keys the root still holds and this map no longer does.
+            checkpointBaselineGeneration = Numbers.LONG_NULL;
+            isCheckpointFullScanRequired = true;
+        }
         if (compactionScratch == null) {
             // First sweep: allocate the reusable second map once. A null factory
             // result means the function opts out of frontier compaction; its map
@@ -244,7 +401,47 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             // scratch consistent even if a prior sweep threw mid-rebuild.
             compactionScratch.clear();
         }
-        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys, survivingKeySink);
+        final MemoryARW ringArena = getRingArena();
+        if (ringArena != null) {
+            if (compactionRingScratch == null) {
+                // Lazily, like the scratch map, and bound to the tracker before first use: the
+                // arena allocates nothing until something appends to it, so binding here keeps
+                // its malloc and its free on the same counter.
+                compactionRingScratch = newCompactionRingScratch();
+                if (compactionRingScratch == null) {
+                    // Half an enrolment: the map rebuild would drop the evicted entries while
+                    // nothing re-homed the survivors' slabs, so the arena would keep every
+                    // evicted slab AND the survivors would end up naming a stale layout. Refuse
+                    // rather than corrupt - the class either enrols in full or not at all.
+                    throw CairoException.critical(0)
+                            .put("window function declares a ring arena but no compaction scratch [function=")
+                            .put(getClass().getName())
+                            .put(']');
+                }
+                if (memoryTracker != null) {
+                    compactionRingScratch.setMemoryTracker(memoryTracker);
+                }
+            } else {
+                // Empty it up front rather than trusting the previous sweep's tail, for the same
+                // reason the scratch map is cleared up front: a sweep that threw part-way -- the
+                // realistic source being the per-view tracker tripping inside an append, which is
+                // exactly the pressure this sweep exists to relieve -- leaves slabs behind that
+                // nothing names. Appending on top of them would copy that dead prefix back into
+                // the primary arena and quietly give away the reclamation this is here to make.
+                // A sweep that completed already freed the block here, so this is then a no-op.
+                compactionRingScratch.close();
+            }
+        }
+        PartitionStateEvictor.rebuildKeepingMembers(
+                map,
+                compactionScratch,
+                survivingKeys,
+                survivingKeySink,
+                compactionRingScratch != null ? this : null
+        );
+        if (compactionRingScratch != null) {
+            compactRingArena(ringArena);
+        }
         // Ping-pong: the rebuilt scratch becomes the live map; the old live map
         // becomes the scratch for the next sweep. No allocation, no free.
         Map old = map;
@@ -257,7 +454,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void reset() {
         Misc.free(map);
         compactionScratch = Misc.free(compactionScratch);
+        compactionRingScratch = Misc.free(compactionRingScratch);
         checkpointDirtyPartitions = Misc.free(checkpointDirtyPartitions);
+        // Goes with the map: the field names a map this function no longer holds, and a
+        // rebound cursor has to earn the tracking back through markCheckpointPartitionDirty.
+        hasCheckpointDirtyTracking = false;
+        hasCheckpointEvictionsRecorded = false;
         tombstoneCount = 0;
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
@@ -275,6 +477,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         }
         if (checkpointDirtyPartitions != null) {
             checkpointDirtyPartitions.setMemoryTracker(tracker);
+        }
+        if (compactionRingScratch != null) {
+            compactionRingScratch.setMemoryTracker(tracker);
         }
     }
 
@@ -298,10 +503,13 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     @Override
     public void toTop() {
         super.toTop();
-        Misc.clear(map);
-        if (checkpointDirtyPartitions != null) {
-            checkpointDirtyPartitions.clear();
+        // isOpen() rather than a null test: a fused function's map is closed for the
+        // whole of its life, and clearing a closed map would walk backing it no longer
+        // holds.
+        if (map != null && map.isOpen()) {
+            map.clear();
         }
+        clearCheckpointDirtyPartitions();
         tombstoneCount = 0;
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         checkpointLogicalStateBytes = 0;
@@ -318,10 +526,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      * names and leaves every other entry of the persistent root alone, so a key
      * whose state moved without being marked keeps the root's stale image - a wrong
      * result that only surfaces on a restart. Opting out is fail-safe by
-     * construction: the map is created here, so a function that never calls this
-     * leaves it null, {@link #getCheckpointDirtyPartitionMap()} returns null, and
-     * every seal full-scans. There is no correct middle ground, and a partial mark
-     * is indistinguishable from a complete one at the seal.
+     * construction: this is the only place the map is created and the only place
+     * {@code hasCheckpointDirtyTracking} is set, so a function that never calls this
+     * leaves {@link #getCheckpointDirtyPartitionMap()} null, has the sweep's eviction
+     * hook decline on its behalf, and every seal full-scans. There is no correct middle
+     * ground, and a partial mark is indistinguishable from a complete one at the seal.
      */
     protected void markCheckpointPartitionDirty(Record record) {
         if (checkpointDirtyPartitions == null) {
@@ -331,20 +540,84 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             // seal encodes them from; a narrower layout would have to carry that
             // index too, through every one of the subclasses that override the
             // factory.
-            checkpointDirtyPartitions = newCompactionScratch();
-            if (checkpointDirtyPartitions == null) {
+            // Into a local, and published only once it is open: reopen() allocates
+            // through the per-view tracker and throws on a breach of
+            // cairo.live.view.refresh.memory.limit.bytes - which is the very limit this
+            // map is charged against - and assigning first would leave the field naming a
+            // closed map that the seal reads anyway. Publishing both together is what
+            // makes hasCheckpointDirtyTracking an invariant of the map rather than a
+            // second thing to keep in step. LiveViewWindow.createTrackedAnchorMap has the
+            // same shape for the same reason.
+            final Map dirtyPartitions = newCompactionScratch();
+            if (dirtyPartitions == null) {
                 return;
             }
             if (memoryTracker != null) {
-                checkpointDirtyPartitions.close();
-                checkpointDirtyPartitions.setMemoryTracker(memoryTracker);
-                checkpointDirtyPartitions.reopen();
+                try {
+                    dirtyPartitions.close();
+                    dirtyPartitions.setMemoryTracker(memoryTracker);
+                    dirtyPartitions.reopen();
+                } catch (Throwable th) {
+                    // Holding it in a local is what puts this cleanup here: no field names
+                    // it yet, so close() and reset() would both walk straight past it.
+                    Misc.free(dirtyPartitions);
+                    throw th;
+                }
             }
+            checkpointDirtyPartitions = dirtyPartitions;
+            hasCheckpointDirtyTracking = true;
         }
         partitionByRecord.of(record);
         MapKey key = checkpointDirtyPartitions.withKey();
         key.put(partitionByRecord, partitionBySink);
-        key.createValue();
+        final MapValue value = key.createValue();
+        if (tombstoneValueIndex >= 0) {
+            // Unconditionally, including on an entry that already existed: this row is
+            // what turns a key the sweep evicted earlier in the cadence back into an
+            // upsert. Writing it on a fresh entry also keeps the marker off whatever
+            // bytes the map's backing happened to hold - createValue() zero-fills on
+            // no implementation.
+            value.putByte(tombstoneValueIndex, (byte) 0);
+        }
+    }
+
+    /**
+     * Puts the survivors' slabs back over a truncated primary arena, which is what actually
+     * hands the evicted partitions' bytes back.
+     * <p>
+     * The bulk copy lands the whole scratch block at offset 0, so the offsets
+     * {@link #onEntryRetained} already wrote into the rebuilt entries - each relative to the
+     * scratch's own base - address the primary arena correctly without a second walk to fix
+     * them up.
+     * <p>
+     * {@link MemoryARW#truncate()} rather than {@code jumpTo(0)}: only truncate reallocates,
+     * and reallocating is the entire point. {@code jumpTo} moves the append pointer and leaves
+     * the allocation at its high-water mark, which would make this a no-op against the refresh
+     * memory limit the sweep exists to keep the view under.
+     * <p>
+     * The free list goes with it. Its entries name offsets into the arena as it was laid out
+     * before this ran, and a compacted arena has no holes for it to describe anyway.
+     */
+    private void compactRingArena(MemoryARW ringArena) {
+        final long usedBytes = compactionRingScratch.getAppendOffset();
+        ringArena.truncate();
+        if (usedBytes > 0) {
+            Vect.memcpy(ringArena.appendAddressFor(usedBytes), compactionRingScratch.getPageAddress(0), usedBytes);
+        }
+        // Free the scratch rather than truncate it. truncate() reallocates down to ONE page and
+        // keeps it for the life of this function instance, so a view holds
+        // cairo.sql.window.store.page.size (1 MB by default) per ring-shaped call - 18 MB for a
+        // view whose window carries the six decimal widths of avg, avg(x, scale) and sum -
+        // against cairo.live.view.refresh.memory.limit.bytes, for memory only a sweep ever
+        // reads. close() hands the block back and leaves the instance reusable: a MemoryARW
+        // allocates nothing until something appends to it, so the next sweep pays one malloc,
+        // against a sweep that has just memcpy'd every surviving slab twice. The sweep's own
+        // peak is unchanged either way - both arenas are live while the copies run.
+        compactionRingScratch.close();
+        final LongList ringFreeList = getRingFreeList();
+        if (ringFreeList != null) {
+            ringFreeList.clear();
+        }
     }
 
     /**
@@ -363,6 +636,68 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         compactionScratch.close();
         compactionScratch.setMemoryTracker(memoryTracker);
         compactionScratch.reopen();
+    }
+
+    /**
+     * Empties the checkpoint dirty set, handing its backing memory back when the frontier
+     * sweep is what grew it.
+     * <p>
+     * {@link Map#clear()} keeps the capacity, which is what a cadence wants: the dirty set
+     * holds roughly the same touched-key count every time, so re-growing it per cadence
+     * would be pure churn. A sweep breaks that - it adds one entry per evicted key on top
+     * of the touched ones, and the trigger fires only when at least half the anchor map is
+     * reclaimable, so the peak is a multiple of the steady state and then stays resident
+     * against {@code cairo.live.view.refresh.memory.limit.bytes} for the view's lifetime.
+     * {@link Map#restoreInitialCapacity()} is the only primitive that gives it back -
+     * {@code setKeyCapacity} grows only - so the sweep-inflated cadence pays a re-grow next
+     * time and every other cadence keeps today's behaviour exactly.
+     */
+    private void clearCheckpointDirtyPartitions() {
+        if (checkpointDirtyPartitions == null) {
+            return;
+        }
+        if (hasCheckpointEvictionsRecorded && checkpointDirtyPartitions.isOpen()) {
+            checkpointDirtyPartitions.restoreInitialCapacity();
+        }
+        // Unconditionally, and after the shrink rather than instead of it: OrderedMap's
+        // restoreInitialCapacity() clears only as a side effect of actually reallocating,
+        // so a map already at its initial capacity would keep every entry and the next
+        // seal would freeze the same removals a second time.
+        checkpointDirtyPartitions.clear();
+        hasCheckpointEvictionsRecorded = false;
+    }
+
+    /**
+     * Copies one surviving partition's ring slab out of this function's arena and into
+     * {@code scratch}, then rewrites {@code dstValue}'s start-offset slot to name where it
+     * landed. The default does nothing, which is correct for every function that owns no ring.
+     * <p>
+     * Implement on the concrete class whose value layout it reads, using
+     * {@link AbstractWindowFunctionFactory#copyRingSlab}. Doing it here rather than through
+     * three separate slot accessors keeps the whole layout dependency - both indices and the
+     * record width - in one expression per class, which is what makes it checkable against the
+     * layout comment sitting next to it.
+     */
+    protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+    }
+
+    /**
+     * Returns a fresh, empty arena for the sweep to re-home surviving ring slabs into, or
+     * {@code null} for a function that owns no ring. Mirrors {@link #newCompactionScratch()}:
+     * the caller binds the memory tracker and owns the result thereafter.
+     */
+    protected @Nullable MemoryARW newCompactionRingScratch() {
+        return null;
+    }
+
+    /**
+     * This function's per-partition ring free list, or {@code null} when it owns no ring.
+     * The sweep clears it: a compacted arena holds the surviving slabs back to back and so
+     * has no holes for the list to name, and every offset it held addressed the arena as it
+     * was laid out before the compaction.
+     */
+    protected @Nullable LongList getRingFreeList() {
+        return null;
     }
 
     /**

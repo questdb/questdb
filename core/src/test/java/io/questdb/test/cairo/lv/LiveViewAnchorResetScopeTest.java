@@ -24,14 +24,19 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -239,6 +244,701 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * {@code max} and {@code min} are the one aggregate family a live view cannot fold into a
+     * ring, and this is what holds them there.
+     * <p>
+     * Their RANGE implementation - one resizable slab per partition in a {@code MemoryARW}
+     * arena - carries a live-view value layout only for a BOUNDED frame start
+     * ({@code MaxMinWindowFunctionFactoryHelper.MaxMinOverPartitionRangeFrameBase}); the
+     * unbounded-lo branch keeps the plain layout and so reports no checkpoint support. The
+     * anchorable subset needs the opposite: a frame reading as UNBOUNDED PRECEDING ... CURRENT
+     * ROW over an anchored window. The two do not meet, and both halves are pinned here.
+     * <p>
+     * The spelling that folds every other family into an anchored ring is EXCLUDE CURRENT ROW,
+     * which keeps its ANCHOR because {@code WindowExpression.isNonDefaultFrame()} never reads
+     * the exclusion mode. Here it lands on the unbounded-lo branch instead, and
+     * {@code CairoEngine.validateLiveViewWindowFunction} refuses the view at CREATE. All nine
+     * ring classes are covered - DOUBLE, LONG, the abstract base the DATE and TIMESTAMP leaves
+     * share, and the six decimal widths - each read as {@code max} and as {@code min}, which
+     * reuse the same nine classes with an inverted comparator.
+     * <p>
+     * The spelling that IS accepted folds to {@code MaxMinOverUnboundedPartitionRowsFrameBase},
+     * which keeps one scalar per partition and no arena, so the subset the frontier sweep walks
+     * holds nothing ring-shaped to reclaim. That is why these nine classes carry none of the
+     * sweep's hooks while {@code avg}, {@code sum}, {@code count}, {@code first_value},
+     * {@code last_value} and {@code nth_value} all do.
+     * <p>
+     * A live view can still carry a ring-shaped {@code max}, through a bounded RANGE frame on
+     * an unanchored window. The sweep does not reach that one either, for the reason it
+     * reaches no unanchored window: it is driven by an anchor's monotone bucket advance, and a
+     * window with no anchor has no frontier to sweep by. Giving the unbounded-lo branch a
+     * live-view layout would instead move max/min into the anchored subset ring-shaped, and
+     * the same change would then have to enrol it in the sweep; the first assertion below is
+     * what fails on the day that happens.
+     */
+    @Test
+    public void testAnchoredMaxAndMinNeverReachTheRingShape() throws Exception {
+        assertMemoryLeak(() -> {
+            // One column per ring class: DOUBLE and LONG carry their own, DATE routes through
+            // the shared base the TIMESTAMP leaves also use, and the six decimal widths pick
+            // six more (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T12:00:00.000000Z", "a", "3") + ", "
+                    + positionalValueRow("2026-01-02T11:00:00.000000Z", "a", "2"));
+            drainWalQueue();
+
+            final String[] columns = {"y", "n", "dt", "d8", "d16", "d32", "d64", "d128", "d256"};
+            for (String name : new String[]{"max", "min"}) {
+                for (String column : columns) {
+                    try {
+                        execute("CREATE LIVE VIEW lv_ring FLUSH EVERY 100ms START FROM BEGINNING AS "
+                                + "SELECT ts, sym, " + name + "(" + column + ") OVER w AS v FROM base "
+                                + "WINDOW w AS (PARTITION BY sym ORDER BY ts "
+                                + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW "
+                                + "ANCHOR DAILY '00:00')");
+                        Assert.fail("an anchored ring-shaped " + name + "(" + column + ") must be refused at CREATE");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "live view select cannot use window function " + name
+                                        + "(); incremental snapshot is not supported for this function yet"
+                        );
+                    }
+                }
+            }
+
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           max(y) OVER w AS my, max(n) OVER w AS mn, max(dt) OVER w AS mt,
+                           max(d8) OVER w AS m8, max(d16) OVER w AS m16, max(d32) OVER w AS m32,
+                           max(d64) OVER w AS m64, max(d128) OVER w AS m128, max(d256) OVER w AS m256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 9 max calls", 9, anchorable.size());
+                for (int i = 0, n = anchorable.size(); i < n; i++) {
+                    final WindowFunction f = anchorable.getQuick(i);
+                    Assert.assertFalse(
+                            "the accepted anchored max/min shape must not fold to a ring",
+                            f.supportsCheckpointRingState()
+                    );
+                    Assert.assertNull(
+                            "a sweep of the anchored subset must find no max/min arena to reclaim",
+                            f.getRingArena()
+                    );
+                }
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets each partition at every bucket crossing, so the row in the
+                // second bucket reports its own value rather than the larger one before it.
+                assertQuery("""
+                        SELECT ts, sym, my, mn, mt, m8, m16, m32, m64, m128, m256
+                        FROM lv ORDER BY ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tmy\tmn\tmt\tm8\tm16\tm32\tm64\tm128\tm256
+                                2026-01-01T11:00:00.000000Z\ta\t1.0\t1\t2026-01-01T11:00:00.000Z\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0
+                                2026-01-01T12:00:00.000000Z\ta\t3.0\t3\t2026-01-01T12:00:00.000Z\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0
+                                2026-01-02T11:00:00.000000Z\ta\t2.0\t2\t2026-01-02T11:00:00.000Z\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The frontier sweep and a ring-shaped member of the anchorable subset.
+     * <p>
+     * A ring-shaped function does reach the subset. {@code SqlParser.validateLiveViewAnchors}
+     * refuses an ANCHOR on a non-default frame, but {@code WindowExpression.isNonDefaultFrame()}
+     * reads the framing mode and the two bounds only - it never looks at the exclusion mode -
+     * so {@code RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW} reads
+     * as the default frame there and keeps its ANCHOR. The fold in
+     * {@code WindowContextImpl.getRowsHi()} then moves the frame end below the current row,
+     * which sends {@code avg} to its RANGE-frame implementation: one resizable ring slab per
+     * partition in a {@code MemoryARW} arena, and {@code supportsCheckpointRingState()} true.
+     * <p>
+     * What this pins is that the sweep reclaims that function's partition state, arena and all.
+     * {@code LiveViewWindow.compact()} calls {@code retainPartitions} on it; the rebuild drops
+     * the evicted keys from the map, and because a map value names its ring slab by a
+     * {@code (startOffset, capacity)} pair rather than a reference, the arena is compacted in
+     * the same pass - surviving slabs are re-homed into a scratch arena, their offsets rewritten,
+     * and the block copied back over the truncated original. Both halves have to land together:
+     * dropping the entries alone would orphan every evicted slab, and re-homing alone would
+     * leave the map growing with the view's lifetime partition cardinality.
+     * <p>
+     * The arena assertion is the half that matters most, and it is the one a map-size check
+     * cannot stand in for: {@code MemoryARW} only ever appends, so without the truncate-and-copy
+     * the arena holds its high-water mark however small the map gets.
+     * <p>
+     * Two sweeps, not one. The scratch arena's INSTANCE survives a sweep but its pages do not,
+     * so a second sweep takes a different path through {@code retainPartitions} than the first:
+     * it finds a scratch that is already there and already empty, and re-allocates its backing
+     * on the first slab it appends. A scratch left resident between sweeps instead would charge
+     * the view one {@code cairo.sql.window.store.page.size} page per ring-shaped call for the
+     * whole of its life, which is what the footprint assertion below holds it to.
+     */
+    @Test
+    public void testFrontierSweepReclaimsARingShapedAnchoredFunctionsStateAndArena() throws Exception {
+        // Four accounts in the seed bucket, so three have to fall behind the frontier before
+        // the trigger's stale-percent arm - half the map at its default - lets a sweep fire.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base (ts, sym, y) VALUES
+                    ('2026-01-01T11:00:00.000000Z', 'a', 1.0),
+                    ('2026-01-01T11:00:01.000000Z', 'b', 2.0),
+                    ('2026-01-01T11:00:02.000000Z', 'c', 3.0),
+                    ('2026-01-01T11:00:03.000000Z', 'd', 4.0)""");
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym, y, avg(y) OVER w AS a, count(y) OVER w AS c
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries two calls", 2, anchorable.size());
+                // Both calls fold to a ring under EXCLUDE CURRENT ROW, and they sit on different
+                // value layouts - avg puts its (startOffset, capacity) pair at slots 2 and 4,
+                // count at 1 and 3 - so asserting over both is what catches an enrolment that
+                // reads the right pair for one shape and the wrong one for another.
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+                // Every slab of every seeded partition is in the arenas by now, so this is the
+                // view's ring footprint at its pre-sweep peak. Read per memory tag rather than
+                // off the per-view tracker, which also carries the maps and the in-memory tier -
+                // their churn across a refresh would swamp a page.
+                final long peakRingBytes = circularBufferBytes();
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                // Two bucket advances with only 'a' following the frontier. The second one
+                // puts three accounts a full bucket behind it, which is what fires the sweep.
+                commit("('2026-01-02T01:00:00.000000Z', 'a', 5.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'a', 6.0), "
+                        + "('2026-01-03T02:00:00.000000Z', 'a', 8.0)", job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+                assertRingScratchNotResident(peakRingBytes);
+                final long[] afterFirstSweepArenaBytes = ringArenaExtents(anchorable);
+
+                // The survivor's ring has to still be readable AT ITS NEW HOME. This row lands in
+                // the same bucket as the two before it, so the frame walks the re-homed slab to
+                // decide what is still in range; a slab that was never copied, or an offset left
+                // naming the arena as it was before the truncate, gives a wrong average here.
+                commit("('2026-01-03T03:00:00.000000Z', 'a', 10.0)", job);
+
+                // A SECOND sweep, which is the only way to reach the scratch-reuse arm: the
+                // first one left compactionRingScratch allocated, so this one has to empty it up
+                // front and append the survivors from logical 0 again. Appending on top of the
+                // first sweep's tail instead would copy that dead prefix back over the primary
+                // arena and give the reclamation away. Reviving b, c and d in a's current bucket
+                // puts the map back to four; two more advances then leave them behind again.
+                commit("('2026-01-03T03:00:01.000000Z', 'b', 20.0), "
+                        + "('2026-01-03T03:00:02.000000Z', 'c', 30.0), "
+                        + "('2026-01-03T03:00:03.000000Z', 'd', 40.0)", job);
+                final long[] revivedArenaBytes = captureRingArenas(anchorable, 4);
+                commit("('2026-01-04T01:00:00.000000Z', 'a', 12.0)", job);
+                commit("('2026-01-05T01:00:00.000000Z', 'a', 14.0)", job);
+
+                Assert.assertEquals(2, window.getCompactionCount());
+                Assert.assertEquals(1, window.getAnchorMapSize());
+                assertRingArenasReclaimed(anchorable, revivedArenaBytes);
+                // And so does the second sweep, which is a different path: the first ran against
+                // a scratch that had never held anything, this one against one that has been
+                // closed once and re-allocated since. A release that only works the first time
+                // would leave the view a page per call heavier from here on.
+                assertRingScratchNotResident(peakRingBytes);
+                // Both sweeps leave the same one partition with the same slab, so the arena has
+                // to land on the same extent twice. A strict shrink alone would not say this: a
+                // second sweep that appended onto the first one's leftover scratch still shrinks
+                // four slabs to two, and only carrying the dead prefix forward sweep after sweep
+                // would eventually show up as growth.
+                for (int i = 0, n = anchorable.size(); i < n; i++) {
+                    Assert.assertEquals(
+                            "a second sweep must not carry the first one's re-homed bytes forward",
+                            afterFirstSweepArenaBytes[i],
+                            anchorable.getQuick(i).getRingArena().getAppendOffset()
+                    );
+                }
+
+                // Same reasoning as the row after the first sweep: read the re-homed ring at the
+                // home the SECOND compaction gave it.
+                commit("('2026-01-05T02:00:00.000000Z', 'a', 16.0)", job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor still resets the ring at every bucket crossing, so the first row of
+                // each of a's five buckets sees an empty frame; only a row that has a predecessor
+                // within its own bucket averages anything. The two that do - 03T02:00 and
+                // 05T02:00 - are the ones reading a slab the sweep re-homed.
+                assertQuery("SELECT ts, sym, y, a, c FROM lv ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ty\ta\tc
+                                2026-01-01T11:00:00.000000Z\ta\t1.0\tnull\t0
+                                2026-01-02T01:00:00.000000Z\ta\t5.0\tnull\t0
+                                2026-01-03T01:00:00.000000Z\ta\t6.0\tnull\t0
+                                2026-01-03T02:00:00.000000Z\ta\t8.0\t6.0\t1
+                                2026-01-03T03:00:00.000000Z\ta\t10.0\t7.0\t2
+                                2026-01-04T01:00:00.000000Z\ta\t12.0\tnull\t0
+                                2026-01-05T01:00:00.000000Z\ta\t14.0\tnull\t0
+                                2026-01-05T02:00:00.000000Z\ta\t16.0\t14.0\t1
+                                2026-01-01T11:00:01.000000Z\tb\t2.0\tnull\t0
+                                2026-01-03T03:00:01.000000Z\tb\t20.0\tnull\t0
+                                2026-01-01T11:00:02.000000Z\tc\t3.0\tnull\t0
+                                2026-01-03T03:00:02.000000Z\tc\t30.0\tnull\t0
+                                2026-01-01T11:00:03.000000Z\td\t4.0\tnull\t0
+                                2026-01-03T03:00:03.000000Z\td\t40.0\tnull\t0
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same sweep over the decimal {@code avg}, {@code sum} and {@code avg(x, scale)}
+     * families: 18 ring-shaped classes, one per (aggregate, decimal width) pair, each
+     * declaring its own {@code (startOffset, capacity)} value indices.
+     * <p>
+     * All 18 happen to carry the ring geometry at slots 2 and 4 today, and this is what holds
+     * them there. Naming the wrong pair no longer corrupts silently - it trips the range check
+     * in {@code AbstractWindowFunctionFactory.copyRingSlab} - but that check fires at refresh
+     * time, so a sweep has to reach every one of the 18 for it to say anything.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryDecimalRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per decimal storage width, since the width picks the implementation
+            // class: precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32, 18 -> DECIMAL64,
+            // 38 -> DECIMAL128, 75 -> DECIMAL256.
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, d8, d16, d32, d64, d128, d256) VALUES "
+                    + decimalRow("2026-01-01T11:00:00.000000Z", "a", "1.0") + ", "
+                    + decimalRow("2026-01-01T11:00:01.000000Z", "b", "2.0") + ", "
+                    + decimalRow("2026-01-01T11:00:02.000000Z", "c", "3.0") + ", "
+                    + decimalRow("2026-01-01T11:00:03.000000Z", "d", "4.0"));
+            drainWalQueue();
+            // avg(x) and sum(x) dispatch on the argument's width; avg(x, scale) is a separate
+            // rescaling family that dispatches on it too, which is the third set of six.
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           avg(d8) OVER w AS a8, sum(d8) OVER w AS s8, avg(d8, 2) OVER w AS r8,
+                           avg(d16) OVER w AS a16, sum(d16) OVER w AS s16, avg(d16, 2) OVER w AS r16,
+                           avg(d32) OVER w AS a32, sum(d32) OVER w AS s32, avg(d32, 2) OVER w AS r32,
+                           avg(d64) OVER w AS a64, sum(d64) OVER w AS s64, avg(d64, 2) OVER w AS r64,
+                           avg(d128) OVER w AS a128, sum(d128) OVER w AS s128, avg(d128, 2) OVER w AS r128,
+                           avg(d256) OVER w AS a256, sum(d256) OVER w AS s256, avg(d256, 2) OVER w AS r256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 18 decimal calls", 18, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitDecimals(decimalRow("2026-01-02T01:00:00.000000Z", "a", "5.0"), job);
+                commitDecimals(decimalRow("2026-01-03T01:00:00.000000Z", "a", "6.0") + ", "
+                        + decimalRow("2026-01-03T02:00:00.000000Z", "a", "8.0"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                commitDecimals(decimalRow("2026-01-03T03:00:00.000000Z", "a", "9.0"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, so the first row of each
+                // of a's three buckets sees an empty frame. All six widths must agree row for
+                // row: a re-homing that read the wrong slot pair for one width would answer only
+                // that width wrongly.
+                assertQuery("""
+                        SELECT ts, sym, a8, s8, r8, a16, s16, r16, a32, s32, r32,
+                               a64, s64, r64, a128, s128, r128, a256, s256, r256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\ta8\ts8\tr8\ta16\ts16\tr16\ta32\ts32\tr32\ta64\ts64\tr64\ta128\ts128\tr128\ta256\ts256\tr256
+                                2026-01-01T11:00:00.000000Z\ta\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00\t6.0\t6.0\t6.00
+                                2026-01-03T03:00:00.000000Z\ta\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00\t7.0\t14.0\t7.00
+                                2026-01-01T11:00:01.000000Z\tb\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same sweep over the {@code first_value} family: 9 classes declaring the hooks plus
+     * 9 IGNORE NULLS subclasses that inherit everything except the value layout.
+     * <p>
+     * The parent/child split is what this case exists for. IGNORE NULLS drops the frame-size
+     * slot, so the child's geometry sits one slot lower than the parent's - 0 and 2 against 1
+     * and 3 - and a child that inherited the parent's pair would read {@code size} as a start
+     * offset and {@code firstIdx} as a capacity. Every column therefore appears twice, once
+     * each way, and the DATE pair reaches the two abstract bases the DATE and TIMESTAMP leaves
+     * share.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryFirstValueRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per implementation family: DOUBLE and LONG carry their own classes,
+            // DATE routes through the shared helper bases, and the six decimal widths pick six
+            // more pairs (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
+                    + positionalValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
+                    + positionalValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           first_value(y) OVER w AS fy, first_value(y) IGNORE NULLS OVER w AS gy,
+                           first_value(n) OVER w AS fn, first_value(n) IGNORE NULLS OVER w AS gn,
+                           first_value(dt) OVER w AS ft, first_value(dt) IGNORE NULLS OVER w AS gt,
+                           first_value(d8) OVER w AS f8, first_value(d8) IGNORE NULLS OVER w AS g8,
+                           first_value(d16) OVER w AS f16, first_value(d16) IGNORE NULLS OVER w AS g16,
+                           first_value(d32) OVER w AS f32, first_value(d32) IGNORE NULLS OVER w AS g32,
+                           first_value(d64) OVER w AS f64, first_value(d64) IGNORE NULLS OVER w AS g64,
+                           first_value(d128) OVER w AS f128, first_value(d128) IGNORE NULLS OVER w AS g128,
+                           first_value(d256) OVER w AS f256, first_value(d256) IGNORE NULLS OVER w AS g256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 18 first_value calls", 18, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitPositionalValues(positionalValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
+                        + positionalValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, so the first row of each
+                // of a's three buckets sees an empty frame and every later row of a bucket
+                // reports that bucket's opening row. The two spellings must agree column for
+                // column: a child reading its parent's slot pair would answer only its own
+                // column wrongly, and only once the sweep has re-homed the slab it reads.
+                assertQuery("""
+                        SELECT ts, sym, fy, gy, fn, gn, ft, gt, f8, g8, f16, g16,
+                               f32, g32, f64, g64, f128, g128, f256, g256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tfy\tgy\tfn\tgn\tft\tgt\tf8\tg8\tf16\tg16\tf32\tg32\tf64\tg64\tf128\tg128\tf256\tg256
+                                2026-01-01T11:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\t6.0\t6.0\t6\t6\t2026-01-03T01:00:00.000Z\t2026-01-03T01:00:00.000Z\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0
+                                2026-01-03T03:00:00.000000Z\ta\t6.0\t6.0\t6\t6\t2026-01-03T01:00:00.000Z\t2026-01-03T01:00:00.000Z\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0
+                                2026-01-01T11:00:01.000000Z\tb\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same sweep over the {@code last_value} family: 9 classes declaring the hooks plus 9
+     * IGNORE NULLS subclasses that inherit them whole.
+     * <p>
+     * This family is where the parent/child hazard C2.2 met does NOT bite, and the case exists
+     * to hold that reading. {@code last_value} keeps no frame-size slot for IGNORE NULLS to
+     * drop, so parent and child both put the ring geometry at slots 0 and 2 and the child
+     * inherits its parent's pair rather than declaring one. Reading every column both ways is
+     * what makes that inheritance a tested claim rather than an assumption: a child whose
+     * layout had in fact shifted would read {@code size} as a start offset, and the range check
+     * in {@code AbstractWindowFunctionFactory.copyRingSlab} would fail the refresh.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryLastValueRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per implementation family: DOUBLE and LONG carry their own classes,
+            // DATE routes through the shared helper bases, and the six decimal widths pick six
+            // more pairs (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
+                    + positionalValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
+                    + positionalValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           last_value(y) OVER w AS ly, last_value(y) IGNORE NULLS OVER w AS my,
+                           last_value(n) OVER w AS ln, last_value(n) IGNORE NULLS OVER w AS mn,
+                           last_value(dt) OVER w AS lt, last_value(dt) IGNORE NULLS OVER w AS mt,
+                           last_value(d8) OVER w AS l8, last_value(d8) IGNORE NULLS OVER w AS m8,
+                           last_value(d16) OVER w AS l16, last_value(d16) IGNORE NULLS OVER w AS m16,
+                           last_value(d32) OVER w AS l32, last_value(d32) IGNORE NULLS OVER w AS m32,
+                           last_value(d64) OVER w AS l64, last_value(d64) IGNORE NULLS OVER w AS m64,
+                           last_value(d128) OVER w AS l128, last_value(d128) IGNORE NULLS OVER w AS m128,
+                           last_value(d256) OVER w AS l256, last_value(d256) IGNORE NULLS OVER w AS m256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 18 last_value calls", 18, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitPositionalValues(positionalValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
+                        + positionalValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, so the first row of each
+                // of a's three buckets sees an empty frame and every later row reports its own
+                // immediate predecessor - which is what tells this expected table apart from the
+                // first_value one over the same fixture, where both later rows report the
+                // bucket's opening row instead. The two spellings must agree column for column.
+                assertQuery("""
+                        SELECT ts, sym, ly, my, ln, mn, lt, mt, l8, m8, l16, m16,
+                               l32, m32, l64, m64, l128, m128, l256, m256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tly\tmy\tln\tmn\tlt\tmt\tl8\tm8\tl16\tm16\tl32\tm32\tl64\tm64\tl128\tm128\tl256\tm256
+                                2026-01-01T11:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\t6.0\t6.0\t6\t6\t2026-01-03T01:00:00.000Z\t2026-01-03T01:00:00.000Z\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0\t6.0
+                                2026-01-03T03:00:00.000000Z\ta\t8.0\t8.0\t8\t8\t2026-01-03T02:00:00.000Z\t2026-01-03T02:00:00.000Z\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0
+                                2026-01-01T11:00:01.000000Z\tb\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same sweep over the {@code nth_value} family: 9 classes, and no subclass anywhere -
+     * {@code nth_value} refuses IGNORE NULLS at validation, so the parent/child hazard C2.2 met
+     * cannot arise here and every one of the 9 carries the hooks itself.
+     * <p>
+     * What this family adds over the other two is the locked read. Once the frame holds n rows
+     * an unbounded-preceding {@code nth_value} freezes its answer: {@code computeNext} returns
+     * early, reading the ring's geometry out of the map value and the value out of the arena
+     * and writing nothing back. The fixture's last row takes that path over a slab the sweep
+     * re-homed, which neither {@code first_value} nor {@code last_value} has an equivalent of.
+     */
+    @Test
+    public void testFrontierSweepReclaimsEveryNthValueRingArena() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // One column per implementation family: DOUBLE and LONG carry their own classes,
+            // DATE routes through the shared helper base, and the six decimal widths pick six
+            // more pairs (precision 2 -> DECIMAL8, 4 -> DECIMAL16, 9 -> DECIMAL32,
+            // 18 -> DECIMAL64, 38 -> DECIMAL128, 75 -> DECIMAL256).
+            execute("""
+                    CREATE TABLE base (
+                        ts TIMESTAMP, sym SYMBOL, y DOUBLE, n LONG, dt DATE,
+                        d8 DECIMAL(2, 1), d16 DECIMAL(4, 1), d32 DECIMAL(9, 1),
+                        d64 DECIMAL(18, 1), d128 DECIMAL(38, 1), d256 DECIMAL(75, 1)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES "
+                    + positionalValueRow("2026-01-01T11:00:00.000000Z", "a", "1") + ", "
+                    + positionalValueRow("2026-01-01T11:00:01.000000Z", "b", "2") + ", "
+                    + positionalValueRow("2026-01-01T11:00:02.000000Z", "c", "3") + ", "
+                    + positionalValueRow("2026-01-01T11:00:03.000000Z", "d", "4"));
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           nth_value(y, 2) OVER w AS vy, nth_value(n, 2) OVER w AS vn,
+                           nth_value(dt, 2) OVER w AS vt,
+                           nth_value(d8, 2) OVER w AS v8, nth_value(d16, 2) OVER w AS v16,
+                           nth_value(d32, 2) OVER w AS v32, nth_value(d64, 2) OVER w AS v64,
+                           nth_value(d128, 2) OVER w AS v128, nth_value(d256, 2) OVER w AS v256
+                    FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts
+                                 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW
+                                 ANCHOR DAILY '00:00')""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull("live view 'lv' must be registered", instance);
+                final ObjList<WindowFunction> anchorable = anchorableFunctions(instance);
+                Assert.assertEquals("the anchored window carries all 9 nth_value calls", 9, anchorable.size());
+                final long[] fourPartitionArenaBytes = captureRingArenas(anchorable, 4);
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertNotNull("the view must carry an anchored window", window);
+                Assert.assertEquals(4, window.getAnchorMapSize());
+
+                commitPositionalValues(positionalValueRow("2026-01-02T01:00:00.000000Z", "a", "5"), job);
+                commitPositionalValues(positionalValueRow("2026-01-03T01:00:00.000000Z", "a", "6") + ", "
+                        + positionalValueRow("2026-01-03T02:00:00.000000Z", "a", "8"), job);
+
+                Assert.assertEquals(1, window.getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives in the anchor map",
+                        1,
+                        window.getAnchorMapSize()
+                );
+                assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
+
+                // Two rows past the sweep, not one: the first still appends to the re-homed
+                // slab and completes the frame, the second finds it already n rows deep and
+                // takes the locked early return over the same slab.
+                commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9") + ", "
+                        + positionalValueRow("2026-01-03T04:00:00.000000Z", "a", "7"), job);
+
+                assertNoRefreshFaults("lv");
+                // The anchor resets every ring at each bucket crossing, and n is 2 over a frame
+                // that excludes the current row, so a bucket's first two rows answer NULL and
+                // every row after that names the bucket's SECOND row - 8 here, not 6 and not the
+                // row's own predecessor, which is what tells this expected table apart from the
+                // first_value and last_value ones over the same fixture.
+                assertQuery("""
+                        SELECT ts, sym, vy, vn, vt, v8, v16, v32, v64, v128, v256
+                        FROM lv ORDER BY sym, ts""")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tvy\tvn\tvt\tv8\tv16\tv32\tv64\tv128\tv256
+                                2026-01-01T11:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-02T01:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-03T01:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-03T02:00:00.000000Z\ta\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-03T03:00:00.000000Z\ta\t8.0\t8\t2026-01-03T02:00:00.000Z\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0
+                                2026-01-03T04:00:00.000000Z\ta\t8.0\t8\t2026-01-03T02:00:00.000Z\t8.0\t8.0\t8.0\t8.0\t8.0\t8.0
+                                2026-01-01T11:00:01.000000Z\tb\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-01T11:00:02.000000Z\tc\tnull\tnull\t\t\t\t\t\t\t
+                                2026-01-01T11:00:03.000000Z\td\tnull\tnull\t\t\t\t\t\t\t
+                                """);
+            }
+        });
+    }
+
+    /**
      * Documents why {@code EXCLUDE CURRENT ROW} is the spelling that reaches the subset
      * unanchored, and pins the neighbouring route closed. An accumulator over a plain
      * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is refused at CREATE by the
@@ -299,5 +999,161 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 );
             }
         });
+    }
+
+    /**
+     * The live compiled subset the ANCHOR runtime dispatches to, read off the registered
+     * view rather than off a standalone compile, so a case can assert what the running
+     * refresh worker actually holds.
+     */
+    private static ObjList<WindowFunction> anchorableFunctions(LiveViewInstance instance) {
+        RecordCursorFactory factory = instance.getCompiledFactory();
+        while (factory != null) {
+            if (factory instanceof WindowRecordCursorFactory windowFactory) {
+                final ObjList<WindowFunction> anchorable = windowFactory.getAnchorableWindowFunctions();
+                Assert.assertNotNull("the anchored window must contribute a function", anchorable);
+                return anchorable;
+            }
+            if (factory instanceof QueryProgress) {
+                factory = factory.getBaseFactory();
+                continue;
+            }
+            break;
+        }
+        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+    }
+
+    private static void assertRingArenasReclaimed(ObjList<WindowFunction> anchorable, long[] seededArenaBytes) {
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            final WindowFunction f = anchorable.getQuick(i);
+            Assert.assertEquals(
+                    "the sweep must drop the evicted partitions from every ring function's map",
+                    1,
+                    f.getPartitionMap().size()
+            );
+            // The surviving partition's slab is re-homed and the arena truncated to it, so
+            // the evicted partitions' bytes come back. Asserted as a strict shrink against
+            // the captured baseline rather than an exact figure, because the survivor has
+            // crossed bucket boundaries by now and its own ring may have grown meanwhile.
+            Assert.assertTrue(
+                    "the sweep must hand back the evicted partitions' arena bytes, but "
+                            + f.getName() + "#" + i + " held " + f.getRingArena().getAppendOffset()
+                            + " of " + seededArenaBytes[i],
+                    f.getRingArena().getAppendOffset() < seededArenaBytes[i]
+            );
+        }
+    }
+
+    /**
+     * Asserts the sweep left none of its scratch arena behind.
+     * <p>
+     * A sweep can only ever shrink a ring arena's logical extent - it just evicted partitions -
+     * so the view's native ring footprint must come out of one no higher than it went in. What
+     * pushes it above the peak is the scratch: truncated rather than freed, it stays at one
+     * {@code cairo.sql.window.store.page.size} page (1 MB by default) per ring-shaped call for
+     * the life of the view, charged to {@code cairo.live.view.refresh.memory.limit.bytes} for
+     * memory only a sweep ever reads.
+     * <p>
+     * The bound is {@code <=} rather than {@code <} because a {@code MemoryARW} allocates whole
+     * pages: four slabs and one slab both fit in the arena's single page, so reclaiming three
+     * partitions moves the append offset - which the sibling assertion covers - and not the
+     * footprint. The refresh is quiesced at every call site, so nothing else is moving the tag.
+     */
+    private static void assertRingScratchNotResident(long peakRingBytes) {
+        final long ringBytes = circularBufferBytes();
+        Assert.assertTrue(
+                "a sweep must hand its scratch arena back, but the view's ring footprint went"
+                        + " from " + peakRingBytes + " at its pre-sweep peak to " + ringBytes
+                        + " after a sweep that dropped three of its four partitions",
+                ringBytes <= peakRingBytes
+        );
+    }
+
+    /**
+     * Asserts every anchorable call folded to a ring and is holding one slab per seeded
+     * partition, and returns each one's arena extent for the post-sweep shrink to be
+     * measured against.
+     */
+    private static long[] captureRingArenas(ObjList<WindowFunction> anchorable, int seededPartitions) {
+        final long[] seededArenaBytes = new long[anchorable.size()];
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            final WindowFunction f = anchorable.getQuick(i);
+            Assert.assertTrue(
+                    "EXCLUDE CURRENT ROW must fold every anchored call here into a ring shape",
+                    f.supportsCheckpointRingState()
+            );
+            Assert.assertNotNull("a ring-shaped function keeps its partitions in a map", f.getPartitionMap());
+            Assert.assertNotNull("a ring-shaped function keeps its slabs in an arena", f.getRingArena());
+            Assert.assertEquals("one map entry per seeded account", seededPartitions, f.getPartitionMap().size());
+            // One slab per partition, so the arena is holding them all. Captured rather than
+            // asserted as an absolute: the slab width follows
+            // cairo.sql.window.initial.range.buffer.size, and what the sweep has to change is
+            // the ratio, not the constant.
+            seededArenaBytes[i] = f.getRingArena().getAppendOffset();
+            Assert.assertTrue(
+                    "the seeded partitions must have put something in the arena",
+                    seededArenaBytes[i] > 0
+            );
+        }
+        return seededArenaBytes;
+    }
+
+    /**
+     * The process's native footprint under the tag every ring arena and every sweep scratch
+     * allocates from. A live-view test drives one view at a time and quiesces its refresh
+     * before reading this, so the figure moves only when that view's rings do.
+     */
+    private static long circularBufferBytes() {
+        return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_CIRCULAR_BUFFER);
+    }
+
+    /**
+     * One row carrying the same magnitude in all six decimal widths, so a case can state the
+     * expected frame arithmetic once instead of six times.
+     */
+    private static String decimalRow(String ts, String sym, String value) {
+        return "('" + ts + "', '" + sym + "'"
+                + (", " + value + "m").repeat(6)
+                + ")";
+    }
+
+    /**
+     * One row carrying the same magnitude in every type {@code first_value},
+     * {@code last_value}, {@code nth_value} and {@code max}/{@code min} each have their own
+     * RANGE implementation for. The DATE column takes the row's own timestamp at millisecond
+     * resolution, so the expected tables read a row of the bucket back rather than an opaque
+     * epoch offset.
+     */
+    private static String positionalValueRow(String ts, String sym, String value) {
+        return "('" + ts + "', '" + sym + "', " + value + ".0, " + value
+                + ", '" + ts.substring(0, ts.length() - 4) + "Z'::date"
+                + (", " + value + ".0m").repeat(6)
+                + ")";
+    }
+
+    private static long[] ringArenaExtents(ObjList<WindowFunction> anchorable) {
+        final long[] extents = new long[anchorable.size()];
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            extents[i] = anchorable.getQuick(i).getRingArena().getAppendOffset();
+        }
+        return extents;
+    }
+
+    private void commit(String values, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base (ts, sym, y) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    private void commitDecimals(String row, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base (ts, sym, d8, d16, d32, d64, d128, d256) VALUES " + row);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    private void commitPositionalValues(String row, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES " + row);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
     }
 }

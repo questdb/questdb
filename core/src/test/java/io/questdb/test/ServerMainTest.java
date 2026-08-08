@@ -671,6 +671,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.in.memory.buffer.growth.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.buffer.initial.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES\t65536\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.max\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.partition.compact.stale.percent\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT\t50\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.partition.compact.threshold\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.refresh.memory.limit.bytes\tQDB_CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "cairo.live.view.refresh.turn.max.commits\tQDB_CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS\t64\tdefault\tfalse\tfalse\n" +
@@ -828,6 +829,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.sort.value.page.size\tQDB_CAIRO_SQL_SORT_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.string.function.buffer.max.size\tQDB_CAIRO_SQL_STRING_FUNCTION_BUFFER_MAX_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.cached.light.enabled\tQDB_CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.window.map.fusion.enabled\tQDB_CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.column.pool.capacity\tQDB_CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.pivot.column.pool.capacity\tQDB_CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.pivot.max.produced.columns\tQDB_CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS\t5000\tdefault\tfalse\tfalse\n" +

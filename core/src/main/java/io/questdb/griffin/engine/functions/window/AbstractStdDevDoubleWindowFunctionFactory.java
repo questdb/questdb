@@ -48,6 +48,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -603,7 +605,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (count > 0) {
                                 double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 sum -= val;
@@ -639,7 +641,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     for (long i = count; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -655,7 +657,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum += val;
                             sumSq += val * val;
@@ -1044,7 +1046,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (count > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum -= val;
@@ -1089,7 +1091,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 for (long i = count, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1105,7 +1107,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum += val;
                         sumSq += val * val;
@@ -1370,6 +1372,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final ArrayColumnTypes mapValueTypes;
         private final String name;
         private double stddev = Double.NaN;
+        // Welford's other two slots in LiveViewWindow's fused map value. The base class
+        // caches the counter, which every family has; these two are this family's own.
+        private int windowStateM2Slot = -1;
+        private int windowStateMeanSlot = -1;
 
         StdDevOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -1413,8 +1419,86 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Runs one Welford step against the window's fused value. The same arithmetic
+         * {@link #computeNext(Record)} runs, against slots the window has already loaded -
+         * and run once for the whole group, so a view naming {@code stddev_samp} beside
+         * {@code var_pop} over one column absorbs each row exactly once.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                final long count = value.getLong(windowStateNonNullCountSlot) + 1;
+                final double oldMean = value.getDouble(windowStateMeanSlot);
+                final double mean = oldMean + (d - oldMean) / count;
+                value.putDouble(windowStateMeanSlot, mean);
+                value.putDouble(
+                        windowStateM2Slot,
+                        value.getDouble(windowStateM2Slot) + (d - mean) * (d - oldMean)
+                );
+                value.putLong(windowStateNonNullCountSlot, count);
+            }
+        }
+
+        /**
+         * Takes the counter off the base class and Welford's own two fields beside it.
+         */
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            windowStateMeanSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_MEAN);
+            windowStateM2Slot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_M2);
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * Welford's running {@code (mean, m2, nonNullCount)}, which is one accumulator for
+         * all four of {@code stddev_samp}, {@code stddev_pop}, {@code var_samp} and
+         * {@code var_pop} - they are this class with two flags flipped, and the flags
+         * decide only what is read off the state, never what goes into it.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            if (isSqrt) {
+                return isSample
+                        ? WindowAccumulatorProjection.PROJECTION_STDDEV_SAMP
+                        : WindowAccumulatorProjection.PROJECTION_STDDEV_POP;
+            }
+            return isSample
+                    ? WindowAccumulatorProjection.PROJECTION_VAR_SAMP
+                    : WindowAccumulatorProjection.PROJECTION_VAR_POP;
+        }
+
+        /**
+         * The whole image is {@code (mean, m2, nonNullCount)} - the frame start is
+         * unbounded, so there are no live rows behind the accumulator to carry.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Double.BYTES + Long.BYTES;
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             // Welford's online algorithm: map stores [0]=mean, [1]=m2, [2]=count
             partitionByRecord.of(record);
             MapKey key = map.withKey();
@@ -1502,8 +1586,28 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             tombstoneCount = 0;
         }
 
+        /**
+         * Materializes this call's result off the shared accumulator. The two flags are
+         * where {@code stddev_samp} and {@code var_pop} part company, and they part company
+         * here rather than in the state.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            stddev = computeResultWelford(
+                    value.getDouble(windowStateM2Slot),
+                    value.getLong(windowStateNonNullCountSlot),
+                    isSample,
+                    isSqrt
+            );
+        }
+
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Welford's [mean, m2, count] all return to
             // zero. The next finite value re-runs Welford with mean=0, m2=0, count=0
             // and produces (mean=d, m2=0, count=1) — identical to the isNew init.

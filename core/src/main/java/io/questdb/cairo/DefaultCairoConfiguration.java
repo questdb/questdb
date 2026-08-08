@@ -567,6 +567,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewPartitionCompactStalePercent() {
+        return 50;
+    }
+
+    @Override
     public int getLiveViewPartitionCompactThreshold() {
         return 100_000;
     }
@@ -1812,6 +1817,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlWindowCachedLightEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlWindowMapFusionEnabled() {
         return true;
     }
 

@@ -155,7 +155,8 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 null,
                                 isRecordNotNull,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

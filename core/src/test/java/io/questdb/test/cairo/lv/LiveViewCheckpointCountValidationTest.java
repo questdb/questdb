@@ -80,7 +80,8 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
             try (
                     LiveViewWindow window = new LiveViewWindow(
                             configuration, "w", LongConstant.NULL, ColumnType.LONG,
-                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, NOOP_SINK, new ObjList<>(), false, null, null);
+                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, NOOP_SINK,
+                            null, null, null, new ObjList<>(), false, null, null);
                     MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 // A valid empty-map snapshot: prelude + partitionCount(0), no entries.
@@ -150,7 +151,8 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
             try (
                     LiveViewWindow window = new LiveViewWindow(
                             configuration, "w", LongConstant.NULL, ColumnType.LONG,
-                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, NOOP_SINK, new ObjList<>(), false, null, null);
+                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, NOOP_SINK,
+                            null, null, null, new ObjList<>(), false, null, null);
                     MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 window.snapshot(buf);

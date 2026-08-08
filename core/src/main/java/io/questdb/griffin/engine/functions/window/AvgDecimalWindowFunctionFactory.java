@@ -62,6 +62,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -236,7 +237,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal128AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
-                                partitionByKeyTypes, liveView);
+                                partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -368,7 +369,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal16AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
-                                partitionByKeyTypes, liveView);
+                                partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -500,7 +501,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal256AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
-                                partitionByKeyTypes, liveView);
+                                partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -632,7 +633,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal32AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
-                                partitionByKeyTypes, liveView);
+                                partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -764,7 +765,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal64AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
-                                partitionByKeyTypes, liveView);
+                                partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -896,7 +897,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         return new Decimal8AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, argPos,
-                                partitionByKeyTypes, liveView);
+                                partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1118,6 +1119,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private static final int RECORD_SIZE = Long.BYTES + 16;
         private final Decimal256 acc = new Decimal256();
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -1155,7 +1159,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1169,6 +1174,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -1191,6 +1197,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -1249,7 +1291,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                                 long h = scratch.getHigh();
@@ -1285,7 +1327,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             try {
@@ -1306,7 +1348,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             try {
                                 Decimal256.uncheckedAdd(acc, scratch);
@@ -2066,7 +2108,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             long h = scratch.getHigh();
@@ -2109,7 +2151,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                         try {
@@ -2130,7 +2172,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                         try {
                             Decimal256.uncheckedAdd(acc, scratch);
@@ -2615,6 +2657,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
+        /**
+         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry, and the accumulator's own
+         * width is the one this DECIMAL width sums into rather than the argument's.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Decimal256.BYTES + Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -2951,6 +3003,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal16AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
         private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final Decimal64 divResult = new Decimal64();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -2987,7 +3042,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -3001,6 +3057,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -3023,6 +3080,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -3081,7 +3174,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 acc -= val;
@@ -3113,7 +3206,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc += val;
@@ -3127,7 +3220,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc += val;
                             frameSize++;
@@ -3810,7 +3903,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc -= val;
@@ -3850,7 +3943,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         acc += val;
@@ -3864,7 +3957,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         acc += val;
                         frameSize++;
@@ -4290,6 +4383,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
+        /**
+         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry, and the accumulator's own
+         * width is the one this DECIMAL width sums into rather than the argument's.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -4636,6 +4739,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private static final int RECORD_SIZE = Long.BYTES + 32;
         private final Decimal256 acc = new Decimal256();
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -4673,7 +4779,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -4687,6 +4794,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -4709,6 +4817,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -4774,7 +4918,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                                 Decimal256.uncheckedSubtract(acc, scratch);
@@ -4810,7 +4954,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             try {
@@ -4831,7 +4975,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             try {
                                 Decimal256.uncheckedAdd(acc, scratch);
@@ -5636,7 +5780,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             Decimal256.uncheckedSubtract(acc, scratch);
@@ -5680,7 +5824,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                         try {
@@ -5701,7 +5845,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                         try {
                             Decimal256.uncheckedAdd(acc, scratch);
@@ -6209,6 +6353,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
+        /**
+         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry, and the accumulator's own
+         * width is the one this DECIMAL width sums into rather than the argument's.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Decimal256.BYTES + Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -6552,6 +6706,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal32AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
         private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final Decimal64 divResult = new Decimal64();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -6588,7 +6745,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -6602,6 +6760,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -6624,6 +6783,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -6682,7 +6877,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long j = 0, n = size; j < n; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 acc -= val;
@@ -6714,7 +6909,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long j = frameSize; j < size; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc += val;
@@ -6728,7 +6923,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long j = 0, n = size; j < n; j++) {
                         long idx = (firstIdx + j) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc += val;
                             frameSize++;
@@ -7411,7 +7606,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc -= val;
@@ -7451,7 +7646,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long j = frameSize, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         acc += val;
@@ -7465,7 +7660,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long j = 0, n = size; j < n; j++) {
                     long idx = (firstIdx + j) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         acc += val;
                         frameSize++;
@@ -7891,6 +8086,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
+        /**
+         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry, and the accumulator's own
+         * width is the one this DECIMAL width sums into rather than the argument's.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -8208,6 +8413,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal64AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final Decimal128 decimal128 = new Decimal128();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -8245,7 +8453,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -8259,6 +8468,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -8281,6 +8491,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -8342,7 +8588,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 decimal128.subtract(val < 0 ? -1L : 0L, val, 0);
@@ -8374,7 +8620,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             long value = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             try {
@@ -8392,7 +8638,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             try {
                                 Decimal128.uncheckedAdd(decimal128, val);
@@ -9106,7 +9352,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc.subtract(val < 0 ? -1L : 0L, val, 0);
@@ -9146,7 +9392,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         long value = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         Decimal128.uncheckedAdd(acc, value);
@@ -9163,7 +9409,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         Decimal128.uncheckedAdd(acc, val);
                         if (acc.hasOverflowed()) {
@@ -9611,6 +9857,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
+        /**
+         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry, and the accumulator's own
+         * width is the one this DECIMAL width sums into rather than the argument's.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Decimal128.BYTES + Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -9936,6 +10192,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     public static class Decimal8AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final Decimal64 divResult = new Decimal64();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -9972,7 +10231,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int type,
                 int position,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -9986,6 +10246,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
@@ -10008,6 +10269,42 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 2 is the ring's start offset,
+         * slot 4 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 2, 4, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -10066,7 +10363,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 byte val = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 acc -= val;
@@ -10098,7 +10395,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             byte val = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc += val;
@@ -10112,7 +10409,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             byte val = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc += val;
                             frameSize++;
@@ -10795,7 +11092,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             byte val = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             acc -= val;
@@ -10835,7 +11132,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         byte val = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         acc += val;
@@ -10849,7 +11146,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         byte val = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         acc += val;
                         frameSize++;
@@ -11273,6 +11570,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        /**
+         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
+         * there are no live rows behind the accumulator to carry, and the accumulator's own
+         * width is the one this DECIMAL width sums into rather than the argument's.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Long.BYTES;
         }
 
         @Override
