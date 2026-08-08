@@ -72,6 +72,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -81,6 +82,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -2543,6 +2545,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // below reproduces that window deterministically: with no registered instance the
         // apply-side invalidation has nothing to mark, and buildViewGraphs reloads the view - still
         // VALID, still carrying the dependency types it compiled against.
+        //
+        // The Windows skip below is the canonical copy of this rationale; its four siblings in this
+        // file, and the one on WalReaderRebindTest#testProjectedBindSkipsDroppedUnprojectedSymbolColumn,
+        // guard the same precondition and point back here. The fixture strands the dictionary by
+        // letting the segment roll delete it, and WalWriter.removeSymbolFiles deletes with
+        // ff.removeQuiet and ignores the result: on Windows removing a hard link whose destination is
+        // open fails with ACCESS_DENIED. Where that delete no-ops the dictionary survives and the
+        // assertion below that it is gone goes red, while every later assertion would pass for the
+        // wrong reason because the drain never faults. Softening that precondition to tolerate the
+        // surviving file would trade the red for a vacuous green, so skipping is the simplest option
+        // that neither lies nor aborts.
+        Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
         final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -2620,6 +2634,137 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRederiveAfterWalLossRefusesWhenAReferencedColumnRetypedMidRederive() throws Exception {
+        // The drift-path twin of
+        // testRederiveAfterWalLossRefusesWhenAReferencedColumnRetypedUnderAStaleFactory. There the
+        // retype has already applied when the re-derive starts, so its ENTRY broken-dependency check
+        // refuses and the method returns before the try. Here the retype lands AFTER that check read
+        // intact metadata, which is the window ApplyWal2TableJob really opens: it applies the
+        // structural change to the base writer BEFORE it calls invalidateLiveViewsForBaseSchemaChange.
+        // The entry check therefore decides nothing about the schema the recompile would adopt, the
+        // replay faults with TableReferenceOutOfDateException, and only the SECOND refusal - the one
+        // inside the drift catch, against metadata read again - stands between that recompile and a
+        // whole-tier REPLACE_RANGE rewritten from a schema the view's query was never created against.
+        //
+        // setSimulateBaseApplyDuringRederiveForTest makes that window deterministic. A thread racing
+        // the drive would decide the outcome by timing, and both checks read the same applied base
+        // metadata, so nothing but an apply landing mid-method separates them. The hook lands the
+        // ALTER exactly where a concurrent apply would; the drift the replay then throws is the real
+        // one raised by LiveViewRefreshSqlExecutionContext.getReader against the stale retained
+        // factory (the capacity bump below already left it stale), not a synthetic throw.
+        //
+        // Windows skip; testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped explains why.
+        Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
+        final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (failWalSymbolRelink.get()
+                        && Utf8s.containsAscii(hardLink, WalUtils.WAL_NAME_BASE)
+                        && Utf8s.endsWithAscii(hardLink, "sym.o")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-04-01T00:00:00.000000Z', 10, 'a'),
+                    ('2026-04-01T00:00:01.000000Z', 20, 'b')""");
+            drainWalQueue();
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, x, sym, count(*) OVER (PARTITION BY sym ORDER BY ts
+                                                      ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
+                    FROM base""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isInvalid());
+
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'a')");
+            drainWalQueue();
+            final String walName = walDirHoldingSymbolDictionary(baseToken, "sym");
+            Assert.assertNotNull("the lagging segment must resolve its symbols through a WAL dictionary", walName);
+
+            // Same stranding as testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift: a capacity
+            // bump plus a failing re-link empties the WAL dictionary the lagging segment reads
+            // through. The bump is also what leaves the retained factory stale, so the replay faults
+            // with the drift this test needs.
+            execute("ALTER TABLE base ALTER COLUMN sym SYMBOL CAPACITY 512");
+            drainWalQueue();
+            failWalSymbolRelink.set(true);
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 40, 'b')");
+            failWalSymbolRelink.set(false);
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the segment roll must have stranded the WAL symbol dictionary",
+                    walSymbolOffsetFileExists(baseToken, walName, "sym")
+            );
+            Assert.assertFalse("the view must still be valid when the re-derive starts", instance.isInvalid());
+
+            final AtomicInteger midRederiveApplies = new AtomicInteger();
+            final AtomicReference<Throwable> midRederiveFailure = new AtomicReference<>();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setSimulateBaseApplyDuringRederiveForTest(() -> {
+                    // The re-derive's own catch(Throwable) would swallow anything thrown here into a
+                    // plain refusal, which is the outcome this test asserts - so stash it and fail on
+                    // it below rather than let a broken fixture read as a pass.
+                    try {
+                        midRederiveApplies.incrementAndGet();
+                        // The retype applies while the instance is off the fan-out index, so nothing
+                        // marks it - and, unlike a registry clear plus buildViewGraphs, it keeps the
+                        // very instance that holds the factory compiled against x INT.
+                        Assert.assertSame(instance, engine.getLiveViewRegistry().removeView("lv"));
+                        execute("ALTER TABLE base ALTER COLUMN x TYPE LONG");
+                        drainWalQueue();
+                        engine.getLiveViewRegistry().registerView(instance);
+                        Assert.assertFalse(
+                                "the apply-side invalidation must have missed the unregistered view",
+                                instance.isInvalid()
+                        );
+                    } catch (Throwable e) {
+                        midRederiveFailure.set(e);
+                    }
+                });
+                driveRefreshToQuiescence(job);
+            }
+
+            if (midRederiveFailure.get() != null) {
+                throw new AssertionError("the mid-re-derive retype failed", midRederiveFailure.get());
+            }
+            Assert.assertEquals(
+                    "the re-derive must have run once, past its entry check, over an intact dependency",
+                    1,
+                    midRederiveApplies.get()
+            );
+            Assert.assertTrue(
+                    "a referenced column retyped after the entry check must still invalidate the view",
+                    instance.isInvalid()
+            );
+            // The full guard string, not just "[column=x]": the apply-side invalidation in
+            // CairoEngine.invalidateLiveViewsForBaseSchemaChange emits that same suffix under a
+            // different prefix ("change column type operation [column=x]"), so the short substring
+            // would pass whichever producer invalidated the view. This names the re-derive's own
+            // refusal in isRederiveRefusedForBrokenDependency.
+            TestUtils.assertContains(
+                    instance.getInvalidationReason(),
+                    "base schema change to a referenced column [column=x]"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRederiveAfterWalLossRefusesWhenAReferencedColumnRetypedUnderAStaleFactory() throws Exception {
         // Same refusal as testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped, but against an
         // instance that never reloaded: it still holds the factory it compiled against the base's OLD
@@ -2635,17 +2780,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // ApplyWal2TableJob applying the structural change to the writer and its call to
         // invalidateLiveViewsForBaseSchemaChange.
         //
-        // What this test does NOT cover, and why no test here does: the sub-window in which the
-        // re-derive's ENTRY check reads intact metadata and the breaking change lands before the
-        // replay opens its reader, so that only the check inside the drift catch can refuse. Both
-        // checks read the same applied base metadata, so nothing but a concurrent apply landing
-        // mid-method separates them; the job exposes no hook to drive one, and a thread racing the
-        // drive would decide the outcome by timing. An injected base _meta read failure does not
-        // stand in for it either: TableReaderMetadata.load retries through
+        // What this test does NOT cover: the sub-window in which the re-derive's ENTRY check reads
+        // intact metadata and the breaking change lands before the replay opens its reader, so that
+        // only the check inside the drift catch can refuse. Both checks read the same applied base
+        // metadata, so nothing but a concurrent apply landing mid-method separates them, and a thread
+        // racing the drive would decide the outcome by timing. An injected base _meta read failure
+        // does not stand in for it either: TableReaderMetadata.load retries through
         // TableUtils.handleMetadataLoadException, so a bounded injected failure never surfaces, and
         // an unbounded one also breaks the replay's own reader open. So this test pins the hazard
-        // class - a refusal must win over a recompile - at the entry check, and the in-catch check
-        // that closes the same hazard on the drift path carries no test of its own.
+        // class - a refusal must win over a recompile - at the entry check;
+        // testRederiveAfterWalLossRefusesWhenAReferencedColumnRetypedMidRederive pins the same hazard
+        // at the in-catch check, landing the retype through the job's
+        // setSimulateBaseApplyDuringRederiveForTest hook.
+        //
+        // Windows skip; testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped explains why.
+        Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
         final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -2748,6 +2897,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // TableReferenceOutOfDateException: the last-resort recovery returned false and the view went
         // permanently invalid with 'flush retry budget exhausted', over a healthy base table and a
         // column that was never dropped. The re-derive now recompiles once and retries.
+        //
+        // Windows skip; testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped explains why.
+        Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
         final AtomicBoolean failWalSymbolRelink = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -2825,6 +2977,108 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     2026-04-01T00:00:02.000000Z\t30\ta\t2
                     2026-04-01T00:00:03.000000Z\t40\tb\t2
                     """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRederiveIsNotNeededWhenAnUnreferencedSymbolColumnIsDropped() throws Exception {
+        // The user-visible half of WalReaderRebindTest#testProjectedBindSkipsDroppedUnprojectedSymbolColumn:
+        // a live view whose SELECT never names a SYMBOL column must survive that column's DROP even
+        // when the view lags behind a segment already written against it. The view's projection is
+        // {ts, x}, so WalSegmentPageFrameCursor binds the WalReader over those two columns only.
+        // WAL symbol dictionaries live at the WAL directory level and every already-written segment
+        // of that WAL resolves its clean symbol band through them, so WalWriter.markColumnRemoved ->
+        // removeSymbolFiles deletes <wal>/sym.{o,c,k,v} the moment the writer applies the DROP, while
+        // the lagging segment keeps carrying a SymbolMapDiff for the column. Folding that diff under
+        // a projection the column is not in faults the drain with 'SymbolMap does not exist' on every
+        // pass, over a base table that is healthy and a column the view never read.
+        //
+        // The fault count is load-bearing here, not decoration. rederiveFromAppliedBaseAfterWalLoss -
+        // the OTHER fix in this commit - treats the stranded dictionary as base WAL loss and, once
+        // the budget is spent, recomputes the whole view from the applied base and reports success.
+        // So the validity and row assertions below pass whether the drain read the segment cleanly
+        // or faulted its way through the retry budget until a last-resort full recompute papered over
+        // it; only assertNoRefreshFaults separates the two. Delete it and this test stops covering the
+        // reader fix entirely.
+        //
+        // Unlike testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift this fixture injects no
+        // FilesFacade failure at all: a plain ALTER TABLE base DROP COLUMN sym is enough to strand
+        // the dictionary, because removeSymbolFiles runs unconditionally on the drop path.
+        //
+        // Windows skip; testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped explains why.
+        Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-04-01T00:00:00.000000Z', 10, 'a'),
+                    ('2026-04-01T00:00:01.000000Z', 20, 'b')""");
+            drainWalQueue();
+            // sym appears nowhere in the SELECT - not in the projection, not in the window's
+            // PARTITION BY - so the view must be indifferent to its fate.
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts
+                                                 ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
+                    FROM base""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isInvalid());
+
+            // A fresh WAL writer links the applied dictionary (two symbols) into its WAL directory,
+            // so the commit below carries a non-empty clean symbol band.
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            // The lagging commit: applied to the base TABLE, never drained by the view, because no
+            // refresh job runs across it.
+            //
+            // 'c' is an ordinary new value, not a precondition. WalEventWriter.writeSymbolMapDiffs
+            // emits a SymbolMapDiff whenever the applied dictionary is non-empty (initialCount > 0),
+            // with or without a new local symbol, and the drain faults on that diff's non-zero
+            // cleanSymbolCount, which sends openSymbolMaps to SymbolMapReaderImpl over the deleted
+            // <wal>/sym.o. What the fixture depends on is the non-empty WAL-level dictionary linked
+            // into the lagging segment's WAL directory, which the assertion below pins.
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 30, 'c')");
+            drainWalQueue();
+            final String walName = walDirHoldingSymbolDictionary(baseToken, "sym");
+            Assert.assertNotNull("the lagging segment must resolve its symbols through a WAL dictionary", walName);
+
+            execute("ALTER TABLE base DROP COLUMN sym");
+            drainWalQueue();
+            // The pooled WAL writer catches up with the structural change on its next goActive,
+            // which is where removeSymbolFiles deletes the dictionary the lagging segment reads
+            // through. The same structural change seals that segment - removeColumn rolls the
+            // writer to a new segment on its next row - so the DROP lands on a later one.
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 40)");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the DROP must have stranded the WAL symbol dictionary",
+                    walSymbolOffsetFileExists(baseToken, walName, "sym")
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse(
+                    "dropping an unreferenced symbol column must not invalidate a lagging view: reason="
+                            + instance.getInvalidationReason(),
+                    instance.isInvalid()
+            );
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tx\trn
+                    2026-04-01T00:00:00.000000Z\t10\t1
+                    2026-04-01T00:00:01.000000Z\t20\t2
+                    2026-04-01T00:00:02.000000Z\t30\t3
+                    2026-04-01T00:00:03.000000Z\t40\t4
+                    """);
+            assertNoRefreshFaults("lv");
 
             execute("DROP LIVE VIEW lv");
         });

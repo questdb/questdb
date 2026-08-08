@@ -280,6 +280,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LiveViewCheckpointScanCost scanCost = new LiveViewCheckpointScanCost();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
+    // Test-only: when armed, the WAL-loss re-derive runs this action after its entry
+    // broken-dependency check and before the replay, modelling the base apply that lands
+    // mid-method - the window ApplyWal2TableJob opens between changing the base writer and
+    // invalidating the dependent views. Lets a test drive the second, in-catch refusal
+    // deterministically instead of racing a thread against the drive.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private Runnable simulateBaseApplyDuringRederiveForTest;
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
     // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
     // was busy, or its memory-pressure control backed off). Lets a test drive the
@@ -493,6 +501,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (checkpointTimelineStoreWriter != null) {
             checkpointTimelineStoreWriter.setTestFailureStage(stage);
         }
+    }
+
+    /**
+     * Test-only: arms a one-shot action that {@link #rederiveFromAppliedBaseAfterWalLoss} runs after
+     * its entry broken-dependency check and before the replay, so a test can land a base schema
+     * change in exactly the window {@code ApplyWal2TableJob} opens between applying a structural
+     * change to the base writer and invalidating the dependent views. That is the only way to reach
+     * the re-derive's second, in-catch refusal deterministically: both checks read the same applied
+     * base metadata, so nothing but a concurrent apply separates them. Production never calls this.
+     * <p>
+     * Two constraints bind the action. First, it runs inside the same {@code try} that
+     * {@link #rederiveFromAppliedBaseAfterWalLoss}'s trailing {@code catch (Throwable)} closes, and
+     * that clause logs and returns false - the very refusal such a test asserts - so an action that
+     * lets a throwable escape turns a broken fixture into a passing test. The action must catch its
+     * own throwables and hand them back to the test thread. Second, {@code refreshInstance} holds
+     * the instance's refresh latch across this call, so the action must not reach a path that waits
+     * for that latch: {@code DROP LIVE VIEW} on this view ({@code LiveViewInstance.fenceRefresh})
+     * and a checkpoint freeze ({@code LiveViewInstance.startCheckpoint}) both spin-then-sleep on it
+     * with no timeout, and would hang this thread against a latch only this thread can release.
+     */
+    @TestOnly
+    public void setSimulateBaseApplyDuringRederiveForTest(Runnable action) {
+        this.simulateBaseApplyDuringRederiveForTest = action;
     }
 
     /**
@@ -8495,6 +8526,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         try {
+            if (simulateBaseApplyDuringRederiveForTest != null) { // @TestOnly, always null in production
+                final Runnable baseApply = simulateBaseApplyDuringRederiveForTest;
+                simulateBaseApplyDuringRederiveForTest = null;
+                baseApply.run();
+            }
             // Drop any un-flushed lead the failed cycles left published (a lead-eligible view
             // between flushes carries a non-zero leadRowCount and a slot holding those rows). The
             // replay recomputes the whole view and rewrites the on-disk tier via REPLACE_RANGE, so

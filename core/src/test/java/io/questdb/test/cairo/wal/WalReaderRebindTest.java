@@ -28,12 +28,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -41,6 +43,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 /**
@@ -55,6 +58,86 @@ import org.junit.Test;
  * and wrong filter results.
  */
 public class WalReaderRebindTest extends AbstractCairoTest {
+    // Aliases LOW_SYMBOL_COLUMN modulo 64, so an index that keys membership by the low six
+    // bits of the column index - a single-word bit set, or one that never grows - confuses
+    // the two columns.
+    private static final int HIGH_SYMBOL_COLUMN = 69;
+    private static final int LOW_SYMBOL_COLUMN = 5;
+    private static final int WIDE_COLUMN_COUNT = 70;
+
+    /**
+     * The same-segment fast path folds only newly-appended events instead of clearing and
+     * rescanning the whole event history, and it must keep skipping the columns the
+     * projection does not name while it does so. A skip that fires only on a full rebuild
+     * would fold an unprojected column's diff on every later commit - re-coupling the bind
+     * to a clean-band file a concurrent DROP COLUMN deletes - and a skip that forgets to
+     * step the event cursor past the skipped diff would shift the folded column's values.
+     * The drain re-opens one segment per base commit, so this is the shape production runs
+     * most.
+     */
+    @Test
+    public void testIncrementalRebindKeepsSkippingUnprojectedSymbolMap() throws Exception {
+        assertMemoryLeak(() -> {
+            // Names si (column 3) but not s (column 2), so every commit's diff for s must be
+            // skipped and drained on the incremental fold too.
+            final IntList projection = new IntList();
+            projection.add(0);
+            projection.add(1);
+            projection.add(3);
+
+            final int commits = 4;
+            final DirectString view = new DirectString();
+            try (
+                    WalWriter walWriter = seedSegmentWithCleanSymbolBand();
+                    WalReader reader = new WalReader(configuration)
+            ) {
+                final TableToken token = engine.verifyTableName("base");
+                final String walName = walWriter.getWalName();
+                long rowCount = 1;
+                reader.of(token, walName, 0, rowCount, projection);
+                Assert.assertEquals(1, reader.getSymbolMapFoldedRecords());
+
+                for (int c = 0; c < commits; c++) {
+                    TableWriter.Row row = walWriter.newRow(3_000_000L + c);
+                    row.putLong(1, 4 + c);
+                    row.putSym(2, "s" + c);
+                    row.putSym(3, "y" + c);
+                    row.append();
+                    walWriter.commit();
+                    rowCount++;
+
+                    // Same table, wal, segment and projection: the incremental fold.
+                    reader.of(token, walName, 0, rowCount, projection);
+                    Assert.assertEquals(
+                            "an unprojected column's symbol map must stay unfolded on an incremental fold",
+                            0,
+                            reader.getSymbolCount(2)
+                    );
+                    // A fresh reader always clears and full-walks, so it is the oracle for
+                    // what the incrementally-maintained maps must resolve to.
+                    try (WalReader oracle = new WalReader(configuration)) {
+                        oracle.of(token, walName, 0, rowCount, projection);
+                        Assert.assertEquals(oracle.getSymbolCount(3), reader.getSymbolCount(3));
+                        final DirectString oracleView = new DirectString();
+                        for (int key = 0, n = oracle.getSymbolCount(3); key < n; key++) {
+                            Assert.assertEquals(
+                                    "an incremental fold must resolve every key the way a full rebuild does",
+                                    oracle.getSymbolValue(3, key, oracleView).toString(),
+                                    reader.getSymbolValue(3, key, view).toString()
+                            );
+                        }
+                    }
+                    // The clean band the first bind loaded survives every later fold.
+                    Assert.assertEquals("x1", reader.getSymbolValue(3, 0, view).toString());
+                    Assert.assertEquals("x2", reader.getSymbolValue(3, 1, view).toString());
+                }
+
+                // One record per bind, not the 1+2+...+N a per-bind full rebuild would fold:
+                // this is what proves the binds above took the incremental path at all.
+                Assert.assertEquals(1 + commits, reader.getSymbolMapFoldedRecords());
+            }
+        });
+    }
 
     /**
      * The mixed shape neither projection test below covers: one symbol column folded while
@@ -112,6 +195,61 @@ public class WalReaderRebindTest extends AbstractCairoTest {
     }
 
     /**
+     * A rebind that NARROWS the projection drops the columns the previous, wider bind
+     * folded. Because a changed projection fails the same-segment test, the narrowing bind
+     * clears every map and re-folds from the start of the event file, and the refold skips
+     * the dropped column - so its map reads EMPTY. Were the narrowing bind to match the
+     * same-segment fast path instead, the map the new projection no longer reaches would
+     * keep the wider bind's entries and serve STALE keys to a caller that resolves against
+     * its own column indexes.
+     */
+    @Test
+    public void testNarrowingRebindClearsSymbolMapItNoLongerProjects() throws Exception {
+        assertMemoryLeak(() -> {
+            final String walName;
+            final TableToken token;
+            try (WalWriter walWriter = seedSegmentWithCleanSymbolBand()) {
+                token = engine.verifyTableName("base");
+                walName = walWriter.getWalName();
+            }
+
+            final IntList projection = new IntList();
+            projection.add(0);
+            projection.add(1);
+            projection.add(2);
+            projection.add(3);
+            final DirectString view = new DirectString();
+            try (WalReader reader = new WalReader(configuration)) {
+                reader.of(token, walName, 0, 1, projection);
+                Assert.assertEquals(3, reader.getSymbolCount(2));
+                Assert.assertEquals("ccc", reader.getSymbolValue(2, 2, view).toString());
+                Assert.assertEquals(3, reader.getSymbolCount(3));
+                Assert.assertEquals("x3", reader.getSymbolValue(3, 2, view).toString());
+
+                projection.clear();
+                projection.add(0);
+                projection.add(1);
+                reader.of(token, walName, 0, 1, projection);
+                Assert.assertEquals(
+                        "a narrowing rebind must clear the map its new projection no longer reaches",
+                        0,
+                        reader.getSymbolCount(2)
+                );
+                Assert.assertEquals(0, reader.getSymbolCount(3));
+                Assert.assertEquals(
+                        "the narrowed bind must resolve nothing rather than a stale key",
+                        SymbolTable.VALUE_NOT_FOUND,
+                        reader.getSymbolKey(2, "ccc", 3)
+                );
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getSymbolKey(3, "x3", 3));
+                // The columns the narrow projection does name stay mapped.
+                Assert.assertEquals(2_000_000L, reader.getColumn(2).getLong(0));
+                Assert.assertEquals(3L, reader.getColumn(4).getLong(0));
+            }
+        });
+    }
+
+    /**
      * A live view that never names a SYMBOL column must survive that column's DROP. The
      * clean-band files a symbol diff resolves against - {@code <wal>/<column>.o} and friends -
      * live at the WAL directory level, and {@code WalWriter.removeSymbolFiles} deletes them as
@@ -125,6 +263,14 @@ public class WalReaderRebindTest extends AbstractCairoTest {
      */
     @Test
     public void testProjectedBindSkipsDroppedUnprojectedSymbolColumn() throws Exception {
+        // WalWriter.removeSymbolFiles deletes the clean band with ff.removeQuiet and ignores the
+        // result, because removing a hard link whose destination file the writer holds open fails
+        // with ACCESS_DENIED on Windows - its own comment says so. Where that delete no-ops the two
+        // assertFalse preconditions below go red, and every later assertion would pass for the wrong
+        // reason because the bind never meets a deleted file. The same guard sits on the five
+        // LiveViewSmokeTest cases that assert this precondition; the one on
+        // testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped carries the full reasoning.
+        Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
         assertMemoryLeak(() -> {
             final String walName;
             final TableToken token;
@@ -164,6 +310,58 @@ public class WalReaderRebindTest extends AbstractCairoTest {
                         0,
                         reader.getSymbolCount(2)
                 );
+                Assert.assertEquals(0, reader.getSymbolCount(3));
+            }
+        });
+    }
+
+    /**
+     * A projection can name a column the SEGMENT does not have, and the reader has to drop such an
+     * entry rather than map it. {@code WalSegmentPageFrameCursor.of} binds the reader BEFORE the
+     * reconcile that compares the projection against the segment's own metadata and throws
+     * {@code TableReferenceOutOfDateException}, so an index the segment lacks reaches
+     * {@code buildMappedColumns} first. ADD COLUMN does not invalidate a live view, so a segment
+     * narrower than the base it lags behind is an ordinary steady state, not a corruption.
+     * <p>
+     * Were the upper bound to admit {@code columnCount} itself, {@code openSegmentColumns} ->
+     * {@code loadColumnAt(columnCount)} -> {@code metadata.getColumnType(columnCount)} would read
+     * past the end of the segment's metadata. A negative entry names no column at all and travels
+     * the same guard: {@code BitSet} indexes its words array unchecked below zero.
+     */
+    @Test
+    public void testProjectionWithAnOutOfRangeIndexBindsWithThatColumnUnmapped() throws Exception {
+        assertMemoryLeak(() -> {
+            final String walName;
+            final TableToken token;
+            try (WalWriter walWriter = seedSegmentWithCleanSymbolBand()) {
+                token = engine.verifyTableName("base");
+                walName = walWriter.getWalName();
+            }
+
+            // base holds four columns, so 4 sits one past the end and -1 below the start. The bind
+            // must drop both and still map the two entries the segment does have.
+            final IntList projection = new IntList();
+            projection.add(0);
+            projection.add(1);
+            projection.add(-1);
+            projection.add(4);
+            try (WalReader reader = new WalReader(configuration)) {
+                reader.of(token, walName, 0, 1, projection);
+                // Two memory slots per column, offset by the leading sentinel pair.
+                Assert.assertEquals(
+                        "an out-of-range projection entry must not disturb the in-range ones",
+                        2_000_000L,
+                        reader.getColumn(2).getLong(0)
+                );
+                Assert.assertEquals(3L, reader.getColumn(4).getLong(0));
+                Assert.assertEquals(
+                        "an out-of-range projection entry must map no column",
+                        0,
+                        reader.getSymbolCount(4)
+                );
+                // The projection names neither symbol column, so the bind stays a projected one
+                // rather than degrading into a full open of every column.
+                Assert.assertEquals(0, reader.getSymbolCount(2));
                 Assert.assertEquals(0, reader.getSymbolCount(3));
             }
         });
@@ -267,6 +465,93 @@ public class WalReaderRebindTest extends AbstractCairoTest {
     }
 
     /**
+     * {@code openSymbolMaps} decides whether to fold a column's diff from a membership index
+     * over the mapped set, keyed by column index. An index that is wrongly TRUE for a column
+     * the projection does not reach folds that column's diff and opens its clean-band file -
+     * the very fault the projected skip exists to avoid - and one that is wrongly FALSE leaves
+     * a projected column resolving against an empty map. Both are silent.
+     * <p>
+     * Every other test in this class uses a four-column table, so all of them exercise column
+     * indexes 0 to 3 only. This one spans 70 columns with SYMBOL columns at 5 and 69 - indexes
+     * that agree in their low six bits - so an index keyed on anything narrower than the whole
+     * column index confuses them. The total projection stands in for "a projection that reaches
+     * every column must fold exactly what no projection folds"; the two partial projections
+     * each name one symbol column and must skip the other.
+     */
+    @Test
+    public void testWideTableProjectionFoldsAndSkipsByExactColumnIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final String walName = seedWideSegmentWithCleanSymbolBands();
+            final TableToken token = engine.verifyTableName("wide");
+
+            final DirectString view = new DirectString();
+            final ObjList<String> unprojectedLow = new ObjList<>();
+            final ObjList<String> unprojectedHigh = new ObjList<>();
+            try (WalReader reader = new WalReader(configuration)) {
+                reader.of(token, walName, 0, 1);
+                for (int key = 0, n = reader.getSymbolCount(LOW_SYMBOL_COLUMN); key < n; key++) {
+                    unprojectedLow.add(reader.getSymbolValue(LOW_SYMBOL_COLUMN, key, view).toString());
+                }
+                for (int key = 0, n = reader.getSymbolCount(HIGH_SYMBOL_COLUMN); key < n; key++) {
+                    unprojectedHigh.add(reader.getSymbolValue(HIGH_SYMBOL_COLUMN, key, view).toString());
+                }
+            }
+            Assert.assertEquals("[aaa,bbb,ccc]", unprojectedLow.toString());
+            Assert.assertEquals("[x1,x2,x3]", unprojectedHigh.toString());
+
+            final IntList projection = new IntList();
+            try (WalReader reader = new WalReader(configuration)) {
+                for (int i = 0; i < WIDE_COLUMN_COUNT; i++) {
+                    projection.add(i);
+                }
+                reader.of(token, walName, 0, 1, projection);
+                final ObjList<String> projectedLow = new ObjList<>();
+                final ObjList<String> projectedHigh = new ObjList<>();
+                for (int key = 0, n = reader.getSymbolCount(LOW_SYMBOL_COLUMN); key < n; key++) {
+                    projectedLow.add(reader.getSymbolValue(LOW_SYMBOL_COLUMN, key, view).toString());
+                }
+                for (int key = 0, n = reader.getSymbolCount(HIGH_SYMBOL_COLUMN); key < n; key++) {
+                    projectedHigh.add(reader.getSymbolValue(HIGH_SYMBOL_COLUMN, key, view).toString());
+                }
+                Assert.assertEquals(
+                        "a projection that reaches every column must fold what no projection folds",
+                        unprojectedLow.toString(),
+                        projectedLow.toString()
+                );
+                Assert.assertEquals(
+                        "a projection that reaches every column must fold what no projection folds",
+                        unprojectedHigh.toString(),
+                        projectedHigh.toString()
+                );
+
+                // Names the low symbol column but not the high one.
+                projection.clear();
+                projection.add(0);
+                projection.add(LOW_SYMBOL_COLUMN);
+                reader.of(token, walName, 0, 1, projection);
+                Assert.assertEquals("ccc", reader.getSymbolValue(LOW_SYMBOL_COLUMN, 2, view).toString());
+                Assert.assertEquals(
+                        "a projection naming column 5 must not reach column 69",
+                        0,
+                        reader.getSymbolCount(HIGH_SYMBOL_COLUMN)
+                );
+
+                // And the mirror image: the high symbol column alone.
+                projection.clear();
+                projection.add(0);
+                projection.add(HIGH_SYMBOL_COLUMN);
+                reader.of(token, walName, 0, 1, projection);
+                Assert.assertEquals("x3", reader.getSymbolValue(HIGH_SYMBOL_COLUMN, 2, view).toString());
+                Assert.assertEquals(
+                        "a projection naming column 69 must not reach column 5",
+                        0,
+                        reader.getSymbolCount(LOW_SYMBOL_COLUMN)
+                );
+            }
+        });
+    }
+
+    /**
      * Skipping a column's diffs is only safe while the projection stays narrow. A rebind that
      * widens it onto the same segment has to fold from the start of the event file again -
      * both the clean band and every diff entry the narrow bind walked past - or the widened
@@ -343,6 +628,40 @@ public class WalReaderRebindTest extends AbstractCairoTest {
         } catch (Throwable th) {
             walWriter.close();
             throw th;
+        }
+    }
+
+    /**
+     * Creates {@code wide}: {@value #WIDE_COLUMN_COUNT} columns whose only SYMBOL columns sit
+     * at {@value #LOW_SYMBOL_COLUMN} and {@value #HIGH_SYMBOL_COLUMN}, applies a two-symbol
+     * dictionary to each, then commits one more row through a fresh WAL writer so its segment
+     * 0 holds a single row whose two symbol diffs each carry {@code cleanSymbolCount = 2}.
+     * Returns the writer's WAL name.
+     */
+    private static String seedWideSegmentWithCleanSymbolBands() throws SqlException {
+        final StringBuilder ddl = new StringBuilder("CREATE TABLE wide (ts TIMESTAMP");
+        for (int i = 1; i < WIDE_COLUMN_COUNT; i++) {
+            ddl.append(", c").append(i);
+            ddl.append(i == LOW_SYMBOL_COLUMN || i == HIGH_SYMBOL_COLUMN ? " SYMBOL" : " LONG");
+        }
+        ddl.append(") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(ddl.toString());
+        execute("""
+                INSERT INTO wide (ts, c5, c69) VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'aaa', 'x1'),
+                    ('2024-01-01T00:00:01.000000Z', 'bbb', 'x2')""");
+        drainWalQueue();
+        // The writer that wrote those rows saw an empty dictionary, so its diffs reference no
+        // clean band. Drop it, so the next writer links the applied dictionary into its WAL.
+        engine.releaseInactive();
+
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("wide"))) {
+            TableWriter.Row row = walWriter.newRow(2_000_000L);
+            row.putSym(LOW_SYMBOL_COLUMN, "ccc");
+            row.putSym(HIGH_SYMBOL_COLUMN, "x3");
+            row.append();
+            walWriter.commit();
+            return walWriter.getWalName();
         }
     }
 

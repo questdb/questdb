@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.FilesFacade;
@@ -64,11 +65,26 @@ public class WalReader implements Closeable {
     private final CairoConfiguration configuration;
     private final WalDataCursor dataCursor = new WalDataCursor();
     private final FilesFacade ff;
+    // Membership index over mappedColumns, keyed by column index: buildMappedColumns() sets bit
+    // i iff mappedColumns holds i, and openSymbolMaps tests it once per SymbolMapDiff per DATA
+    // event record. The linear scan it replaces walked mappedColumns, whose length is the width
+    // of the caller's PROJECTION rather than of the base table - a narrow live view over a
+    // 2000-column base scanned 2-3 entries - so the win lands on a full refold under a wide
+    // projection, where that scan repeats over every record in the segment. On the shape the
+    // live-view drain runs per base commit, the incremental same-segment fold, it saves a few
+    // nanoseconds per bind: that fold walks only newly-appended records, and the same bind
+    // munmaps and remaps every mapped column. Only buildMappedColumns() writes the index, in
+    // lockstep with mappedColumns, so the two cannot disagree. A bind reuses the words array and
+    // grows it - one Arrays.copyOf in BitSet.checkCapacity - only when it first projects a column
+    // index above the current capacity, so a steady-state bind allocates nothing.
+    private final BitSet mappedColumnFlags = new BitSet();
     // The deduped, in-range column set openSegmentColumns() maps and openSymbolMaps folds
     // when a projection is active: the caller's projection minus out-of-range entries, plus
-    // the designated timestamp. Recomputed per bind (O(projection^2) over a handful of
-    // entries) rather than cached, so it can never go stale against a changed column count or
-    // timestamp index.
+    // the designated timestamp. buildMappedColumns() rebuilds it per bind rather than caching
+    // it, so it can never go stale against a changed column count or timestamp index. That
+    // rebuild costs O(projection) for the dedup loop plus the Arrays.fill BitSet.clear() runs
+    // over the whole words array - which the widest column index this reader ever bound sizes,
+    // not the current projection, and which every bind pays, projected or not.
     private final IntList mappedColumns = new IntList();
     private final SequencerMetadata metadata;
     private final Path path = new Path();
@@ -456,12 +472,18 @@ public class WalReader implements Closeable {
     // naming one column twice (SELECT a, a) does not map and remap it twice per commit.
     private void buildMappedColumns() {
         mappedColumns.clear();
+        // Clear ahead of the early return below, so a bind that drops the projection cannot
+        // leave the previous bind's bits behind for the next projected one to read.
+        mappedColumnFlags.clear();
         if (!hasProjection) {
             return;
         }
         for (int i = 0, n = projectedColumns.size(); i < n; i++) {
             final int columnIndex = projectedColumns.getQuick(i);
-            if (columnIndex >= 0 && columnIndex < columnCount && !mappedColumns.contains(columnIndex)) {
+            // getAndSet() both records membership and reports whether this index was already
+            // admitted, so the dedup costs one bit test rather than a scan of what is mapped
+            // so far.
+            if (columnIndex >= 0 && columnIndex < columnCount && !mappedColumnFlags.getAndSet(columnIndex)) {
                 mappedColumns.add(columnIndex);
             }
         }
@@ -469,9 +491,17 @@ public class WalReader implements Closeable {
         // loadColumnAt sizes it at double width and consumers reach for it by identity
         // rather than by projected position, so a bound reader must never lack it.
         final int timestampIndex = getTimestampIndex();
-        if (timestampIndex >= 0 && timestampIndex < columnCount && !mappedColumns.contains(timestampIndex)) {
+        if (timestampIndex >= 0 && timestampIndex < columnCount && !mappedColumnFlags.getAndSet(timestampIndex)) {
             mappedColumns.add(timestampIndex);
         }
+    }
+
+    // Reports whether the effective mapped set reaches columnIndex, in O(1). The negative
+    // test keeps a column index the event file should never carry out of BitSet.get(), which
+    // indexes its words array unchecked below zero; such an index names no column, so it is
+    // not mapped.
+    private boolean isColumnMapped(int columnIndex) {
+        return columnIndex >= 0 && mappedColumnFlags.get(columnIndex);
     }
 
     private void loadColumnAt(int columnIndex) {
@@ -570,7 +600,7 @@ public class WalReader implements Closeable {
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {
                     int columnIndex = symbolDiff.getColumnIndex();
-                    if (hasProjection && !mappedColumns.contains(columnIndex)) {
+                    if (hasProjection && !isColumnMapped(columnIndex)) {
                         // The caller cannot reach this column - getSymbolValue/getSymbolKey
                         // serve projected indexes only, and getDataCursor() rejects a
                         // projected reader - so folding its diff buys nothing and couples
