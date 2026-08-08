@@ -44,9 +44,12 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Asserts that an OK ack reports the per-table seqTxn of the work its batch
@@ -64,9 +67,25 @@ import java.util.List;
  * under {@code qwp.max.uncommitted.rows} so the append-time force commit never
  * fires. Both cases send the same rows through the same code path, so the pair
  * isolates the force commit as the only variable.
+ * <p>
+ * The over-cap case only covers the force commit while all {@code ROW_COUNT}
+ * rows reach {@code QwpWalAppender} as ONE table block, which is what leaves
+ * {@code QwpTudCache} a drained writer to reconcile. The sender therefore pins
+ * every auto-flush trigger instead of inheriting the client's defaults, and
+ * {@link #EXPECTED_SEQ_TXN} asserts the resulting one-transaction shape against
+ * {@code wal_tables()} so a split fails here rather than quietly degrading the
+ * case into a second copy of the control.
  */
 public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
 
+    private static final int AUTO_FLUSH_INTERVAL_MILLIS = 3_600_000;
+    /**
+     * The batch commits as a single WAL transaction, so both the table's
+     * sequencer txn and the seqTxn the acks must report are 1.
+     */
+    private static final long EXPECTED_SEQ_TXN = 1;
+    private static final int PROBE_LEN = 6;
+    private static final int RELAY_PROBE_TIMEOUT_MS = 30_000;
     private static final int ROW_COUNT = 200;
 
     @Before
@@ -75,16 +94,101 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
         TestUtils.unchecked(() -> createDummyConfiguration());
     }
 
+    /**
+     * {@link AckTee} has to service more than one connection: the QWP sender
+     * keeps a foreground reconnect factory wired even in memory mode, so a wire
+     * failure makes it dial the same relay port again. A relay that accepts once
+     * lets the reconnect finish its TCP handshake against the listen backlog and
+     * then never services it, and the run parks until the 20-minute suite
+     * timeout fires instead of failing with a cause.
+     */
+    @Test
+    public void testAckTeeRelaysSequentialConnections() throws Exception {
+        assertMemoryLeak(() -> {
+            final int connectionCount = 2;
+            final CountDownLatch upstreamServed = new CountDownLatch(connectionCount);
+            try (ServerSocket upstream = new ServerSocket(0, 4, InetAddress.getLoopbackAddress())) {
+                final Thread upstreamThread = new Thread(() -> {
+                    for (int i = 0; i < connectionCount; i++) {
+                        try (Socket peer = upstream.accept()) {
+                            final byte[] probe = new byte[PROBE_LEN];
+                            readFully(peer.getInputStream(), probe);
+                            final byte[] reply = new String(probe, StandardCharsets.US_ASCII)
+                                    .replace("ping", "pong").getBytes(StandardCharsets.US_ASCII);
+                            peer.getOutputStream().write(reply);
+                            peer.getOutputStream().flush();
+                            upstreamServed.countDown();
+                        } catch (IOException e) {
+                            return;
+                        }
+                    }
+                }, "qwp-relay-probe-upstream");
+                upstreamThread.setDaemon(true);
+                upstreamThread.start();
+
+                try (AckTee tee = new AckTee(upstream.getLocalPort())) {
+                    for (int i = 0; i < connectionCount; i++) {
+                        try (Socket client = new Socket(InetAddress.getLoopbackAddress(), tee.localPort())) {
+                            // The read timeout is not a coordination guess. It only turns the
+                            // single-shot-accept hang into a reportable failure: a relay that
+                            // never accepts connection 1 can never service it, so no legitimate
+                            // timing window exists for this bound to race with. The green path
+                            // is event-driven - the blocking read returns the instant the relay
+                            // forwards the reply, and upstreamServed latches the second service.
+                            client.setSoTimeout(RELAY_PROBE_TIMEOUT_MS);
+                            client.getOutputStream().write(("ping-" + i).getBytes(StandardCharsets.US_ASCII));
+                            client.getOutputStream().flush();
+                            final byte[] echoed = new byte[PROBE_LEN];
+                            readFully(client.getInputStream(), echoed);
+                            Assert.assertEquals(
+                                    "the relay did not forward connection " + i,
+                                    "pong-" + i,
+                                    new String(echoed, StandardCharsets.US_ASCII)
+                            );
+                        }
+                    }
+                }
+
+                Assert.assertTrue(
+                        "the relay never carried both connections through to the upstream",
+                        upstreamServed.await(RELAY_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                );
+                upstreamThread.join();
+
+                // close() joins the acceptor and every pump, so this holds without
+                // any waiting. A relay thread outliving close() is what leaves a
+                // half-torn-down connection behind for the next test in the JVM.
+                for (Thread t : Thread.getAllStackTraces().keySet()) {
+                    Assert.assertFalse(
+                            "a relay thread outlived AckTee.close(): " + t.getName(),
+                            t.getName().startsWith("qwp-ack-tee-")
+                    );
+                }
+            }
+        });
+    }
+
     @Test
     public void testOkAckReportsSeqTxnBelowCap() throws Exception {
-        assertAckReportsSeqTxn("1000000", "ack_cov_below");
+        assertMemoryLeak(() -> assertAckReportsSeqTxn("1000000", "ack_cov_below"));
     }
 
     @Test
     public void testOkAckReportsSeqTxnWhenAppendTimeCommitFires() throws Exception {
         // QwpWalAppender force-commits the table block once it crosses
         // qwp.max.uncommitted.rows, draining the writer before QwpTudCache runs.
-        assertAckReportsSeqTxn("10", "ack_cov_over");
+        assertMemoryLeak(() -> assertAckReportsSeqTxn("10", "ack_cov_over"));
+    }
+
+    private static void readFully(InputStream in, byte[] dst) throws IOException {
+        int read = 0;
+        while (read < dst.length) {
+            final int n = in.read(dst, read, dst.length - read);
+            if (n < 0) {
+                throw new IOException("peer closed after " + read + " of " + dst.length + " bytes");
+            }
+            read += n;
+        }
     }
 
     private void assertAckReportsSeqTxn(String maxUncommittedRows, String table) throws Exception {
@@ -98,6 +202,20 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             try (AckTee tee = new AckTee(HTTP_PORT)) {
                 try (Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
                         .address("localhost:" + tee.localPort())
+                        // Batch explicitly rather than inheriting the client's auto-flush
+                        // defaults. Whether the over-cap case covers the append-time force
+                        // commit at all hinges on the whole batch arriving as one table
+                        // block: a split that leaves the tail under the cap commits that
+                        // tail through commitAll exactly like the control does, and the
+                        // case silently stops discriminating. Pinning all three triggers
+                        // takes DEFAULT_WS_AUTO_FLUSH_ROWS / _BYTES / _INTERVAL_NANOS out
+                        // of that argument. The WebSocket transport rejects
+                        // disableAutoFlush() and rejects an infinite interval, so the
+                        // interval gets an hour - orders of magnitude past the loop below,
+                        // and it only ever fires from inside at().
+                        .autoFlushRows(0)
+                        .autoFlushBytes(0)
+                        .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
                         .build()) {
                     for (int i = 0; i < ROW_COUNT; i++) {
                         sender.table(table)
@@ -106,6 +224,11 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     }
                     sender.flush();
                 }
+                // Snapshot after close(), which returns only once every relayed socket is
+                // closed and every pump thread has terminated. No pump can still be
+                // writing into the buffer, so the snapshot needs no argument about when
+                // pump() tees relative to when it forwards.
+                tee.close();
                 serverFrames = tee.serverBinaryFrames();
             }
 
@@ -113,6 +236,18 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             // not a lost write.
             TestUtils.assertEventually(() ->
                     serverMain.assertSql("SELECT count() FROM " + table, "count\n" + ROW_COUNT + "\n"));
+
+            // Pin the precondition the over-cap case's coverage rests on. One sequencer
+            // txn means the appender saw the whole batch as a single table block: over the
+            // cap that commit can only be the force commit inside the append, under it only
+            // commitAll's. Any split - a future client flush trigger, a server-side batch
+            // limit - commits at least twice and fails here, loudly, rather than leaving a
+            // tail that commits through commitAll and satisfies the ack assertion below on
+            // the unfixed code too.
+            serverMain.assertSql(
+                    "SELECT sequencerTxn FROM wal_tables() WHERE name = '" + table + "'",
+                    "sequencerTxn\n" + EXPECTED_SEQ_TXN + "\n"
+            );
 
             int okAckCount = 0;
             long reportedSeqTxn = Long.MIN_VALUE;
@@ -146,11 +281,15 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             }
 
             Assert.assertTrue("the server sent no OK ack", okAckCount > 0);
-            Assert.assertTrue(
-                    "no OK ack reported a seqTxn for " + table + ", so a durable-ack client reads "
-                            + "the batch as trivially durable and trims its store-and-forward slot "
-                            + "before the upload tracker has seen the WAL segment; acks seen: " + observed,
-                    reportedSeqTxn > 0
+            // Cross-check against the table's own sequencer txn rather than against zero:
+            // an ack that reports a stale or lower seqTxn covers less WAL than it claims,
+            // and "> 0" waves that through.
+            Assert.assertEquals(
+                    "no OK ack reported the final seqTxn for " + table + ", so a durable-ack client "
+                            + "reads the batch as trivially durable and trims its store-and-forward "
+                            + "slot before the upload tracker has seen the WAL segment; acks seen: " + observed,
+                    EXPECTED_SEQ_TXN,
+                    reportedSeqTxn
             );
         }
     }
@@ -162,45 +301,61 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
      * off the assertion thread.
      */
     private static final class AckTee implements Closeable {
+        private final Thread acceptor;
         private final ServerSocket listener;
+        private final List<Thread> pumps = new ArrayList<>();
         private final ByteArrayOutputStream serverToClient = new ByteArrayOutputStream();
         private final List<Socket> sockets = new ArrayList<>();
+        // Guarded by sockets. close() raises it before it closes the listener, so
+        // the acceptor tells a shutdown apart from a transient accept failure and
+        // never registers a connection that close() has already walked past.
+        private boolean isClosed;
 
         private AckTee(int upstreamPort) throws IOException {
             listener = new ServerSocket(0, 4, InetAddress.getLoopbackAddress());
-            final Thread acceptor = new Thread(() -> {
-                try {
-                    final Socket downstream = listener.accept();
-                    final Socket upstream = new Socket(InetAddress.getLoopbackAddress(), upstreamPort);
-                    synchronized (sockets) {
-                        sockets.add(downstream);
-                        sockets.add(upstream);
-                    }
-                    pump(downstream.getInputStream(), upstream.getOutputStream(), null);
-                    pump(upstream.getInputStream(), downstream.getOutputStream(), serverToClient);
-                } catch (IOException ignore) {
-                    // the test tore the relay down
-                }
-            }, "qwp-ack-tee-acceptor");
+            acceptor = new Thread(() -> acceptLoop(upstreamPort), "qwp-ack-tee-acceptor");
             acceptor.setDaemon(true);
             acceptor.start();
         }
 
+        /**
+         * Returns only once the relay is quiescent: the listener and every
+         * relayed socket are closed, and the acceptor and both pump threads of
+         * every connection have terminated. Idempotent, so a caller that closes
+         * early to freeze the tee buffer can still leave the try-with-resources
+         * close in place.
+         */
         @Override
         public void close() {
             synchronized (sockets) {
+                isClosed = true;
+                closeQuietly(listener);
                 for (int i = 0, n = sockets.size(); i < n; i++) {
-                    try {
-                        sockets.get(i).close();
-                    } catch (IOException ignore) {
-                        // already gone
-                    }
+                    closeQuietly(sockets.get(i));
                 }
             }
-            try {
-                listener.close();
-            } catch (IOException ignore) {
-                // already gone
+            // Join outside the monitor. The acceptor needs the monitor to observe
+            // the shutdown flag, so joining while holding it would deadlock.
+            joinQuietly(acceptor);
+            // The acceptor is the only thread that registers pumps, so the list is
+            // final once it has terminated. Every pump's socket is already closed,
+            // which is what unblocks the pump out of read().
+            final List<Thread> live;
+            synchronized (sockets) {
+                live = new ArrayList<>(pumps);
+            }
+            for (int i = 0, n = live.size(); i < n; i++) {
+                joinQuietly(live.get(i));
+            }
+        }
+
+        private static void closeQuietly(Closeable closeable) {
+            if (closeable != null) {
+                try {
+                    closeable.close();
+                } catch (IOException ignore) {
+                    // already gone
+                }
             }
         }
 
@@ -211,6 +366,58 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 }
             }
             return 0;
+        }
+
+        private static void joinQuietly(Thread thread) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        /**
+         * Services connections until close(). The QWP sender reconnects through
+         * the same port after a wire failure, so a single accept would leave the
+         * reconnect's completed TCP handshake sitting in the backlog forever.
+         */
+        private void acceptLoop(int upstreamPort) {
+            for (; ; ) {
+                Socket downstream = null;
+                Socket upstream = null;
+                try {
+                    downstream = listener.accept();
+                    upstream = new Socket(InetAddress.getLoopbackAddress(), upstreamPort);
+                } catch (IOException e) {
+                    // The downstream is already accepted when the upstream dial
+                    // fails, so drop it here - otherwise it leaks and the client
+                    // waits on a connection nothing will ever service.
+                    closeQuietly(downstream);
+                    closeQuietly(upstream);
+                    synchronized (sockets) {
+                        if (isClosed) {
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                synchronized (sockets) {
+                    if (isClosed) {
+                        closeQuietly(downstream);
+                        closeQuietly(upstream);
+                        return;
+                    }
+                    sockets.add(downstream);
+                    sockets.add(upstream);
+                }
+                try {
+                    pump(downstream.getInputStream(), upstream.getOutputStream(), null);
+                    pump(upstream.getInputStream(), downstream.getOutputStream(), serverToClient);
+                } catch (IOException e) {
+                    closeQuietly(downstream);
+                    closeQuietly(upstream);
+                }
+            }
         }
 
         private int localPort() {
@@ -236,6 +443,12 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 }
             }, "qwp-ack-tee-pump");
             t.setDaemon(true);
+            // Register before start() so close() always has the thread to join.
+            // Only the acceptor calls this, and close() snapshots the list after
+            // it has joined the acceptor, so the pair is never observed split.
+            synchronized (sockets) {
+                pumps.add(t);
+            }
             t.start();
         }
 

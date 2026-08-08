@@ -174,10 +174,16 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Same as {@link #commitAll()} but invokes {@code consumer} for every table
-     * that actually committed new data (had uncommitted rows), passing the
-     * sequencer txn assigned to that commit. Used by QWP durable-ack tracking
-     * to record which client messages still need an object-store upload.
+     * Same as {@link #commitAll()} but also reports committed sequencer txns to
+     * {@code consumer}. For every table it commits, it compares the writer's last
+     * seqTxn against the last seqTxn already reported for that table and invokes
+     * {@code consumer} when it has advanced -- whether or not this call is the one
+     * that committed it, and whether or not the table had uncommitted rows. A table
+     * with nothing to flush must not be skipped: the advance can come from a commit
+     * made outside this class, and losing it lets a durable ack cover a WAL segment
+     * the upload tracker never saw (#7482); see {@code reportCommittedTxn}. Used by
+     * QWP durable-ack tracking to record which client messages still need an
+     * object-store upload.
      */
     public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
         boolean droppedTableFound;
@@ -393,8 +399,11 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Callback invoked by {@link #commitAll(CommittedTxnConsumer)} for every
-     * table that actually advanced its sequencer txn during the commit.
+     * Callback invoked by {@link #commitAll(CommittedTxnConsumer)} and by
+     * {@link #commitIfMaxUncommittedRowsReached(CommittedTxnConsumer)} for every
+     * table whose sequencer txn is ahead of the last seqTxn reported for it, even
+     * when the commit that advanced it happened in an earlier call or outside this
+     * class.
      */
     @FunctionalInterface
     public interface CommittedTxnConsumer {

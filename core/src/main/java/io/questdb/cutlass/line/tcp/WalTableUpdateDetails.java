@@ -36,9 +36,18 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // ack / durable-upload watermarks). Compared against getLastSeqTxn() so a commit
     // made ANYWHERE -- including QwpWalAppender's force-commit at the
     // max-uncommitted-rows cap, which happens outside QwpTudCache entirely -- is still
-    // reported exactly once. Long.MIN_VALUE matches the writer's "no txn yet" sentinel.
-    // Never reused across connections: QwpTudCache.reset()/clear() frees every TUD.
-    private long lastReportedSeqTxn = Long.MIN_VALUE;
+    // reported exactly once. The constructor seeds it from the writer, so only advances
+    // this connection produced can ever be reported.
+    // Never reused across connections: QwpIngressProcessorState.onDisconnected() (and
+    // QwpTudCache.close()) call QwpTudCache.reset(), which frees every TUD. The writer
+    // underneath is pooled and outlives the TUD, which is what the constructor seed
+    // handles. QwpTudCache.clear(), which runs between frames on a live connection, does
+    // NOT free: it rolls uncommitted rows back and keeps the TUD so the next frame reuses
+    // the cached writer, freeing only when the cache is distressed. That free is safe:
+    // every setDistressed() caller also rejects the frame, so the unresolved-sequence gate
+    // in QwpIngressUpgradeProcessor.handleBinaryMessage refuses every later data frame on
+    // the connection and no re-seeded TUD is ever built for it.
+    private long lastReportedSeqTxn;
 
     public WalTableUpdateDetails(
             CairoEngine engine,
@@ -52,6 +61,16 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
             long maxUncommittedRows
     ) {
         super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, commitInterval, commitOnClose, maxUncommittedRows);
+        // Seed the watermark from the writer rather than from a fixed sentinel:
+        // engine.getWalWriter() can hand back a pooled WalWriter whose lastSeqTxn still
+        // carries the PREVIOUS owner's commit -- WalWriterPool.WalWriterTenant.refresh()
+        // only calls goActive(), and neither goActive() nor rollback0() clears the field.
+        // Without this seed the first reportCommittedTxn() on such a writer hands the ack
+        // and durable-upload watermarks a seqTxn this connection never committed, parking
+        // a table entry with no work behind it that a demote then waits out. A brand-new
+        // writer reports TableSequencer.NO_TXN (Long.MIN_VALUE), and a non-WAL
+        // TableWriterAPI reports -1, so fresh-table behaviour is unchanged.
+        this.lastReportedSeqTxn = writer.getLastSeqTxn();
     }
 
     public long getLastReportedSeqTxn() {

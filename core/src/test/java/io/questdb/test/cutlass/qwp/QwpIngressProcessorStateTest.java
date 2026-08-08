@@ -1725,12 +1725,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitAllSkipsConsumerWhenFirstRow() throws Exception {
-        // When no uncommitted rows are pending, tud.isFirstRow() returns true and
-        // the consumer must NOT be invoked — the commit is a no-op and wouldn't
-        // advance the sequencer txn.
+    public void testCommitAllSkipsConsumerWhenSeqTxnNegative() throws Exception {
+        // commitAll() has no isFirstRow() guard of its own: it calls tud.commit(false)
+        // and then reportCommittedTxn() unconditionally. What keeps the consumer away
+        // here is reportCommittedTxn()'s FIRST guard clause, seqTxn < 0. This test
+        // creates the table, so its WalWriter is brand new and its lastSeqTxn is still
+        // TableSequencer.NO_TXN (Long.MIN_VALUE); with no rows pending, commit(false)
+        // is a no-op and leaves it there. Long.MIN_VALUE < 0 short-circuits the guard
+        // before the seqTxn <= getLastReportedSeqTxn() clause is even evaluated. That
+        // second clause would hold here too, because the TUD constructor seeds
+        // lastReportedSeqTxn from this same virgin writer, so this test pins the
+        // outcome for a writer with no txn rather than one clause in isolation; the
+        // <= clause has its own test, testCommitAllSkipsSeqTxnInheritedFromPooledWriter.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE first_row_skip (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE no_seq_txn_skip (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -1740,13 +1748,14 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             ) {
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
-                        new Utf8String("first_row_skip"),
+                        new Utf8String("no_seq_txn_skip"),
                         null,
                         null,
                         1
                 );
                 Assert.assertNotNull(tud);
-                // Real writer, no rows ingested → getUncommittedRowCount() == 0 → isFirstRow() is true.
+                // Real writer, no rows ingested, so commit(false) below is a no-op and
+                // the writer never gets a sequencer txn.
                 Assert.assertTrue(tud.isFirstRow());
 
                 boolean[] invoked = new boolean[]{false};
@@ -1757,7 +1766,106 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable", t);
                 }
-                Assert.assertFalse("consumer must be skipped when no rows to commit", invoked[0]);
+                Assert.assertFalse("consumer must be skipped while the writer's seqTxn is negative", invoked[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllSkipsSeqTxnInheritedFromPooledWriter() throws Exception {
+        // A WalWriter returned to the engine pool keeps its lastSeqTxn: the pool's
+        // refresh() only calls goActive(), and neither goActive() nor rollback0()
+        // touches the field. So the next connection that borrows the same writer
+        // starts life seeing a seqTxn IT never committed. reportCommittedTxn must
+        // not hand that inherited txn to the ack / durable-upload watermarks --
+        // doing so parks a (table, seqTxn) entry the connection has no work behind,
+        // which a PRIMARY->REPLICA demote then waits out in
+        // roleChangeCloseWithUploadGrace.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pooled_inherit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+
+            // Connection A: commit one row, then release the writer back to the pool.
+            long committedByA;
+            try (QwpTudCache cacheA = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudA = cacheA.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("pooled_inherit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tudA);
+                tudA.getWriter().newRow(0L).append();
+                try {
+                    cacheA.commitAll();
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                committedByA = tudA.getLastSeqTxn();
+                Assert.assertTrue("connection A must have advanced the txn", committedByA > 0);
+            }
+
+            // Connection B: re-borrows the warm writer and commits NOTHING.
+            try (QwpTudCache cacheB = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudB = cacheB.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("pooled_inherit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tudB);
+                // Premise of the test: the re-borrowed writer really did carry A's txn over.
+                Assert.assertEquals(
+                        "premise: the pooled writer must retain the previous owner's seqTxn",
+                        committedByA,
+                        tudB.getLastSeqTxn()
+                );
+                Assert.assertTrue(tudB.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cacheB.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals(
+                        "an inherited seqTxn must not be reported (got " + reported[0] + ")",
+                        0,
+                        calls[0]
+                );
+
+                // A genuine commit on this connection must still be reported.
+                tudB.getWriter().newRow(1L).append();
+                try {
+                    cacheB.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("connection B's own commit must be reported", 1, calls[0]);
+                Assert.assertEquals(tudB.getLastSeqTxn(), reported[0]);
+                Assert.assertTrue("the reported txn must be B's, not A's", reported[0] > committedByA);
             }
         });
     }
@@ -1804,6 +1912,86 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedReportsTxnCommittedInsideAppend() throws Exception {
+        // Mid-group twin of testCommitAllReportsTxnCommittedInsideAppend, driving the
+        // real cache: every other caller of commitIfMaxUncommittedRowsReached() reaches
+        // it through a test double that overrides it wholesale.
+        // QwpWalAppender.appendToWalColumnar force-commits through
+        // commitIfMaxUncommittedRowsCountReached() once a table crosses
+        // qwp.max.uncommitted.rows. That commit advances the sequencer txn AND drains
+        // the writer, so the deferred group's mid-batch
+        // commitIfMaxUncommittedRowsReached() finds an empty writer. It must still
+        // report the txn: the ack and durable-upload watermarks only ever learn about
+        // committed work through this consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE max_rows_append_commit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=2 mirrors QwpIngressProcessorState, which passes
+            // qwp.max.uncommitted.rows. WAL writers report no metadata service, so
+            // this cache-level value - not the table's WITH clause - drives the
+            // force commit.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 2)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("max_rows_append_commit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: write past the cap, then run the same
+                // force commit the appender runs after endColumnarWrite().
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals(
+                        "commitIfMaxUncommittedRowsReached must report the txn exactly once",
+                        1,
+                        calls[0]
+                );
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Reporting is exactly-once: a second mid-batch pass over unchanged
+                // state must not re-issue the txn.
+                calls[0] = 0;
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an already-reported txn must not repeat", 0, calls[0]);
             }
         });
     }
