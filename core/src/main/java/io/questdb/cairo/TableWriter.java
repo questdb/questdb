@@ -14475,15 +14475,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
-        if (lastPartitionSquashed) {
-            openLastPartition();
-        } else if (targetIsOpenPartition) {
-            // The squash appended into the very partition this writer still holds
-            // open, through the frame's own file descriptors. Our column append
-            // memories were positioned before the append, so they now describe a
-            // SHORTER file than what is on disk. Nothing re-syncs them here: the
-            // lastPartitionSquashed branch above is the only existing refresh, and
-            // it only fires when the SOURCE being squashed is the last partition.
+        if (lastPartitionSquashed || targetIsOpenPartition) {
+            // The squash appended through the frame's own file descriptors into a
+            // partition this writer holds open, so the writer's column append
+            // memories describe a SHORTER file than what is on disk.
             //
             // Left stale, the next truncating close (doClose -> freeColumns ->
             // closeAppendMemoryTruncate -> MemoryMA.close(true)) trims every .d
@@ -14494,12 +14489,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // NULL BINARY whose 8-byte -1 marker is cut mid-way, surfacing as
             // "binary is outside of file boundary".
             //
-            // Drop the stale view the same way the lastPartitionSquashed branch
-            // does -- close WITHOUT truncating, so nothing can trim to the stale
-            // offset -- and re-open the active partition so the writer resumes
-            // from sizes that match what is on disk.
-            closeActivePartition(false);
-            openLastPartition();
+            // lastPartitionSquashed: the squash consumed the last partition, and the
+            // loop above already closed it WITHOUT truncating, so openLastPartition
+            // re-opens the merged partition at its new size.
+            //
+            // targetIsOpenPartition: the target is the partition lastOpenPartitionTs
+            // names, and it is never the last one -- the selection loop only breaks
+            // while targetPartitionIndex < partitionIndexHi - 1, and
+            // lastPartitionSquashed == false means a partition survives after the
+            // target. openLastPartition would therefore re-open the wrong partition,
+            // and it no-ops outright once that last partition is parquet (see
+            // openLastPartitionAndSetAppendPosition), which is exactly how the writer
+            // ends up holding an earlier partition open in the first place. Close
+            // WITHOUT truncating, then re-open the TARGET. openPartition also re-runs
+            // configureFollowerAndWriter / configureCoveringIfNeeded /
+            // populateDenseIndexerList, so the reseal below and the next commit see
+            // live column memories and a dense indexer list that matches indexCount.
+            //
+            // Both branches distress on failure. removeAttachedPartitions,
+            // columnVersionWriter.squashPartition, updatePartitionSizeByTimestamp and
+            // the transient/fixed row-count adjustments above have already run but
+            // neither commit() has fired, so a throw here leaves in-memory state
+            // diverged from _txn. housekeep() absorbs that through
+            // handleHousekeepingException, but squashAllPartitionsIntoOne,
+            // squashPartitions (ALTER TABLE ... SQUASH PARTITIONS) and
+            // squashPartitionForce have no such handler, and setAppendPosition's
+            // non-CairoException paths do not distress on their own.
+            try {
+                if (lastPartitionSquashed) {
+                    openLastPartition();
+                } else {
+                    closeActivePartition(false);
+                    // openPartition re-points partitionTimestampHi at whatever it opens, but the
+                    // target is NOT the last partition here. partitionTimestampHi is the writer's
+                    // append horizon and must keep tracking the last partition -- processWalCommit
+                    // asserts that partitionTimestampHi and txWriter.maxTimestamp resolve to the
+                    // same partition. The squash changes neither, so restore the value it had.
+                    final long lastPartitionTimestampHi = partitionTimestampHi;
+                    final long targetRowCount = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+                    openPartition(targetPartition, targetRowCount);
+                    setAppendPosition(targetRowCount, false);
+                    partitionTimestampHi = lastPartitionTimestampHi;
+                }
+            } catch (Throwable e) {
+                LOG.critical().$("squash succeeded but reopening the active partition failed `").$(e).$('`').$();
+                distressed = true;
+                throw e;
+            }
         }
 
         // The squash grew the target partition's .d files via FrameAlgebra.append.

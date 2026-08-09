@@ -203,16 +203,6 @@ public class PostingGenLookup implements Closeable {
                 - (long) (keyRange + 2) * Integer.BYTES;
     }
 
-    /**
-     * True when the last {@link #snapshotMetadata} fill hit a drop in the
-     * gen-dir's TXN_AT_SEAL sequence and truncated the staging snapshot.
-     * Only actionable once the caller has confirmed the fill ran under a
-     * stable seqlock; before that it just means the read was torn.
-     */
-    public boolean isStagingNonMonotonic() {
-        return staging.nonMonotonicTxnAtSeal;
-    }
-
     public long getGenTxnAtSeal(int gen) {
         return active.genTxnAtSeals.getQuick(gen);
     }
@@ -317,8 +307,7 @@ public class PostingGenLookup implements Closeable {
      * Note this deliberately does NOT assert: this method runs inside the
      * window the caller is allowed to read torn (it re-validates the chain
      * header seqlock afterwards and retries), so a non-monotonic read here is
-     * a legal transient. {@link #isStagingNonMonotonic()} lets the caller act
-     * on it once the seqlock has proven the snapshot self-consistent.
+     * a legal transient.
      *
      * @param entryOffset byte offset of the chain entry in {@code keyMem};
      *                    the gen-dir starts at
@@ -336,7 +325,6 @@ public class PostingGenLookup implements Closeable {
             if (txnAtSeal < prevTxnAtSeal) {
                 // Slot i was never validly published -- and neither was anything
                 // beyond it, since the writer appends gens in order. Truncate.
-                s.nonMonotonicTxnAtSeal = true;
                 return i;
             }
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
@@ -385,7 +373,6 @@ public class PostingGenLookup implements Closeable {
         final IntList genMinKeys = new IntList();
         final LongList genTxnAtSeals = new LongList();
         boolean anySparseGen;
-        boolean nonMonotonicTxnAtSeal;
 
         void clear() {
             genFileOffsets.clear();
@@ -396,7 +383,6 @@ public class PostingGenLookup implements Closeable {
             genMaxValues.clear();
             genTxnAtSeals.clear();
             anySparseGen = false;
-            nonMonotonicTxnAtSeal = false;
         }
     }
 }

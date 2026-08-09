@@ -447,6 +447,7 @@ public class PostingIndexWriter implements IndexWriter {
     public void close() {
         try {
             if (keyMem.isOpen()) {
+                boolean isSized = false;
                 try {
                     // v1 trimmed to KEY_FILE_RESERVED because the only live
                     // bytes were the two header pages. v2 keeps chain entries
@@ -482,8 +483,35 @@ public class PostingIndexWriter implements IndexWriter {
                         liveSize = KEY_FILE_RESERVED;
                     }
                     keyMem.setSize(liveSize);
+                    isSized = true;
+                } catch (Throwable e) {
+                    // Both statements above can throw: peekRegionLimit rejects an
+                    // unreadable or inconsistent header, and setSize -> jumpTo ->
+                    // extend0 -> allocateDiskSpace raises OUTSIDE extend0's own
+                    // self-closing try, so an ENOSPC leaves keyMem OPEN. The
+                    // truncating release below then sizes the trim from
+                    // getAppendOffset(), which no publish ever advances (the chain
+                    // writes the .pk exclusively through absolute putLong(offset, v)),
+                    // so it is still the open-time value -- ftruncating away every
+                    // byte published since this instance opened, and on a fresh index
+                    // the entire live region. Releasing WITHOUT truncation is always
+                    // the safe direction: it leaves at most a page of slack at the
+                    // tail, which the next open ignores because the header's
+                    // regionLimit bounds the live region. Swallow so close() keeps its
+                    // non-throwing contract -- freeIndexers() / releaseIndexerWriters()
+                    // free the sibling indexers in unguarded loops, and O3CopyJob's
+                    // finally { Misc.free(indexWriter); } would replace an in-flight
+                    // O3 exception with this one.
+                    LOG.error().$("could not size posting index key file on close, releasing untruncated [index=")
+                            .$safe(indexName)
+                            .$(", e=").$(e)
+                            .I$();
                 } finally {
-                    Misc.free(keyMem);
+                    if (isSized) {
+                        Misc.free(keyMem);
+                    } else if (keyMem.isOpen()) {
+                        keyMem.close(false);
+                    }
                 }
             }
         } finally {
@@ -2344,6 +2372,48 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.setMemory(pendingCountsAddr, countBufSize, (byte) 0);
 
         activeKeyIds = new int[keyCapacity];
+    }
+
+    /**
+     * Post-condition for every chain publish: the entry's gen-dir TXN_AT_SEAL
+     * sequence must be non-decreasing across all {@code newGenCount} slots we
+     * just made visible. publishToChain writes exactly ONE slot per call and
+     * then publishes a GEN_COUNT covering all of them, so it relies on slots
+     * {@code [0, overrideGenIndex)} already being fully published. This check
+     * makes any writer that breaks that assumption fail loudly, with its own
+     * stack, instead of surfacing later as an unrelated reader tripping over
+     * the same entry.
+     * <p>
+     * Callers invoke this as {@code assert assertGenDirPublished(...)}, so the
+     * whole scan (O(genCount) strided reads of the freshly published gen dir)
+     * is elided when assertions are off. It cannot repair anything in any case:
+     * publishToChain runs it AFTER appendNewEntry / extendHead has already made
+     * the entry and the chain header visible to readers.
+     *
+     * @return true when the sequence is non-decreasing, false (after logging at
+     * CRITICAL) when it regresses
+     */
+    private boolean assertGenDirPublished(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
+        long prev = Long.MIN_VALUE;
+        for (int i = 0; i < newGenCount; i++) {
+            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
+            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (txnAtSeal < prev) {
+                LOG.critical()
+                        .$("posting index published a non-monotonic gen-dir [index=").$safe(indexName)
+                        .$(", entryOffset=").$(entryBase)
+                        .$(", genCount=").$(newGenCount)
+                        .$(", badGen=").$(i)
+                        .$(", txnAtSeal=").$(txnAtSeal)
+                        .$(", prevTxnAtSeal=").$(prev)
+                        .$(", writtenGen=").$(overrideGenIndex)
+                        .$(", sealTxn=").$(sealTxn)
+                        .$(']').$();
+                return false;
+            }
+            prev = txnAtSeal;
+        }
+        return true;
     }
 
     /**
@@ -4546,42 +4616,7 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
-        assertGenDirPublished(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
-    }
-
-    /**
-     * Post-condition for every chain publish: the entry's gen-dir TXN_AT_SEAL
-     * sequence must be non-decreasing across all {@code newGenCount} slots we
-     * just made visible. publishToChain writes exactly ONE slot per call and
-     * then publishes a GEN_COUNT covering all of them, so it relies on slots
-     * {@code [0, overrideGenIndex)} already being fully published. This check
-     * makes any writer that breaks that assumption fail loudly, with its own
-     * stack, instead of surfacing later as an unrelated reader tripping over
-     * the same entry.
-     */
-    private void assertGenDirPublished(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
-        long prev = Long.MIN_VALUE;
-        for (int i = 0; i < newGenCount; i++) {
-            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
-            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-            if (txnAtSeal < prev) {
-                LOG.critical()
-                        .$("posting index published a non-monotonic gen-dir [index=").$safe(indexName)
-                        .$(", entryOffset=").$(entryBase)
-                        .$(", genCount=").$(newGenCount)
-                        .$(", badGen=").$(i)
-                        .$(", txnAtSeal=").$(txnAtSeal)
-                        .$(", prevTxnAtSeal=").$(prev)
-                        .$(", writtenGen=").$(overrideGenIndex)
-                        .$(", sealTxn=").$(sealTxn)
-                        .$(']').$();
-                assert false : "posting index published a non-monotonic gen-dir [index=" + indexName
-                        + ", entryOffset=" + entryBase + ", genCount=" + newGenCount + ", badGen=" + i
-                        + ", txnAtSeal=" + txnAtSeal + ", prevTxnAtSeal=" + prev + ']';
-                return;
-            }
-            prev = txnAtSeal;
-        }
+        assert assertGenDirPublished(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
     }
 
     private void rebuildSidecarsByCopy(long newSealTxn) {

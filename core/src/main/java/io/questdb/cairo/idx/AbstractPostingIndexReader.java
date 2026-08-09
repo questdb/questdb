@@ -1346,19 +1346,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // unpublished slot reads as TXN_AT_SEAL=0 / SIZE=0 /
                 // KEY_COUNT=0, so silently truncating to the prefix returns a
                 // partial index scan -- wrong rows, no signal.
+                // Nothing repairs this in place: trimInFlightTailGens only cuts a
+                // TAIL whose TXN_AT_SEAL is ABOVE the current table txn, so the
+                // 0-tagged slot left by the historical truncation stops the walk
+                // and the entry survives recovery unchanged. REINDEX is the only
+                // route back -- it deletes the .pk and every sealed .pv/.pc for
+                // the column and rebuilds them from the base column data.
                 if (snapshotGenCount < entryScratch.genCount) {
-                    LOG.critical().$(INDEX_CORRUPT)
-                            .$(" [reason=gen-dir TXN_AT_SEAL not monotonic, entryOffset=").$(entryScratch.offset)
-                            .$(", genCount=").$(entryScratch.genCount)
-                            .$(", publishedGenCount=").$(snapshotGenCount)
-                            .$(", sealTxn=").$(entryScratch.sealTxn)
-                            .$(']').$();
-                    throw CairoException.critical(0)
+                    CairoException ex = CairoException.critical(0)
                             .put(INDEX_CORRUPT)
-                            .put(" [reason=gen-dir TXN_AT_SEAL not monotonic, entryOffset=").put(entryScratch.offset)
+                            .put(", rebuild it with REINDEX TABLE <table> COLUMN ").put(indexColumnName)
+                            .put(" LOCK EXCLUSIVE")
+                            .put(" [reason=gen-dir TXN_AT_SEAL not monotonic, column=").put(indexColumnName)
+                            .put(", entryOffset=").put(entryScratch.offset)
                             .put(", genCount=").put(entryScratch.genCount)
                             .put(", publishedGenCount=").put(snapshotGenCount)
+                            .put(", sealTxn=").put(entryScratch.sealTxn)
                             .put(']');
+                    LOG.critical().$safe(ex.getFlyweightMessage()).$();
+                    throw ex;
                 }
                 genLookup.commitSnapshot();
                 genLookup.invalidateCache();
