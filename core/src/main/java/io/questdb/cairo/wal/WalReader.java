@@ -67,16 +67,16 @@ public class WalReader implements Closeable {
     private final FilesFacade ff;
     // Membership index over mappedColumns, keyed by column index: buildMappedColumns() sets bit
     // i iff mappedColumns holds i, and openSymbolMaps tests it once per SymbolMapDiff per DATA
-    // event record. The linear scan it replaces walked mappedColumns, whose length is the width
-    // of the caller's PROJECTION rather than of the base table - a narrow live view over a
-    // 2000-column base scanned 2-3 entries - so the win lands on a full refold under a wide
-    // projection, where that scan repeats over every record in the segment. On the shape the
-    // live-view drain runs per base commit, the incremental same-segment fold, it saves a few
-    // nanoseconds per bind: that fold walks only newly-appended records, and the same bind
-    // munmaps and remaps every mapped column. Only buildMappedColumns() writes the index, in
-    // lockstep with mappedColumns, so the two cannot disagree. A bind reuses the words array and
-    // grows it - one Arrays.copyOf in BitSet.checkCapacity - only when it first projects a column
-    // index above the current capacity, so a steady-state bind allocates nothing.
+    // event record. Master folds every column's diff unconditionally - its openSymbolMaps has no
+    // membership test at all - so against master this reader changes two things: it skips the fold
+    // entirely for a column the projection does not name, and the test that decides that is a
+    // single bit read rather than a scan of the mapped set, so it does not grow with the
+    // projection's width. It still runs once per diff per DATA record, so a full refold pays it
+    // once per record per diff, which is the cost this reader adds over master's unconditional
+    // fold. Only buildMappedColumns() writes the index, in lockstep with mappedColumns, so
+    // the two cannot disagree. A bind reuses the words array and grows it - one Arrays.copyOf in
+    // BitSet.checkCapacity - only when it first projects a column index above the current
+    // capacity, so a steady-state bind allocates nothing.
     private final BitSet mappedColumnFlags = new BitSet();
     // The deduped, in-range column set openSegmentColumns() maps and openSymbolMaps folds
     // when a projection is active: the caller's projection minus out-of-range entries, plus
@@ -195,11 +195,31 @@ public class WalReader implements Closeable {
 
     /**
      * Returns the number of symbol keys accumulated for column {@code col} in the open
-     * segment, or 0 when the column has no symbol map. {@link #openSymbolMaps} seeds the
-     * map with the base table's clean dictionary keys {@code [0, cleanSymbolCount)} and
-     * then applies every data transaction's diff entries, whose keys continue from
-     * {@code cleanSymbolCount}. The resulting key space is therefore dense, so the count
-     * doubles as an exclusive upper bound for a {@code 0..count-1} enumeration.
+     * segment, or 0 when the column has no symbol map. For a column {@link #openSymbolMaps}
+     * folded, that fold seeds the map with the base table's clean dictionary keys
+     * {@code [0, cleanSymbolCount)} and then applies every data transaction's diff entries,
+     * whose keys continue from {@code cleanSymbolCount}. The resulting key space is therefore
+     * dense, so the count doubles as an exclusive upper bound for a {@code 0..count-1}
+     * enumeration.
+     * <p>
+     * A projected bind folds ONLY the columns the projection reaches, so this answers 0 for
+     * every other column - it does not report that column's real dictionary. That empty answer
+     * is the contract, not an oversight: {@link #of} clears and re-folds on every projection
+     * change precisely so a map the current projection no longer reaches reads EMPTY rather
+     * than STALE, and {@code WalReaderRebindTest} observes an unfolded map through exactly
+     * this 0 (as does {@link #getSymbolKey}'s {@link SymbolTable#VALUE_NOT_FOUND}).
+     * <p>
+     * Do NOT guard the accessor with {@code assert !hasProjection || isColumnMapped(col)}: it
+     * would forbid the answer the paragraph above specifies. What holds callers to the
+     * mapped-column contract where the projection and the symbol-table set actually meet are two
+     * {@code assert} statements, so they run under {@code -ea} - tests and CI - and not in a
+     * production server: {@code WalSegmentPageFrameCursor.computeFrame} asserts a projected column
+     * was mapped before it binds a symbol table over it, and {@link #getDataCursor()} asserts it is
+     * never called on a projected reader, whose record can be asked for any column. The guard that
+     * does run in production is a different one: {@code WalSegmentPageFrameCursor.of()} reconciles
+     * the projection against the segment's own metadata by name and type and throws
+     * {@code TableReferenceOutOfDateException} for a projection this segment cannot satisfy, which
+     * is the only way an unmapped projected column is reachable from user input.
      */
     public int getSymbolCount(int col) {
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
@@ -218,6 +238,10 @@ public class WalReader implements Closeable {
      * and match this txn's rows carrying that same local id. Callers pass their clean symbol count,
      * so the lookup only resolves clean-dictionary keys (stable across every txn in the segment); a
      * caller's own new symbols come from its per-txn diff overlay.
+     * <p>
+     * Serves mapped columns only: under a projection a column the projection does not reach has
+     * an unfolded map and resolves to {@link SymbolTable#VALUE_NOT_FOUND} by design. See
+     * {@link #getSymbolCount} for why that empty answer is the contract.
      */
     public int getSymbolKey(int col, CharSequence value, int hiExclusive) {
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
@@ -247,6 +271,10 @@ public class WalReader implements Closeable {
      * rebinds this reader, until {@link #close()}, or until the caller rebinds the
      * view itself via another call. Callers that need two simultaneous views on the
      * same column must supply two distinct {@link DirectString} instances.
+     * <p>
+     * Serves mapped columns only: under a projection a column the projection does not reach has
+     * an unfolded map and resolves to {@code null} by design. See {@link #getSymbolCount} for
+     * why that empty answer is the contract.
      */
     public CharSequence getSymbolValue(int col, int key, DirectString view) {
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;

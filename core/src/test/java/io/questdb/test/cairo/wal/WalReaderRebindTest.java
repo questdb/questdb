@@ -26,7 +26,6 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.wal.WalReader;
@@ -38,7 +37,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -241,6 +239,9 @@ public class WalReaderRebindTest extends AbstractCairoTest {
                         SymbolTable.VALUE_NOT_FOUND,
                         reader.getSymbolKey(2, "ccc", 3)
                 );
+                // The third clause of the same contract: the wider bind resolved this very key to
+                // "ccc" above, so a stale map would hand it back here.
+                Assert.assertNull(reader.getSymbolValue(2, 2, view));
                 Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getSymbolKey(3, "x3", 3));
                 // The columns the narrow projection does name stay mapped.
                 Assert.assertEquals(2_000_000L, reader.getColumn(2).getLong(0));
@@ -267,9 +268,9 @@ public class WalReaderRebindTest extends AbstractCairoTest {
         // result, because removing a hard link whose destination file the writer holds open fails
         // with ACCESS_DENIED on Windows - its own comment says so. Where that delete no-ops the two
         // assertFalse preconditions below go red, and every later assertion would pass for the wrong
-        // reason because the bind never meets a deleted file. The same guard sits on the five
+        // reason because the bind never meets a deleted file. The same guard sits on the three
         // LiveViewSmokeTest cases that assert this precondition; the one on
-        // testRederiveAfterWalLossRefusesWhenAReferencedColumnRetyped carries the full reasoning.
+        // testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift carries the full reasoning.
         Assume.assumeFalse("the WAL symbol dictionary delete is best-effort on Windows", Os.isWindows());
         assertMemoryLeak(() -> {
             final String walName;
@@ -279,9 +280,9 @@ public class WalReaderRebindTest extends AbstractCairoTest {
                 walName = walWriter.getWalName();
                 Assert.assertTrue(
                         "the clean band must be linked into the WAL directory, or the diff carries no clean symbol count",
-                        symbolOffsetFileExists(token, walName, "s")
+                        walSymbolOffsetFileExists(token, walName, "s")
                 );
-                Assert.assertTrue(symbolOffsetFileExists(token, walName, "si"));
+                Assert.assertTrue(walSymbolOffsetFileExists(token, walName, "si"));
 
                 execute("ALTER TABLE base DROP COLUMN s");
                 execute("ALTER TABLE base DROP COLUMN si");
@@ -290,9 +291,9 @@ public class WalReaderRebindTest extends AbstractCairoTest {
                 walWriter.goActive();
                 Assert.assertFalse(
                         "the writer must delete the WAL-level clean band on DROP COLUMN",
-                        symbolOffsetFileExists(token, walName, "s")
+                        walSymbolOffsetFileExists(token, walName, "s")
                 );
-                Assert.assertFalse(symbolOffsetFileExists(token, walName, "si"));
+                Assert.assertFalse(walSymbolOffsetFileExists(token, walName, "si"));
             }
 
             // The projection a view over SELECT ts, v would compile to: it names neither
@@ -662,14 +663,6 @@ public class WalReaderRebindTest extends AbstractCairoTest {
             row.append();
             walWriter.commit();
             return walWriter.getWalName();
-        }
-    }
-
-    private static boolean symbolOffsetFileExists(TableToken token, String walName, String columnName) {
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(walName);
-            TableUtils.offsetFileName(path, columnName, TableUtils.COLUMN_NAME_TXN_NONE);
-            return configuration.getFilesFacade().exists(path.$());
         }
     }
 

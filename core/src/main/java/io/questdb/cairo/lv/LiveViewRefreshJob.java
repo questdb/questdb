@@ -205,6 +205,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // hold a REPLACE_RANGE delete band that denies the ROWS discovery its key domain.
     private boolean applyAheadInsertOnly;
     private final ApplyWal2TableJob applyJob;
+    // Test-only observability for the WAL-loss re-derive's drift branch. Counts the
+    // re-derives this worker completed only after recompiling against changed base
+    // metadata, so the plain success path leaves it at 0. Kept on the worker rather
+    // than the view because it is not a production metric; a test reads it to prove
+    // which branch ran - the two branches differ in nothing else a test can observe.
+    private long baseMetadataDriftRecompileCount;
     private final BlockFileWriter blockFileWriter;
     // Sits directly under the window cursor on the two repair replays that
     // re-version logical roots, so each boundary freezes between two rows rather
@@ -288,6 +294,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseApplyDuringRederiveForTest;
+    // Test-only: an extra closeable whose close() throws. consumeBaseMetadataCloseFaultForTest
+    // closes it and returns the resulting throwable as the primary of the very freeBestEffort call
+    // that closes the pooled base metadata, so the fault lands in closeFailure exactly where a real
+    // TableMetadata.close() failure would. Consuming it inside the close statement is what pins the
+    // close's position: relocating that statement into a try-with-resources takes the fault with it,
+    // and the test's "the fault fired" assertion goes red.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private QuietCloseable simulateBaseMetadataCloseFailureForTest;
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
     // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
     // was busy, or its memory-pressure control backed off). Lets a test drive the
@@ -401,6 +416,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.memoryPool = new PageFrameMemoryPool(engine.getConfiguration(), 0L);
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
+    }
+
+    /**
+     * Test-only: number of WAL-loss re-derives this worker completed through the base-metadata drift
+     * branch of {@link #rederiveFromAppliedBaseAfterWalLoss} - the ones that recompiled through
+     * {@link #recoverFromBaseMetadataDrift} and retried. A re-derive that succeeded on the plain path
+     * does not count.
+     */
+    @TestOnly
+    public long baseMetadataDriftRecompileCountForTest() {
+        return baseMetadataDriftRecompileCount;
     }
 
     @Override
@@ -524,6 +550,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateBaseApplyDuringRederiveForTest(Runnable action) {
         this.simulateBaseApplyDuringRederiveForTest = action;
+    }
+
+    /**
+     * Test-only: arms a one-shot closeable that
+     * {@link #isRederiveRefusedForBrokenDependency} closes as part of the same statement that closes
+     * the pooled base metadata (see {@link #consumeBaseMetadataCloseFaultForTest}), so the metadata
+     * tenant still returns to the pool and {@code assertMemoryLeak} keeps its force. A
+     * {@code close()} that throws is the only way a test can produce a close failure there:
+     * {@code TableMetadataPool} has no reachable path that makes its tenant's {@code close()} throw
+     * (see the comment on the close itself). The read-failure {@code catch} releases the armed
+     * closeable too, so arming it never leaks when the read throws first.
+     * <p>
+     * Because the close statement itself consumes the fault, that statement is what the test pins:
+     * moving the close back inside a try-with-resources deletes the statement, the fault is never
+     * consumed, and the test's "the injected close fault must have run" assertion goes red.
+     * Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateBaseMetadataCloseFailureForTest(QuietCloseable closeFault) {
+        this.simulateBaseMetadataCloseFailureForTest = closeFault;
     }
 
     /**
@@ -8371,6 +8417,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only seam: closes the armed close fault, if any, and returns the throwable its
+     * {@code close()} raised, so a caller can hand it to {@code Misc.freeBestEffort} as the primary
+     * of the same call that closes the real resource. Disarms one-shot. Returns null in production,
+     * where the field is never set, at a cost of one null check.
+     *
+     * @see #setSimulateBaseMetadataCloseFailureForTest
+     */
+    @TestOnly
+    private @Nullable Throwable consumeBaseMetadataCloseFaultForTest() {
+        if (simulateBaseMetadataCloseFailureForTest == null) {
+            return null;
+        }
+        final QuietCloseable closeFault = simulateBaseMetadataCloseFailureForTest;
+        simulateBaseMetadataCloseFailureForTest = null;
+        return Misc.freeBestEffort(null, closeFault);
+    }
+
+    /**
      * Decides whether the WAL-loss re-derive must refuse outright because the base's applied
      * metadata no longer resolves every column the view REFERENCES under the same name AND type
      * ({@link LiveViewInstance#findFirstMissingOrRetypedColumn}, the same predicate
@@ -8382,7 +8446,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Reads the base metadata FRESH on every call, so
      * {@link #rederiveFromAppliedBaseAfterWalLoss} can ask both before the replay and again after a
      * {@link TableReferenceOutOfDateException} - the drift proves the base metadata moved since the
-     * first read, and the recompile that follows would adopt whatever it moved to.
+     * first read, and the recompile that follows would adopt whatever it moved to. The answer is
+     * only as fresh as the read that produced it: this method closes the metadata before it returns,
+     * and the caller's replay and recompile each open their own base reader afterwards, so asking
+     * again NARROWS the window in which a structural change slips past unseen - it does not close
+     * it.
      * <p>
      * A metadata read that FAILS is not a refusal. "Cannot read the metadata" and "the metadata
      * says a referenced column broke" are different answers: the read can fail for reasons that have
@@ -8391,7 +8459,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * this runs when the flush-retry budget is already spent, so refusing on a doubt would brick a
      * view over a healthy base with no second chance. An unreadable base falls through to the
      * replay, whose own {@code getReader} opens the base for real and faults loudly if it truly is
-     * unreadable. A read that SUCCEEDS and names a broken dependency is a decision, and refuses.
+     * unreadable. A read that SUCCEEDS and names a broken dependency is a decision, and refuses -
+     * including when the metadata close that follows then fails, which is why the close sits
+     * outside the guarded region rather than inside a try-with-resources.
      * <p>
      * On refusal, stashes the offending column name as the pending invalidation reason, which
      * {@link #handleRefreshFailure} invalidates with, so {@code live_views().invalidation_reason}
@@ -8402,13 +8472,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private boolean isRederiveRefusedForBrokenDependency(LiveViewInstance instance, TableToken baseToken, CairoException cause) {
         final String viewName = instance.getDefinition().getViewName();
         final String brokenColumn;
-        try (TableMetadata baseMetadata = engine.getTableMetadata(baseToken)) {
+        TableMetadata baseMetadata = null;
+        try {
+            baseMetadata = engine.getTableMetadata(baseToken);
             brokenColumn = instance.findFirstMissingOrRetypedColumn(baseMetadata);
         } catch (Throwable e) {
+            Misc.free(baseMetadata, e);
+            consumeBaseMetadataCloseFaultForTest(); // @TestOnly no-op in production; releases an armed fault the close below never reaches
             LOG.error().$("live view could not read the applied base metadata before re-deriving, proceeding [view=")
                     .$(viewName)
                     .$(", error=").$(e).I$();
             return false;
+        }
+        // The close sits OUTSIDE the guard above on purpose: a close that fails cannot unmake the
+        // answer the read already produced. A try-with-resources runs its implicit close BEFORE the
+        // catch clause of the same statement, so any close fault would route an already-named broken
+        // column into the "proceeding" branch and let the re-derive adopt the new schema. That is a
+        // language-level guarantee rather than a defence against a known fault: TableMetadataPool
+        // has no reachable path that makes this tenant's close() throw today - AbstractMultiTenantPool
+        // only ever claims an UNALLOCATED slot (releaseAll's idle sweep, notifyDropped, lock), and the
+        // one branch that erases a LIVE borrower's slot, releaseAll at pool shutdown, calls goodbye()
+        // first, which nulls the tenant's pool and entry so close() never reaches returnToPool at all.
+        // Log the close failure and drop it: the caller's contract is that this check answers rather
+        // than throws.
+        //
+        // consumeBaseMetadataCloseFaultForTest() is null in production and costs one null check; a
+        // test arms it to make this very close report a failure. It sits INSIDE this statement so
+        // that the statement is what a mutation has to delete or move, and deleting it deletes the
+        // fault's consumption too.
+        final Throwable closeFailure = Misc.freeBestEffort(consumeBaseMetadataCloseFaultForTest(), baseMetadata);
+        if (closeFailure != null) {
+            LOG.error().$("live view could not close the applied base metadata after the dependency check [view=")
+                    .$(viewName)
+                    .$(", error=").$(closeFailure).I$();
         }
         if (brokenColumn == null) {
             return false;
@@ -8490,13 +8586,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * runs clean.
      * <p>
      * That question is asked TWICE, against freshly read metadata each time: once before the replay,
-     * and again inside the drift catch below, before the recompile. Both are needed because
-     * {@code ApplyWal2TableJob} applies a structural change to the base writer BEFORE it calls
-     * {@code invalidateLiveViewsForBaseSchemaChange}, so an {@code ALTER TABLE base ALTER COLUMN
-     * <referenced> TYPE ...} landing between the first read and the replay's reader open passes the
-     * entry check on the OLD metadata and surfaces only as the drift - and the recompile would then
-     * adopt the NEW schema and republish the whole tier from it. The invalidation that lands
-     * microseconds later does not undo that: an invalid view stays queryable.
+     * and again inside the drift catch below, before the recompile. The second ask earns its keep
+     * because {@code ApplyWal2TableJob} applies a structural change to the base writer BEFORE it
+     * calls {@code invalidateLiveViewsForBaseSchemaChange}, so an {@code ALTER TABLE base ALTER
+     * COLUMN <referenced> TYPE ...} landing between the first read and the replay's reader open
+     * passes the entry check on the OLD metadata and surfaces only as the drift - by which point the
+     * first answer has decided nothing about the schema the recompile is about to adopt.
+     * <p>
+     * Neither ask CLOSES that window; both only narrow it. The check reads the base metadata under
+     * its own guarded read and closes it before returning, and the recompile re-reads the
+     * metadata independently - {@code ensureCompiledFactory} opens its own base reader - so nothing
+     * pins a metadata version across the gap. A structural change landing inside that gap (one
+     * {@code prepareForBaseSchemaRecompile} plus one compile wide) still passes the second check,
+     * and the recompile still adopts the NEW schema and republishes the whole tier from it. Pinning
+     * the metadata open across the whole recovery would close the gap, at the cost of holding a
+     * pooled metadata tenant across a long call. What bounds the residue today is the apply side:
+     * {@code invalidateLiveViewsForBaseSchemaChange} marks the registered instance invalid
+     * microseconds later, and an invalid view stays queryable - so the worst surviving outcome is an
+     * already-invalid view holding rows recomputed from the new schema rather than the stale
+     * old-schema ones.
      * <p>
      * When every referenced column survives but the base metadata version moved anyway, the cached
      * plan is stale and {@code LiveViewRefreshSqlExecutionContext.getReader} refuses the reader with
@@ -8569,7 +8677,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             // The drift proves the base metadata moved AFTER the entry check read it, so that read
             // decided nothing about the schema the recompile is about to adopt. Ask again, against
-            // metadata read now.
+            // metadata read now. That narrows the window to the gap between this read and the
+            // recompile's own reader open; it does not close it (see the method javadoc).
             if (isRederiveRefusedForBrokenDependency(instance, baseToken, cause)) {
                 return false;
             }
@@ -8599,6 +8708,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$(recompiledError).I$();
                 return false;
             }
+            // The recompiled retry is the only thing separating this outcome from the plain success
+            // path above - both leave the view valid over the same rows - so a test asserting the
+            // outcome alone cannot tell them apart. Count the branch here, where it succeeded, and
+            // the plain path stays at 0. @TestOnly, read by LiveViewSmokeTest.
+            baseMetadataDriftRecompileCount++;
             LOG.info().$("live view re-derived from the applied base after base WAL loss and a base metadata change [view=")
                     .$(viewName)
                     // Not baseAppliedSeqTxn: the recompiled recovery re-reads the base writer txn
