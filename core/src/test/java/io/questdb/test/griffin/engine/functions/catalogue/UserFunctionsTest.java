@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -38,12 +39,25 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class UserFunctionsTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(UserFunctionsTest.class);
     private static final String SQL = "SELECT current_user(), session_user() FROM long_sequence(";
+
+    @Override
+    @Before
+    public void setUp() {
+        // Small page frames so the 1000-row parallel-filter table splits into several frames dispatched
+        // across the workers, keeping the async filter plan deterministic instead of hinging on the
+        // ambient default (1M rows = one frame, where async selection is marginal and suite-order
+        // sensitive). Harmless for the other single-context tests here. See RuntimeConstFunctionTest.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
+        super.setUp();
+    }
 
     @Test
     public void testUserFunctionsAreSharedAcrossParallelWorkers() throws Exception {
