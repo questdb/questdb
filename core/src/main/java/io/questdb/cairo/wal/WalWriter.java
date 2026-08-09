@@ -3194,12 +3194,30 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                 // this means we have rolled uncommitted rows to a new segment already
                                 // we should switch metadata to this new segment
                                 path.trimTo(pathSize).slash().put(segmentId);
-                                // this will close old _meta file and create the new one
-                                metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-
+                                // CREATE BEFORE PUBLISH -- the same rule the addColumn and renameColumn
+                                // in-segment paths above already follow, and the last place that still got it
+                                // backwards. The segment _meta written by switchTo describes the column with
+                                // its NEW type, and apply sizes the files from that type: converting to a
+                                // var-size type makes apply demand an aux (.i) vector that only
+                                // openColumnFiles creates. Publishing first left a window where the durable
+                                // segment _meta named a VARCHAR column whose .i file did not exist yet, and a
+                                // crash inside it (the _meta.swp barrier) made the segment permanently
+                                // unappliable: "WAL segment column too short for committed row range
+                                // [... actual=-1]", actual=-1 being a MISSING file, and the table suspended
+                                // for good while the sequencer ran ahead.
+                                //
+                                // So: create the files, fsync the segment directory so their names are
+                                // durable, and only then publish the metadata that points at them.
+                                final int segPathLen = path.size();
                                 if (segmentRowCount == 0) {
-                                    openColumnFiles(columnName, newType, newColumnIndex, path.size());
+                                    openColumnFiles(columnName, newType, newColumnIndex, segPathLen);
                                 }
+                                if (walCommitMode() != CommitMode.NOSYNC) {
+                                    final long segDirFd = TableUtils.openRONoCache(ff, path.trimTo(segPathLen).$(), LOG);
+                                    ff.fsyncAndClose(segDirFd);
+                                }
+                                // this will close old _meta file and create the new one
+                                metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
                             }
 
                             if (rowsRemainInCurrentSegment == 0) {

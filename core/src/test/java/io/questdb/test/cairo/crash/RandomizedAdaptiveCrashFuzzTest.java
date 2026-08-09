@@ -460,6 +460,33 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
     }
 
+    /**
+     * Regression pin: the in-segment ALTER COLUMN TYPE path must create a converted column's files BEFORE it
+     * publishes the segment {@code _meta} that names them.
+     * <p>
+     * Converting FIXED -> VAR-SIZE makes apply demand an aux (.i) vector that only {@code openColumnFiles}
+     * creates, so publishing first left a window where durable segment metadata described a VARCHAR column
+     * whose {@code .i} file did not exist. A crash inside it (the {@code _meta.swp} barrier) made the segment
+     * permanently unappliable -- "WAL segment column too short for committed row range [... actual=-1]",
+     * actual=-1 being a MISSING file -- and suspended the table for good while the sequencer ran ahead.
+     * The sibling addColumn and renameColumn paths were fixed earlier; this one was missed.
+     * <p>
+     * This seed is the control. It reproduces deterministically at k=542 on the exact durability op
+     * {@code msync <table>/_meta.swp}, and it is pinned rather than unit-tested because the branch needs
+     * {@code !rollSegmentOnNextRow && segmentRowCount == 0} -- a WalWriter state a direct unit test does not
+     * reach (an attempt to build one recorded no ops at all: the switch is deferred to the next row write).
+     * Reverting the reorder in {@code WalWriter.changeColumnType} turns this red.
+     * <p>
+     * Found by the continuous soak on two independent seeds (ADO #259841 W0, #259886 WN); it PREDATES the
+     * durable-epoch work -- it reproduces with both the epoch guard and the recovery cross-check disabled.
+     */
+    @Test
+    public void testChangeColumnTypeSegmentPublishOrderCrashSafeW0() throws Exception {
+        Assume.assumeTrue("crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
+                Boolean.getBoolean(NIGHTLY_PROP));
+        runWithCrashFacade(() -> runSeedSweep(-6969352248487674537L, -4282943605332762306L, 0, 600));
+    }
+
     // NIGHTLY-only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema. Sweep a
     // large prefix to validate the machinery and W=0 monotonicity without duplicating the full-history bar
     // covered by testFullLibraryW0. CI validates the machinery with testConvertPartitionCrashSafeW0 instead.
