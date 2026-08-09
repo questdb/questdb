@@ -9013,6 +9013,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsSkipRowsTranslatesNativeKeyFromSecondSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v INT)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            // ta's full dictionary assigns native key 1 to 'wrong', although the filter exposes
+            // only key 0. tb assigns the same native key 1 to 'keep'. Skipping the sole visible ta
+            // row and tb's first row lands directly on 'keep', without a preceding hasNext() that
+            // could update the projection's source tracker through the ordinary A-to-B transition.
+            execute("INSERT INTO ta VALUES ('a', 1), ('wrong', 0)");
+            execute("INSERT INTO tb VALUES ('drop'), ('keep')");
+
+            try (RecordCursorFactory factory = select(
+                    "SELECT s FROM ta WHERE v = 1 UNION ALL SELECT s FROM tb"
+            )) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    counter.set(2);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                    Assert.assertEquals(0, counter.get());
+
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    TestUtils.assertEquals("keep", resultTable.valueOf(record.getInt(0)));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsStatefulSourceResolvesKeyAndTextAlike() throws Exception {
         // list() and the rnd_symbol_* generators draw a fresh value on EVERY accessor call, so
         // getInt() and getSymbol() on one row are two independent draws. The projection reads the
