@@ -35,9 +35,17 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // Highest seqTxn already handed to the ingress committed-txn consumer (the QWP
     // ack / durable-upload watermarks). Compared against getLastSeqTxn() so a commit
     // made ANYWHERE -- including QwpWalAppender's force-commit at the
-    // max-uncommitted-rows cap, which happens outside QwpTudCache entirely -- is still
-    // reported exactly once. The constructor seeds it from the writer, so only advances
-    // this connection produced can ever be reported.
+    // max-uncommitted-rows cap, which happens outside QwpTudCache entirely -- still
+    // reaches the consumer, and reaches it exactly once ONCE THE CONSUMER ACCEPTS IT.
+    // reportCommittedTxn advances this watermark only after the consumer returns, so a
+    // consumer that throws leaves the seqTxn behind for the cache's next pass to offer
+    // again: the cache-level contract is at-least-once, exactly-once after acceptance.
+    // The constructor seeds it from the writer, so a previous
+    // owner of the pooled writer cannot have its advance reported on this connection.
+    // The seed bounds WHOSE advances reach the consumer, not WHAT KIND of advance: an
+    // implicit ALTER advances getLastSeqTxn() the same way a data commit does, so a
+    // metadata-only txn can be reported on its own. QwpTudCache.reportCommittedTxn
+    // accepts that rather than gating on it; the reasoning lives there.
     // Never reused across connections: QwpIngressProcessorState.onDisconnected() (and
     // QwpTudCache.close()) call QwpTudCache.reset(), which frees every TUD. The writer
     // underneath is pooled and outlives the TUD, which is what the constructor seed

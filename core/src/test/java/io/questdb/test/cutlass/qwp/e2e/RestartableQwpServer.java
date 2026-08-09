@@ -52,8 +52,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * worker pool keeps test scheduling deterministic.
  */
 public final class RestartableQwpServer implements AutoCloseable {
+    static final int PORT_PICK_ATTEMPTS = 5;
     private static final Log LOG = LogFactory.getLog(RestartableQwpServer.class);
-    private static final int PORT_PICK_ATTEMPTS = 5;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
@@ -115,12 +115,24 @@ public final class RestartableQwpServer implements AutoCloseable {
      * loopback address at the moment we hand it out.
      */
     public static int pickFreePort() throws IOException {
+        return pickFreePort(RestartableQwpServer::allocateWildcardPort);
+    }
+
+    /**
+     * Seam over {@link #pickFreePort()}: the caller supplies the candidate ports the loopback
+     * probe then vets. Every caller outside this class's own unit test uses the no-argument
+     * overload, which feeds it {@code new ServerSocket(0)}. The unit test feeds it a port it
+     * holds a loopback listener on, which is the only way a test can reach the retry and
+     * exhaustion branches deterministically: occupancy is the only bind failure a test can
+     * arrange, and waiting for an ephemeral allocator to hand out an occupied port is a wait the
+     * javadoc above explains nobody can promise ever ends. The probe's bind can fail for other
+     * reasons too -- see the throw below -- but no test drives those.
+     */
+    static int pickFreePort(PortCandidateSupplier candidates) throws IOException {
         int port = -1;
         IOException lastError = null;
         for (int attempt = 1; attempt <= PORT_PICK_ATTEMPTS; attempt++) {
-            try (ServerSocket wildcard = new ServerSocket(0)) {
-                port = wildcard.getLocalPort();
-            }
+            port = candidates.next();
             try (ServerSocket loopback = new ServerSocket(port, 0, InetAddress.getLoopbackAddress())) {
                 return loopback.getLocalPort();
             } catch (IOException shadowed) {
@@ -133,8 +145,14 @@ public final class RestartableQwpServer implements AutoCloseable {
         }
         // The loopback bind can also fail for reasons other than occupancy, such as a sandbox
         // denying the bind. Carry the last failure as the cause so the caller sees which one hit.
-        throw new IllegalStateException("could not pick a port free on both 0.0.0.0 and 127.0.0.1 after "
+        throw new IllegalStateException("no candidate port bound on 127.0.0.1 after "
                 + PORT_PICK_ATTEMPTS + " attempts [lastPort=" + port + ']', lastError);
+    }
+
+    private static int allocateWildcardPort() throws IOException {
+        try (ServerSocket wildcard = new ServerSocket(0)) {
+            return wildcard.getLocalPort();
+        }
     }
 
     @Override
@@ -201,5 +219,10 @@ public final class RestartableQwpServer implements AutoCloseable {
         }
         server = null;
         workerPool = null;
+    }
+
+    @FunctionalInterface
+    interface PortCandidateSupplier {
+        int next() throws IOException;
     }
 }

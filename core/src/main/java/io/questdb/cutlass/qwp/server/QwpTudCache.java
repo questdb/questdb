@@ -404,6 +404,10 @@ public class QwpTudCache implements QuietCloseable {
      * table whose sequencer txn is ahead of the last seqTxn reported for it, even
      * when the commit that advanced it happened in an earlier call or outside this
      * class.
+     * <p>
+     * An implementation must not re-enter the cache's commit entry points. The
+     * watermark advances only after {@code accept} returns, so a re-entrant consumer
+     * finds the same seqTxn still unreported and recurses.
      */
     @FunctionalInterface
     public interface CommittedTxnConsumer {
@@ -427,6 +431,53 @@ public class QwpTudCache implements QuietCloseable {
      * Reconciliation is also why a future commit site cannot reintroduce the bug:
      * correctness depends on the writer's seqTxn, not on the caller remembering to
      * bracket anything.
+     * <p>
+     * A reported advance is not necessarily a data commit. Structural txns share the
+     * seqTxn space with data txns, so the implicit ALTER {@code QwpWalAppender} runs for
+     * a column the frame introduces advances the writer's seqTxn as well; a
+     * FLAG_DEFER_COMMIT frame below the max-uncommitted-rows cap therefore reports that
+     * metadata-only txn with no rows behind it. This method accepts such a txn rather
+     * than gating on it, on three counts.
+     * The ALTER is permanent work this connection produced, and a rollback of the
+     * deferred group does not undo it. No DURABLE ack can outrun an upload:
+     * {@code QwpIngressProcessorState.collectDurableProgress} forwards only the
+     * registry's own uploadedSeqTxn, never the pending value, and on the normal path
+     * the group-closing {@link #commitAll(CommittedTxnConsumer)} supersedes the pending
+     * entry with the data txn -- on a rollback or error exit, and on a normal exit that
+     * commits no data txn for that table, the metadata-only entry instead stands until
+     * {@code QwpIngressProcessorState.onDurableAckSent()} prunes it once the upload
+     * covers that seqTxn, or {@code onDisconnected()} clears it. (The cumulative OK ack
+     * is a different watermark and is not upload-gated at all; this count is about the
+     * durable ack only.) And the upload watermark already had to clear structure txns
+     * before this change: a data txn reported after an implicit ALTER is numbered above
+     * it, so a registry that could not advance past a metadata-only txn would already
+     * stall on the far commoner non-deferred ALTER-then-insert frame. That last count
+     * is an assumption about the enterprise uploader -- this repository ships only
+     * {@code DefaultDurableAckRegistry}, which is disabled and returns -1 -- so the
+     * first two counts have to carry the argument on their own. Gating instead on "a
+     * commit drained the writer in this call" would reinstate #7482 for a frame whose
+     * force-commit is followed by further rows.
+     * <p>
+     * The one visible effect is a delay: a demote landing between such a frame and its
+     * group-closing commit now waits for the ALTER's upload coverage, bounded for a live
+     * client by {@code QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS},
+     * where the previous shape waited for nothing on that table. That constant is not a
+     * wall-clock teardown bound, as its own declaration comment states: the deferred
+     * close re-evaluates coverage-or-expiry only on inbound, recv-driven re-entry, so a
+     * silent peer lingers deferred until the transport idle reaper tears the connection
+     * down.
+     * <p>
+     * The consumer runs BEFORE the watermark advances, so at THIS layer a consumer that
+     * throws leaves the txn unreported and the next call to this method offers it again,
+     * at the cost of a duplicate set of overwriting map puts in
+     * {@code QwpIngressProcessorState.recordCommittedTable}. On the current production
+     * wiring that next call never comes: {@code QwpIngressProcessorState.commit()} and
+     * {@code commitIfMaxUncommittedRowsReached()} call {@code setDistressed()} when the
+     * consumer throws, and the frame handler's {@code state.clear()} then frees every
+     * TUD, so the txn is lost under either ordering -- harmlessly, because the frame is
+     * NACKed and the client replays from its acked watermark. This ordering is defence
+     * in depth for a future caller that does not distress the cache, not a recovery that
+     * runs today.
      */
     private static void reportCommittedTxn(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) {
         if (consumer == null || tud.isDropped()) {
@@ -437,12 +488,12 @@ public class QwpTudCache implements QuietCloseable {
         if (seqTxn < 0 || seqTxn <= tud.getLastReportedSeqTxn()) {
             return;
         }
-        tud.setLastReportedSeqTxn(seqTxn);
         consumer.accept(
                 tud.getTableToken().getTableName(),
                 tud.getTableToken().getDirName(),
                 seqTxn
         );
+        tud.setLastReportedSeqTxn(seqTxn);
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
