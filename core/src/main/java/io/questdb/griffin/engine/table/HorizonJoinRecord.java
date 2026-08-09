@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -51,7 +51,6 @@ public class HorizonJoinRecord implements Record {
     public static final int SOURCE_SEQUENCE = 1;
     public static final int SOURCE_SLAVE = 2;
 
-    private final BorrowedArray nullArray = new BorrowedArray();
     private int[] columnIndices;
     private int[] columnSources;
     private long horizonTimestamp;
@@ -65,8 +64,21 @@ public class HorizonJoinRecord implements Record {
         if (src != null) {
             return src.getArray(columnIndices[col], columnType);
         }
-        nullArray.ofNull();
-        return nullArray;
+        return ArrayConstant.NULL;
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        // Forward, so a page-frame source keeps its direct shape-header read. Record's default would
+        // fall back to getArray() and materialize an ArrayView for every row.
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArrayDimLen(columnIndices[col], columnType, dim) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArrayDouble1d2d(columnIndices[col], columnType, idx0, idx1) : Double.NaN;
     }
 
     @Override

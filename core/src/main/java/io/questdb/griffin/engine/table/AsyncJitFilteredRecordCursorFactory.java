@@ -59,6 +59,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
@@ -161,6 +162,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    @TestOnly
+    public AsyncJitFilterAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -221,6 +228,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public @NotNull Function getFilter() {
         return filter;
+    }
+
+    // Stable iff the retained filter and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        return filter.isNonDeterministic() || base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return filter.isStableWithinExecution() && base.isStableWithinExecution();
     }
 
     @Override
