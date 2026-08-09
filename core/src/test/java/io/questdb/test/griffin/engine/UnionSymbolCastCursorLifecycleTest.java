@@ -234,6 +234,47 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     }
 
     @Test
+    public void testNativeKeyCacheFallsBackToMapAfterDenseGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
+            final int distinctCount = 40;
+            final String[][] rows = new String[34][];
+            // Key 16 arrives before any low keys, so sparse-first admission puts it in the map.
+            rows[0] = new String[]{"v16"};
+            for (int i = 0; i < 32; i++) {
+                rows[i + 1] = new String[]{"v" + i};
+            }
+            // By now the dense array covers key 16, but its zero slot must still fall back to the
+            // translation that predates the growth rather than re-interning the value.
+            rows[33] = new String[]{"v16"};
+
+            final StaticSymbolCursorFactory base =
+                    new StaticSymbolCursorFactory(denseKeySymbolTable(distinctCount), rows);
+            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    final int[] keys = new int[rows.length];
+                    for (int i = 0; i < rows.length; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        keys[i] = record.getInt(0);
+                        TestUtils.assertEquals(rows[i][0], symbolTable.valueOf(keys[i]));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertEquals(keys[0], keys[17]);
+                    Assert.assertEquals(keys[0], keys[33]);
+                    Assert.assertEquals(32, function.internCount);
+                }
+                assertCursorClosed(base, tracker, function);
+            } finally {
+                releaseTracker(tracker);
+            }
+        });
+    }
+
+    @Test
     public void testNativeKeyCacheGrowsDenseRegionUnderTrackerAndReleases() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();

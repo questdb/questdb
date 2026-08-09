@@ -278,6 +278,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     private static class NativeKeyMap implements QuietCloseable {
         private static final int INITIAL_DENSE_CAPACITY = 16;
+        // A dense int slot costs 4 bytes; an entry in DirectIntIntHashMap costs 16 bytes at its
+        // configured 0.5 load factor. Do not grow the array beyond memory parity with the number
+        // of translations it actually contains.
+        private static final int MAX_DENSE_SLOTS_PER_ENTRY = 4;
         private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
         private static final int NOT_FOUND = -1;
         private final DirectIntIntHashMap map = new DirectIntIntHashMap(
@@ -290,6 +294,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         );
         private long denseAddress;
         private int denseCapacity;
+        private int denseEntryCount;
         private int denseLimit;
         private boolean isClosed;
         @Nullable
@@ -300,6 +305,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             try {
                 denseAddress = Unsafe.free(denseAddress, (long) denseCapacity * Integer.BYTES, MEMORY_TAG, memoryTracker);
                 denseCapacity = 0;
+                denseEntryCount = 0;
                 denseLimit = 0;
             } finally {
                 map.close();
@@ -312,35 +318,26 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         private int get(int sourceKey) {
             if (sourceKey >= 0 && sourceKey < denseCapacity) {
                 final int stored = Unsafe.getInt(denseAddress + ((long) sourceKey << 2));
-                return stored == 0 ? NOT_FOUND : stored - 1;
+                if (stored != 0) {
+                    return stored - 1;
+                }
             }
-            if (sourceKey < denseLimit) {
-                // Below the dense limit but past what the array covers, so it has never been
-                // translated: put() routes every such key to the array, never to the map.
-                return NOT_FOUND;
-            }
+            // A key may be below the dense array's current capacity yet live in the map: an
+            // earlier sparse sighting can precede later density-driven array growth.
             return map.isOpen() ? map.get(sourceKey) : NOT_FOUND;
         }
 
         private void growDense(int requiredCapacity) {
-            // put() routes a key here only when it is below denseLimit, so requiredCapacity never
-            // exceeds denseLimit and denseLimit is at least 1.
             assert denseLimit > 0 && requiredCapacity <= denseLimit;
-            // Never size past denseLimit. get() claims every key below denseCapacity for the array
-            // while put() sends every key from denseLimit up to the map, so an array wider than the
-            // limit strands the keys in between: written to the map, looked up in the array. They
-            // then never resolve from the cache and the record re-interns their text on every row.
-            // Without the clamp the INITIAL_DENSE_CAPACITY floor opens that window for any
-            // dictionary of fewer than INITIAL_DENSE_CAPACITY symbols that hands out a key inside
-            // it. Clamping cannot under-size the array, given requiredCapacity <= denseLimit.
-            int newCapacity = Math.min(denseLimit, Math.max(INITIAL_DENSE_CAPACITY, denseCapacity));
-            while (newCapacity < requiredCapacity) {
-                newCapacity <<= 1;
-                if (newCapacity < 0 || newCapacity >= denseLimit) {
-                    newCapacity = denseLimit;
-                    break;
-                }
-            }
+            final int maxCapacity = maxDenseCapacity();
+            assert requiredCapacity <= maxCapacity;
+            // Double for dense sequential scans, but cap by observed density. A lone key 999,999
+            // in a million-symbol dictionary therefore stays in the map instead of allocating and
+            // zeroing a four-megabyte array.
+            final int newCapacity = Math.min(
+                    maxCapacity,
+                    Math.max(requiredCapacity, Math.max(INITIAL_DENSE_CAPACITY, denseCapacity << 1))
+            );
             final long oldSize = (long) denseCapacity * Integer.BYTES;
             final long newSize = (long) newCapacity * Integer.BYTES;
             if (denseAddress == 0) {
@@ -352,6 +349,13 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             // uncovered slot still reads as "not translated yet".
             Unsafe.setMemory(denseAddress + oldSize, newSize - oldSize, (byte) 0);
             denseCapacity = newCapacity;
+        }
+
+        private int maxDenseCapacity() {
+            return Math.min(
+                    denseLimit,
+                    Math.max(INITIAL_DENSE_CAPACITY, (denseEntryCount + 1) * MAX_DENSE_SLOTS_PER_ENTRY)
+            );
         }
 
         private void of(MemoryTracker memoryTracker, int denseLimit) {
@@ -371,19 +375,38 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 // fail loudly instead of silently escaping the limit.
                 throw CairoException.nonCritical().put("union symbol key cache reused after close");
             }
-            if (sourceKey < denseLimit) {
+            if (sourceKey < denseLimit && shouldUseDense(sourceKey)) {
                 if (sourceKey >= denseCapacity) {
                     growDense(sourceKey + 1);
                 }
                 // Store resultKey + 1 so a zeroed slot reads as "not translated yet". VALUE_IS_NULL
                 // round-trips as well: Integer.MIN_VALUE + 1 is still non-zero.
-                Unsafe.putInt(denseAddress + ((long) sourceKey << 2), resultKey + 1);
+                final long address = denseAddress + ((long) sourceKey << 2);
+                if (Unsafe.getInt(address) == 0) {
+                    denseEntryCount++;
+                }
+                Unsafe.putInt(address, resultKey + 1);
                 return;
             }
             if (!map.isOpen()) {
                 map.reopen();
             }
             map.put(sourceKey, resultKey);
+        }
+
+        private boolean shouldUseDense(int sourceKey) {
+            if (sourceKey < denseCapacity) {
+                return true;
+            }
+            final int maxCapacity = maxDenseCapacity();
+            // Avoid repeated tiny reallocations at the density boundary. Wait until observed
+            // entries justify at least the next geometric growth; a final clamp to denseLimit is
+            // allowed for a small source dictionary.
+            final int nextGrowthCapacity = Math.min(
+                    denseLimit,
+                    Math.max(INITIAL_DENSE_CAPACITY, denseCapacity << 1)
+            );
+            return sourceKey < maxCapacity && nextGrowthCapacity <= maxCapacity;
         }
     }
 
@@ -408,14 +431,11 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             keyMap.of(memoryTracker, denseKeyLimit(symbolTable));
         }
 
-        // A table dictionary numbers its symbols 0..getSymbolCount()-1, so a direct-indexed array
-        // translates a source key in one load instead of hashing and probing it on every row, and
-        // holds 4 bytes per key against the map's 16 at load factor 0.5. This returns a LIMIT, not
-        // a size: the array still grows on demand, so a query that touches few keys of a large
-        // dictionary charges the tracker for what it touched rather than for the whole dictionary.
-        // The limit follows CARDINALITY, never key range - a static table handing out sparse keys
-        // (see UnionSymbolCastSparseKeyTest) stays on the map, so this holds for any
-        // StaticSymbolTable rather than assuming every one of them numbers its keys densely.
+        // A table dictionary normally numbers its symbols 0..getSymbolCount()-1, so eligible dense
+        // keys translate in one load instead of hashing and probing. This returns only the upper
+        // eligibility bound: NativeKeyMap additionally requires observed key density before it
+        // grows the array, and routes isolated high keys through the map. The bound follows
+        // CARDINALITY, never key range, so sparse custom StaticSymbolTables stay on the map too.
         private static int denseKeyLimit(@Nullable SymbolTable symbolTable) {
             if (symbolTable instanceof StaticSymbolTable staticSymbolTable) {
                 final int symbolCount = staticSymbolTable.getSymbolCount();

@@ -39,9 +39,39 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
+    private static final int HIGH_DENSE_SOURCE_KEY = 999_999;
+    // Models a filtered table whose physical dictionary has one million symbols while the cursor
+    // returns only its final key. Cardinality makes the key eligible for the dense region, but one
+    // touched translation cannot justify a million-slot array.
+    private static final StaticSymbolTable HIGH_DENSE_TABLE = new StaticSymbolTable() {
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return 1_000_000;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            return value != null && "high".contentEquals(value) ? HIGH_DENSE_SOURCE_KEY : VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key == HIGH_DENSE_SOURCE_KEY ? "high" : null;
+        }
+    };
     // A static source dictionary whose keys cover all three regions of the translation cache.
-    // getSymbolCount() bounds the direct-indexed region, so keys below it translate through the
-    // array and keys above it through the hash map - one source column, both code paths. "gap5"
+    // getSymbolCount() bounds dense eligibility, while keys above it use the hash map - one source
+    // column, both code paths. "gap5"
     // sits in the window between the cardinality bound and the array's INITIAL_DENSE_CAPACITY
     // floor, which the array must leave to the map.
     private static final int MIXED_GAP_KEY = 5;
@@ -124,6 +154,40 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
             return key == SPARSE_SOURCE_KEY ? "sparse" : null;
         }
     };
+
+    @Test
+    public void testHighKeyInLargeDictionaryUsesSparseTrackedCache() throws Exception {
+        assertMemoryLeak(() -> {
+            // The old contiguous dense growth needed 4 MB for key 999,999 and breached this limit.
+            final MemoryTracker tracker = acquireTracker(64L << 10);
+            try (RecordCursorFactory factory = newFactory(
+                    new StaticSymbolCursorFactory(HIGH_DENSE_TABLE, new String[][]{{"high"}, {"high"}})
+            )) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    Assert.assertTrue(cursor.hasNext());
+                    final int resultKey = record.getInt(0);
+                    Assert.assertEquals(0, resultKey);
+                    TestUtils.assertEquals("high", symbolTable.valueOf(resultKey));
+                    Assert.assertTrue(
+                            "one high source key must not allocate a cardinality-sized array [used="
+                                    + tracker.getUsed() + ']',
+                            tracker.getUsed() < 4096
+                    );
+
+                    final long used = tracker.getUsed();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(resultKey, record.getInt(0));
+                    Assert.assertEquals("the cached translation must not allocate", used, tracker.getUsed());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+                Assert.assertEquals("cursor close must release the tracked cache", 0, tracker.getUsed());
+            } finally {
+                releaseTracker(tracker);
+            }
+        });
+    }
 
     // A source key that sits above the dictionary's cardinality but below the dense array's initial
     // capacity belongs to the map. Sizing the array past the cardinality bound leaves put() writing
