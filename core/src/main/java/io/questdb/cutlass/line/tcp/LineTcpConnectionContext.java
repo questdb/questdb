@@ -242,8 +242,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         } catch (AuthenticatorException e) {
             return IOContextResult.NEEDS_DISCONNECT;
         } catch (CairoException e) {
-            // Malformed input from the client must not be logged as a critical error.
-            LOG.error().$('[').$(getFd()).$("] authentication failed [error=").$safe(e.getFlyweightMessage()).I$();
+            // Malformed client input is not a server fault, so this catch never forces a
+            // severity: it follows the exception. An authenticator that rejects what the client
+            // sent raises a non-critical exception and lands on LOG.error(); a pluggable
+            // authenticator that fails for a genuinely critical reason keeps its severity and
+            // errno.
+            LogRecord error = e.isCritical() ? LOG.critical() : LOG.error();
+            error.$('[').$(getFd()).$("] authentication failed [error=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno()).I$();
             return IOContextResult.NEEDS_DISCONNECT;
         }
         switch (result) {

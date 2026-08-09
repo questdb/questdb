@@ -30,6 +30,7 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -393,22 +394,6 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     }
 
     @Test
-    public void testKeyIdIsNotValidUtf8() throws Exception {
-        // a client that speaks a different (binary) protocol on the ILP port must be
-        // disconnected as if the authentication failed, without an unhandled error
-        runInAuthContext(() -> {
-            recvCharset = StandardCharsets.ISO_8859_1;
-            recvBuffer = new String(
-                    new byte[]{'@', 0, 13, 0, 1, (byte) 0xC0, (byte) 0xA8, '8', 1, '\n'},
-                    StandardCharsets.ISO_8859_1
-            );
-            handleContextIO0();
-            Assert.assertTrue(disconnected);
-            Assert.assertNull(sentBytes);
-        });
-    }
-
-    @Test
     public void testJunkSignature() throws Exception {
         runInAuthContext(() -> {
             int[] junkSignatureInt = {186, 55, 135, 152, 129, 156, 1, 143, 221, 100, 197, 198, 98, 49, 222, 50, 83, 106, 199, 57, 202, 41, 47, 17, 14, 71, 80, 85, 44, 33, 56, 167, 30,
@@ -421,6 +406,90 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
+    }
+
+    @Test
+    public void testKeyIdIsMultiByteUtf8() throws Exception {
+        // readKeyId() guards with Utf8s.validateUtf8() and then converts with Utf8s.toString().
+        // Should the guard ever become stricter than the converter, a client whose key id holds
+        // legitimate non-ASCII characters would be locked out with no backstop, so pin that a
+        // valid 2-, 3- and 4-byte sequence passes it
+        final String multiByteKeyId = "\u00fcser\u4e2d\ud83d\ude00";
+        // readKeyId() logs the key id through $safe(), which renders a 4-byte character as '??'
+        // (Utf8s.put4ByteSafe pushes the decoded surrogate pair into a Utf8Sink, and
+        // Utf8Sink.put(char) replaces surrogates), so the assertion stops before the emoji.
+        // readKeyId() logs this line at all only when validateUtf8() accepted the whole key id
+        final String loggedKeyId = "authentication read key id [keyId=\u00fcser\u4e2d";
+        final LogCapture capture = new LogCapture();
+        try {
+            capture.start();
+            runInAuthContext(() -> {
+                send(multiByteKeyId + "\n", false);
+                // the authenticator answered with a challenge, so the key id cleared both the
+                // guard and the conversion that follows it
+                Assert.assertNotNull(readChallenge(false));
+                Assert.assertFalse(disconnected);
+                capture.waitForRegex("authentication read key id \\[keyId=\u00fcser\u4e2d");
+                capture.assertLogged(loggedKeyId);
+                capture.assertNotLogged("authentication failed, key id is not valid UTF-8");
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testKeyIdIsNotValidUtf8() throws Exception {
+        // a client that speaks a different (binary) protocol on the ILP port must be
+        // disconnected as if the authentication failed, without an unhandled error
+        final LogCapture capture = new LogCapture();
+        try {
+            capture.start();
+            runInAuthContext(() -> {
+                recvCharset = StandardCharsets.ISO_8859_1;
+                recvBuffer = new String(
+                        new byte[]{'@', 0, 13, 0, 1, (byte) 0xC0, (byte) 0xA8, '8', 1, '\n'},
+                        StandardCharsets.ISO_8859_1
+                );
+                handleContextIO0();
+                Assert.assertTrue(disconnected);
+                Assert.assertNull(sentBytes);
+                // the authenticator must reject the key id itself. Letting Utf8s.toString() throw
+                // instead disconnects the client just the same, so the log line is the only
+                // observable that tells the two apart
+                capture.waitForRegex("authentication failed, key id is not valid UTF-8 \\[keyId=|cannot convert invalid UTF-8 sequence to UTF-16");
+                capture.assertLogged("authentication failed, key id is not valid UTF-8 [keyId=");
+                capture.assertNotLogged("cannot convert invalid UTF-8 sequence to UTF-16");
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testMalformedBase64Signature() throws Exception {
+        // a signature line that is not valid base64 must disconnect the client as a plain
+        // authentication failure, without letting a CairoException escape the context
+        final LogCapture capture = new LogCapture();
+        try {
+            capture.start();
+            runInAuthContext(() -> {
+                send(AUTH_KEY_ID1 + "\n", false);
+                Assert.assertNotNull(readChallenge(false));
+                // 5 base64 chars, so length % 4 == 1, which Chars.base64Decode rejects
+                recvBuffer = "abcde\n";
+                handleContextIO0();
+                Assert.assertTrue(disconnected);
+                Assert.assertNull(sentBytes);
+                // malformed client input is not a server fault, so the context logs the failure
+                // at ERROR and never at CRITICAL
+                capture.waitForRegex("[EC] i\\.q\\.c\\.l\\.t\\.LineTcpConnectionContext \\[\\d+] authentication failed \\[error=invalid base64 encoding \\[string=abcde], errno=-1]");
+                capture.assertLoggedRE("E i\\.q\\.c\\.l\\.t\\.LineTcpConnectionContext \\[\\d+] authentication failed \\[error=invalid base64 encoding \\[string=abcde], errno=-1]");
+                capture.assertNotLogged("C i.q.c.l.t.LineTcpConnectionContext");
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
