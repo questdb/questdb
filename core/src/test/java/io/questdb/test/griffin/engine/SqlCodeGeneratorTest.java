@@ -8692,6 +8692,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsDistinctTranslatesNativeKeysPerSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            // Both source dictionaries assign native key 0, but to different text. A distinct
+            // UNION switches to B through UnionRecordCursor.switchToCursorB(), not the UNION ALL
+            // transition covered elsewhere, so the projection must refresh its source tracker.
+            execute("INSERT INTO ta VALUES ('a')");
+            execute("INSERT INTO tb VALUES ('b')");
+
+            try (RecordCursorFactory factory = select("SELECT s FROM ta UNION SELECT s FROM tb")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int aKey = record.getInt(0);
+                    TestUtils.assertEquals("a", resultTable.valueOf(aKey));
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int bKey = record.getInt(0);
+                    Assert.assertNotEquals(aKey, bKey);
+                    TestUtils.assertEquals("b", resultTable.valueOf(bKey));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsDynamicEqualityDoesNotMaterializeKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta AS (SELECT x::SYMBOL s, x::SYMBOL expected FROM long_sequence(1000))");
