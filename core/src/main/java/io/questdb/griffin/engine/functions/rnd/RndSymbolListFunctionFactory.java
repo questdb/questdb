@@ -74,7 +74,8 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            final int key = next();
+            return symbols.getQuick(key) == null ? SymbolTable.VALUE_IS_NULL : key;
         }
 
         @Override
@@ -125,8 +126,9 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsKeyValueAccess() {
             // The dictionary is a fixed list built once per cursor, so getInt() returns an index
-            // and valueOf() resolves it without touching text. A key consumer (QWP egress) should
-            // therefore take the key path and encode each distinct value once, not once per row.
+            // for a value, or VALUE_IS_NULL for a null slot, and valueOf() resolves it without
+            // touching text. A key consumer (QWP egress) should therefore take the key path and
+            // encode each distinct value once, not once per row.
             return true;
         }
 
@@ -142,7 +144,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolKey != -1 ? symbols.getQuick(symbolKey) : null;
+            return symbolKey > -1 ? symbols.getQuick(symbolKey) : null;
         }
 
         private int next() {

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -73,7 +74,8 @@ public class ListFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            final int key = next();
+            return symbols.getQuick(key) == null ? SymbolTable.VALUE_IS_NULL : key;
         }
 
         @Override
@@ -108,8 +110,9 @@ public class ListFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsKeyValueAccess() {
             // The dictionary is a fixed list built once per cursor, so getInt() returns an index
-            // and valueOf() resolves it without touching text. A key consumer (QWP egress) should
-            // therefore take the key path and encode each distinct value once, not once per row.
+            // for a value, or VALUE_IS_NULL for a null slot, and valueOf() resolves it without
+            // touching text. A key consumer (QWP egress) should therefore take the key path and
+            // encode each distinct value once, not once per row.
             return true;
         }
 
@@ -125,10 +128,10 @@ public class ListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            // getInt() returns a raw index into symbols, so valueOf indexes it directly. Routing
-            // through TableUtils.toIndexKey assumed a leading null slot that this list does not
-            // have, which returned the following value for every key and ran off the end of the
-            // list on the last one.
+            // Non-null keys are raw indexes into symbols, so valueOf indexes them directly.
+            // Routing through TableUtils.toIndexKey assumed a leading null slot that this list
+            // does not have, which returned the following value for every key and ran off the end
+            // of the list on the last one.
             return symbolKey > -1 ? symbols.getQuick(symbolKey) : null;
         }
 

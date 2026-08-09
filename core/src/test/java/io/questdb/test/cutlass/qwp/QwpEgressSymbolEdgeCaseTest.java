@@ -446,6 +446,27 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testNullableFixedDictionaryFunctionsRoundTrip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented();
+                 QwpQueryClient client = QwpQueryClient.fromConfig(
+                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                client.connect();
+                assertSymbolFunctionRoundTrip(
+                        client,
+                        "SELECT list('a', NULL, 'b') s FROM long_sequence(6)",
+                        new String[]{"a", null, "b", "a", null, "b"}
+                );
+                assertSymbolFunctionRoundTrip(
+                        client,
+                        "SELECT rnd_symbol(NULL) s FROM long_sequence(3)",
+                        new String[]{null, null, null}
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNullAndNonNullInterleavedMultiBatch() throws Exception {
         // Alternating NULL and non-null across multiple batches. The server
         // bitmap grows batch-by-batch; each batch's non-null count drives how
@@ -821,6 +842,42 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
                 Assert.assertEquals(4, rowIdx[0]);
             }
         });
+    }
+
+    private static void assertSymbolFunctionRoundTrip(
+            QwpQueryClient client,
+            String query,
+            String[] expected
+    ) throws Exception {
+        final int[] rowIndex = {0};
+        client.execute(query, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                Assert.assertEquals(QwpConstants.TYPE_SYMBOL, batch.getColumnWireType(0));
+                for (int r = 0; r < batch.getRowCount(); r++) {
+                    final int row = rowIndex[0]++;
+                    final String expectedValue = expected[row];
+                    Assert.assertEquals(expectedValue == null, batch.isNull(0, r));
+                    Assert.assertEquals(expectedValue, batch.getSymbol(0, r));
+                    if (expectedValue == null) {
+                        Assert.assertEquals(-1, batch.getSymbolId(0, r));
+                    } else {
+                        Assert.assertTrue(batch.getSymbolId(0, r) >= 0);
+                    }
+                }
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.assertEquals(expected.length, totalRows);
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("egress error for nullable symbol function: " + message);
+            }
+        });
+        Assert.assertEquals(expected.length, rowIndex[0]);
     }
 
 }

@@ -108,6 +108,22 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullableFixedDictionarySymbolFunctionsReturnNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            assertKeySequence(
+                    "list('a', NULL, 'b')",
+                    new int[]{0, SymbolTable.VALUE_IS_NULL, 2, 0, SymbolTable.VALUE_IS_NULL, 2},
+                    new String[]{"a", null, "b", "a", null, "b"}
+            );
+            assertKeySequence(
+                    "rnd_symbol(NULL)",
+                    new int[]{SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL},
+                    new String[]{null, null, null}
+            );
+        });
+    }
+
+    @Test
     public void testMemoizedSymbolFunctionsKeepKeyValueAccess() throws Exception {
         // Production wraps a SYMBOL projection in SymbolFunctionMemoizer when the function asks for
         // it or its alias is referenced more than once. ALLOW_FUNCTION_MEMOIZATION defaults to true
@@ -190,6 +206,32 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
         // valueOf(getInt(rec)), so comparing the two against each other agrees even on a wrong value.
         Assert.assertEquals(sql + " resolved through its key", expected, read(sql, columnIndex, true));
         Assert.assertEquals(sql + " read as text", expected, read(sql, columnIndex, false));
+    }
+
+    private void assertKeySequence(String expression, int[] expectedKeys, String[] expectedValues) throws SqlException {
+        Assert.assertEquals(expectedKeys.length, expectedValues.length);
+        try (RecordCursorFactory factory = select(
+                "SELECT " + expression + " s FROM long_sequence(" + expectedKeys.length + ')'
+        )) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                Assert.assertTrue(expression + " must keep the native-key egress path", symbolTable.supportsKeyValueAccess());
+                final Record record = cursor.getRecord();
+                int row = 0;
+                while (cursor.hasNext()) {
+                    final int key = record.getInt(0);
+                    Assert.assertEquals(expression + " returned the wrong key at row " + row, expectedKeys[row], key);
+                    final CharSequence value = symbolTable.valueOf(key);
+                    Assert.assertEquals(
+                            expression + " resolved the wrong value at row " + row,
+                            expectedValues[row],
+                            value == null ? null : value.toString()
+                    );
+                    row++;
+                }
+                Assert.assertEquals(expectedKeys.length, row);
+            }
+        }
     }
 
 
