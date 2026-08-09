@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.std.DirectIntIntHashMap;
@@ -118,6 +117,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 // cursor.of() may have taken baseCursor before throwing; drop that reference so a
                 // later cursor close does not free the same instance a second time.
                 cursor.baseCursor = null;
+                cursor.clearSymbolTables();
                 Misc.free(baseCursor);
             } finally {
                 for (int i = 0, n = functions.size(); i < n; i++) {
@@ -226,20 +226,31 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     private static class KeyValueSymbolTable implements SymbolTable {
         private final SymbolTable delegate;
+        private int columnIndex = -1;
+        @Nullable
+        private RecordCursor sourceCursor;
+        // Probe lazily so a text-only consumer never touches the source symbol tables. QWP asks
+        // before selecting its key path, and the answer stays fixed for this cursor execution.
+        private int supportsKeyValueAccess = -1;
 
         private KeyValueSymbolTable(SymbolTable delegate) {
             this.delegate = delegate;
         }
 
-        // The union answers for the whole result, but its cost is per leg: a leg backed by a table
-        // dictionary translates by key and never touches text, while a dynamic leg has to intern its
-        // text to mint one. True is the better approximation - the text fallback re-encodes UTF-8 on
-        // every row, which the key path does only on first sight of a key - and it is what keeps a
-        // static leg on two int probes per row. It costs an all-dynamic union the merged dictionary
-        // it would otherwise never build.
+        private KeyValueSymbolTable(SymbolTable delegate, boolean supportsKeyValueAccess) {
+            this.delegate = delegate;
+            this.supportsKeyValueAccess = supportsKeyValueAccess ? 1 : 0;
+        }
+
         @Override
         public boolean supportsKeyValueAccess() {
-            return true;
+            if (supportsKeyValueAccess < 0) {
+                supportsKeyValueAccess = UnionSymbolSourceCursor.hasKeyValueSymbolTable(
+                        sourceCursor,
+                        columnIndex
+                ) ? 1 : 0;
+            }
+            return supportsKeyValueAccess > 0;
         }
 
         @Override
@@ -250,6 +261,18 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public CharSequence valueOf(int key) {
             return delegate.valueOf(key);
+        }
+
+        private void clear() {
+            columnIndex = -1;
+            sourceCursor = null;
+            supportsKeyValueAccess = 0;
+        }
+
+        private void of(RecordCursor sourceCursor, int columnIndex) {
+            this.columnIndex = columnIndex;
+            this.sourceCursor = sourceCursor;
+            supportsKeyValueAccess = -1;
         }
     }
 
@@ -421,21 +444,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             this.columns = new ObjList<>(symbolColumns.size());
             try {
                 for (int i = 0, n = symbolColumns.size(); i < n; i++) {
-                    SymbolTable symbolTable = null;
-                    try {
-                        symbolTable = sourceCursor.getSymbolTable(symbolColumns.getQuick(i));
-                        if (symbolTable instanceof SymbolFunction symbolFunction) {
-                            final StaticSymbolTable staticSymbolTable = symbolFunction.getStaticSymbolTable();
-                            if (staticSymbolTable != null) {
-                                symbolTable = staticSymbolTable;
-                            }
-                        }
-                        if (symbolTable == null || !symbolTable.supportsKeyValueAccess()) {
-                            symbolTable = null;
-                        }
-                    } catch (UnsupportedOperationException ignored) {
-                        // Dynamic expressions and cursors without symbol tables use text fallback.
-                    }
+                    final SymbolTable symbolTable = UnionSymbolSourceCursor.keyValueSymbolTable(
+                            sourceCursor,
+                            symbolColumns.getQuick(i)
+                    );
                     // symbolColumns is built by walking the columns in order, so index i is both
                     // this column's position here and its function index.
                     columns.add(new SourceColumn(symbolFunction(functions.getQuick(i)), symbolTable, memoryTracker));
@@ -513,7 +525,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         private final UnionSymbolCastRecord record;
         private final UnionSymbolSourceCursor.SymbolSourceTracker sourceTracker = new UnionSymbolSourceCursor.SymbolSourceTracker();
         private final IntList symbolColumns = new IntList();
-        private final ObjList<SymbolTable> symbolTables = new ObjList<>();
+        private final ObjList<KeyValueSymbolTable> symbolTables = new ObjList<>();
         private RecordCursor baseCursor;
         private int currentSourceIndex = -1;
         private SourceState currentSourceState;
@@ -560,6 +572,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 try {
                     baseCursor = Misc.free(baseCursor);
                 } finally {
+                    clearSymbolTables();
                     for (int i = 0, n = functions.size(); i < n; i++) {
                         functions.getQuick(i).cursorClosed();
                     }
@@ -605,7 +618,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             if (symbolTable == null) {
                 symbolTable = function;
             }
-            return new KeyValueSymbolTable(symbolTable);
+            return new KeyValueSymbolTable(
+                    symbolTable,
+                    symbolTables.getQuick(functionIndex).supportsKeyValueAccess()
+            );
         }
 
         @Override
@@ -638,6 +654,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 sourceCursor.updateSymbolSource();
             } else {
                 sourceTracker.of(baseCursor, 0);
+            }
+        }
+
+        private void clearSymbolTables() {
+            for (int i = 0, n = symbolTables.size(); i < n; i++) {
+                symbolTables.getQuick(i).clear();
             }
         }
 
@@ -690,6 +712,9 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             this.memoryTracker = memoryTracker;
             if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
                 sourceCursor.bindSymbolSourceTracker(sourceTracker, 0);
+            }
+            for (int i = 0, n = symbolColumns.size(); i < n; i++) {
+                symbolTables.getQuick(i).of(baseCursor, symbolColumns.getQuick(i));
             }
             this.record.of(baseCursor.getRecord());
             toTop();

@@ -8717,6 +8717,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsDynamicSourcesPreferTextAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = select("""
+                    SELECT x::STRING::SYMBOL s FROM long_sequence(3)
+                    UNION ALL
+                    SELECT (x + 3)::STRING::SYMBOL s FROM long_sequence(3)
+                    """)) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    Assert.assertFalse(symbolTable.supportsKeyValueAccess());
+                    Assert.assertFalse(cursor.newSymbolTable(0).supportsKeyValueAccess());
+
+                    final Record record = cursor.getRecord();
+                    final String[] expected = {"1", "2", "3", "4", "5", "6"};
+                    for (String value : expected) {
+                        Assert.assertTrue(cursor.hasNext());
+                        TestUtils.assertEquals(value, record.getSymA(0));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // QWP follows supportsKeyValueAccess(). Keeping it on the text path for an
+                    // all-dynamic union must leave the query-scoped merged dictionary untouched.
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsFollowedByNonUnionSetOperation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL)");
@@ -8832,6 +8863,34 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("SELECT u.s, d.label FROM (ta UNION ALL tb) u JOIN dim d ON u.s = d.s ORDER BY u.s")
                     .noLeakCheck().columnType(0, ColumnType.SYMBOL)
                     .returns("s\tlabel\na\tAA\nc\tCC\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsMixedSourcesPreferKeyAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL)");
+            execute("INSERT INTO tab VALUES ('stored')");
+
+            try (RecordCursorFactory factory = select("""
+                    SELECT s FROM tab
+                    UNION ALL
+                    SELECT x::STRING::SYMBOL s FROM long_sequence(2)
+                    """)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    Assert.assertTrue(symbolTable.supportsKeyValueAccess());
+                    Assert.assertTrue(cursor.newSymbolTable(0).supportsKeyValueAccess());
+
+                    final Record record = cursor.getRecord();
+                    final String[] expected = {"stored", "1", "2"};
+                    for (String value : expected) {
+                        Assert.assertTrue(cursor.hasNext());
+                        TestUtils.assertEquals(value, symbolTable.valueOf(record.getInt(0)));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
         });
     }
 

@@ -62,6 +62,12 @@ abstract class AbstractUnionSymbolSourceCursor extends AbstractSetRecordCursor i
     }
 
     @Override
+    public boolean hasKeyValueSymbolTable(int columnIndex) {
+        return UnionSymbolSourceCursor.hasKeyValueSymbolTable(cursorA, columnIndex)
+                || UnionSymbolSourceCursor.hasKeyValueSymbolTable(cursorB, columnIndex);
+    }
+
+    @Override
     public void updateSymbolSource() {
         updateSymbolSource(isUsingCursorA ? cursorA : cursorB, isUsingCursorA ? symbolSourceIndexA : symbolSourceIndexB);
     }
