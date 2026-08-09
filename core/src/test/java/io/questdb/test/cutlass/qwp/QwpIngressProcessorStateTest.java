@@ -1718,6 +1718,57 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearSurvivesDistressedCloseFailure() throws Exception {
+        // Companion to testResetSurvivesEvictionCloseFailure, but for clear()'s
+        // distressed free loop. When a commit failure marks the cache
+        // distressed, the per-message finally routes into clear(), which frees
+        // every cached TUD to discard the connection's buffered rows. Before
+        // the fix that free had no per-entry try/catch: one writer's close()
+        // failing on ENOSPC/EIO aborted the loop, leaving the map populated,
+        // isDistressed latched true and cachedTableCount stale -- wedging the
+        // cache for the life of the connection. The commit loops deliberately
+        // let their own free failures escape into setDistressed()+clear(), so
+        // this branch is their safety net and must not itself throw.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE clear_evict_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE clear_evict_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud1 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("clear_evict_1"), null, null, 2
+                );
+                Assert.assertNotNull(tud1);
+                WalTableUpdateDetails tud2 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("clear_evict_2"), null, null, 2
+                );
+                Assert.assertNotNull(tud2);
+                Assert.assertEquals(2, cache.size());
+
+                // Distressed path only: setDistressed() skips the rollback loop
+                // and goes straight to the free loop under test.
+                cache.setDistressed();
+
+                // Only one of the two writers fails to close; clear() must still
+                // free the other and finish resetting the map, the distressed
+                // flag and the count despite the failure.
+                replaceWriterWithFailingClose(tud1);
+
+                // No try/catch here on purpose: a propagating exception fails
+                // this test outright, which is exactly the pre-fix behavior this
+                // test guards against.
+                cache.clear();
+
+                Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllBestEffortSurvivesEvictionCloseFailure() throws Exception {
         // M2: the eviction free in the UDP loops closes the evicted writer,
         // which rolls back its buffered rows through real file IO that can

@@ -160,7 +160,21 @@ public class QwpTudCache implements QuietCloseable {
             for (int i = 0, n = keys.size(); i < n; i++) {
                 Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                Misc.free(tud);
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // Freeing a discarded writer still closes it, rolling back
+                    // its buffered rows through real file IO that can fail on
+                    // ENOSPC/EIO. Swallow so the loop frees the remaining
+                    // entries and the map/flag/count reset below still runs.
+                    // An escape here would wedge the cache -- entries kept,
+                    // isDistressed latched true, cachedTableCount stale -- and
+                    // abort the per-message finally that routes a distressed
+                    // commit into clear(). Mirrors reset(); the commit loops
+                    // rely on this branch to absorb their own free failures.
+                    LOG.error().$("could not close discarded writer [table=").$(tableName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
             }
             tableUpdateDetails.clear();
             cachedTableCount = 0;
@@ -539,7 +553,11 @@ public class QwpTudCache implements QuietCloseable {
             cachedTableCount = tableUpdateDetails.size();
             return tud;
         } catch (Throwable th) {
-            Misc.free(tud != null ? tud : walWriter);
+            // Fold a close-IO failure (rollback-on-close can hit ENOSPC/EIO)
+            // into the primary as suppressed instead of masking it -- matches
+            // the sibling free on the applyPendingStructureChanges failure path
+            // above.
+            Misc.free(tud != null ? tud : walWriter, th);
             throw th;
         }
     }
