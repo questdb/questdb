@@ -31,13 +31,13 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -153,10 +153,10 @@ public class LegacyMetaReplacingIndexTest extends AbstractCairoTest {
         final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         try (Path src = new Path(); Path dst = new Path()) {
-            src.of(Files.getResourcePath(getClass().getResource(META_RESOURCE)));
+            src.of(TestUtils.getResourcePath(META_RESOURCE));
             metaPath(dst);
             ff.removeQuiet(dst.$());
-            Assert.assertTrue(ff.copy(src.$(), dst.$()) > -1);
+            Assert.assertTrue("could not copy " + src + " to " + dst, ff.copy(src.$(), dst.$()) > -1);
 
             // The file comes from another instance, so its table id and metadata version would be
             // rejected before the column entries are ever read. Put back the two fields the fresh
