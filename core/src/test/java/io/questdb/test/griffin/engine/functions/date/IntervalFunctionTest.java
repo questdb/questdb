@@ -386,6 +386,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertQuery("select true as bool from long_sequence(1) where now() in today()")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             bool
                             true
@@ -478,6 +479,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             assertQuery("select true as result from long_sequence(1)\n" +
                     "where now_ns() in today()")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             result
                             true
@@ -499,6 +501,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             assertQuery("select true as result from long_sequence(1)\n" +
                     "where now() in today()")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             result
                             true
