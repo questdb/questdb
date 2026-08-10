@@ -5102,10 +5102,13 @@ public class WalWriterTest extends AbstractCairoTest {
             }
             Assert.assertEquals("cleanup must not retry the failed IO on the expel path", 1, mapFailures.get());
 
-            // The pool must not hand back a half-cancelled writer still marked
-            // as being in columnar-write mode: the entry was expelled and the
-            // writer fully closed, so a fresh acquire gets a brand-new,
-            // functioning instance rather than the poisoned one.
+            // In-body discriminator: on the unfixed pool the stranded busy
+            // entry kept this writer open with its fds. The fresh acquire
+            // below does NOT discriminate -- the pool simply hands out the
+            // next free slot even when an entry is stranded -- it only proves
+            // the pool still functions; assertMemoryLeak's shutdown check
+            // backstops the stranded entry itself.
+            Assert.assertFalse("expelled writer must be fully closed", w.isOpen());
             try (WalWriter w2 = engine.getWalWriter(token)) {
                 Assert.assertNotSame(w, w2);
                 TableWriter.Row row = w2.newRow(2_000_000L);
@@ -5171,8 +5174,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 armed.set(false);
             }
 
-            // The pool must not be stranded: the entry was expelled and the
-            // writer fully closed, so a fresh acquire works and closes cleanly.
+            // In-body discriminator: on the unfixed pool the stranded busy
+            // entry kept this writer open with its fds. The fresh acquire
+            // below does NOT discriminate -- the pool simply hands out the
+            // next free slot even when an entry is stranded -- it only proves
+            // the pool still functions; assertMemoryLeak's shutdown check
+            // backstops the stranded entry itself.
+            Assert.assertFalse("expelled writer must be fully closed", w.isOpen());
             try (WalWriter w2 = engine.getWalWriter(token)) {
                 Assert.assertNotNull(w2);
             }
