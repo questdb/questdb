@@ -3035,6 +3035,57 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsDiscardsWhenSalvageCommitFails() throws Exception {
+        // When the salvage commit of a renamed table's buffered rows FAILS,
+        // the eviction must (a) refuse the lookup with the discard message
+        // instead of acknowledging silently, (b) still evict the entry, and
+        // (c) NOT notify the committed-txn consumer: a notification here would
+        // plant a per-table durable-ack watermark for rows that were rolled
+        // back -- the phantom-ack shape this PR exists to prevent.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_fail_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            int[] consumerNotifications = new int[1];
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> consumerNotifications[0]++);
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_fail_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_fail_src TO sal_fail_dst");
+                execute("CREATE TABLE sal_fail_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // The stale re-lookup below reaches evictStaleTud's salvage
+                // branch (dir alive under sal_fail_dst, instanceof WalWriter
+                // passes) and the injected commit failure makes
+                // salvageBufferedRows return false.
+                replaceWriterWithFailingCommitWalWriter(tud);
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("sal_fail_src"), null, null, 1
+                    );
+                    Assert.fail("a failed salvage must refuse the lookup, not acknowledge");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "renamed table discarded buffered rows, cannot acknowledge");
+                }
+                Assert.assertEquals("failed salvage must still evict the entry", 0, cache.size());
+                Assert.assertEquals("failed salvage must not plant a durable-ack watermark",
+                        0, consumerNotifications[0]);
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsSalvageNotifiesCommittedTxnConsumer() throws Exception {
         // I1: the salvage commit in evictStaleTud bypasses
         // commitAll(consumer)/commitIfMaxUncommittedRowsReached(consumer), the
@@ -4644,6 +4695,46 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     throw new UnsupportedOperationException(method.getName());
                 }
         ));
+    }
+
+    private static void replaceWriterWithFailingCommitWalWriter(WalTableUpdateDetails tud) throws Exception {
+        // A REAL WalWriter subclass, not a TableWriterAPI proxy: evictStaleTud
+        // only attempts salvage when tud.getWriter() instanceof WalWriter, so
+        // no proxy can reach salvageBufferedRows' commit-failure arm. The
+        // constructor resolves the live (renamed) table's sequencer through
+        // the cached token's directory and rebinds to the current metadata
+        // token, so goActive() finds the writer current and the injected
+        // failure fires inside the salvage commit itself.
+        TableToken token = tud.getTableToken();
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, new WalWriter(
+                engine.getConfiguration(),
+                token,
+                engine.getTableSequencerAPI(),
+                engine.getDdlListener(token),
+                engine.getWalDirectoryPolicy(),
+                engine.getWalLocker(),
+                engine.getRecentWriteTracker(),
+                engine.getTelemetryWal()
+        ) {
+            @Override
+            public long getUncommittedRowCount() {
+                // TableUpdateDetails.commit() short-circuits on zero; report a
+                // pending row so the commit below is reached. This also keeps
+                // tud.isFirstRow() false, the salvage precondition.
+                return 1;
+            }
+
+            @Override
+            public void commit() {
+                throw CairoException.nonCritical().put("simulated salvage commit failure");
+            }
+        });
     }
 
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
