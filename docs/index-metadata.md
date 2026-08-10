@@ -93,7 +93,7 @@ group entries, they live in the index sections, and the file ends with a CRC.
 | 44 | 4 | `KEY_COUNT` | u32 | distinct symbol keys the index covers |
 | 48 | 4 | `KEY_ID_COLUMN` | i32 | index of the synthetic `key_id` column in the descriptors |
 | 52 | 4 | `ROW_ID_COLUMN` | i32 | index of the synthetic `row_id` column, or `-1` under `PAYLOAD_KIND = 1` |
-| 56 | 8 | `RESERVED` | u64 | must be 0 |
+| 56 | 8 | `INDEX_SECTIONS_OFFSET` | u64 | absolute file offset of the first index section (`RG_BLOCK_OFFSET`). 8-byte aligned |
 
 **Readers never use the filesystem's reported length to bound an `_im` read or mapping.** The on-disk
 length may include bytes from an in-progress, unpublished write and is not a commit boundary; only
@@ -142,7 +142,24 @@ lets it skip the fetch entirely when the chunk is all-null.
 
 ## Index sections
 
-Written after the last row group block, in this order. Each starts 8-byte aligned.
+Written after the last row group block, in this order. Each starts 8-byte aligned, and each section's
+footprint is padded up to a multiple of 8 so the next one stays aligned.
+
+### Locating them
+
+`INDEX_SECTIONS_OFFSET` in the header points at the first section. **Readers must use it rather than
+deriving it.**
+
+Deriving it forwards is impossible: a row group block's size depends on the length of its out-of-line
+stat region, which is not recorded anywhere. Deriving it backwards from the CRC is possible — every
+section size follows from the header counts — but it makes the padding rule part of the read path, and
+requires each subtraction to be individually overflow-checked against a hostile file. Two independent
+reader implementations (Rust and Java) must agree byte-for-byte, and a stored offset is one value to
+compare rather than a chain of inferences to keep in step.
+
+Readers must still validate what they are given: `INDEX_SECTIONS_OFFSET` must be 8-byte aligned, must
+lie after the column descriptors and name strings, and the sections it implies must fit within
+`IM_FILE_SIZE - 4`. A file failing any of these is rejected.
 
 | section | size | description |
 | --- | --- | --- |
@@ -265,6 +282,11 @@ rather than trusting callers:
   to the wrong data row group.
 - Every row group block carries exactly `COLUMN_COUNT` chunks.
 - `NUM_ROWS > 0` for every block — a zero-row parquet row group is treated as corruption.
+- `COLUMN_COUNT > 0`; `PAYLOAD_KIND` is `0` or `1`; `KEY_ID_COLUMN` is in range; `ROW_ID_COLUMN` is
+  `-1` if and only if `PAYLOAD_KIND == 1`.
+- The `key_id` chunk's `MIN_STAT` used for the `RG_FIRST_KEY` cross-check must be **inline**. Key ids
+  are 4-byte ints so this always holds in practice, but an out-of-line reference happens to be encoded
+  as `(offset << 16) | length` and could otherwise collide with a small key value.
 
 ## Versioning
 
