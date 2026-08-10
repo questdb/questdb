@@ -77,11 +77,20 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * be a WINDOW / HORIZON join SLAVE. That merged cursor is SYNTHETIC and single-threaded: its frames are
  * per-day cross-cell merges and its rowIds are merge ordinals (not physical partitions/native rows), and
  * there is no per-worker concurrent twin ({@link #newTimeFrameCursor()} stays null). So
- * {@link #supportsConcurrentTimeFrameCursor()} returns false, and the code generator routes such a slave
- * ONLY to the paths that walk the cursor purely through its own ordered frame/row space: the SERIAL,
- * non-fast WINDOW / HORIZON join (never the async/parallel one, which would NPE on the null concurrent
- * cursor, nor the fast symbol-indexed one, which would mis-address the synthetic frames) and, for ASOF /
- * LT, the LIGHT join rather than the fast time-frame factory (preserving the composite-read design).
+ * {@link #supportsConcurrentTimeFrameCursor()} returns false, which keeps such a slave off the
+ * ASYNC/PARALLEL WINDOW / HORIZON join (whose atom would NPE on the null concurrent cursor) and off the
+ * fast ASOF / LT time-frame factory, routing those to the SERIAL window/horizon join and the LIGHT
+ * ASOF / LT join respectively (preserving the composite-read design).
+ * <p>
+ * CORRECTION (merge audit 2026-08-10): an earlier version of this note also claimed a composite slave
+ * never reaches the FAST symbol-indexed WINDOW join. That is NOT true, and was not true before the
+ * master merge either -- {@code SqlCodeGenerator} selects {@code WindowJoinFastRecordCursorFactory} on
+ * {@code supportsTimeFrameCursor()} alone (which is {@code forward} here), so a keyed window join with a
+ * composite slave does take it. Measured with a probe rather than argued: 5 cases in
+ * {@code CompositeWindowHorizonEndToEndTest} reach it, and they are differential
+ * {@code ...MatchPlainTwin} tests that PASS -- the fast factory is twin-correct over the merged cursor
+ * for those shapes. Do NOT "fix" this by gating the fast path: that would disable behaviour currently
+ * proven correct. Trust the differential tests over this comment.
  * <p>
  * {@code convertToSampleByIndexPageFrameCursorFactory()} is deliberately NOT overridden: it is a separate
  * gate -- independent of {@link #supportsPageFrameCursor()} / {@link #getPageFrameCursor} -- that
