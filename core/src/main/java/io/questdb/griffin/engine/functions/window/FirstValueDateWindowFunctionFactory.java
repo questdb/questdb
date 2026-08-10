@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
@@ -118,9 +119,12 @@ public class FirstValueDateWindowFunctionFactory extends AbstractWindowFunctionF
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -138,9 +142,11 @@ public class FirstValueDateWindowFunctionFactory extends AbstractWindowFunctionF
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -181,8 +187,16 @@ public class FirstValueDateWindowFunctionFactory extends AbstractWindowFunctionF
 
     static final class NotNullUnboundedPartitionRowsDate extends FirstValueWindowFunctionFactoryHelper.FirstNotNullValueOverUnboundedPartitionRowsFrameBase implements WindowDateFunction {
 
-        NotNullUnboundedPartitionRowsDate(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(map, partitionByRecord, partitionBySink, arg);
+        NotNullUnboundedPartitionRowsDate(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -226,9 +240,12 @@ public class FirstValueDateWindowFunctionFactory extends AbstractWindowFunctionF
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -246,9 +263,11 @@ public class FirstValueDateWindowFunctionFactory extends AbstractWindowFunctionF
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -289,8 +308,16 @@ public class FirstValueDateWindowFunctionFactory extends AbstractWindowFunctionF
 
     static final class UnboundedPartitionRowsDate extends FirstValueWindowFunctionFactoryHelper.FirstValueOverUnboundedPartitionRowsFrameBase implements WindowDateFunction {
 
-        UnboundedPartitionRowsDate(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(map, partitionByRecord, partitionBySink, arg);
+        UnboundedPartitionRowsDate(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override

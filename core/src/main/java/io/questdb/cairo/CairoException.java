@@ -38,12 +38,21 @@ import org.jetbrains.annotations.Nullable;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
+    // MoveFileW reports this when it refuses an existing destination, where POSIX
+    // rename would have replaced it. A destination that is merely delete-pending
+    // reports ERRNO_ACCESS_DENIED_WIN instead, which is indistinguishable from a
+    // real permission failure and so is not treated as a collision.
+    public static final int ERRNO_ALREADY_EXISTS_WIN = 183;
     public static final int ERRNO_EACCES_LINUX = 13;
     public static final int ERRNO_EACCES_MACOS = 13;
     public static final int ERRNO_EPERM_LINUX = 1;
     public static final int ERRNO_EPERM_MACOS = 1;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+    // Not reachable from MoveFileW today - CreateFile and CopyFile raise it - but
+    // cheap to accept alongside ERRNO_ALREADY_EXISTS_WIN, and no POSIX rename can
+    // produce either value.
+    public static final int ERRNO_FILE_EXISTS_WIN = 80;
     // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
     // Error #316 (0x13C) is the timed out bit bitwise OR'd with ETIMEDOUT (60).
     public static final int ERRNO_FILE_READ_TIMEOUT_MACOS = 316;
@@ -60,6 +69,27 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
     private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    // PARTITION_SNAPSHOT_STALE (-113) and PARTITION_SNAPSHOT_ID_MISSING (-114) cross
+    // the JNI boundary: the enterprise cold-storage decoder throws them from Rust,
+    // which hardcodes the literals in qdb-ent/src/cold_storage/jni/decoder.rs and
+    // cannot see this chain. Append new codes below rather than inserting them
+    // above, so these two keep their values; ColdErrnoContractTest pins them.
+    public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
+    public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
+    // The on-disk _lv / _lv.s carry a format version newer than this build
+    // supports. The catalogue load path catches this and surfaces the view as
+    // version_unsupported rather than hiding it; distinct from structural
+    // corruption so the two map to different operator-visible outcomes.
+    public static final int LV_FILE_VERSION_UNSUPPORTED = PARTITION_SNAPSHOT_ID_MISSING - 1;
+    // A live-view versioned checkpoint timeline artifact failed structural
+    // validation: a torn/foreign _timeline superblock slot, or a metadata page
+    // whose framing, bounds, or per-page checksum did not hold. Timeline state is
+    // derived and rebuildable, so this is a recovery-quality signal rather than a
+    // compatibility break: a bad superblock slot falls back to the other slot, and
+    // a bad metadata page invalidates only that one root version and schedules its
+    // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED, which covers
+    // required state and does surface to the operator.
+    public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
@@ -219,9 +249,32 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     /**
-     * A non-critical error raised BECAUSE the wire value's type, shape or
-     * precision is fundamentally incompatible with the target column (e.g.
-     * an unsupported type coercion or a geohash precision mismatch). The
+     * Rethrows a failure after a best-effort Cairo/SQL resource cleanup has attempted every
+     * close. Unchecked failures retain their identity. The checked branch handles defensive
+     * cases such as a sneaky checked exception escaping a Closeable implementation.
+     */
+    public static void rethrowCleanupFailure(@Nullable Throwable failure) {
+        switch (failure) {
+            case null -> {
+                return;
+            }
+            case RuntimeException runtimeException -> throw runtimeException;
+            case Error error -> throw error;
+            default -> {
+                final CairoException exception = nonCritical().put("resource cleanup failed");
+                exception.initCause(failure);
+                throw exception;
+            }
+        }
+    }
+
+    /**
+     * A non-critical error raised BECAUSE the frame's own content is
+     * fundamentally incompatible with what it names: the wire value's type,
+     * shape or precision does not fit the target column (an unsupported type
+     * coercion, a geohash precision mismatch), or the named target is not a
+     * writable table at all (a view, materialized view or live view, or a
+     * non-WAL table on a WAL-only ingestion path). The
      * refusal is DETERMINISTIC under byte-identical replay -- the same bytes
      * produce the same rejection every time -- so protocol layers that must
      * tell a permanent data error apart from a transient write refusal (the
@@ -378,9 +431,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     /**
-     * Whether this refusal is a deterministic wire-value/column-type mismatch
-     * (set only by {@link #schemaMismatch()}). Implies the error is
-     * non-critical and permanent -- replay of the same bytes cannot succeed.
+     * Whether this refusal is a deterministic wire-value/column-type mismatch,
+     * or names a target that is not a writable table (set only by
+     * {@link #schemaMismatch()}). Implies the error is non-critical and
+     * permanent -- replay of the same bytes cannot succeed.
      */
     public boolean isSchemaMismatch() {
         return (flags & FLAG_SCHEMA_MISMATCH) != 0;

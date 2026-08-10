@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -64,6 +66,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
+    private final ObjList<LiveViewInstance> liveViewSink = new ObjList<>();
     private final Clock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -244,6 +247,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         return;
                     }
                     try {
+                        if (!beforeDroppedTableRemoved(tableToken)) {
+                            // Removal deferred (e.g. remote objects not reclaimed yet); retry on a later sweep.
+                            return;
+                        }
                         // Fully deregister the table
                         Path pathToDelete = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
                         Path symLinkTarget = null;
@@ -494,9 +501,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private long getSafeToPurgeUpToTxn(long readerSeqTxn) {
         long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
-        engine.getMatViewGraph().getDependentViews(tableToken, childViewSink);
+        engine.getDependentViewGraph().getDependentViews(tableToken, childViewSink);
+        // The dependent-view graph carries both mat-view and live-view tokens.
+        // Live views are enumerated separately below via liveViewRegistry, so
+        // skip them here to avoid the matViewStateStore lookup that would
+        // never produce a state for an LV token.
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
+            if (viewToken.isLiveView()) {
+                continue;
+            }
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
 
             if (state != null && !state.isDropped()) {
@@ -521,6 +535,96 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
                     }
                 }
+            }
+        }
+
+        // Live views publish lv_consumed_seqTxn through this purge floor
+        // alongside mat-view consumers. Both dropped and invalid views release
+        // their floor, mirroring the mat-view arm above. Invalidation is
+        // terminal for a live view - there is no in-place revalidation path,
+        // the refresh worker permanently skips an invalid view, and its
+        // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
+        // the floor pinned would clamp safeToPurgeTxn to that frozen value and
+        // block base WAL purging indefinitely while the base keeps ingesting.
+        // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
+        // reader, not the raw base WAL, so the retained WAL is never load-bearing.
+        // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
+        // dedicated live view refresh pool has no workers. In either case nothing advances
+        // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would
+        // pin the base WAL forever while the base keeps ingesting. The mat-view arm gets the
+        // feature-off half free (NoOp state store -> null state -> floor released); the LV arm
+        // reads the registry directly, so it needs the gate.
+        //
+        // isLiveViewRefreshEnabled() is the whole condition, not a necessary-but-insufficient
+        // proxy. ServerMain additionally requires !isReadOnlyInstance(), which is covered because
+        // it creates no WalPurgeJob at all in that case, so this method never runs on a replica.
+        //
+        // Keep this call identical to CairoEngine.buildViewGraphs' registration guard: this clamps
+        // exactly what that method registers. Both read config only and both evaluate on the boot
+        // thread before the pools start, so they cannot disagree and no sweep can race
+        // registration.
+        if (!engine.getConfiguration().isLiveViewRefreshEnabled()) {
+            return safeToPurgeTxn;
+        }
+        liveViewSink.clear();
+        final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
+        liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);
+        if (liveViewSink.size() == 0) {
+            // No dependent views: nothing below can lower the floor, so skip the role read too.
+            return safeToPurgeTxn;
+        }
+        // Sample the dynamic read-only flag ONCE for the whole fan-out. Re-reading it per view lets a
+        // PRIMARY-to-REPLICA flip land between two iterations: the views already iterated contribute no
+        // frontier floor while the rest do, and the combined min can then sit ABOVE an earlier view's
+        // frontier - purging base WAL-E its next drain still reads. One sample makes the floor
+        // internally consistent. A sample that reads false is safe even if a demote lands immediately
+        // after: on a primary the frontier arm is a provable no-op (see below), so nothing was skipped.
+        final boolean readOnly = engine.isReadOnlyMode();
+        for (int v = 0, n = liveViewSink.size(); v < n; v++) {
+            final LiveViewInstance instance = liveViewSink.getQuick(v);
+            if (instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+            if (lvConsumed > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
+            }
+            // Read-only replica only: lvConsumed tracks this node's own flush watermark, but the
+            // replica drains base WAL-E forward from refreshedUpToSeqTxn, which lags lvConsumed
+            // while the lead trails the flushed point (Case B). Purging (refreshedUpToSeqTxn,
+            // lvConsumed] would delete WAL-E a seeded drain still reads, so floor at the frontier.
+            // No-op on a primary (lead leads lvConsumed); the cross-thread long read only min-combines.
+            if (readOnly) {
+                final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
+                if (refreshedUpTo > -1) {
+                    safeToPurgeTxn = Math.min(safeToPurgeTxn, refreshedUpTo);
+                }
+            }
+            // Hold the base WAL back to the durable head checkpoint's base commit,
+            // not the applied point. On restart the restore replays the
+            // (headBaseSeqTxn, applied] base WAL to advance the accumulators restored
+            // from the selected root up to the applied watermark; lvConsumed advances
+            // to that applied point every flush, but the head only advances on the
+            // checkpoint cadence, so lvConsumed can outrun it and let this range be
+            // purged out from under the next restart's replay. Capping at
+            // headBaseSeqTxn keeps the replay WAL until a later seal moves the head
+            // past it. LONG_NULL (no head, or one an O3 repair cleared) leaves the
+            // floor at lvConsumed: those views recover by rebuilding from the applied
+            // base table, which needs no raw base WAL.
+            final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+            if (headBaseSeqTxn > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
+            }
+            // The versioned timeline keeps both A/B generations recoverable.
+            // Its floor is therefore the minimum normalized base coordinate of
+            // both durable slots, published to the instance only after the
+            // superblock commit point. Recovery/repair owners may lower the same
+            // floor while pinned. Kept as a separate arm from the head above: the
+            // head follows the newest boundary this process sealed, while the
+            // timeline floor follows what either durable slot still needs.
+            final long timelineFloor = instance.getCheckpointTimelineWalPurgeFloor();
+            if (timelineFloor > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, timelineFloor);
             }
         }
         return safeToPurgeTxn;
@@ -570,6 +674,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setWalPath(TableToken tableName, int walId) {
         return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
+    }
+
+    /**
+     * Hook invoked just before a dropped table's local directory is removed. Returning false defers
+     * the local removal to a later sweep, e.g. to first reclaim the table's remote objects. The OSS
+     * default removes now.
+     *
+     * @return true if the local table directory may be removed now
+     */
+    protected boolean beforeDroppedTableRemoved(TableToken tableToken) {
+        return true;
     }
 
     protected long getCurrentSeqPart(long lastAppliedTxn, int txnPartSize) {

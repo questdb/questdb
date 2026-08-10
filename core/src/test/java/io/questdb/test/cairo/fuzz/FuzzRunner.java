@@ -56,6 +56,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -89,6 +90,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
+    private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
@@ -893,6 +895,102 @@ public class FuzzRunner {
         return excludedIntervals;
     }
 
+    private void assertCoveredCursors(
+            SqlCompiler compiler,
+            String tableName,
+            String symbolColumnName,
+            CharSequence projection,
+            String whereClause
+    ) throws SqlException {
+        final String covered = "select " + projection + " from " + tableName + whereClause;
+        final String uncovered = "select /*+ no_covering */ " + projection + " from " + tableName + whereClause;
+
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(compiler, sqlExecutionContext, "explain " + covered, plan);
+
+        final String expectedPlan = "CoveringIndex on: " + symbolColumnName + " with:";
+        Assert.assertTrue(
+                "covering plan not chosen for " + covered + ", plan was:\n" + plan,
+                Chars.contains(plan, expectedPlan)
+        );
+        LOG.info().$("checking covered values: ").$safe(covered).I$();
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, uncovered, covered, LOG);
+    }
+
+    /**
+     * Reads the covered values back through the covering index and compares them
+     * against the same projection with covering disabled.
+     * <p>
+     * The scans in {@link #checkIndexRandomValueScan} cannot do this: they project
+     * {@code *}, so at least one projected column is not in the INCLUDE list,
+     * {@code buildCoveringIndexMapping} returns null
+     * (SqlCodeGenerator.java:915) and no covering cursor is ever constructed. That
+     * left the whole covering sidecar lifecycle - including parquet round-trips -
+     * unasserted by the fuzz suite. Projecting exactly the key column plus its
+     * covered columns is what forces the covering plan.
+     * <p>
+     * Every distinct key is checked, not the single random value
+     * {@link #checkIndexRandomValueScan} picks. That matters: a dropped sidecar
+     * only shows up in the rows of the partition that lost it, and with one random
+     * key the odds of sampling such a row are low enough that a deliberately
+     * reintroduced parquet-&gt;native covering bug survived four fuzz runs
+     * undetected. Keys are checked one at a time so that each comparison stays a
+     * single-key equality, which both plans resolve through the same index and
+     * therefore emit in the same order without needing an ORDER BY.
+     */
+    private void checkCoveredValueScan(
+            SqlCompiler compiler,
+            String tableName,
+            String symbolColumnName
+    ) throws SqlException {
+        final StringSink projection = new StringSink();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int keyIndex = metadata.getColumnIndexQuiet(symbolColumnName);
+            if (keyIndex < 0 || !metadata.isColumnIndexed(keyIndex)) {
+                return; // the column was dropped or un-indexed on this table
+            }
+            final IntList coveringIndices = metadata.getCoveringColumnIndices(keyIndex);
+            if (coveringIndices == null || coveringIndices.size() == 0) {
+                return; // not a COVERING index
+            }
+            projection.put('"').put(symbolColumnName).put('"');
+            for (int c = 0, cn = coveringIndices.size(); c < cn; c++) {
+                final int writerIndex = coveringIndices.getQuick(c);
+                if (writerIndex < 0) {
+                    continue; // covered column was dropped
+                }
+                for (int r = 0, rn = metadata.getColumnCount(); r < rn; r++) {
+                    if (metadata.getWriterIndex(r) == writerIndex) {
+                        projection.put(", \"").put(metadata.getColumnName(r)).put('"');
+                        break;
+                    }
+                }
+            }
+        }
+
+        sink.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "select distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
+        int checked = 0;
+        for (int lo = sink.indexOf("\n") + 1, hi; lo > 0 && lo < sink.length() && checked < MAX_COVERED_KEYS_CHECKED; lo = hi + 1) {
+            hi = sink.indexOf("\n", lo);
+            if (hi < 0) {
+                hi = sink.length();
+            }
+            final String value = sink.subSequence(lo, hi).toString();
+            if (value.indexOf('\'') >= 0) {
+                continue; // a quote would need escaping; skip this key
+            }
+            checked++;
+            assertCoveredCursors(compiler, tableName, symbolColumnName, projection,
+                    " where \"" + symbolColumnName + "\" = " + (value.isEmpty() ? "null" : "'" + value + "'"));
+        }
+        if (checked == MAX_COVERED_KEYS_CHECKED) {
+            LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
+                    .$(" keys [table=").$safe(tableName).$(", column=").$safe(symbolColumnName).I$();
+        }
+    }
+
     private void checkIndexRandomValueScan(
             String expectedTableName,
             String actualTableName,
@@ -908,12 +1006,13 @@ public class FuzzRunner {
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
-            LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+            LOG.info().$("checking random index with filter: ").$safe(indexedWhereClause).I$();
             String limit = ""; // for debugging, e.g. " limit 100"
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
             // Now let's do backward order assertion
             String orderBy = " order by " + tsColumnName + " desc";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
+            checkCoveredValueScan(compiler, actualTableName, symbolColumnName);
         }
     }
 
@@ -1450,9 +1549,7 @@ public class FuzzRunner {
             applyNonWal(transactions, tableNameNoWal, rnd);
             long endNonWalMicro = System.nanoTime() / 1000;
             long nonWalTotal = endNonWalMicro - startMicro;
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
-            }
+            assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
 
             applyWal(transactions, tableNameWal, 1, rnd);
 

@@ -73,7 +73,7 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             reader.setActiveColumns(columnIndexes);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
-                    fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex);
+                    fwdCursor = new IntervalFwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
                 }
                 // Task 5b: propagate on every getCursor() call (cheap, idempotent) rather than only at
                 // construction -- fwdCursor/bwdCursor are cached and reused across executions of this
@@ -84,7 +84,7 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             }
 
             if (bwdCursor == null) {
-                bwdCursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex);
+                bwdCursor = new IntervalBwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
             }
             bwdCursor.setAllowedCellKeys(allowedCellKeys);
             return bwdCursor.of(reader, executionContext);
@@ -97,6 +97,25 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     @Override
     public int getOrder() {
         return baseOrder;
+    }
+
+    // Deterministic iff the interval model is: a runtime model re-evaluates its bound functions
+    // on every open, so a non-deterministic bound can yield different frames across executions.
+    @Override
+    public boolean isNonDeterministic() {
+        return intervalModel.isNonDeterministic();
+    }
+
+    // Compose the weaker within-execution property separately so execution-scoped bounds can
+    // remain stable even when they are non-deterministic across executions.
+    @Override
+    public boolean isStableWithinExecution() {
+        return intervalModel.isStableWithinExecution();
+    }
+
+    @Override
+    public boolean isIntervalScan() {
+        return true;
     }
 
     @Override

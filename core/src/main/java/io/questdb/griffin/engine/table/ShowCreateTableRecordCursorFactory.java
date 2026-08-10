@@ -60,7 +60,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     private static final RecordMetadata METADATA;
     protected final TableToken tableToken;
     protected final int tokenPosition;
-    private final ShowCreateTableCursor cursor = new ShowCreateTableCursor();
+    private ShowCreateTableCursor cursor = new ShowCreateTableCursor();
 
     public ShowCreateTableRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -160,8 +160,16 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateTableCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
@@ -217,9 +225,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
-            // SHOW CREATE TABLE rejects views and materialized views during parsing
+            // SHOW CREATE TABLE rejects regular, materialized and live views during parsing
             // (see SqlParserCallback.getTableToken); guard against any future caller that bypasses it.
-            assert !tableToken.isView() && !tableToken.isMatView();
+            assert !tableToken.isView() && !tableToken.isMatView() && !tableToken.isLiveView();
 
             toTop();
             return this;

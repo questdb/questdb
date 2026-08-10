@@ -44,8 +44,12 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
@@ -7115,9 +7119,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testProjectionConstantCastOverflowDoesNotLeakInnerFactory() throws Exception {
         // The DECIMAL cast in the projection constant-folds at compile time and
         // throws ImplicitCastException when the literal does not fit. The inner
-        // factory tree -- including the AsyncFiltered factory's PageFrameSequence,
-        // which holds a native circuit-breaker buffer -- was leaking because the
-        // virtual-projection codegen caught only SqlException | CairoException and
+        // factory tree -- including the AsyncFiltered factory's PageFrameSequence
+        // and its native buffers -- was leaking because the virtual-projection
+        // codegen caught only SqlException | CairoException and
         // ImplicitCastException is a plain RuntimeException.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -8290,7 +8294,55 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createViewSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table lv_base (val int, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create live view lv_ext flush every 1s start from now as (" +
+                            "select ts, val, count(*) over (partition by val order by ts rows between 1 preceding and current row) rn from lv_base" +
+                            ") foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createLiveViewSuffixCalled);
+                }
             }
+        });
+    }
+
+    @Test
+    public void testUseLiveViewExtensionGrammar() throws Exception {
+        // An edition compiler can consume its own trailing grammar after CREATE LIVE
+        // VIEW (enterprise consumes OWNED BY '<principal>' this way): the hook
+        // receives the first trailing token, reads what it understands off the
+        // lexer, and delegates the remainder to the default, which still rejects
+        // anything left over. The builder the hook returns produces a regular live
+        // view, and its SHOW CREATE output (which carries no extension clause in the
+        // OSS form) parses back through the default hook.
+        assertMemoryLeak(() -> {
+            execute("create table lvg_base (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (OwnedByLiveViewCompilerWrapper compiler = new OwnedByLiveViewCompilerWrapper(engine)) {
+                execute(compiler, "create live view lvg flush every 1s start from now as (" +
+                        "select ts, val, count(*) over (partition by val order by ts rows between 1 preceding and current row) rn from lvg_base" +
+                        ") owned by 'sarah'", sqlExecutionContext);
+                Assert.assertEquals("sarah", compiler.ownedBy);
+
+                try {
+                    execute(compiler, "create live view lvg2 flush every 1s start from now as (" +
+                            "select ts, val, count(*) over (partition by val order by ts rows between 1 preceding and current row) rn from lvg_base" +
+                            ") owned by 'sarah' foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [foobar]");
+                }
+            }
+
+            // The emitted DDL round-trips through the default (OSS) hook.
+            printSql("SHOW CREATE LIVE VIEW lvg;");
+            final String ddl = sink.toString().replace("ddl\n", "");
+            execute("DROP LIVE VIEW lvg");
+            execute(ddl);
+            printSql("SHOW CREATE LIVE VIEW lvg;");
+            TestUtils.assertEquals(ddl, sink.toString().replace("ddl\n", ""));
+            execute("DROP LIVE VIEW lvg");
         });
     }
 
@@ -8611,9 +8663,44 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         void run(CairoEngine engine);
     }
 
+    // Emulates an edition compiler that consumes OWNED BY '<principal>' after the
+    // CREATE LIVE VIEW statement body, the way enterprise does: read the clause off
+    // the lexer, record it, and hand whatever follows to the default hook, which
+    // rejects any leftover token.
+    static class OwnedByLiveViewCompilerWrapper extends SqlCompilerImpl {
+        String ownedBy;
+
+        OwnedByLiveViewCompilerWrapper(CairoEngine engine) {
+            super(engine);
+        }
+
+        @Override
+        public CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+                GenericLexer lexer,
+                SqlExecutionContext executionContext,
+                CreateLiveViewOperationBuilderImpl builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            if (tok != null && Chars.equalsLowerCaseAscii(tok, "owned")) {
+                final CharSequence by = SqlUtil.fetchNext(lexer);
+                if (by == null || !SqlKeywords.isByKeyword(by)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "BY expected");
+                }
+                final CharSequence principal = SqlUtil.fetchNext(lexer);
+                if (principal == null) {
+                    throw SqlException.$(lexer.getPosition(), "principal expected");
+                }
+                ownedBy = Chars.toString(GenericLexer.unquote(principal));
+                return super.parseCreateLiveViewExt(lexer, executionContext, builder, SqlUtil.fetchNext(lexer));
+            }
+            return super.parseCreateLiveViewExt(lexer, executionContext, builder, tok);
+        }
+    }
+
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
+        boolean createLiveViewSuffixCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean createViewSuffixCalled;
@@ -8623,6 +8710,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
+        }
+
+        @Override
+        public CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+                GenericLexer lexer,
+                SqlExecutionContext executionContext,
+                CreateLiveViewOperationBuilderImpl builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createLiveViewSuffixCalled = true;
+            return super.parseCreateLiveViewExt(lexer, executionContext, builder, tok);
         }
 
         @Override

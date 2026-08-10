@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
@@ -70,6 +71,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -99,12 +101,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
     private final int workerCount;
+    private AsyncWindowJoinRecordCursor cursor;
+    private PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
 
     public AsyncWindowJoinFastRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -229,8 +231,27 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    @TestOnly
+    public AsyncWindowJoinFastAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return masterFactory;
+    }
+
+    // getBaseFactory() exposes only the master. The slave is parser-restricted to a plain table
+    // today, but propagate both sides explicitly so the external-source guard stays honest if that
+    // restriction is ever relaxed. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
     }
 
     @Override
@@ -247,6 +268,23 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             cursor.close();
             throw th;
         }
+    }
+
+    @TestOnly
+    public String getReducerName() {
+        final PageFrameReducer reducer = frameSequence.getReducer();
+        if (reducer == AGGREGATE) return "AGGREGATE";
+        if (reducer == AGGREGATE_PREVAILING) return "AGGREGATE_PREVAILING";
+        if (reducer == AGGREGATE_PREVAILING_JOIN_FILTERED) return "AGGREGATE_PREVAILING_JOIN_FILTERED";
+        if (reducer == AGGREGATE_VECT) return "AGGREGATE_VECT";
+        if (reducer == AGGREGATE_VECT_PREVAILING) return "AGGREGATE_VECT_PREVAILING";
+        if (reducer == FILTER_AND_AGGREGATE) return "FILTER_AND_AGGREGATE";
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING) return "FILTER_AND_AGGREGATE_PREVAILING";
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED)
+            return "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED";
+        if (reducer == FILTER_AND_AGGREGATE_VECT) return "FILTER_AND_AGGREGATE_VECT";
+        if (reducer == FILTER_AND_AGGREGATE_VECT_PREVAILING) return "FILTER_AND_AGGREGATE_VECT_PREVAILING";
+        throw new AssertionError("reducer is not one of " + getClass().getSimpleName() + "'s constants");
     }
 
     @Override
@@ -334,12 +372,15 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final Function joinFilter = atom.getJoinFilter(slotId);
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
+        // The slot is held from here on: clearTemporaryData() and every of() below must sit inside
+        // the try that releases it, see PerWorkerLocks.acquireSlot(). The getters above the try are
+        // ObjList lookups and cannot throw.
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -484,11 +525,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -635,11 +676,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -839,12 +880,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -1022,12 +1063,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -2232,10 +2273,24 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(frameSequence);
-        Misc.free(cursor);
-        Misc.free(joinMetadata);
+        final AsyncWindowJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable failure = Misc.freeBestEffort(null, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinMetadata);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

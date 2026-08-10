@@ -29,10 +29,15 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -64,6 +69,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
@@ -987,6 +993,16 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportClearsTaskBeforeTrackerCursor() throws Exception {
+        assertParquetExportTaskClosesBeforeTrackerCursor(false);
+    }
+
+    @Test
+    public void testParquetExportClosesTaskBeforeTrackerCursor() throws Exception {
+        assertParquetExportTaskClosesBeforeTrackerCursor(true);
+    }
+
+    @Test
     public void testParquetExportCompressionCode() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1284,7 +1300,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
             )) {
@@ -1297,7 +1313,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
@@ -1399,9 +1415,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.HTTP_MIN_ENABLED.getPropertyPath(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestExpLimit),
                     PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestJsonLimit)
             )) {
@@ -2273,12 +2289,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
-                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(fragmentation),
                     PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), exportRoot
             )) {
                 serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
@@ -2581,6 +2597,87 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 TestUtils.assertEquals(expectedSink, actualSink);
             }
         }
+    }
+
+    private void assertParquetExportTaskClosesBeforeTrackerCursor(boolean closeState) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicBoolean taskCleanupCalled = new AtomicBoolean();
+            final AtomicBoolean trackerCursorClosed = new AtomicBoolean();
+            try (ExportQueryProcessorState state = new ExportQueryProcessorState(null, null)) {
+                state.setTaskAndCursorForTest(
+                        new CopyExportRequestTask() {
+                            @Override
+                            public void clear() {
+                                onTaskCleanup();
+                                super.clear();
+                            }
+
+                            @Override
+                            public void close() {
+                                onTaskCleanup();
+                                super.close();
+                            }
+
+                            private void onTaskCleanup() {
+                                if (taskCleanupCalled.compareAndSet(false, true)) {
+                                    Assert.assertFalse(
+                                            "export task must close before its tracker cursor closes",
+                                            trackerCursorClosed.get()
+                                    );
+                                }
+                            }
+                        },
+                        new NoRandomAccessRecordCursor() {
+                            @Override
+                            public void close() {
+                                trackerCursorClosed.set(true);
+                            }
+
+                            @Override
+                            public Record getRecord() {
+                                return null;
+                            }
+
+                            @Override
+                            public SymbolTable getSymbolTable(int columnIndex) {
+                                return null;
+                            }
+
+                            @Override
+                            public boolean hasNext() {
+                                return false;
+                            }
+
+                            @Override
+                            public SymbolTable newSymbolTable(int columnIndex) {
+                                return null;
+                            }
+
+                            @Override
+                            public long preComputedStateSize() {
+                                return 0;
+                            }
+
+                            @Override
+                            public long size() {
+                                return 0;
+                            }
+
+                            @Override
+                            public void toTop() {
+                            }
+                        }
+                );
+
+                if (closeState) {
+                    state.close();
+                } else {
+                    state.clear();
+                }
+                Assert.assertTrue("export task cleanup callback must run", taskCleanupCalled.get());
+                Assert.assertTrue("tracker cursor must close during state cleanup", trackerCursorClosed.get());
+            }
+        });
     }
 
     private void assertParquetMatchesQuery(

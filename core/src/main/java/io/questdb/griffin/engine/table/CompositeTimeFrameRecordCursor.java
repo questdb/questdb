@@ -158,7 +158,7 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         this.timestampIndex = metadata.getTimestampIndex();
         try {
             this.frameAddressCache = new PageFrameAddressCache();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration);
             // Deferred allocation (keepClosed=true); buildPermutation() reopen()s on first use,
             // mirroring TimeFrameCursorImpl's frameRowCounts/framePartitionIndexes.
             this.permutation = new DirectLongList(1024, MemoryTag.NATIVE_DEFAULT, true);

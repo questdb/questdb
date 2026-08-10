@@ -36,12 +36,16 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.ScalarSubQueryCompileCache;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -90,8 +94,32 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_LESS_EQ = 5;
     private static final int INTRINSIC_OP_NOT = 8;
     private static final int INTRINSIC_OP_NOT_EQ = 7;
+    // Ceiling on how deeply speculative scalar sub-query bound compiles may nest.
+    // <p>
+    // A declined speculation no longer costs a second compile - the compiled sub-query is handed to
+    // the residual filter through ScalarSubQueryCompileCache - so compile work is already linear in
+    // the nesting depth. This cap is the backstop for that guarantee, not the mechanism behind it:
+    // reuse serves one consumer, so any predicate that is genuinely compiled more than once (a
+    // per-worker filter clone finding the slot already claimed) would fall back to generating its
+    // own copy, and were that ever to happen on a nested chain the old doubling would reappear as
+    // T(k) = 2*T(k+1) = O(2^D). Nothing in code generation tests the circuit breaker (all trip tests
+    // sit on row-iteration paths) and neither SqlParser nor ExpressionParser caps nesting, so an
+    // uncancellable exponential compile is worth a hard ceiling even when it should be unreachable.
+    // Past this depth pruning is simply not attempted, which bounds the worst case at 2^MAX.
+    // <p>
+    // Declining is always semantically safe: it is the same fallback the stability gate below uses,
+    // and the residual filter remains the single source of truth. Only the pruning optimization is
+    // lost, and only for bounds nested deeper than any realistic query.
+    private static final int MAX_SPECULATIVE_SCALAR_BOUND_DEPTH = 4;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
+    // Slots holding sub-query compiles parked for a declined bound's residual filter. Owned here and
+    // released when the enclosing generation completes.
+    private final ObjList<ScalarSubQueryCompileCache> scalarBoundCompileCaches = new ObjList<>();
+    // Holds the WHERE clauses saved around a speculative scalar sub-query compile. Cleared only in
+    // clear(), i.e. at a top-level compilation boundary, so a saved clause handed back to a model
+    // stays valid for the whole compilation, exactly like the compiler's own expression node pool.
+    private final ObjectPool<ExpressionNode> exprNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
     private final Interval intervalScratch = new Interval();
     private final StringSink intervalSink = new StringSink();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
@@ -102,6 +130,9 @@ public final class WhereClauseParser implements Mutable {
     // marks must be reverted so collapseIntrinsicNodes does not later
     // shred a still-needed branch and leave a half-collapsed OR node.
     private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+    // FunctionParser compiles scalar subqueries through the owning SqlCodeGenerator, which can re-enter extract().
+    // Each recursion level borrows one snapshot so the nested traversal cannot overwrite its suspended parent.
+    private final ObjList<SavedState> savedStates = new ObjList<>();
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final LongList tempInIntervals = new LongList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
@@ -127,13 +158,62 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
+    private int reentryDepth;
     private long resolvedBoundConst;
     private Function resolvedBoundFunc;
+    // Nesting depth of speculative scalar sub-query bound compiles that led to this parser, and
+    // whether this parser has already spent a speculative compile on the model it is parsing. Each
+    // generation depth gets its own parser instance, so SqlCodeGenerator seeds the child from its
+    // parent when it borrows one. The flag is sticky for the whole generation on purpose: once a
+    // bound here has been speculatively compiled, the residual re-compile of that same sub-query is
+    // the second half of the doubling and has to be charged for too, otherwise the budget resets on
+    // every residual descent and the blow-up merely drops from O(2^D) to O(D^MAX).
+    private int scalarBoundDepth;
+    private boolean scalarBoundSpeculated;
     private CharSequence timestamp;
+    private boolean useIndexedSymbolFilters = true;
 
     @Override
     public void clear() {
-        models.clear();
+        freeBorrowedModels();
+        freeScalarBoundCompileCaches();
+        csPool.clear();
+        exprNodePool.clear();
+        clearTransientState();
+        reentryDepth = 0;
+        scalarBoundDepth = 0;
+        for (int i = 0, n = savedStates.size(); i < n; i++) {
+            savedStates.getQuick(i).clear();
+        }
+    }
+
+    /**
+     * Depth to seed a parser borrowed for a nested generation with: one deeper than this parser
+     * when the nested generation was triggered by a speculative scalar sub-query bound compile,
+     * otherwise unchanged, so ordinary sub-select nesting never consumes the speculation budget.
+     */
+    int childScalarBoundDepth() {
+        return scalarBoundSpeculated ? scalarBoundDepth + 1 : scalarBoundDepth;
+    }
+
+    void setScalarBoundDepth(int scalarBoundDepth) {
+        this.scalarBoundDepth = scalarBoundDepth;
+    }
+
+    /**
+     * Releases any speculative sub-query compile that no residual filter claimed. Called when the
+     * generation that produced them finishes, which is the point at which an unclaimed entry is
+     * provably garbage: the residual filter is compiled inside that same generation.
+     */
+    void freeScalarBoundCompileCaches() {
+        for (int i = 0, n = scalarBoundCompileCaches.size(); i < n; i++) {
+            scalarBoundCompileCaches.getQuick(i).free();
+        }
+        scalarBoundCompileCaches.clear();
+    }
+
+    void clearTransientState() {
+        scalarBoundSpeculated = false;
         stack.clear();
         keyNodes.clear();
         keyExclNodes.clear();
@@ -150,14 +230,74 @@ public final class WhereClauseParser implements Mutable {
         tmpFunctions.clear();
         clearKeys();
         clearExcludedKeys();
-        csPool.clear();
         timestamp = null;
         preferredKeyColumn = null;
+        resolvedBoundFunc = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
+        useIndexedSymbolFilters = true;
     }
 
     public IntrinsicModel extract(
+            @NotNull AliasTranslator translator,
+            ExpressionNode node,
+            @NotNull RecordMetadata m,
+            CharSequence preferredKeyColumn,
+            int timestampIndex,
+            @NotNull FunctionParser functionParser,
+            @NotNull RecordMetadata metadata,
+            @NotNull SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            @NotNull TableReader reader,
+            boolean noIndex
+    ) throws SqlException {
+        final int depth = reentryDepth++;
+        SavedState saved = null;
+        Throwable failure = null;
+        try {
+            if (depth > 0) {
+                while (savedStates.size() < depth) {
+                    savedStates.add(new SavedState());
+                }
+                final SavedState candidate = savedStates.getQuick(depth - 1);
+                saveStateInto(candidate);
+                saved = candidate;
+                clearTransientState();
+            }
+            return extract0(
+                    translator,
+                    node,
+                    m,
+                    preferredKeyColumn,
+                    timestampIndex,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    latestByMultiColumn,
+                    reader,
+                    noIndex
+            );
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
+        } finally {
+            try {
+                if (saved != null) {
+                    restoreStateFrom(saved);
+                }
+            } catch (RuntimeException | Error restoreFailure) {
+                if (failure != null) {
+                    failure.addSuppressed(restoreFailure);
+                } else {
+                    throw restoreFailure;
+                }
+            } finally {
+                reentryDepth--;
+            }
+        }
+    }
+
+    private IntrinsicModel extract0(
             @NotNull AliasTranslator translator,
             ExpressionNode node,
             @NotNull RecordMetadata m,
@@ -176,6 +316,12 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
+        // Live view base SELECT compilation suppresses indexed-symbol key extraction so the
+        // planner emits a plain FilteredRecordCursorFactory shape that the incremental refresh
+        // path already handles. Without this, an indexed-symbol equality predicate would push
+        // the filter into a SymbolIndexFilteredRowCursorFactory whose Function is invisible to
+        // the live view refresh, causing filtered rows to slip through.
+        this.useIndexedSymbolFilters = !executionContext.isLiveViewCompile();
 
         IntrinsicModel model = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
@@ -203,7 +349,10 @@ public final class WhereClauseParser implements Mutable {
         stack.clear();
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (isAndKeyword(node.token)) {
+                // tokenless nodes (e.g. sub-queries used as boolean predicates) are not
+                // intrinsic candidates; fall through to the poll branch so they stay in
+                // the residual filter
+                if (node.token != null && isAndKeyword(node.token)) {
                     if (!removeAndIntrinsics(
                             timestampDriver,
                             translator,
@@ -238,7 +387,7 @@ public final class WhereClauseParser implements Mutable {
                     } else {
                         node = node.lhs;
                     }
-                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
+                } else if (node.token != null && isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
                     // Entire OR tree was extracted as timestamp intrinsics
                     node = stack.poll();
                 } else {
@@ -252,6 +401,34 @@ public final class WhereClauseParser implements Mutable {
         model.filter = collapseIntrinsicNodes(root);
         createKeyValueBindVariables(model, functionParser, executionContext);
         return model;
+    }
+
+    /**
+     * Frees every {@link IntrinsicModel} borrowed from the pool since the last reset, then resets
+     * the pool position. A borrowed model may own a scalar sub-query cursor factory that was
+     * transferred into its interval builder but not yet handed downstream via
+     * {@code buildIntervalModel()} - for example when a later LATEST BY residual-filter compilation
+     * throws mid-generation. {@link IntrinsicModel#clear()} frees such a factory when ownership was
+     * not transferred and is a no-op free once it was, so this is safe on both the success and the
+     * failure paths. Cleanup is best-effort: a close failure on one model does not stop the others,
+     * and the first failure is rethrown with the rest suppressed so a caller unwinding another
+     * exception can attach it.
+     */
+    void freeBorrowedModels() {
+        Throwable failure = null;
+        for (int i = 0, n = models.getPos(); i < n; i++) {
+            try {
+                models.peekQuick(i).clear();
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else {
+                    failure.addSuppressed(th);
+                }
+            }
+        }
+        models.clear();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public IntrinsicModel getEmpty(int timestampType, int partitionBy, CairoConfiguration configuration) {
@@ -304,6 +481,13 @@ public final class WhereClauseParser implements Mutable {
         return n.type == ExpressionNode.FUNCTION
                 || n.type == ExpressionNode.BIND_VARIABLE
                 || n.type == ExpressionNode.OPERATION;
+    }
+
+    // A bound that resolves to a (runtime) function rather than a compile-time constant: either an
+    // ordinary function/bind-variable expression or a scalar subquery (QUERY). Used to recognize
+    // runtime-bound timestamp equality predicates for OR-union folding.
+    private static boolean isRuntimeBound(ExpressionNode n) {
+        return n != null && (isFunc(n) || n.type == ExpressionNode.QUERY);
     }
 
     private static boolean isIntegerType(int type) {
@@ -484,6 +668,13 @@ public final class WhereClauseParser implements Mutable {
                 reader
         );
 
+        if (predicate.intrinsicValue == IntrinsicModel.FALSE
+                || tempModel.intrinsicValue == IntrinsicModel.FALSE) {
+            model.intersectEmpty();
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
         if (extracted || tempModel.hasIntervalFilters()) {
             // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
             // This applies the offset to each interval boundary using the timestamp driver's add method,
@@ -537,6 +728,7 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode lo = between.args.getQuick(1);
         ExpressionNode hi = between.args.getQuick(0);
 
+        Throwable failure = null;
         try {
             model.setBetweenNegated(isNegated);
             boolean isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, lo);
@@ -548,8 +740,15 @@ public final class WhereClauseParser implements Mutable {
                 between.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
         } finally {
-            model.clearBetweenTempParsing();
+            if (failure != null) {
+                model.clearBetweenTempParsing(failure);
+            } else {
+                model.clearBetweenTempParsing();
+            }
         }
 
         return false;
@@ -631,12 +830,14 @@ public final class WhereClauseParser implements Mutable {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-                final Function func = functionParser.parseFunction(b, m, executionContext);
+                Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
+                    final Function ownedFunc = func;
+                    func = null;
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 } catch (Throwable th) {
-                    Misc.free(func);
+                    Misc.free(func, th);
                     throw th;
                 }
             } else {
@@ -740,14 +941,18 @@ public final class WhereClauseParser implements Mutable {
         }
         // special case for ts = (<subquery>) and similar cases
         if (a.type == ExpressionNode.LITERAL && isTimestamp(a) && b.type == ExpressionNode.QUERY) {
-            final Function func = functionParser.parseFunction(b, m, executionContext);
+            Function func = functionParser.parseFunction(b, m, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
+                    final Function ownedFunc = func;
+                    func = null;
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 }
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
             } catch (Throwable th) {
-                Misc.free(func);
+                Misc.free(func, th);
                 throw th;
             }
         }
@@ -874,7 +1079,7 @@ public final class WhereClauseParser implements Mutable {
                     return true;
                 } else if (isFunc(inArg)) {
                     // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
-                    final Function func = functionParser.parseFunction(inArg, metadata, executionContext);
+                    Function func = functionParser.parseFunction(inArg, metadata, executionContext);
                     try {
                         if (checkFunctionCanBeStrInterval(executionContext, func)) {
                             if (func.isConstant()) {
@@ -884,15 +1089,21 @@ public final class WhereClauseParser implements Mutable {
                                 } else {
                                     model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
                                 }
-                                Misc.free(func);
+                                final Function ownedFunc = func;
+                                func = null;
+                                Misc.free(ownedFunc);
                             } else if (func.isRuntimeConstant()) {
+                                final Function ownedFunc = func;
+                                func = null;
                                 if (!isNegated) {
-                                    model.intersectRuntimeIntervals(func);
+                                    model.intersectRuntimeIntervals(ownedFunc, inArg.position);
                                 } else {
-                                    model.subtractRuntimeIntervals(func);
+                                    model.subtractRuntimeIntervals(ownedFunc, inArg.position);
                                 }
                             } else {
-                                Misc.free(func);
+                                final Function ownedFunc = func;
+                                func = null;
+                                Misc.free(ownedFunc);
                                 return false;
                             }
                             in.intrinsicValue = IntrinsicModel.TRUE;
@@ -906,27 +1117,35 @@ public final class WhereClauseParser implements Mutable {
                                     model.subtractIntervals(interval.getLo(), interval.getHi());
                                 }
                                 in.intrinsicValue = IntrinsicModel.TRUE;
-                                Misc.free(func);
+                                final Function ownedFunc = func;
+                                func = null;
+                                Misc.free(ownedFunc);
                                 return true;
                             } else if (func.isRuntimeConstant()) {
+                                final Function ownedFunc = func;
+                                func = null;
                                 if (!isNegated) {
-                                    model.intersectRuntimeIntervals(func);
+                                    model.intersectRuntimeIntervals(ownedFunc, inArg.position);
                                 } else {
-                                    model.subtractRuntimeIntervals(func);
+                                    model.subtractRuntimeIntervals(ownedFunc, inArg.position);
                                 }
                                 in.intrinsicValue = IntrinsicModel.TRUE;
                                 return true;
                             }
-                            Misc.free(func);
+                            final Function ownedFunc = func;
+                            func = null;
+                            Misc.free(ownedFunc);
                             return false;
                         } else {
                             checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
                             // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
                             // This is same as equals
-                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, func, inArg.position);
+                            final Function ownedFunc = func;
+                            func = null;
+                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, ownedFunc, inArg.position);
                         }
                     } catch (Throwable th) {
-                        Misc.free(func);
+                        Misc.free(func, th);
                         throw th;
                     }
                 }
@@ -1245,11 +1464,13 @@ public final class WhereClauseParser implements Mutable {
         if (head == null) {
             return false;
         }
-        // A function bound is compiled by resolveScalarBound below and can re-enter
-        // compileMonotonicChain for a nested subquery, overwriting tempMonotonicChain; a
-        // constant/null bound cannot, so the shared list is only snapshotted for a function bound.
-        final boolean boundIsFunc = (loBoundNode != null && isFunc(loBoundNode)) || (hiBoundNode != null && isFunc(hiBoundNode));
-        final ObjList<MonotonicTimestampFunction> chain = boundIsFunc ? new ObjList<>(tempMonotonicChain) : tempMonotonicChain;
+        // The inverter (for a runtime bound) RETAINS its monotonic chain, so it cannot reference the
+        // shared tempMonotonicChain, which the next predicate's compileMonotonicChain clears (and a
+        // subquery bound re-enters compileMonotonicChain mid-call, clobbering it). Instead of copying
+        // tempMonotonicChain, both the inverter's evaluate() and the compile-time probe below traverse
+        // the owned head's linked chain (head -> getTimestampArg() -> ...), which is stable and holds
+        // the same functions in the same outermost-first order. The constant path below runs before any
+        // runtime bound is resolved and no subquery can reach it, so it still reads tempMonotonicChain.
         Function loBound = null;
         Function hiBound = null;
         try {
@@ -1309,7 +1530,7 @@ public final class WhereClauseParser implements Mutable {
                     hiConst = t;
                 }
                 intervalScratch.of(loConst, hiConst);
-                final int soundness = foldInvert(chain, intervalScratch);
+                final int soundness = foldInvert(tempMonotonicChain, intervalScratch);
                 if (soundness == MonotonicTimestampFunction.NONE) {
                     return false;
                 }
@@ -1326,15 +1547,31 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
 
+            // A scalar SUBQUERY bound (e.g. >= (SELECT ...)) is compiled twice: once for this
+            // pruning inverter and once for the retained residual filter. If the sub-query's two
+            // cursor opens are not PROVABLY going to yield the same value within this execution,
+            // pruning could drop rows the residual filter would keep, so skip pruning and let the
+            // residual filter be the single source of truth.
+            // Function.isStableWithinExecution() is the purpose-built property and is fail-safe:
+            // unknown sub-query shapes report unstable and never prune. Provably deterministic
+            // sub-query bounds (e.g. max(ts) over a plain scan) prune, and so do execution-scoped
+            // runtime constants - (SELECT now()), (SELECT $1::timestamp) - because both opens
+            // re-read the same frozen SqlExecutionContext snapshot. Traversal-unstable sources
+            // such as (SELECT rnd_timestamp(...)) remain residual-only. The finally below frees
+            // loBound/hiBound/head (ownership has not yet transferred to the inverter).
+            if ((loBound instanceof ScalarSubQueryTimestampFunction && !loBound.isStableWithinExecution())
+                    || (hiBound instanceof ScalarSubQueryTimestampFunction && !hiBound.isStableWithinExecution())) {
+                return false;
+            }
+
             // A constant end of a mixed BETWEEN is carried into the inverter (as a point) rather than
             // applied statically, so both ends are resolved and normalized together at scan open.
-            final int soundness = foldInvertProbe(chain);
+            final int soundness = foldInvertProbe(head);
             if (soundness == MonotonicTimestampFunction.NONE) {
                 return false;
             }
-            model.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
+            final TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
                     head,
-                    chain,
                     loBound,
                     loBound != null ? adjustComparison(equalsTo, true) : 0,
                     loConst,
@@ -1343,17 +1580,32 @@ public final class WhereClauseParser implements Mutable {
                     hiConst,
                     isBetween,
                     outDriver
-            ));
+            );
+            // Share one evaluation of each scalar sub-query bound between this pruning inverter and
+            // the retained residual filter: the bound publishes its single per-execution value into a
+            // holder that the residual (re-compiled from the same sub-query node) reads instead of
+            // opening the sub-query again. Without this, a commit between the two opens could make
+            // pruning stricter than the residual and silently drop qualifying rows.
+            shareScalarSubQueryBound(loBound, loBoundNode);
+            shareScalarSubQueryBound(hiBound, hiBoundNode);
             head = loBound = hiBound = null; // ownership transferred to the inverter
+            model.intersectMonotonicTimestamp(inverter);
             // a runtime bound may not be invertible when the scan opens, so it only prunes
-            // and the predicate stays a residual filter
+            // and the predicate stays a residual filter. Unstable scalar SUBQUERY bounds (e.g.
+            // rnd_*) are handled above (pruning skipped, residual only); execution-stable bounds
+            // (bind variables, now(), deterministic sub-queries) prune safely, and non-deterministic
+            // direct FUNCTION bounds (systimestamp/sysdate) are rejected by resolveScalarBound
+            // before reaching here.
             return false;
         } catch (SqlException | CairoException e) {
             return false;
         } finally {
-            Misc.free(loBound);
+            // Only reached with a non-null bound when pruning was declined (the adopted path nulls
+            // them out above). A declined scalar sub-query bound is about to be generated again by
+            // the retained residual filter, so hand the compile over instead of discarding it.
+            parkDeclinedScalarBound(loBound, loBoundNode);
             if (hiBound != loBound) {
-                Misc.free(hiBound);
+                parkDeclinedScalarBound(hiBound, hiBoundNode);
             }
             Misc.free(head);
         }
@@ -1511,7 +1763,9 @@ public final class WhereClauseParser implements Mutable {
                 Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampNotEqualsFunction(timestampDriver, model, node, func, b.position);
+                    final Function ownedFunc = func;
+                    func = null;
+                    return analyzeTimestampNotEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 } catch (Throwable th) {
                     Misc.free(func);
                     throw th;
@@ -1788,28 +2042,35 @@ public final class WhereClauseParser implements Mutable {
             Function func,
             int functionPosition
     ) throws SqlException {
-        if (func.isConstant()) {
-            long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
-            if (value == Numbers.LONG_NULL) {
-                // make it empty set
-                model.intersectEmpty();
-            } else {
-                model.intersectIntervals(value, value);
+        try {
+            if (func.isConstant()) {
+                long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
+                if (value == Numbers.LONG_NULL) {
+                    // make it empty set
+                    model.intersectEmpty();
+                } else {
+                    model.intersectIntervals(value, value);
+                }
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
+                return true;
+            } else if (func.isRuntimeConstant() || func.getType() == ColumnType.CURSOR) {
+                final Function ownedFunc = func;
+                func = null;
+                model.intersectRuntimeTimestamp(ownedFunc, functionPosition);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             }
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            Misc.free(func);
-            return true;
-        } else if (func.isRuntimeConstant()) {
-            model.intersectRuntimeTimestamp(func);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        } else if (func.getType() == ColumnType.CURSOR) {
-            model.intersectRuntimeTimestamp(func);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+            final Function ownedFunc = func;
+            func = null;
+            Misc.free(ownedFunc);
+            return false;
+        } catch (Throwable th) {
+            Misc.free(func, th);
+            throw th;
         }
-        Misc.free(func);
-        return false;
     }
 
     private boolean analyzeTimestampGreater(
@@ -1833,17 +2094,28 @@ public final class WhereClauseParser implements Mutable {
             } catch (NumericException e) {
                 throw SqlException.invalidDate(compareWithNode.token, compareWithNode.position);
             }
-            model.intersectIntervals(lo, Long.MAX_VALUE);
+            if (!equalsTo && lo == Long.MIN_VALUE) {
+                // a strict bound at Long.MAX_VALUE wrapped around during adjustment inside
+                // parseFullOrPartialDate; such a bound is just past the timestamp domain
+                // and matches nothing
+                model.intersectEmpty();
+            } else {
+                model.intersectIntervals(lo, Long.MAX_VALUE);
+            }
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         } else if (isFunc(compareWithNode)) {
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
                     lo = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (lo == Numbers.LONG_NULL) {
                         // make it empty set
+                        model.intersectEmpty();
+                    } else if (!equalsTo && lo == Long.MAX_VALUE) {
+                        // a strict bound just past the timestamp domain matches nothing;
+                        // lo + 1 would wrap around to Long.MIN_VALUE and select every row
                         model.intersectEmpty();
                     } else {
                         model.intersectIntervals(lo + adjustComparison(equalsTo, true), Long.MAX_VALUE);
@@ -1852,7 +2124,9 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(ownedFunc, Long.MAX_VALUE, adjustComparison(equalsTo, true), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1863,10 +2137,12 @@ public final class WhereClauseParser implements Mutable {
             }
         } else if (compareWithNode.type == ExpressionNode.QUERY) {
             // special case for ts = (<subquery>) and similar cases
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(ownedFunc, Long.MAX_VALUE, adjustComparison(equalsTo, true), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1903,7 +2179,7 @@ public final class WhereClauseParser implements Mutable {
             }
             return true;
         } else if (isFunc(compareWithNode)) {
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
@@ -1917,7 +2193,9 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(Long.MIN_VALUE, ownedFunc, adjustComparison(equalsTo, false), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1928,10 +2206,12 @@ public final class WhereClauseParser implements Mutable {
             }
         } else if (compareWithNode.type == ExpressionNode.QUERY) {
             // special case for ts = (<subquery>) and similar cases
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(Long.MIN_VALUE, ownedFunc, adjustComparison(equalsTo, false), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1948,20 +2228,33 @@ public final class WhereClauseParser implements Mutable {
             TimestampDriver timestampDriver,
             IntrinsicModel model,
             ExpressionNode node,
-            Function function,
+            Function func,
             int functionPosition
     ) throws SqlException {
-        if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(timestampDriver, function, functionPosition, true);
-            model.subtractIntervals(value, value);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        } else if (function.isRuntimeConstant()) {
-            model.subtractEquals(function);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+        try {
+            if (func.isConstant()) {
+                long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
+                model.subtractIntervals(value, value);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
+                return true;
+            } else if (func.isRuntimeConstant()) {
+                final Function ownedFunc = func;
+                func = null;
+                model.subtractEquals(ownedFunc, functionPosition);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+            final Function ownedFunc = func;
+            func = null;
+            Misc.free(ownedFunc);
+            return false;
+        } catch (Throwable th) {
+            Misc.free(func, th);
+            throw th;
         }
-        return false;
     }
 
     private void applyKeyExclusions(
@@ -2036,6 +2329,50 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
+     * Accumulates a scalar-subquery timestamp bound (ts = (select ...)) into the OR interval model
+     * as a UNION disjunct. Only a single-timestamp-column cursor qualifies; it is evaluated at scan
+     * open, exactly like a runtime-constant bound, and an empty/NULL result contributes nothing to
+     * the union (the empty-set identity). Returns true if the bound cannot be accumulated (the
+     * caller must bail and revert to a residual scan).
+     */
+    private boolean cannotAccumulateTimestampCursor(
+            IntrinsicModel model,
+            ExpressionNode queryNode,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Same speculation budget as the monotonic channel: this compile is discarded whenever the
+        // OR extraction is rolled back - which happens whenever ANY sibling disjunct turns out not
+        // to be extractable - and the predicate then stays a residual filter that generates this
+        // very sub-query again. Uncharged, that doubles compile time per nesting level.
+        if (scalarBoundDepth >= MAX_SPECULATIVE_SCALAR_BOUND_DEPTH) {
+            // "cannot accumulate": the caller reverts the OR extraction to a residual filter, which
+            // is always sound - it only forgoes the interval-union optimization.
+            return true;
+        }
+        scalarBoundSpeculated = true;
+        Function func = parseScalarSubQueryBound(queryNode, functionParser, metadata, executionContext);
+        try {
+            if (checkCursorFunctionReturnsSingleTimestamp(func)) {
+                final Function ownedFunc = func;
+                func = null;
+                model.unionRuntimeTimestamp(ownedFunc, queryNode.position);
+                return false;
+            }
+            final Function ownedFunc = func;
+            func = null;
+            // Declined: the residual filter is about to generate this same sub-query, so hand the
+            // compile over rather than discarding it.
+            parkDeclinedScalarBound(ownedFunc, queryNode);
+            return true;
+        } catch (Throwable th) {
+            Misc.free(func, th);
+            throw th;
+        }
+    }
+
+    /**
      * Accumulates a timestamp function (like now()) into the OR interval model.
      * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
      * Returns true if the function cannot be accumulated (the caller must bail).
@@ -2051,30 +2388,38 @@ public final class WhereClauseParser implements Mutable {
         Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
         try {
             if (!ColumnType.isTimestamp(func.getType())) {
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
                 return true;
             }
             if (func.isConstant()) {
                 long ts = func.getTimestamp(null);
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
                 if (isFirst) {
                     model.intersectIntervals(ts, ts);
                 } else {
                     model.unionIntervals(ts, ts);
                 }
             } else if (func.isRuntimeConstant()) {
-                if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
-                } else {
-                    model.unionRuntimeTimestamp(func);
-                }
+                final Function ownedFunc = func;
+                func = null;
+                // Every OR disjunct contributes to a union. A runtime bound that evaluates to NULL
+                // is the empty-set identity under UNION (see RuntimeIntervalModel), so the anchor
+                // uses UNION too: an INTERSECT anchor would collapse the whole disjunction to empty
+                // when its bound is NULL and silently drop the other disjuncts' rows.
+                model.unionRuntimeTimestamp(ownedFunc, funcNode.position);
             } else {
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
                 return true;
             }
             return false;
         } catch (Throwable th) {
-            Misc.free(func);
+            Misc.free(func, th);
             throw th;
         }
     }
@@ -2158,6 +2503,109 @@ public final class WhereClauseParser implements Mutable {
         allKeyValuesAreKnown = true;
     }
 
+    private void restoreStateFrom(SavedState state) {
+        timestamp = state.timestamp;
+        preferredKeyColumn = state.preferredKeyColumn;
+        noIndex = state.noIndex;
+        isConstFunction = state.isConstFunction;
+        resolvedBoundConst = state.resolvedBoundConst;
+        resolvedBoundFunc = state.resolvedBoundFunc;
+        allKeyValuesAreKnown = state.allKeyValuesAreKnown;
+        allKeyExcludedValuesAreKnown = state.allKeyExcludedValuesAreKnown;
+        stack.clear();
+        stack.addAll(state.stack);
+        keyNodes.clear();
+        keyNodes.addAll(state.keyNodes);
+        keyExclNodes.clear();
+        keyExclNodes.addAll(state.keyExclNodes);
+        orIntrinsicNodes.clear();
+        orIntrinsicNodes.addAll(state.orIntrinsicNodes);
+        tempNodes.clear();
+        tempNodes.addAll(state.tempNodes);
+        tempMonotonicChain.clear();
+        tempMonotonicChain.addAll(state.tempMonotonicChain);
+        tmpFunctions.clear();
+        tmpFunctions.addAll(state.tmpFunctions);
+        tempInIntervals.clear();
+        tempInIntervals.addAll(state.tempInIntervals);
+        tempKeys.clear();
+        tempKeys.addAll(state.tempKeys);
+        tempK.clear();
+        tempK.addAll(state.tempK);
+        tempKeyValues.clear();
+        tempKeyValues.addAll(state.tempKeyValues);
+        tempKeyExcludedValues.clear();
+        tempKeyExcludedValues.addAll(state.tempKeyExcludedValues);
+        tempPos.clear();
+        tempPos.addAll(state.tempPos);
+        tempType.clear();
+        tempType.addAll(state.tempType);
+        tempP.clear();
+        tempP.addAll(state.tempP);
+        tempT.clear();
+        tempT.addAll(state.tempT);
+        tempKeyValuePos.clear();
+        tempKeyValuePos.addAll(state.tempKeyValuePos);
+        tempKeyValueType.clear();
+        tempKeyValueType.addAll(state.tempKeyValueType);
+        tempKeyExcludedValuePos.clear();
+        tempKeyExcludedValuePos.addAll(state.tempKeyExcludedValuePos);
+        tempKeyExcludedValueType.clear();
+        tempKeyExcludedValueType.addAll(state.tempKeyExcludedValueType);
+        state.clear();
+    }
+
+    private void saveStateInto(SavedState state) {
+        state.timestamp = timestamp;
+        state.preferredKeyColumn = preferredKeyColumn;
+        state.noIndex = noIndex;
+        state.isConstFunction = isConstFunction;
+        state.resolvedBoundConst = resolvedBoundConst;
+        state.resolvedBoundFunc = resolvedBoundFunc;
+        state.allKeyValuesAreKnown = allKeyValuesAreKnown;
+        state.allKeyExcludedValuesAreKnown = allKeyExcludedValuesAreKnown;
+        state.stack.clear();
+        state.stack.addAll(stack);
+        state.keyNodes.clear();
+        state.keyNodes.addAll(keyNodes);
+        state.keyExclNodes.clear();
+        state.keyExclNodes.addAll(keyExclNodes);
+        state.orIntrinsicNodes.clear();
+        state.orIntrinsicNodes.addAll(orIntrinsicNodes);
+        state.tempNodes.clear();
+        state.tempNodes.addAll(tempNodes);
+        state.tempMonotonicChain.clear();
+        state.tempMonotonicChain.addAll(tempMonotonicChain);
+        state.tmpFunctions.clear();
+        state.tmpFunctions.addAll(tmpFunctions);
+        state.tempInIntervals.clear();
+        state.tempInIntervals.addAll(tempInIntervals);
+        state.tempKeys.clear();
+        state.tempKeys.addAll(tempKeys);
+        state.tempK.clear();
+        state.tempK.addAll(tempK);
+        state.tempKeyValues.clear();
+        state.tempKeyValues.addAll(tempKeyValues);
+        state.tempKeyExcludedValues.clear();
+        state.tempKeyExcludedValues.addAll(tempKeyExcludedValues);
+        state.tempPos.clear();
+        state.tempPos.addAll(tempPos);
+        state.tempType.clear();
+        state.tempType.addAll(tempType);
+        state.tempP.clear();
+        state.tempP.addAll(tempP);
+        state.tempT.clear();
+        state.tempT.addAll(tempT);
+        state.tempKeyValuePos.clear();
+        state.tempKeyValuePos.addAll(tempKeyValuePos);
+        state.tempKeyValueType.clear();
+        state.tempKeyValueType.addAll(tempKeyValueType);
+        state.tempKeyExcludedValuePos.clear();
+        state.tempKeyExcludedValuePos.addAll(tempKeyExcludedValuePos);
+        state.tempKeyExcludedValueType.clear();
+        state.tempKeyExcludedValueType.addAll(tempKeyExcludedValueType);
+    }
+
     // removes nodes extracted into special symbol/key or timestamp filters from given node
     private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
@@ -2184,14 +2632,14 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private ExpressionNode collapseWithin0(ExpressionNode node) {
-        if (node == null || isWithinKeyword(node.token)) {
+        if (node == null || (isWithinKeyword(node.token))) {
             return null;
         }
-        if (node.queryModel == null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
-            if (node.lhs == null || isWithinKeyword(node.lhs.token)) {
+        if (node.queryModel == null && node.token != null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
+            if (node.lhs == null || (isWithinKeyword(node.lhs.token))) {
                 return node.rhs;
             }
-            if (node.rhs == null || isWithinKeyword(node.rhs.token)) {
+            if (node.rhs == null || (isWithinKeyword(node.rhs.token))) {
                 return node.lhs;
             }
         }
@@ -2199,7 +2647,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
-        if (node == null || isWithinKeyword(node.token)) {
+        if (node == null || (isWithinKeyword(node.token))) {
             return null;
         }
         node.lhs = collapseWithinNodes(collapseWithin0(node.lhs));
@@ -2215,7 +2663,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && !noIndex && useIndexedSymbolFilters && m.isColumnIndexed(m.getColumnIndex(columnName)))
                 );
     }
 
@@ -2435,8 +2883,17 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 valueNode = node.lhs;
             }
+            // A scalar-subquery bound (ExpressionNode.QUERY), e.g. `ts = (select ...) OR ts =
+            // (select ...)`, is accepted as a UNION disjunct. Every OR leaf unions into the model
+            // (including the anchor via unionRuntimeTimestamp), and a NULL/empty subquery bound is
+            // the empty-set identity under UNION (see RuntimeIntervalModel): it contributes nothing
+            // instead of collapsing the whole disjunction, so the other disjuncts' rows survive.
             if (isFunc(valueNode)) {
                 if (cannotAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
+                    return false;
+                }
+            } else if (valueNode.type == ExpressionNode.QUERY) {
+                if (cannotAccumulateTimestampCursor(model, valueNode, functionParser, metadata, executionContext)) {
                     return false;
                 }
             } else {
@@ -2471,9 +2928,26 @@ public final class WhereClauseParser implements Mutable {
         return soundness;
     }
 
-    private int foldInvertProbe(ObjList<MonotonicTimestampFunction> chain) {
+    private int foldInvertProbe(Function head) {
+        // Probe the owned head's linked chain with an unbounded interval; head survives the shared
+        // tempMonotonicChain being clobbered by a subquery bound compiled while resolving the bounds.
         intervalScratch.of(Long.MIN_VALUE, Long.MAX_VALUE);
-        return foldInvert(chain, intervalScratch);
+        int soundness = MonotonicTimestampFunction.EXACT;
+        Function f = head;
+        while (f instanceof MonotonicTimestampFunction m) {
+            final int grade = m.invertTimestampInterval(intervalScratch);
+            if (grade == MonotonicTimestampFunction.NONE) {
+                return MonotonicTimestampFunction.NONE;
+            }
+            if (grade == MonotonicTimestampFunction.SUPERSET) {
+                soundness = MonotonicTimestampFunction.SUPERSET;
+            }
+            if (intervalScratch.getLo() > intervalScratch.getHi()) {
+                return soundness;
+            }
+            f = m.getTimestampArg();
+        }
+        return soundness;
     }
 
     private CharSequence getStrFromFunction(
@@ -2543,7 +3017,7 @@ public final class WhereClauseParser implements Mutable {
      * - Nested OR of the above
      */
     private boolean isOrOfTimestampIn(ExpressionNode node) {
-        if (node == null) {
+        if (node == null || node.token == null) {
             return false;
         }
 
@@ -2582,13 +3056,15 @@ public final class WhereClauseParser implements Mutable {
             if (node.lhs == null || node.rhs == null) {
                 return false;
             }
-            // Check both orientations: timestamp = 'value' and 'value' = timestamp
+            // Check both orientations: timestamp = 'value' and 'value' = timestamp. The value side
+            // may be a constant, a function/bind variable, or a scalar subquery (QUERY): a QUERY
+            // bound unions into the interval model, with an empty result treated as the empty set.
             if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)
-                    && (node.rhs.type == ExpressionNode.CONSTANT || isFunc(node.rhs))) {
+                    && (node.rhs.type == ExpressionNode.CONSTANT || isRuntimeBound(node.rhs))) {
                 return true;
             }
             return node.rhs.type == ExpressionNode.LITERAL && isTimestamp(node.rhs)
-                    && (node.lhs.type == ExpressionNode.CONSTANT || isFunc(node.lhs));
+                    && (node.lhs.type == ExpressionNode.CONSTANT || isRuntimeBound(node.lhs));
         }
 
         return false;
@@ -2688,6 +3164,73 @@ public final class WhereClauseParser implements Mutable {
         return ts;
     }
 
+    /**
+     * Compiles a scalar sub-query bound without consuming its query model. The compile is
+     * speculative: every path that declines pruning keeps the predicate as a residual row filter,
+     * which re-compiles this very node (and re-compiles it once more per worker for a parallel
+     * filter). {@link SqlCodeGenerator#generate} extracts a model's WHERE clause into intrinsics and
+     * leaves the model holding only the residual remainder, so without this save/restore the second
+     * generation would silently produce an unfiltered sub-query and the outer query would compare
+     * against the wrong bound. This mirrors what {@code generateFilter0()} already does for filters
+     * it compiles more than once, except that the clauses are held here instead of in the model's
+     * single backup slot, which the nested generation overwrites.
+     */
+    private Function parseScalarSubQueryBound(
+            ExpressionNode boundNode,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Locals rather than scratch fields: compiling the sub-query re-enters extract() on this
+        // parser, and a nested bound would clobber shared scratch mid-call.
+        final ObjList<IQueryModel> savedModels = new ObjList<>();
+        final ObjList<ExpressionNode> savedWhereClauses = new ObjList<>();
+        saveSubQueryWhereClauses(boundNode.queryModel, savedModels, savedWhereClauses);
+        try {
+            return functionParser.parseFunction(boundNode, metadata, executionContext);
+        } finally {
+            for (int i = 0, n = savedModels.size(); i < n; i++) {
+                savedModels.getQuick(i).setWhereClause(savedWhereClauses.getQuick(i));
+            }
+        }
+    }
+
+    /**
+     * Hands a declined scalar sub-query bound to the residual filter that is about to compile the
+     * same sub-query node, instead of freeing a factory only to generate an identical one. Anything
+     * that is not a scalar sub-query bound, or has no QUERY node to key on, is freed as before.
+     * <p>
+     * The slot is owned by this parser and released by {@link #freeScalarBoundCompileCaches()} when
+     * the enclosing generation finishes, so a bound that is never consumed - a predicate optimized
+     * away, or a generation that threw - cannot leak an open factory.
+     */
+    private void parkDeclinedScalarBound(Function bound, ExpressionNode boundNode) {
+        if (bound == null) {
+            return;
+        }
+        Function compiled = bound;
+        if (bound instanceof ScalarSubQueryTimestampFunction ssf) {
+            // Park the wrapped sub-query, not the timestamp-bound wrapper: the residual expects the
+            // same cursor function a fresh generation would produce.
+            compiled = ssf.releaseCursorFunction();
+            Misc.free(ssf);
+        }
+        if (compiled == null) {
+            return;
+        }
+        if (boundNode == null || boundNode.type != ExpressionNode.QUERY) {
+            Misc.free(compiled);
+            return;
+        }
+        ScalarSubQueryCompileCache cache = boundNode.scalarBoundCompileCache;
+        if (cache == null) {
+            cache = new ScalarSubQueryCompileCache();
+            boundNode.scalarBoundCompileCache = cache;
+            scalarBoundCompileCaches.add(cache);
+        }
+        cache.put(compiled);
+    }
+
     private void processArgument(
             ExpressionNode inArg,
             RecordMetadata metadata,
@@ -2783,6 +3326,11 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn,
             TableReader reader
     ) throws SqlException {
+        if (node.token == null) {
+            // tokenless node, e.g. a sub-query used directly as a boolean predicate;
+            // not an intrinsic, keep it as a regular filter
+            return false;
+        }
         return switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN ->
                     analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
@@ -2798,7 +3346,7 @@ public final class WhereClauseParser implements Mutable {
                     analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT_EQ ->
                     analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
-            case INTRINSIC_OP_NOT -> (
+            case INTRINSIC_OP_NOT -> node.rhs != null && node.rhs.token != null && ((
                     isInKeyword(node.rhs.token) && analyzeNotIn(
                             timestampDriver,
                             translator,
@@ -2824,7 +3372,7 @@ public final class WhereClauseParser implements Mutable {
                             latestByMultiColumn,
                             reader
                     )
-            );
+            ));
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->
@@ -2922,6 +3470,20 @@ public final class WhereClauseParser implements Mutable {
      * {@link #resolvedBoundFunc}, ownership passing to the caller). The returned status selects the
      * outcome; see the {@code BOUND_*} constants.
      */
+    // Links a scalar sub-query pruning bound to its retained residual filter so both read one frozen
+    // value. The bound (owner) publishes into the holder at scan open; the residual - re-compiled from
+    // the same sub-query node, including per-worker clones - reads that holder via
+    // ScalarSubQueryBoundRefFunction instead of opening the sub-query again.
+    private static void shareScalarSubQueryBound(Function bound, ExpressionNode boundNode) {
+        // Only actual scalar SUBQUERY bounds need sharing; direct runtime constants (bind variables,
+        // now()) already re-read the same frozen SqlExecutionContext snapshot on every open.
+        if (boundNode != null && bound instanceof ScalarSubQueryTimestampFunction ssf) {
+            final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ssf.getType());
+            ssf.setPublishHolder(holder);
+            boundNode.scalarBoundHolder = holder;
+        }
+    }
+
     private int resolveScalarBound(
             int outType,
             TimestampDriver outDriver,
@@ -2967,6 +3529,35 @@ public final class WhereClauseParser implements Mutable {
             }
             return BOUND_CONST;
         }
+        if (boundNode.type == ExpressionNode.QUERY) {
+            // scalar subquery bound, e.g. dateadd('h',1,ts) >= (select ...). Only a
+            // single-timestamp-column cursor qualifies; it is evaluated at scan open,
+            // exactly like a runtime-constant (bind variable) bound.
+            if (!isTimestamp) {
+                return BOUND_FAIL;
+            }
+            // Stop speculating once the bound nesting gets pathological: the compile below is
+            // discarded on every decline and re-done by the residual, so each extra level doubles
+            // compile time. Declining here costs only the pruning optimization.
+            if (scalarBoundDepth >= MAX_SPECULATIVE_SCALAR_BOUND_DEPTH) {
+                return BOUND_FAIL;
+            }
+            scalarBoundSpeculated = true;
+            Function owner = parseScalarSubQueryBound(boundNode, functionParser, metadata, executionContext);
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(owner)) {
+                    owner = new ScalarSubQueryTimestampFunction(owner, boundNode.position);
+                    resolvedBoundFunc = owner;
+                    owner = null;
+                    return BOUND_FUNC;
+                }
+                return BOUND_FAIL;
+            } finally {
+                // owner is still the raw sub-query cursor function here - it is nulled once wrapped
+                // and adopted - so it is exactly what the residual would otherwise re-generate.
+                parkDeclinedScalarBound(owner, boundNode);
+            }
+        }
         if (isFunc(boundNode)) {
             if (referencesTimestamp(boundNode)) {
                 return BOUND_FAIL;
@@ -3010,6 +3601,63 @@ public final class WhereClauseParser implements Mutable {
         return BOUND_FAIL;
     }
 
+    /**
+     * Deep-clones the WHERE clause of {@code model} and of every model reachable from it into the
+     * caller's lists, walking the same nested/union/join/update chain as
+     * {@link IQueryModel#backupWhereClause(ObjectPool, IQueryModel)} and, on top of that, the models
+     * a WHERE clause carries in its own scalar sub-query nodes - generating the bound consumes those
+     * too.
+     */
+    private void saveSubQueryWhereClauses(
+            IQueryModel model,
+            ObjList<IQueryModel> savedModels,
+            ObjList<ExpressionNode> savedWhereClauses
+    ) {
+        IQueryModel current = model;
+        while (current != null && current.isOptimisable()) {
+            if (current.getUnionModel() != null) {
+                saveSubQueryWhereClauses(current.getUnionModel(), savedModels, savedWhereClauses);
+            }
+            if (current.getUpdateTableModel() != null) {
+                saveSubQueryWhereClauses(current.getUpdateTableModel(), savedModels, savedWhereClauses);
+            }
+            for (int i = 1, n = current.getJoinModels().size(); i < n; i++) {
+                final IQueryModel m = current.getJoinModels().get(i);
+                if (m != null && current != m) {
+                    saveSubQueryWhereClauses(m, savedModels, savedWhereClauses);
+                }
+            }
+            final ExpressionNode whereClause = current.getWhereClause();
+            savedModels.add(current);
+            savedWhereClauses.add(ExpressionNode.deepClone(exprNodePool, whereClause));
+            saveWhereClauseSubQueryModels(whereClause, savedModels, savedWhereClauses);
+            current = current.getNestedModel();
+        }
+    }
+
+    /**
+     * Descends an expression tree and saves the WHERE clauses of every scalar sub-query model it
+     * carries. Unlike {@code SqlCodeGenerator.processNodeQueryModels()} this also walks {@code args},
+     * so a sub-query in a three-or-more argument call (e.g. {@code between}) is covered too.
+     */
+    private void saveWhereClauseSubQueryModels(
+            ExpressionNode node,
+            ObjList<IQueryModel> savedModels,
+            ObjList<ExpressionNode> savedWhereClauses
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.queryModel != null) {
+            saveSubQueryWhereClauses(node.queryModel, savedModels, savedWhereClauses);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            saveWhereClauseSubQueryModels(node.args.getQuick(i), savedModels, savedWhereClauses);
+        }
+        saveWhereClauseSubQueryModels(node.lhs, savedModels, savedWhereClauses);
+        saveWhereClauseSubQueryModels(node.rhs, savedModels, savedWhereClauses);
+    }
+
     private boolean translateBetweenToTimestampModel(
             TimestampDriver timestampDriver,
             IntrinsicModel model,
@@ -3021,23 +3669,87 @@ public final class WhereClauseParser implements Mutable {
         if (node.type == ExpressionNode.CONSTANT) {
             model.setBetweenBoundary(parseTokenAsTimestamp(timestampDriver, node));
             return true;
+        } else if (node.type == ExpressionNode.QUERY) {
+            // scalar subquery bound, e.g. ts BETWEEN (select ...) AND (select ...). Only a
+            // single-timestamp-column cursor qualifies; it is evaluated at scan open, exactly
+            // like a runtime-constant (bind variable) bound.
+            //
+            // Same speculation budget as the monotonic channel: this compile is discarded whenever
+            // the BETWEEN translation is abandoned - notably when the OTHER boundary turns out not
+            // to be translatable - and the predicate then stays a residual filter that generates
+            // this very sub-query again. Uncharged, that doubles compile time per nesting level.
+            if (scalarBoundDepth >= MAX_SPECULATIVE_SCALAR_BOUND_DEPTH) {
+                // decline: the caller keeps the predicate as a residual filter, which is always
+                // sound - it only forgoes the interval-pruning optimization.
+                return false;
+            }
+            scalarBoundSpeculated = true;
+            final Function func = parseScalarSubQueryBound(node, functionParser, metadata, executionContext);
+            boolean isRetained = false;
+            Throwable failure = null;
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(func)) {
+                    try {
+                        model.setBetweenBoundary(func, node.position);
+                        isRetained = true;
+                        return true;
+                    } catch (Throwable th) {
+                        // A pre-adoption failure leaves func caller-owned. A terminal handoff marks
+                        // it consumed before invoking throwing cleanup, so this catch must not
+                        // close it again.
+                        isRetained = model.isBetweenBoundaryFunctionConsumed();
+                        throw th;
+                    }
+                }
+            } catch (Throwable th) {
+                failure = th;
+                throw th;
+            } finally {
+                if (!isRetained) {
+                    if (failure == null) {
+                        // Graceful decline: the predicate stays a residual filter that would
+                        // otherwise generate this same sub-query, so hand the compile over. Parking
+                        // only stores a reference, so unlike the free below it cannot throw.
+                        parkDeclinedScalarBound(func, node);
+                    } else {
+                        Misc.freeBestEffort(failure, func);
+                    }
+                }
+            }
+            return false;
         } else if (isFunc(node)) {
             final Function func = functionParser.parseFunction(node, metadata, executionContext);
+            boolean isRetained = false;
+            Throwable failure = null;
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
                 if (func.isConstant()) {
-                    long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
+                    final long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
                     model.setBetweenBoundary(timestamp);
-                    Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.setBetweenBoundary(func);
-                    return true;
+                    try {
+                        model.setBetweenBoundary(func, node.position);
+                        isRetained = true;
+                        return true;
+                    } catch (Throwable th) {
+                        // A pre-adoption failure leaves func caller-owned. A terminal handoff marks
+                        // it consumed before invoking throwing cleanup, so this catch must not
+                        // close it again.
+                        isRetained = model.isBetweenBoundaryFunctionConsumed();
+                        throw th;
+                    }
                 }
-                Misc.free(func);
             } catch (Throwable th) {
-                Misc.free(func);
+                failure = th;
                 throw th;
+            } finally {
+                if (!isRetained) {
+                    final Throwable cleanupFailure = Misc.freeBestEffort(failure, func);
+                    if (failure == null) {
+                        CairoException.rethrowCleanupFailure(cleanupFailure);
+                    }
+                }
             }
         }
         return false;
@@ -3115,6 +3827,7 @@ public final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext,
             LongList prefixes
     ) throws SqlException {
+        assert stack.isEmpty();
         prefixes.clear();
         if (node == null) {
             return null;
@@ -3131,7 +3844,7 @@ public final class WhereClauseParser implements Mutable {
         stack.clear();
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
+                if (node.token != null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
                     if (!removeWithin(translator, node.rhs, metadata, functionParser, executionContext, prefixes)) {
                         stack.push(node.rhs);
                     }
@@ -3145,6 +3858,63 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return collapseWithinNodes(root);
+    }
+
+    private static final class SavedState {
+        private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
+        private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+        private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+        private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+        private final LongList tempInIntervals = new LongList();
+        private final CharSequenceHashSet tempK = new CharSequenceHashSet();
+        private final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
+        private final IntList tempKeyExcludedValuePos = new IntList();
+        private final IntList tempKeyExcludedValueType = new IntList();
+        private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+        private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
+        private final IntList tempKeyValuePos = new IntList();
+        private final IntList tempKeyValueType = new IntList();
+        private final ObjList<MonotonicTimestampFunction> tempMonotonicChain = new ObjList<>();
+        private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
+        private final IntList tempP = new IntList();
+        private final IntList tempPos = new IntList();
+        private final IntList tempT = new IntList();
+        private final IntList tempType = new IntList();
+        private final ObjList<Function> tmpFunctions = new ObjList<>();
+        private boolean allKeyExcludedValuesAreKnown;
+        private boolean allKeyValuesAreKnown;
+        private boolean isConstFunction;
+        private boolean noIndex;
+        private CharSequence preferredKeyColumn;
+        private long resolvedBoundConst;
+        private Function resolvedBoundFunc;
+        private CharSequence timestamp;
+
+        private void clear() {
+            keyExclNodes.clear();
+            keyNodes.clear();
+            orIntrinsicNodes.clear();
+            stack.clear();
+            tempInIntervals.clear();
+            tempK.clear();
+            tempKeyExcludedValues.clear();
+            tempKeyExcludedValuePos.clear();
+            tempKeyExcludedValueType.clear();
+            tempKeys.clear();
+            tempKeyValues.clear();
+            tempKeyValuePos.clear();
+            tempKeyValueType.clear();
+            tempMonotonicChain.clear();
+            tempNodes.clear();
+            tempP.clear();
+            tempPos.clear();
+            tempT.clear();
+            tempType.clear();
+            tmpFunctions.clear();
+            preferredKeyColumn = null;
+            resolvedBoundFunc = null;
+            timestamp = null;
+        }
     }
 
     static {

@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -66,7 +65,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
                 return 50;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_HTTP_CONN) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration) {
             @Override
             public boolean checkIfTripped(long millis, long fd) {
                 return breakConnection == 0 || --breakConnection == 0;

@@ -43,7 +43,7 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
     protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
-    protected final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
+    protected final ParquetPartitionDecoder parquetDecoder;
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
@@ -67,19 +67,35 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     private int initialPartitionHi;
     private int initialPartitionLo;
 
-    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+    public AbstractIntervalPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
+        this.parquetDecoder = configuration.newParquetPartitionDecoder();
         this.parquetTimestampFinder = new ParquetTimestampFinder(parquetDecoder);
     }
 
     @Override
     public void close() {
-        reader = Misc.free(reader);
         Misc.free(parquetTimestampFinder);
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
+        reader = Misc.free(reader);
+    }
+
+    /**
+     * The WHOLE resolved interval list, deliberately - not the
+     * {@code [intervalsLo, intervalsHi)} sub-range this cursor actually walks.
+     * {@link #cullIntervals} narrows those bounds against the READER's timestamp range, so
+     * they describe where this table's rows can be, not what the filter admits. A caller
+     * applying the filter to rows of its own (a live view's in-memory tier holds output
+     * rows the LV table has not been flushed yet, i.e. rows ABOVE the reader's maximum)
+     * would drop every one of them by honouring the culled bounds. The cull is an
+     * optimisation over one row source; the list is the filter.
+     */
+    @Override
+    public LongList getIntervals() {
+        return intervals;
     }
 
     @Override
@@ -146,6 +162,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        parquetTimestampFinder.setMemoryTracker(sqlExecutionContext != null ? sqlExecutionContext.getMemoryTracker() : null);
         this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
         calculateRanges(reader, intervals);
         this.reader = reader;

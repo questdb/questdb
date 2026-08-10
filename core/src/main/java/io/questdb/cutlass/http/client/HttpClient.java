@@ -539,7 +539,7 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
-            } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
+            } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), 0, 0)) {
                 socket.close();
                 connect(host, port);
             } else if (!Chars.equalsNc(host, HttpClient.this.host) || (port != HttpClient.this.port)) {

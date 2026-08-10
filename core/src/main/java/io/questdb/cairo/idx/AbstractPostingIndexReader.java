@@ -523,12 +523,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * SAME {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
      * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
      *
-     * @param key             column key (>= 0)
-     * @param maxValueClamped inclusive clamp the cursor uses; reserved for symmetry with
-     *                        {@link #selectKthMatch} — the cache predicate is value-independent,
-     *                        so it does not currently affect which gens are cached
+     * @param key column key (>= 0)
      */
-    public void populateCacheForKey(int key, long maxValueClamped) {
+    public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;
         }
@@ -1292,7 +1289,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
             // headerScratch.formatVersion is populated regardless of pick
             // outcome (read under seqlock at the start of the picker).
-            if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            if (!PostingIndexUtils.isSupportedFormatVersion(headerScratch.formatVersion)) {
                 throw CairoException.critical(0)
                         .put("Unsupported Posting index version: ").put(headerScratch.formatVersion);
             }
@@ -1301,7 +1298,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // Fill staging gen-dir snapshot from the picked entry's payload.
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
-                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset);
+                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
                 // Re-validate the chain header seqlock. extendHead mutates the
                 // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
                 // aligned stores and republishes the header. Without this
@@ -1332,9 +1329,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // active snapshot. Slots are zero-padded to coverCount so
                 // callers can read them by includeIdx without bounds checks.
                 sidecarFileEndOffsets.clear();
-                sidecarFileEndOffsets.setPos(coverCount);
+                // Use the entry's OWN authoritative cover count where it exceeds
+                // the reader's live .pci coverCount (which can be transiently 0
+                // mid covering-config): a format-1 entry carries its footer for its
+                // packed coverCount, so covered reads stay robust instead of
+                // returning NULL. Equal in the steady state.
+                final int effCoverCount = Math.max(coverCount, entryScratch.coverCount);
+                sidecarFileEndOffsets.setPos(effCoverCount);
                 int picked = entryScratch.coverFileEndOffsets.size();
-                for (int c = 0; c < coverCount; c++) {
+                for (int c = 0; c < effCoverCount; c++) {
                     sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
                 }
                 this.lastPickedPinnedTxn = this.pinnedTableTxn;
@@ -1360,7 +1363,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 sidecarFileEndOffsets.setQuick(c, 0L);
             }
             // Reset gen lookup to an empty staging snapshot and promote it.
-            genLookup.snapshotMetadata(keyMem, 0, 0L);
+            genLookup.snapshotMetadata(keyMem, 0, 0L, PostingIndexUtils.COVERING_FORMAT_LEGACY, 0);
             genLookup.commitSnapshot();
             genLookup.invalidateCache();
             this.lastPickedPinnedTxn = this.pinnedTableTxn;
@@ -1738,13 +1741,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         // the genLookup cache is only committed (putCacheEntries) when the gen walk
         // reaches its end, so we must not stop early. Closing the cursor returns it
         // to the reader's free list, which is safe because warming is single-threaded.
-        RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns);
-        try {
+        try (RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns)) {
             while (cursor.hasNext()) {
                 cursor.next();
             }
-        } finally {
-            cursor.close();
         }
     }
 
