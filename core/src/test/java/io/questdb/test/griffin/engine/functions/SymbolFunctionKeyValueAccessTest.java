@@ -78,6 +78,18 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFixedDictionarySymbolFunctionsResolveNullSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            assertResolvesNullSentinel("rnd_symbol('a', 'b', 'c')");
+            assertResolvesNullSentinel("rnd_symbol(4, 3, 6, 0)");
+            assertResolvesNullSentinel("rnd_symbol_weighted('A', 2.5, 'B', 1.5, 'C', 1.0)");
+            assertResolvesNullSentinel("rnd_symbol_zipf('A', 'B', 'C', 'D', 'E', 2.0)");
+            assertResolvesNullSentinel("rnd_symbol_zipf(5, 1.5)");
+            assertResolvesNullSentinel("list('RXGZ', 'HYRX', 'ABC')");
+        });
+    }
+
+    @Test
     public void testListSymbolFunctionResolvesEachKeyToItsOwnValue() throws Exception {
         // list() is the one function above whose DRAW is deterministic - getInt() is
         // position++ % count - so its key sequence, not just its mapping, can be pinned. (The
@@ -251,11 +263,7 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
                     final SymbolTable symbolTable = cursor.getSymbolTable(0);
                     while (cursor.hasNext()) {
                         final int key = cursor.getRecord().getInt(0);
-                        Assert.assertTrue(expression + " minted a negative key", key >= 0);
-                        Assert.assertNotNull(
-                                expression + " must resolve key " + key + " without reading row text",
-                                symbolTable.valueOf(key)
-                        );
+                        assertValidKeyAndValue(expression, symbolTable, key);
                     }
                 }
             }
@@ -286,6 +294,20 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
         }
     }
 
+    private void assertResolvesNullSentinel(String expression) throws SqlException {
+        try (RecordCursorFactory factory = select("SELECT " + expression + " s FROM long_sequence(1)")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                Assert.assertTrue(expression + " must keep the native-key egress path", symbolTable.supportsKeyValueAccess());
+                Assert.assertNull(expression + " must resolve VALUE_IS_NULL", symbolTable.valueOf(SymbolTable.VALUE_IS_NULL));
+                Assert.assertNull(
+                        expression + " must resolve VALUE_IS_NULL through valueBOf",
+                        symbolTable.valueBOf(SymbolTable.VALUE_IS_NULL)
+                );
+            }
+        }
+    }
+
     private void assertResolvesThroughKey(String sql, int columnIndex) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -294,11 +316,27 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
                     final int key = record.getInt(columnIndex);
-                    Assert.assertTrue(sql + " minted a negative key", key >= 0);
-                    Assert.assertNotNull(sql + " must resolve key " + key, symbolTable.valueOf(key));
+                    assertValidKeyAndValue(sql, symbolTable, key);
                 }
             }
         }
+    }
+
+    private CharSequence assertValidKeyAndValue(String expression, SymbolTable symbolTable, int key) {
+        Assert.assertTrue(
+                expression + " returned a negative key other than VALUE_IS_NULL: " + key,
+                key == SymbolTable.VALUE_IS_NULL || key >= 0
+        );
+        final CharSequence value = symbolTable.valueOf(key);
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            Assert.assertNull(expression + " must resolve VALUE_IS_NULL", value);
+        } else {
+            Assert.assertNotNull(
+                    expression + " must resolve key " + key + " without reading row text",
+                    value
+            );
+        }
+        return value;
     }
 
     private List<String> read(String sql, int columnIndex, boolean isReadThroughKey) throws SqlException {
@@ -315,9 +353,13 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
                     );
                 }
                 while (cursor.hasNext()) {
-                    final CharSequence value = isReadThroughKey
-                            ? symbolTable.valueOf(record.getInt(columnIndex))
-                            : record.getStrA(columnIndex);
+                    final CharSequence value;
+                    if (isReadThroughKey) {
+                        final int key = record.getInt(columnIndex);
+                        value = assertValidKeyAndValue(sql, symbolTable, key);
+                    } else {
+                        value = record.getStrA(columnIndex);
+                    }
                     values.add(value == null ? null : value.toString());
                 }
             }

@@ -198,7 +198,7 @@ public class RndSymbolZipfNFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            if (symbolKey == -1) {
+            if (symbolKey < 0) {
                 return null;
             }
             sinkA.clear();

@@ -49,6 +49,10 @@ import org.jetbrains.annotations.Nullable;
  * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
  * populated by function dynamically, in that values that have not yet been returned via
  * getInt() are not cached.
+ * <p>
+ * A function that opts into {@link #supportsKeyValueAccess()} must return
+ * {@link SymbolTable#VALUE_IS_NULL} from {@link #getInt(Record)} for a null symbol and a
+ * non-negative key for every non-null symbol. See {@link SymbolTable#supportsKeyValueAccess()}.
  */
 public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();

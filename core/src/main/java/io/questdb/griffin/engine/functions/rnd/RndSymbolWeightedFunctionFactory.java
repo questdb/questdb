@@ -211,7 +211,7 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolKey != -1 ? symbols.getQuick(symbolKey) : null;
+            return symbolKey > -1 ? symbols.getQuick(symbolKey) : null;
         }
 
         private int next() {

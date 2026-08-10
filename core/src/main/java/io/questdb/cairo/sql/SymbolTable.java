@@ -46,6 +46,12 @@ public interface SymbolTable {
      * all-SYMBOL UNION answers true because it serves table dictionaries by key without touching
      * their text, even though a leg that has to intern its own text pays for the key it hands
      * back. Read it as "prefer the key path here", not as a per-row guarantee.
+     * <p>
+     * The record paired with a table that returns true must represent a null symbol as
+     * {@link #VALUE_IS_NULL} from {@link Record#getInt(int)}, and every non-null symbol as a
+     * non-negative key. The table must resolve every such non-negative key through
+     * {@link #valueOf(int)} and {@link #valueBOf(int)} without reading the record. Consumers may
+     * reject any other negative key as a contract violation.
      */
     default boolean supportsKeyValueAccess() {
         return false;

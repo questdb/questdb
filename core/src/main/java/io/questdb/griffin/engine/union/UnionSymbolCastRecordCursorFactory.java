@@ -220,6 +220,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 && strColumn.getColumnIndex() == column;
     }
 
+    private static CairoException invalidUnionSymbolKey(int sourceKey) {
+        return CairoException.nonCritical().put("invalid union symbol key [key=").put(sourceKey).put(']');
+    }
+
     private static CastStrToSymbolFunctionFactory.Func symbolFunction(Function function) {
         return (CastStrToSymbolFunctionFactory.Func) function;
     }
@@ -366,7 +370,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
         private void put(int sourceKey, int resultKey) {
             if (sourceKey < 0) {
-                throw CairoException.nonCritical().put("invalid union symbol key [key=").put(sourceKey).put(']');
+                throw invalidUnionSymbolKey(sourceKey);
             }
             if (isClosed) {
                 // close() hands the query's MemoryTracker back, so reopening here would allocate
@@ -514,6 +518,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             final int sourceKey = sourceState.record.getInt(col);
             if (sourceKey == SymbolTable.VALUE_IS_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
+            }
+            if (sourceKey < 0) {
+                // supportsKeyValueAccess() promises VALUE_IS_NULL or a non-negative key. Validate
+                // before valueOf(): an implementation backed by a list may otherwise index it with
+                // VALUE_NOT_FOUND (or another invalid negative key) before keyMap.put() can reject it.
+                throw invalidUnionSymbolKey(sourceKey);
             }
             int resultKey = sourceColumn.keyMap.get(sourceKey);
             if (resultKey == NativeKeyMap.NOT_FOUND) {

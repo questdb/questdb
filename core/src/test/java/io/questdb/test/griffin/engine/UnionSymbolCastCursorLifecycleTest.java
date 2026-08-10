@@ -523,11 +523,36 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
             final MemoryTracker tracker = acquireTracker();
             try {
                 // A source dictionary answers VALUE_NOT_FOUND for text it does not hold. That is
-                // not VALUE_IS_NULL, so it slips past the null check and reaches the translation
-                // cache as a negative key - which a cache indexed by the raw key would read out of
-                // bounds. The projection must reject it instead of translating it.
+                // not VALUE_IS_NULL, so a native-key consumer must reject it before either asking
+                // the dictionary to resolve it or indexing the translation cache with it.
+                final StaticSymbolTable invalidKeySymbolTable = new StaticSymbolTable() {
+                    @Override
+                    public boolean containsNullValue() {
+                        return false;
+                    }
+
+                    @Override
+                    public int getSymbolCount() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int keyOf(CharSequence value) {
+                        return VALUE_NOT_FOUND;
+                    }
+
+                    @Override
+                    public CharSequence valueBOf(int key) {
+                        throw new AssertionError("an invalid key must be rejected before valueBOf");
+                    }
+
+                    @Override
+                    public CharSequence valueOf(int key) {
+                        throw new AssertionError("an invalid key must be rejected before valueOf");
+                    }
+                };
                 final StaticSymbolCursorFactory base =
-                        new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"gamma"}});
+                        new StaticSymbolCursorFactory(invalidKeySymbolTable, new String[][]{{"gamma"}});
                 final ObjList<Function> functions =
                         functions(new CastStrToSymbolFunctionFactory.Func(new StrColumn(0)));
                 try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
