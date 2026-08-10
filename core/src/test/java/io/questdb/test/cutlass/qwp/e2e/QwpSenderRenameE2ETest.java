@@ -85,9 +85,18 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
                 // there is no ack-based signal to await v=1's delivery. Poll
                 // for the auto-created "sal_ws" registry entry instead of a
                 // bare sleep: getTableTokenIfExists returns null while the
-                // name is locked mid-create, so once it is non-null the
-                // frame's synchronous server-side processing (create, then
-                // append) has fully run.
+                // name is locked mid-create. The token is published inside
+                // getOrCreateTable BEFORE the writer acquisition and the
+                // append, so a non-null token proves the frame's synchronous
+                // processing has STARTED, not finished; the residual window is
+                // the tail of that one processMessage call, and the RENAME
+                // below is a full SQL round-trip issued after this poll, which
+                // in practice lands well after that window. If the salvage
+                // assertions at the end of this test ever observe zero rows,
+                // close the window for real: send a second deferred probe
+                // frame for a throwaway table and poll for THAT table's token
+                // -- same-connection frames are processed in order, a true
+                // happens-after for v=1's append.
                 //
                 // Then pin the buffered premise the salvage below depends
                 // on: v=1 reached the writer (table exists) but stayed
