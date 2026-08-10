@@ -187,9 +187,19 @@ public class QwpTudCache implements QuietCloseable {
         reset();
         tableUpdateDetails.clear();
         cachedTableCount = 0;
-        ddlMem = Misc.free(ddlMem);
-        path = Misc.free(path);
-        symbolCachePool = Misc.free(symbolCachePool);
+        // Thread the frees so one failing close cannot skip the rest; the
+        // first failure carries the later ones as suppressed and rethrows
+        // at the end.
+        final var ddlMemToFree = ddlMem;
+        ddlMem = null;
+        Throwable cleanupFailure = Misc.freeBestEffort(null, ddlMemToFree);
+        final var pathToFree = path;
+        path = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pathToFree);
+        final var symbolCachePoolToFree = symbolCachePool;
+        symbolCachePool = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, symbolCachePoolToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**

@@ -348,13 +348,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     @Override
     public void close() {
-        tudCache = Misc.free(tudCache);
-        streamingDecoder = Misc.free(streamingDecoder);
-        walAppender = Misc.free(walAppender);
+        final var tudCacheToFree = tudCache;
+        tudCache = null;
+        Throwable cleanupFailure = Misc.freeBestEffort(null, tudCacheToFree);
+        final var streamingDecoderToFree = streamingDecoder;
+        streamingDecoder = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingDecoderToFree);
+        final var walAppenderToFree = walAppender;
+        walAppender = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, walAppenderToFree);
+        // The native buffer free cannot throw and must run even when a free
+        // above failed -- previously a tudCache close failure leaked it.
         if (bufferAddress != 0) {
             Unsafe.free(bufferAddress, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferAddress = 0;
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**

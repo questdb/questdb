@@ -223,11 +223,17 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             fd = -1;
 
             try {
+                // commitAllBestEffort is throw-free by contract (its eviction
+                // frees are per-entry guarded), so the rethrow at the end of
+                // the finally cannot mask a commit failure.
                 tudCache.commitAllBestEffort();
             } finally {
-                Misc.free(tudCache);
-                Misc.free(walAppender);
+                Throwable cleanupFailure = Misc.freeBestEffort(null, tudCache);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, walAppender);
+                // Unsafe.free cannot throw; it runs last so the buffer is
+                // reclaimed even when a writer close above failed.
                 Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
     }
