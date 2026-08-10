@@ -91,6 +91,30 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         return base;
     }
 
+    // Stable iff the limit expressions (which may be arbitrary functions) and the base are stable;
+    // sorting itself introduces no value sources.
+    @Override
+    public boolean isNonDeterministic() {
+        if (loFunction != null && loFunction.isNonDeterministic()) {
+            return true;
+        }
+        if (hiFunction != null && hiFunction.isNonDeterministic()) {
+            return true;
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        if (loFunction != null && !loFunction.isStableWithinExecution()) {
+            return false;
+        }
+        if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);

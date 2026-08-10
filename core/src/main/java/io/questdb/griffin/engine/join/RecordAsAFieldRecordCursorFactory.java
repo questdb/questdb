@@ -80,6 +80,13 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         return base.usesCompiledFilter();
     }
 
+    // Wraps the sub-query factory without exposing it through getBaseFactory(), so the
+    // external-source property is propagated explicitly.
+    @Override
+    public boolean usesExternalDataSource() {
+        return base.usesExternalDataSource();
+    }
+
     @Override
     public boolean usesIndex() {
         return base.usesIndex();
