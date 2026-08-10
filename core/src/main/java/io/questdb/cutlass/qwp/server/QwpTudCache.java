@@ -720,10 +720,12 @@ public class QwpTudCache implements QuietCloseable {
     // Evicts a stale cached entry (see isTableTokenStale): either the table was
     // DROPped -- its token resolves by neither name nor directory -- or it was
     // RENAMEd and the old name was reused by a new table. A pure rename that
-    // does NOT reuse the old name is not stale and never reaches here -- its
-    // buffered rows keep committing through the same writer. A dropped table's
-    // rows cannot be re-homed and are discarded; a renamed table's rows are
-    // salvaged below instead.
+    // does NOT reuse the old name is not stale and never reaches here from the
+    // lookup path -- its entry stays cached and every commit through it fails
+    // loudly with TableReferenceOutOfDateException; on the UDP fire-and-forget
+    // loops that failure latches writerInError, which evicts the entry on the
+    // next pass. A dropped table's rows cannot be re-homed and are discarded;
+    // a renamed table's rows are salvaged below instead.
     private void evictStaleTud(int key, Utf8Sequence tableNameUtf8, WalTableUpdateDetails tud) {
         final boolean hadBufferedRows = !tud.isFirstRow();
         final boolean isRenamed = engine.getTableTokenByDirName(tud.getTableToken().getDirName()) != null;
@@ -831,8 +833,11 @@ public class QwpTudCache implements QuietCloseable {
         // another live table took the name after a rename (byName is a
         // different, live token). A pure rename whose old name is NOT re-used
         // resolves the directory but not the name, and is deliberately not
-        // stale: the entry stays cached and commits keep failing with
-        // TableReferenceOutOfDateException, exactly as on master.
+        // stale: on the lookup path the entry stays cached and commits keep
+        // failing with TableReferenceOutOfDateException, exactly as on master.
+        // The UDP commit loops additionally evict such an entry once a failed
+        // commit latches writerInError -- a deliberate change from master,
+        // which retried the wedged entry forever.
         return byName != null || engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
     }
 
