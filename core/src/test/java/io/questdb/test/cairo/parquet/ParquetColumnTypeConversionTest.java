@@ -1063,6 +1063,41 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalToBinaryFloat() throws Exception {
+        // DECIMAL <-> DOUBLE and DECIMAL <-> FLOAT have no Rust decoder arm; ConvertOperatorImpl
+        // rewrites the parquet partition to native before converting, so both tables here take the
+        // same native path.
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "DOUBLE");
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "FLOAT");
+            String values = """
+                    (12345.6789m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99.9999m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(18, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(38, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(76, 4)", "DOUBLE", values);
+
+            String narrow = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0m, '2024-01-01T00:00:02.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(2, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(4, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(9, 1)", "DOUBLE", narrow);
+
+            assertConversion("DECIMAL(18, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(38, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(76, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(2, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(4, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(9, 1)", "FLOAT", narrow);
+        });
+    }
+
+    @Test
     public void testDecimalToStringTypes() throws Exception {
         assertMemoryLeak(() -> {
             String values = """
@@ -1073,6 +1108,39 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             for (String target : new String[]{"STRING", "VARCHAR"}) {
                 assertConversion("DECIMAL(18, 4)", target, values);
             }
+        });
+    }
+
+    @Test
+    public void testBinaryFloatToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DOUBLE", "DECIMAL(18, 4)");
+            assertPrePassMadePartitionNative("FLOAT", "DECIMAL(18, 4)");
+            String values = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e300, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("DOUBLE", "DECIMAL(18, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(38, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(76, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(9, 2)", values);
+            assertConversion("DOUBLE", "DECIMAL(4, 1)", values);
+            assertConversion("DOUBLE", "DECIMAL(2, 1)", values);
+
+            String floatValues = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e30, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("FLOAT", "DECIMAL(18, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(38, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(76, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(9, 2)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(4, 1)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(2, 1)", floatValues);
         });
     }
 
@@ -3872,6 +3940,27 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("nt");
             tryDrop("pt");
+        }
+    }
+
+    private void assertPrePassMadePartitionNative(String sourceType, String targetType) throws Exception {
+        try {
+            execute("CREATE TABLE pp (ts TIMESTAMP, val " + sourceType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pp VALUES ('2024-01-01T00:00:01.000000Z', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE pp CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+            }
+
+            execute("ALTER TABLE pp ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormat(0));
+            }
+        } finally {
+            tryDrop("pp");
         }
     }
 

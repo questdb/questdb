@@ -45,10 +45,13 @@ import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.std.Decimal;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.DecimalParser;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.fastdouble.FastFloatParser;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -58,6 +61,13 @@ public final class DecimalUtil {
     public static final int INT_TYPE = ColumnType.getDecimalType(10, 0);
     public static final int LONG_TYPE = ColumnType.getDecimalType(19, 0);
     public static final int SHORT_TYPE = ColumnType.getDecimalType(5, 0);
+    // 10^22 is the largest power of ten a double holds exactly.
+    private static final int MAX_EXACT_SCALE = 22;
+    private static final long MAX_EXACT_UNSCALED = 1L << 53;
+    private static final double[] POW10 = {
+            1E0, 1E1, 1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8, 1E9, 1E10, 1E11,
+            1E12, 1E13, 1E14, 1E15, 1E16, 1E17, 1E18, 1E19, 1E20, 1E21, 1E22
+    };
 
     private DecimalUtil() {
     }
@@ -616,5 +626,143 @@ public final class DecimalUtil {
                 throw CairoException.critical(0)
                         .put("cannot store decimal into column type: ").put(ColumnType.nameOf(targetType));
         }
+    }
+
+    /**
+     * Converts a 128-bit decimal to the nearest double. The sink holds the decimal text on the
+     * fallback path and is left clobbered.
+     */
+    public static double toDouble(StringSink sink, Decimal128 value, int scale, int precision) {
+        final long high = value.getHigh();
+        final long low = value.getLow();
+        if (isExact(low, scale) && high == (low >> 63)) {
+            return (double) low / POW10[scale];
+        }
+        sink.clear();
+        Decimal128.toSink(sink, high, low, scale, precision);
+        return Numbers.parseDouble(sink);
+    }
+
+    /**
+     * Converts a 256-bit decimal to the nearest double. The sink holds the decimal text on the
+     * fallback path and is left clobbered.
+     */
+    public static double toDouble(StringSink sink, Decimal256 value, int scale, int precision) {
+        final long hh = value.getHh();
+        final long hl = value.getHl();
+        final long lh = value.getLh();
+        final long ll = value.getLl();
+        final long signExtension = ll >> 63;
+        if (isExact(ll, scale) && hh == signExtension && hl == signExtension && lh == signExtension) {
+            return (double) ll / POW10[scale];
+        }
+        sink.clear();
+        Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
+        return Numbers.parseDouble(sink);
+    }
+
+    /**
+     * Converts an unscaled 64-bit decimal to the nearest double. The sink holds the decimal text
+     * on the fallback path and is left clobbered.
+     */
+    public static double toDouble(StringSink sink, long value, int scale, int precision) {
+        if (isExact(value, scale)) {
+            return (double) value / POW10[scale];
+        }
+        sink.clear();
+        Decimal64.toSink(sink, value, scale, precision);
+        return Numbers.parseDouble(sink);
+    }
+
+    /**
+     * Converts a 128-bit decimal to the nearest float, or NULL for a magnitude outside the float
+     * range. The sink holds the decimal text on the fallback path and is left clobbered.
+     */
+    public static float toFloat(StringSink sink, Decimal128 value, int scale, int precision) {
+        final long high = value.getHigh();
+        final long low = value.getLow();
+        if (isExact(low, scale) && high == (low >> 63)) {
+            final double quotient = (double) low / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
+        }
+        sink.clear();
+        Decimal128.toSink(sink, high, low, scale, precision);
+        return toFloat(sink);
+    }
+
+    /**
+     * Converts a 256-bit decimal to the nearest float, or NULL for a magnitude outside the float
+     * range. The sink holds the decimal text on the fallback path and is left clobbered.
+     */
+    public static float toFloat(StringSink sink, Decimal256 value, int scale, int precision) {
+        final long hh = value.getHh();
+        final long hl = value.getHl();
+        final long lh = value.getLh();
+        final long ll = value.getLl();
+        final long signExtension = ll >> 63;
+        if (isExact(ll, scale) && hh == signExtension && hl == signExtension && lh == signExtension) {
+            final double quotient = (double) ll / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
+        }
+        sink.clear();
+        Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
+        return toFloat(sink);
+    }
+
+    /**
+     * Converts an unscaled 64-bit decimal to the nearest float, or NULL for a magnitude outside the
+     * float range. The sink holds the decimal text on the fallback path and is left clobbered.
+     */
+    public static float toFloat(StringSink sink, long value, int scale, int precision) {
+        if (isExact(value, scale)) {
+            final double quotient = (double) value / POW10[scale];
+            if (isRoundedOnce(quotient)) {
+                return (float) quotient;
+            }
+        }
+        sink.clear();
+        Decimal64.toSink(sink, value, scale, precision);
+        return toFloat(sink);
+    }
+
+    /**
+     * When the unscaled value and 10^scale are both exact doubles the quotient is rounded once,
+     * so dividing them gives the same double as parsing the decimal text.
+     */
+    private static boolean isExact(long unscaled, int scale) {
+        return scale <= MAX_EXACT_SCALE && unscaled >= -MAX_EXACT_UNSCALED && unscaled <= MAX_EXACT_UNSCALED;
+    }
+
+    /**
+     * Narrowing the quotient to a float rounds a second time. That only disagrees with rounding
+     * the exact value once when the quotient lands on a float midpoint, where ties-to-even can
+     * pick the wrong neighbour; a midpoint carries the half-ulp bit and no bit below it.
+     */
+    private static boolean isRoundedOnce(double quotient) {
+        return (Double.doubleToRawLongBits(quotient) & 0x1FFFFFFFL) != 0x10000000L;
+    }
+
+    /**
+     * Rounds the decimal text to a float in a single step. Out of the float range yields NULL,
+     * same as cast(double as float). Everything above Float.MAX_VALUE rounds either to it or to
+     * infinity, so only that one magnitude needs the double to settle which side of the range it is.
+     */
+    private static float toFloat(StringSink sink) {
+        // rejectOverflow=false keeps overflow and underflow out of the exception path
+        final float f = FastFloatParser.parseFloat(sink, false);
+        if (Float.isInfinite(f)) {
+            return Float.NaN;
+        }
+        if (f == Float.MAX_VALUE || f == -Float.MAX_VALUE) {
+            final double magnitude = Numbers.parseDouble(sink);
+            if (magnitude > Float.MAX_VALUE || magnitude < -Float.MAX_VALUE) {
+                return Float.NaN;
+            }
+        }
+        return f;
     }
 }
