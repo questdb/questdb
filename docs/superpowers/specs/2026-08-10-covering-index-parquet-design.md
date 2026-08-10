@@ -83,9 +83,45 @@ multi-key frame path in the factory.
 
 ## Design
 
+### Configuration
+
+The Parquet index form is opt-in. Two properties, following the style of the
+existing `cairo.posting.index.row.id.encoding` enum (names provisional):
+
+| property | values | default |
+| --- | --- | --- |
+| `cairo.posting.index.parquet.partition.format` | `native`, `parquet` | `native` |
+| `cairo.posting.index.parquet.payload` | `row_per_posting`, `row_per_key` | `row_per_posting` |
+
+`native` preserves today's behaviour exactly: `linkPartitionIndexFiles` hard-links
+`.pk`/`.pv`/`.pci`/`.pc*` into the Parquet partition directory. `parquet` produces
+`<col>.pidx.parquet` + `<col>.pidx._im` instead. The second property selects the
+payload shape and is meaningful only when the first is `parquet`.
+
+Three consequences follow, and they are load-bearing rather than incidental:
+
+1. **The configuration governs the writer only. Readers must dispatch on what is
+   actually on disk.** A reader that consulted the configuration would mis-read
+   every partition written under the other setting the moment the flag is flipped.
+   The on-disk discriminator is the `_pm` footer feature section (equivalently, the
+   presence of `<col>.pidx.parquet`).
+2. **Mixed state within one table is a supported, expected state.** Flipping the
+   flag migrates nothing. A partition changes form only when its index is next
+   rebuilt — that is, on the next O3 commit that touches it, or an explicit
+   `REINDEX`. There is no implicit migration pass, and none is planned here.
+3. Because both forms must coexist, the format is forced to be self-describing —
+   which was already the goal, so the flag costs nothing architecturally.
+
+The flag also turns the payload bake-off into a genuine A/B: identical data,
+identical queries, different on-disk artifacts and different reader code paths.
+Benchmarks must assert the *artifact* — that `<col>.pidx.parquet` exists in one arm
+and `<col>.pv.*` in the other — rather than trusting that setting the flag had any
+effect.
+
 ### Artifact set
 
-Per Parquet partition, per indexed SYMBOL column:
+When `cairo.posting.index.parquet.partition.format = parquet`, per Parquet
+partition, per indexed SYMBOL column:
 
 ```
 <table>/<partition>.<nameTxn>/
@@ -256,7 +292,10 @@ a Parquet partition must route to the new seal.
 ### Read path
 
 `IndexFactory.createReader` (`IndexFactory.java:41`) is the single dispatch point;
-it already switches on index type and direction. Parquet partitions get
+it already switches on index type and direction. It gains a third input: the
+partition's **on-disk** index form, resolved from the `_pm` footer feature section,
+never from configuration. Parquet partitions carrying native sidecars keep the
+existing readers; Parquet partitions carrying `pidx` artifacts get
 `ParquetPostingIndexFwdReader` / `ParquetPostingIndexBwdReader` implementing the
 existing `IndexReader` contract, so nothing above the seam changes.
 
@@ -303,13 +342,16 @@ oracle for the directory fast path in tests.
 index files out of the Parquet partition directory and falls back to
 `rebuildColumnIndex` when the key file is absent (`:13460`–`:13466`).
 
-Because this design removes native index files from Parquet partition directories,
-the link branch will never fire and the fallback rebuild becomes the only path.
-The fallback is complete — `rebuildColumnIndex` calls `configureCoveringIfNeeded`
-(`TableWriter:12662`) so it rebuilds `.pci`/`.pc*` as well as `.pv` — but it is
-strictly more expensive than a link. This is a deliberate, stated regression in
-`parquet -> native` conversion cost, and it must be covered by a test that exercises
-the fallback directly rather than incidentally.
+That existing `ff.exists` probe is exactly the right discriminator for mixed state
+and needs no change: a partition still carrying native sidecars takes the link fast
+path, and one carrying `pidx` artifacts falls through to the rebuild. The fallback
+is complete — `rebuildColumnIndex` calls `configureCoveringIfNeeded`
+(`TableWriter:12662`) so it rebuilds `.pci`/`.pc*` as well as `.pv`.
+
+The cost regression is therefore scoped to partitions written in `parquet` mode,
+not to the feature being present. It remains real for those partitions — a rebuild
+is strictly more expensive than a hard link — and must be covered by a test that
+exercises the fallback branch directly rather than incidentally.
 
 ### Interface audit (resolved)
 
@@ -361,17 +403,24 @@ key by key.
   of the four write-order steps.
 - **Fuzz.** Extend `FuzzAddCoveringIndexOperation` to run against Parquet partitions
   with O3 in both update and rewrite mode.
-- **Conversion.** `parquet -> native` exercising the `restoreIndexFilesAfterParquetToNative`
-  rebuild fallback directly.
+- **Conversion.** `parquet -> native` from a `pidx` partition, exercising the
+  `restoreIndexFilesAfterParquetToNative` rebuild fallback directly, and from a
+  native-sidecar partition, confirming the link fast path still fires.
+- **Mixed state.** A table holding both native-sidecar and `pidx` Parquet
+  partitions must answer queries identically across the boundary. Flip the flag
+  mid-test, write more partitions, and assert reader dispatch follows the on-disk
+  form rather than the current setting — including the flip *back* to `native`,
+  which must not corrupt or ignore existing `pidx` partitions.
 - **`touch_table()`** on a Parquet-backed covering index.
 - **Bake-off harness.** Arm N against arm B on size and query latency, over both a
-  low-cardinality hot-key shape and a 110k-symbol shape.
+  low-cardinality hot-key shape and a 110k-symbol shape. Each arm asserts the
+  on-disk artifact it actually produced before recording a number.
 
 ## Scope
 
-**In scope:** the on-disk format, `_im`, the `_pm` footer section, the write path,
-the Parquet-backed `IndexReader`, pruning levels 1–3, `parquet -> native`, and the
-two-arm bake-off.
+**In scope:** the two configuration properties and on-disk-form dispatch, the
+on-disk format, `_im`, the `_pm` footer section, the write path, the Parquet-backed
+`IndexReader`, pruning levels 1–3, `parquet -> native`, and the two-arm bake-off.
 
 **Out of scope, enabled but not built:** cold storage upload, replication, S3
 pull-back, filter pushdown (pruning level 4), incremental index append.
@@ -385,7 +434,13 @@ pull-back, filter pushdown (pruning level 4), incremental index append.
    one-row O3 insert into a large Parquet partition. This must be measured. A bad
    result is the strongest argument for revisiting row-group-major addressing, which
    is the only layout in which incremental index append is expressible.
-3. **`parquet -> native` conversion slows down**, since the link fast path
-   disappears and the rebuild fallback becomes the only path.
-4. **Storage duplication.** The index duplicates covered column data. Already true
+3. **Mixed-state test surface.** Making the form opt-in means both forms must be
+   correct *and* interoperable within one table, across flag flips in both
+   directions. This is the cost of the configuration flag, and it is worth paying:
+   the alternative is a one-way change with no fallback if the bake-off or the
+   write-amplification measurement comes out badly.
+4. **`parquet -> native` conversion slows down** for partitions written in
+   `parquet` mode, since those take the rebuild fallback rather than the link fast
+   path. Scoped to those partitions only.
+5. **Storage duplication.** The index duplicates covered column data. Already true
    of `.pc`, but now in a file that is also destined for upload.
