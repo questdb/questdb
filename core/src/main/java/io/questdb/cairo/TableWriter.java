@@ -1797,6 +1797,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (pendingParquetToNativeConversions.size() == 0) {
             return;
         }
+        // Composite invariant (merge audit 2026-08-10): the body below is cell-blind -- it deletes
+        // partition dirs through the cellKey-0 safeDeletePartitionDir overload and reopens "the"
+        // partition for a day. It is unreachable for a routed composite table because the ONLY
+        // populator of pendingParquetToNativeConversions is convertPartitionParquetToNative, which
+        // throws on isRoutedComposite() before it can queue anything. A non-empty queue here on a
+        // routed composite table therefore means that gate was bypassed or removed: fail loudly
+        // rather than silently deleting the wrong cell's directory.
+        if (isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not support pending parquet-to-native conversions [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
         try {
             // Persist reconstructed column tops before the txn, else _txn references a stale _cv.
             if (columnVersionWriter.hasChanges()) {
@@ -4501,6 +4513,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
+
+        // Composite gate (merge audit 2026-08-10): this method resolves the partition by timestamp
+        // alone and builds its paths with the cell-less setPathForNativePartition, then deletes the
+        // old dir via the cellKey-0 safeDeletePartitionDir -- all cell-blind. It has no production
+        // caller in OSS today (tests only), and its siblings convertPartitionNativeToParquet /
+        // convertPartitionParquetToNative are both gated the same way; gate it too so a future
+        // caller cannot reach it for a routed composite table by accident.
+        if (isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support switching a native partition to parquet [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
 
         if (inTransaction()) {
             assert !tableToken.isWal();
