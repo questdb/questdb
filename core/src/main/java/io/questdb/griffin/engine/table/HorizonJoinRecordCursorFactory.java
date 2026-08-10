@@ -163,6 +163,19 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         return masterFactory;
     }
 
+    // getBaseFactory() exposes only the master. The slave is parser-restricted to a plain table
+    // today, but propagate both sides explicitly so the external-source guard stays honest if that
+    // restriction is ever relaxed. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
