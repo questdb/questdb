@@ -7143,7 +7143,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final Function loFunc = getLoFunction(model, executionContext);
             final Function hiFunc = getHiFunction(model, executionContext);
             return new LimitRecordCursorFactory(
-                    factory, loFunc, hiFunc, limitLo != null ? limitLo.position : limitHi.position
+                    factory,
+                    loFunc,
+                    hiFunc,
+                    limitLo != null ? limitLo.position : limitHi.position,
+                    configuration.getSqlMaxNegativeLimit()
             );
         } catch (Throwable e) {
             Misc.free(factory);

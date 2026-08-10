@@ -335,6 +335,47 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNOverIndexedScanWithResidualFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table trades (
+                        ts timestamp,
+                        sym symbol index,
+                        venue symbol,
+                        price double
+                    ) timestamp(ts) partition by day
+                    """);
+            execute("""
+                    insert into trades values
+                        ('2026-08-01T00:00:01.000000Z', 'AAA-BBB', 'venue-1', 1.0),
+                        ('2026-08-01T00:00:02.000000Z', 'AAA-BBB', 'venue-2', 2.0),
+                        ('2026-08-01T00:00:03.000000Z', 'CCC-DDD', 'venue-1', 3.0),
+                        ('2026-08-02T00:00:01.000000Z', 'AAA-BBB', 'venue-1', 4.0),
+                        ('2026-08-02T00:00:02.000000Z', 'AAA-BBB', 'venue-2', 5.0),
+                        ('2026-08-02T00:00:03.000000Z', 'AAA-BBB', 'venue-1', 6.0)
+                    """);
+
+            assertQuery("""
+                    select /*+ no_covering */ ts, price
+                    from trades
+                    where sym = 'AAA-BBB'
+                        and venue = 'venue-1'
+                        and ts <= '2026-08-02T00:00:03.000000Z'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            ts\tprice
+                            2026-08-02T00:00:01.000000Z\t4.0
+                            2026-08-02T00:00:03.000000Z\t6.0
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitDefinesBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute(createTableDdl);
