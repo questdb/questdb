@@ -66,8 +66,6 @@ import java.util.List;
  */
 public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest {
 
-    // Stream bounds. Their product caps the table's row count, which the test-config
-    // sort key budget must admit -- see testSortKeyBudgetAdmitsStreamCeiling.
     private static final int ROUNDS_MAX = 79;
     private static final int ROUNDS_MIN = 40;
     private static final int ROWS_PER_TXN_MAX = 4049;
@@ -122,13 +120,7 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
 
     @Test
     public void testSortKeyBudgetAdmitsStreamCeiling() {
-        // The comparison query in assertTablesIdentical sorts (ts, sym, value) -- three
-        // columns of at most 8 key bytes each, so FIXED_24. If the test-config sort key
-        // budget (Overrides, cairo.sql.sort.key.max.bytes) admits fewer rows than the
-        // stream ceiling, high-row-count seeds die in LimitOverflowException before any
-        // differential assertion runs. This fails deterministically when the budget
-        // shrinks or the stream bounds grow; adding a fourth sort column to the
-        // comparison query moves it to FIXED_32 and requires revisiting both.
+        // assertTablesIdentical sorts (ts, sym, value): at most 24 key bytes -> FIXED_24.
         final long ceiling = (long) ROUNDS_MAX * TXNS_PER_ROUND_MAX * ROWS_PER_TXN_MAX;
         final long budgetRows = SortKeyEncoder.maxEntries(
                 configuration.getSqlSortKeyMaxBytes(),
