@@ -5059,10 +5059,16 @@ public class WalWriterTest extends AbstractCairoTest {
         // the distressed flag.
         setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16_384);
         AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger mapFailures = new AtomicInteger();
         ff = new TestFilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (armed.compareAndSet(true, false)) {
+                // Persistent while armed, unlike a one-shot: the expel branch
+                // re-enters cleanupBeforeClose() via super.close(), and a
+                // one-shot injection would let that retry silently succeed,
+                // hiding whether close retried the failed IO at all.
+                if (armed.get()) {
+                    mapFailures.incrementAndGet();
                     return FilesFacade.MAP_FAILED;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -5091,6 +5097,7 @@ public class WalWriterTest extends AbstractCairoTest {
             } finally {
                 armed.set(false);
             }
+            Assert.assertEquals("cleanup must not retry the failed IO on the expel path", 1, mapFailures.get());
 
             // The pool must not hand back a half-cancelled writer still marked
             // as being in columnar-write mode: the entry was expelled and the
