@@ -50,7 +50,5 @@ public interface ViewStateStore extends Mutable {
 
     void removeViewState(TableToken viewToken);
 
-    void reenqueueCompileTask(ViewCompilerTask task);
-
     boolean tryDequeueCompilerTask(ViewCompilerTask task);
 }

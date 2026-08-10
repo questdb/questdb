@@ -1077,11 +1077,7 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
-        vWorkerPool.assign(
-                vWorkerPool.isFiberHost()
-                        ? new ViewCompilerJob(engine, sharedQueryWorkerCount, vWorkerPool.getFiberRuntime())
-                        : new ViewCompilerJob(engine, sharedQueryWorkerCount)
-        );
+        vWorkerPool.assign(new ViewCompilerJob(engine, sharedQueryWorkerCount));
     }
 
     protected void setupWalApplyJob(

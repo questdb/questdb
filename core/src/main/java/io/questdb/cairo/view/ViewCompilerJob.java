@@ -40,10 +40,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
-import io.questdb.mp.continuation.Fiber;
-import io.questdb.mp.continuation.FiberRuntime;
-import io.questdb.mp.continuation.FiberTask;
-import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -55,16 +51,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public class ViewCompilerJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(ViewCompilerJob.class);
     private final ObjList<TableToken> compileViewsSink = new ObjList<>();
     private final ViewCompilerExecutionContext compilerExecutionContext;
     private final ViewCompilerTask compilerTask = new ViewCompilerTask();
     private final CairoEngine engine;
-    private final @Nullable FiberRuntime fiberRuntime;
-    private final @Nullable FiberCompilerTask fiberTask;
     private final ObjList<TableToken> invalidateViewsSink = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final ViewStateStore stateStore;
@@ -75,20 +67,10 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     public ViewCompilerJob(CairoEngine engine, int sharedQueryWorkerCount) {
-        this(engine, sharedQueryWorkerCount, null);
-    }
-
-    public ViewCompilerJob(
-            CairoEngine engine,
-            int sharedQueryWorkerCount,
-            @Nullable FiberRuntime fiberRuntime
-    ) {
         try {
             this.engine = engine;
-            this.fiberRuntime = fiberRuntime;
             this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.compilerExecutionContext = engine.createViewCompilerContext(sharedQueryWorkerCount);
-            this.fiberTask = fiberRuntime != null ? new FiberCompilerTask() : null;
             this.viewGraph = engine.getViewGraph();
             this.stateStore = engine.getViewStateStore();
         } catch (Throwable th) {
@@ -141,10 +123,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @Override
     public Job cloneInstance() {
-        final FiberRuntime runtime = fiberRuntime;
-        return runtime != null
-                ? new ViewCompilerJob(engine, sharedQueryWorkerCount, runtime)
-                : new ViewCompilerJob(engine, sharedQueryWorkerCount);
+        return new ViewCompilerJob(engine, sharedQueryWorkerCount);
     }
 
     @Override
@@ -160,9 +139,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        if (fiberRuntime != null) {
-            return processNotificationsOnFiber();
-        }
         final SuspensionScope.Mode previousMode = SuspensionScope.enter(
                 SuspensionScope.Mode.BLOCKING
         );
@@ -348,110 +324,5 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             compile(compilerTask.tableToken, compilerTask.updateTimestamp);
         }
         return false;
-    }
-
-    private boolean processNotificationsOnFiber() {
-        final FiberRuntime runtime = fiberRuntime;
-        final FiberCompilerTask task = fiberTask;
-        if (runtime == null || task == null || !task.isAvailable()) {
-            return false;
-        }
-        if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
-            return false;
-        }
-
-        Fiber fiber = null;
-        long reservationEpoch = 0;
-        boolean isDequeued = true;
-        try {
-            fiber = runtime.tryReserveFiber();
-            if (fiber == null) {
-                return false;
-            }
-            reservationEpoch = fiber.getReservationEpoch();
-            if (!task.prepare(compilerTask)) {
-                return false;
-            }
-            final LaunchResult result = runtime.launchReserved(
-                    fiber,
-                    reservationEpoch,
-                    task,
-                    task.getIncarnation()
-            );
-            if (result == LaunchResult.LAUNCHED) {
-                isDequeued = false;
-                return true;
-            }
-            task.releaseAfterLaunchFailure();
-            return false;
-        } finally {
-            if (fiber != null) {
-                runtime.releaseReservedFiber(fiber, reservationEpoch);
-            }
-            if (isDequeued) {
-                stateStore.reenqueueCompileTask(compilerTask);
-            }
-        }
-    }
-
-    private class FiberCompilerTask extends FiberTask {
-        private final AtomicBoolean isAvailable = new AtomicBoolean(true);
-        private final ViewCompilerTask notification = new ViewCompilerTask();
-
-        private boolean isAvailable() {
-            return isAvailable.get();
-        }
-
-        @Override
-        protected void onAbandoned() {
-            if (notification.tableToken != null) {
-                stateStore.reenqueueCompileTask(notification);
-            }
-        }
-
-        @Override
-        protected void onDone() {
-            notification.clear();
-            isAvailable.set(true);
-        }
-
-        @Override
-        protected void onError(Throwable th) {
-            LOG.critical().$("view compilation failed on fiber [view=").$(notification.tableToken)
-                    .$(", ex=").$(th)
-                    .I$();
-        }
-
-        @Override
-        protected boolean runStep() {
-            compile(notification.tableToken, notification.updateTimestamp);
-            return true;
-        }
-
-        private boolean prepare(ViewCompilerTask source) {
-            if (!isAvailable.compareAndSet(true, false)) {
-                return false;
-            }
-            boolean isPrepared = false;
-            try {
-                if (isDone() && !tryReopen()) {
-                    return false;
-                }
-                source.copyTo(notification);
-                isPrepared = true;
-                return true;
-            } finally {
-                if (!isPrepared) {
-                    isAvailable.set(true);
-                }
-            }
-        }
-
-        private void releaseAfterLaunchFailure() {
-            if (isIdle(getIncarnation())) {
-                notification.clear();
-                isAvailable.set(true);
-            }
-        }
     }
 }

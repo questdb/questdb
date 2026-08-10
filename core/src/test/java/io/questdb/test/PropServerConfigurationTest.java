@@ -2696,7 +2696,6 @@ public class PropServerConfigurationTest {
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolQueryConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolWriteConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(configuration.getViewCompilerPoolConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getWalApplyPoolConfiguration(), 37, 11, 5);
     }
 
@@ -2779,10 +2778,6 @@ public class PropServerConfigurationTest {
         assertWorkerPoolModeProperty(
                 PropertyKey.PG_FIBER_ENABLED,
                 PropServerConfiguration::getPGWireConfiguration
-        );
-        assertWorkerPoolModeProperty(
-                PropertyKey.VIEW_COMPILER_WORKER_FIBER_ENABLED,
-                PropServerConfiguration::getViewCompilerPoolConfiguration
         );
     }
 

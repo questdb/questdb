@@ -714,7 +714,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     LIVE_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("live.view.refresh.worker.yield.threshold"),
     VIEW_COMPILER_WORKER_COUNT("view.compiler.worker.count"),
     VIEW_COMPILER_WORKER_AFFINITY("view.compiler.worker.affinity"),
-    VIEW_COMPILER_WORKER_FIBER_ENABLED("view.compiler.worker.fiber.enabled"),
     VIEW_COMPILER_WORKER_HALT_ON_ERROR("view.compiler.worker.haltOnError"),
     VIEW_COMPILER_WORKER_NAP_THRESHOLD("view.compiler.worker.nap.threshold"),
     VIEW_COMPILER_WORKER_SLEEP_THRESHOLD("view.compiler.worker.sleep.threshold"),

@@ -630,7 +630,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int viewCompilerWorkerCount;
     private final boolean viewCompilerWorkerHaltOnError;
     private final long viewCompilerWorkerNapThreshold;
-    private final WorkerPoolMode viewCompilerWorkerPoolMode;
     private final long viewCompilerWorkerSleepThreshold;
     private final long viewCompilerWorkerYieldThreshold;
     private final int viewWalWriterPoolMaxSegments;
@@ -1614,12 +1613,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.viewCompilerWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_COMPILER_WORKER_AFFINITY, viewCompilerWorkerCount);
             this.viewCompilerWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_YIELD_THRESHOLD, 1000);
             this.viewCompilerWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_COMPILER_WORKER_HALT_ON_ERROR, false);
-            this.viewCompilerWorkerPoolMode = readWorkerPoolMode(
-                    properties,
-                    env,
-                    PropertyKey.VIEW_COMPILER_WORKER_FIBER_ENABLED,
-                    false
-            );
 
             // Export pool configuration
             this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, cpuExportWorkers);
@@ -2710,7 +2703,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         configureFiberPool(sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(sharedWorkerPoolQueryConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(sharedWorkerPoolWriteConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(viewCompilerPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(walApplyPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
     }
 
@@ -7729,7 +7721,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropViewCompilerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
+    private class PropViewCompilerPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -7763,11 +7755,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return viewCompilerWorkerCount;
-        }
-
-        @Override
-        public WorkerPoolMode getWorkerPoolMode() {
-            return viewCompilerWorkerPoolMode;
         }
 
         @Override
