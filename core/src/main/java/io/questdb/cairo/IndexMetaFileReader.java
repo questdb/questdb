@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
@@ -63,9 +62,10 @@ import io.questdb.std.str.LPSZ;
  * </pre>
  * <p>
  * <b>Ownership:</b> {@link #openAndMapRO(FilesFacade, LPSZ, IndexMetaFileReader)}
- * leaves the reader owning the mapping and the file descriptor, both released
- * by {@link #close()}. {@link #ofAddress(long, long)} binds to a buffer the
- * caller owns; {@link #close()} then only zeroes the reader's fields.
+ * leaves the reader owning the mapping, released by {@link #close()}; the file
+ * descriptor is closed before that method returns. {@link #ofAddress(long, long)}
+ * binds to a buffer the caller owns; {@link #close()} then only zeroes the
+ * reader's fields.
  * <p>
  * <b>Thread safety:</b> not thread-safe per instance.
  * <p>
@@ -96,7 +96,6 @@ public class IndexMetaFileReader implements QuietCloseable {
     private long colRangeOffset;
     private long dataBoundaryOffset;
     private int dataRowGroupCount;
-    private long fd = -1;
     private FilesFacade ff;
     private int indexColumnCount;
     private int indexRowGroupCount;
@@ -111,35 +110,49 @@ public class IndexMetaFileReader implements QuietCloseable {
     private long size;
 
     /**
-     * Single-open helper: opens the {@code _im} file, maps its header, reads
-     * the committed {@code IM_FILE_SIZE} at offset 0, remaps to exactly that
-     * size and binds the reader to it. On success the reader owns both the
-     * mapping and the file descriptor, and {@link #close()} releases them.
+     * Single-open helper: opens the {@code _im} file, reads the committed
+     * {@code IM_FILE_SIZE} at offset 0 with a pread, maps exactly that many
+     * bytes and binds the reader to the mapping. The file descriptor is closed
+     * before this method returns - the mapping outlives it - so the reader owns
+     * only the mapping, released by {@link #close()}.
      * <p>
-     * Returns {@code false} when the file is missing or unreadable, leaving
-     * the reader cleared. Throws when the file is present but malformed.
+     * Returns {@code 0}, leaving the reader cleared, when the file is missing,
+     * unreadable, or not yet committed. Throws when the file is present but
+     * malformed.
      *
      * @param ff     files facade
      * @param path   path to the {@code _im} file
      * @param reader reader to bind the mapping to
-     * @return true when the reader is bound to a valid {@code _im} file
+     * @return the mapping address, or {@code 0} when there is nothing to read
      * @throws CairoException if the file is corrupt or the header claims a size
      *                        larger than the file
      */
-    public static boolean openAndMapRO(FilesFacade ff, LPSZ path, IndexMetaFileReader reader) {
+    public static long openAndMapRO(FilesFacade ff, LPSZ path, IndexMetaFileReader reader) {
         // The reader is left cleared on failure, so the caller can use the
         // return value alone as the success/failure signal.
         reader.clear();
         final long fd = ff.openRO(path);
         if (fd < 0) {
-            return false;
+            return 0;
         }
-        long addr = 0;
-        long mappedSize = 0;
         try {
-            addr = TableUtils.mapRO(ff, fd, IM_HEADER_SIZE, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            mappedSize = IM_HEADER_SIZE;
-            final long imFileSize = Unsafe.getLong(addr + OFF_IM_FILE_SIZE);
+            // Read IM_FILE_SIZE with a pread and validate it against the file
+            // length BEFORE mapping anything. mmap() does not check the length
+            // against the file, so mapping a fixed header off a shorter file
+            // succeeds and the first read lands on a page past EOF, raising
+            // SIGBUS - which kills the JVM instead of throwing. A crash between
+            // the writer's creat() and its first write leaves exactly such a
+            // zero-length file. This mirrors ParquetMetaFileReader.openAndMapRO,
+            // whose ordering is the point of the guard.
+            final long imFileSize = ff.readNonNegativeLong(fd, 0);
+            if (imFileSize <= 0) {
+                // 0: IM_FILE_SIZE is patched last as the commit signal, so an
+                // unpatched zero means "not committed yet" - a normal state, not
+                // corruption. Negative: the pread could not return 8 bytes, so
+                // the file is shorter than the size field and holds nothing to
+                // read either way.
+                return 0;
+            }
             if (imFileSize < IM_HEADER_SIZE + IM_TRAILER_SIZE) {
                 throw CairoException.critical(0)
                         .put("invalid _im IM_FILE_SIZE [imFileSize=").put(imFileSize)
@@ -148,8 +161,7 @@ public class IndexMetaFileReader implements QuietCloseable {
             // The filesystem length never bounds the mapping - only IM_FILE_SIZE
             // does - but a header claiming more bytes than the file holds would
             // make the reads below run past EOF and SIGBUS the JVM, so corruption
-            // must surface as a clear error instead. This mirrors the identical
-            // guard in ParquetMetaFileReader.openAndMapRO.
+            // must surface as a clear error instead.
             final long actualFileSize = ff.length(fd);
             if (imFileSize > actualFileSize) {
                 throw CairoException.critical(0)
@@ -157,50 +169,35 @@ public class IndexMetaFileReader implements QuietCloseable {
                         .put(", actualFileSize=").put(actualFileSize)
                         .put(", path=").put(path).put(']');
             }
-            if (imFileSize > IM_HEADER_SIZE) {
-                // mremap leaves the previous mapping intact when it fails, so the
-                // catch below still unmaps the header mapping held in addr.
-                addr = TableUtils.mremap(
-                        ff,
-                        fd,
-                        addr,
-                        IM_HEADER_SIZE,
-                        imFileSize,
-                        Files.MAP_RO,
-                        MemoryTag.MMAP_PARQUET_METADATA_READER
-                );
-                mappedSize = imFileSize;
+            final long addr = TableUtils.mapRO(ff, fd, imFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            try {
+                reader.ofAddress(addr, imFileSize);
+            } catch (Throwable th) {
+                ff.munmap(addr, imFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                throw th;
             }
-            reader.ofAddress(addr, imFileSize);
-            // Transfer ownership only once the mapping is bound and validated:
-            // until then the catch below owns the cleanup.
+            // Transfer mapping ownership only once the reader is bound and
+            // validated: until then the catch above owns the cleanup.
             reader.ff = ff;
-            reader.fd = fd;
-            reader.mappedSize = mappedSize;
-            return true;
-        } catch (Throwable th) {
-            reader.clear();
-            if (addr != 0) {
-                ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
+            reader.mappedSize = imFileSize;
+            return addr;
+        } finally {
+            // The mapping survives the descriptor, so the reader never retains
+            // one: Phase 2 holds a reader per indexed column per partition and
+            // each retained descriptor would cost a live fd.
             ff.close(fd);
-            throw th;
         }
     }
 
     /**
-     * Releases the mapping and the file descriptor when this reader owns them
-     * (see {@link #openAndMapRO}) and zeroes the reader's fields. Safe to call
-     * repeatedly and safe to call on a reader that was never bound.
+     * Releases the mapping when this reader owns it (see {@link #openAndMapRO})
+     * and zeroes the reader's fields. Safe to call repeatedly and safe to call
+     * on a reader that was never bound.
      */
     public void clear() {
         if (mappedSize != 0) {
             ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             mappedSize = 0;
-        }
-        if (fd != -1) {
-            ff.close(fd);
-            fd = -1;
         }
         ff = null;
         addr = 0;

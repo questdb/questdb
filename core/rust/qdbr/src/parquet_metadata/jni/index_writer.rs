@@ -42,6 +42,15 @@ pub struct IndexMetaBuiltFile {
     data: Vec<u8>,
 }
 
+macro_rules! check_not_negative {
+    ($env:expr, $count:expr, $name:expr) => {
+        if $count < 0 {
+            let err = fmt_err!(InvalidType, concat!($name, " count is negative"));
+            return err.into_cairo_exception().throw($env);
+        }
+    };
+}
+
 macro_rules! check_not_null {
     ($env:expr, $ptr:expr, $name:expr) => {
         if $ptr.is_null() {
@@ -65,6 +74,8 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     let env = &mut env;
     check_not_null!(env, ptr, "IndexMetaFileWriter");
     check_not_null!(env, col_ranges_ptr, "IndexMetaFileWriter col ranges");
+    // A negative jint would become an enormous slice length below.
+    check_not_negative!(env, col_count, "IndexMetaFileWriter col ranges");
     let writer = unsafe { &mut *ptr };
     let raw = unsafe { slice::from_raw_parts(col_ranges_ptr, (col_count as usize) * 2) };
     let ranges: Vec<(u64, u64)> = raw.chunks_exact(2).map(|c| (c[0], c[1])).collect();
@@ -155,6 +166,8 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
     let env = &mut env;
     check_not_null!(env, ptr, "IndexMetaFileWriter");
     check_not_null!(env, boundaries_ptr, "IndexMetaFileWriter boundaries");
+    // A negative jint would become an enormous slice length below.
+    check_not_negative!(env, count, "IndexMetaFileWriter boundaries");
     let writer = unsafe { &mut *ptr };
     let boundaries = unsafe { slice::from_raw_parts(boundaries_ptr, count as usize) };
     writer.set_data_row_group_boundaries(boundaries);
