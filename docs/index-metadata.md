@@ -136,6 +136,11 @@ followed by the out-of-line region holding min/max stats whose payload exceeds 8
 
 Blocks are 8-byte aligned so `RG_BLOCK_OFFSET` can store `offset >> 3` in a u32.
 
+**`RG_BLOCK_OFFSET` entries strictly ascend, and a reader must validate that at open time.** The whole
+extent model rests on it: "block `i` runs to block `i + 1`" is meaningless if the entries are unordered,
+and an out-of-line bound derived from an inverted extent is meaningless too. A file whose entries do not
+strictly ascend is rejected.
+
 **A block's extent is bounded by the next block.** Block `i` runs from `RG_BLOCK_OFFSET[i]` to
 `RG_BLOCK_OFFSET[i + 1]`, and the last block runs to `INDEX_SECTIONS_OFFSET`. An out-of-line stat
 reference is `(offset << 16) | length` relative to the block, and readers **must reject a reference
@@ -176,7 +181,7 @@ lie after the column descriptors and name strings, and the sections it implies m
 
 | section | size | description |
 | --- | --- | --- |
-| `RG_BLOCK_OFFSET` | `INDEX_RG_COUNT * 4` | u32 per row group: byte offset of its block from file start, `>> 3` |
+| `RG_BLOCK_OFFSET` | `INDEX_RG_COUNT * 4` | u32 per row group: byte offset of its block from file start, `>> 3`. **Entries strictly ascend** |
 | `RG_FIRST_KEY` | `(INDEX_RG_COUNT + 1) * 4` | u32 per row group: the smallest key id present in it. Non-decreasing. The final entry is a sentinel equal to `KEY_COUNT` |
 | `DATA_RG_BOUNDARY` | `(DATA_RG_COUNT + 1) * 8` | i64: cumulative row counts of `data.parquet`'s row groups. First entry `0`, non-decreasing |
 | `CHECKSUM` | 4 | CRC32 over bytes `[8, CHECKSUM)` — everything after `IM_FILE_SIZE` |
@@ -287,6 +292,25 @@ Reader:
 7. Because step 6 validates every descriptor's `NAME_OFFSET` / `NAME_LENGTH`, a bad name entry is
    rejected at open time rather than on first access. Both reader implementations must do this, or
    they disagree on which files are valid.
+8. Validate the header's column selectors, which are otherwise trusted all the way to an address
+   computation: `PAYLOAD_KIND` is `0` or `1`; `0 <= KEY_ID_COLUMN < COLUMN_COUNT`; and `ROW_ID_COLUMN`
+   is `-1` if and only if `PAYLOAD_KIND == 1`, otherwise in range. These are the sanctioned route to the
+   synthetic columns, so a caller passes them straight to a column-chunk accessor; an unvalidated value
+   indexes past the mapping.
+9. Validate every `RG_BLOCK_OFFSET` entry: strictly ascending; each block starting at or after
+   `64 + COLUMN_COUNT * 32`; each block ending at or before `INDEX_SECTIONS_OFFSET`; and each extent at
+   least `8 + COLUMN_COUNT * 64`, the minimum a block needs for its chunks.
+
+### What the reader does *not* re-check
+
+These are writer-enforced invariants that readers deliberately trust, and a reader that additionally
+enforces them would reject files the others accept:
+
+- `RG_FIRST_KEY` non-decreasing, and its cross-check against the `key_id` chunk's `MIN_STAT`.
+- `DATA_RG_BOUNDARY[0] == 0` and its monotonicity.
+
+Slack between the end of `DATA_RG_BOUNDARY` and the CRC is permitted — readers bound the sections with
+`sections_end <= crc_offset`, not equality.
 
 ## Validation the writer performs
 
@@ -301,8 +325,8 @@ rather than trusting callers:
   to the wrong data row group.
 - Every row group block carries exactly `COLUMN_COUNT` chunks.
 - `NUM_ROWS > 0` for every block — a zero-row parquet row group is treated as corruption.
-- `COLUMN_COUNT > 0`; `PAYLOAD_KIND` is `0` or `1`; `KEY_ID_COLUMN` is in range; `ROW_ID_COLUMN` is
-  `-1` if and only if `PAYLOAD_KIND == 1`.
+- `COLUMN_COUNT > 0`. (`PAYLOAD_KIND`, `KEY_ID_COLUMN` and `ROW_ID_COLUMN` are validated by the
+  **reader** as well — see step 8 — because they reach an address computation.)
 - The `key_id` chunk's `MIN_STAT` used for the `RG_FIRST_KEY` cross-check must be **inline**. Key ids
   are 4-byte ints so this always holds in practice, but an out-of-line reference happens to be encoded
   as `(offset << 16) | length` and could otherwise collide with a small key value.
