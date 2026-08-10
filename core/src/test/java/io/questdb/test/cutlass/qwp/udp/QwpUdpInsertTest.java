@@ -1912,19 +1912,27 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         };
     }
 
+    // Keyed on the receiver's datagram counters, not runSerially()'s return:
+    // the interval-commit branch also returns true, so with interleaved DDL
+    // the boolean could report "received" before any datagram was handled.
+    // processedCount + totalDroppedCount increases exactly once per handled
+    // datagram, making progress unambiguous.
     private static void drainReceiver(QwpUdpReceiver receiver) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        boolean everReceived = false;
+        long handledBefore = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
+        boolean hasEverProgressed = false;
         while (System.nanoTime() < deadline) {
-            boolean received = receiver.runSerially();
-            if (received) {
-                everReceived = true;
-            } else if (everReceived) {
+            receiver.runSerially();
+            long handledNow = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
+            if (handledNow > handledBefore) {
+                handledBefore = handledNow;
+                hasEverProgressed = true;
+            } else if (hasEverProgressed) {
                 break;
             }
             Os.pause();
         }
-        Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
+        Assert.assertTrue("timeout: receiver did not process any datagrams", hasEverProgressed);
     }
 
     // Deterministic drain for multi-datagram tests: the single-gap drainReceiver
