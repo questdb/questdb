@@ -116,6 +116,12 @@ maps exactly `IM_FILE_SIZE` bytes.
 | `row_id` | `-1` | `LONG` | synthetic; located via the header's `ROW_ID_COLUMN` |
 | covered column | the covered column's **writer index** | its QuestDB column type | this is the mapping a query's `requiredCoverColumns` uses to build a parquet column projection |
 
+Lookup by `ID` is defined only for real columns: **a lookup with a negative `ID` is rejected**, not
+matched against the synthetic columns. `key_id` and `row_id` are found through the header's
+`KEY_ID_COLUMN` and `ROW_ID_COLUMN`, which is the only sanctioned way to reach them. This matches
+`ParquetMetaFileReader.getColumnIndexById`, and it keeps `-1` meaning "not a table column" rather than
+doubling as a lookup key that happens to match the first synthetic column.
+
 Writer indices are used rather than positional table indices because they survive `DROP COLUMN`, which
 is the same convention `data.parquet` uses for its `field_id`.
 
@@ -129,6 +135,13 @@ One block per index row group, written sequentially after the name strings, **id
 followed by the out-of-line region holding min/max stats whose payload exceeds 8 bytes.
 
 Blocks are 8-byte aligned so `RG_BLOCK_OFFSET` can store `offset >> 3` in a u32.
+
+**A block's extent is bounded by the next block.** Block `i` runs from `RG_BLOCK_OFFSET[i]` to
+`RG_BLOCK_OFFSET[i + 1]`, and the last block runs to `INDEX_SECTIONS_OFFSET`. An out-of-line stat
+reference is `(offset << 16) | length` relative to the block, and readers **must reject a reference
+that lands outside its own block's extent**. Bounding it only by the end of the row-group region would
+let a stat in one row group address bytes belonging to another — legal-looking, silently wrong, and
+exactly the kind of cross-block read a crafted file would use.
 
 Column chunks are `_pm`'s 64-byte structure verbatim: `CODEC`, `ENCODINGS`, `STAT_FLAGS`, `STAT_SIZES`,
 `NUM_VALUES`, `BYTE_RANGE_START`, `TOTAL_COMPRESSED`, `NULL_COUNT`, `DISTINCT_COUNT`, `MIN_STAT`,
