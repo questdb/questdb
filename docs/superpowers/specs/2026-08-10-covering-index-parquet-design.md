@@ -134,9 +134,26 @@ partition, per indexed SYMBOL column:
 No `.pk`, `.pv`, `.pci` or `.pc*` in a Parquet partition.
 
 `_im` mirrors `_pm`'s contract exactly: `IM_FILE_SIZE` at offset 0 patched last as
-the commit signal, a CRC over everything after it, a trailer carrying
-`FOOTER_LENGTH`, and callers never using the filesystem's reported length as a
-commit boundary.
+the commit signal, a CRC over everything after it, and callers never using the
+filesystem's reported length as a commit boundary.
+
+**The full `_im` byte layout is specified in `docs/index-metadata.md`.** It reuses
+`_pm`'s column descriptor, row group block and column chunk structures byte-for-byte
+and adds index-specific sections. Three consequences are load-bearing for this
+design and were missing from the first cut of the format:
+
+- **Column chunks, not just byte ranges.** Each `(row group, column)` carries
+  `CODEC`, `ENCODINGS`, `NUM_VALUES`, `NULL_COUNT` and min/max stats alongside
+  `BYTE_RANGE_START` / `TOTAL_COMPRESSED`. Byte ranges alone let a cold reader
+  locate index bytes but not decode them, which fails this design's own goal.
+- **Column descriptors map an index column to a QuestDB column.** A covered
+  column's descriptor `ID` is its writer index, so a query's
+  `requiredCoverColumns` becomes a parquet column projection. Without this the
+  projection has nothing to key on.
+- **Per-key statistics fall out for free.** Because row groups are key-aligned, a
+  covered column's min/max in a block is that key's range, which is exactly what
+  pruning level 4 needs. The format now carries it even though the planner work to
+  exploit it is a later phase.
 
 ### Version tokens
 
