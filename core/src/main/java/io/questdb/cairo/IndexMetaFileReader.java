@@ -29,37 +29,58 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zip;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 
 /**
- * Memory-mapped reader for the {@code _im} covering-index metadata file, the
- * sidecar to {@code <col>.pidx.parquet}. It mirrors the Rust
- * {@code IndexMetaReader} in {@code qdb-parquet-meta}: the two implementations
- * derive their section offsets from the same header fields and must stay in
- * lock step.
+ * Memory-mapped reader for the {@code _im} covering-index metadata file,
+ * format version 2, the sidecar to {@code <col>.pidx.parquet}. It mirrors the
+ * Rust {@code IndexMetaReader} in {@code qdb-parquet-meta}: the two
+ * implementations validate the same fields in the same order and resolve the
+ * same section offsets, and must stay in lock step.
+ * <p>
+ * {@code _im} deliberately reuses {@code _pm}'s 32-byte column descriptor,
+ * row group block and 64-byte column chunk structures byte for byte, so the
+ * descriptor and chunk field offsets below are
+ * {@link ParquetMetaFileReader}'s, unchanged. Only the header and the
+ * index-specific sections differ.
  * <p>
  * Binary format (little-endian):
  * <pre>
- * HEADER (48 bytes fixed):
- *   [0]  IM_FILE_SIZE        u64  (total committed file size; patched last as the commit signal)
- *   [8]  FEATURE_FLAGS       u64  (bits 32-63 are required: unknown bits must cause rejection)
- *   [16] FORMAT_VERSION      u32
- *   [20] PAYLOAD_KIND        u32
- *   [24] INDEX_RG_COUNT      u32
- *   [28] DATA_RG_COUNT       u32
- *   [32] INDEX_COLUMN_COUNT  u32
- *   [36] KEY_COUNT           u32
- *   [40] RESERVED            u64
+ * HEADER (64 bytes fixed):
+ *   [0]  IM_FILE_SIZE          u64  (total committed file size; patched last as the commit signal,
+ *                                    and the only field outside the CRC)
+ *   [8]  IM_MAGIC              u64  (0x0200584449425144, the bytes QDBIDX\0\2)
+ *   [16] FEATURE_FLAGS         u64  (bits 32-63 are required: unknown bits must cause rejection)
+ *   [24] FORMAT_VERSION        u32  (2)
+ *   [28] PAYLOAD_KIND          u32  (0 = row per posting, 1 = row per key)
+ *   [32] COLUMN_COUNT          u32
+ *   [36] INDEX_RG_COUNT        u32
+ *   [40] DATA_RG_COUNT         u32
+ *   [44] KEY_COUNT             u32
+ *   [48] KEY_ID_COLUMN         i32
+ *   [52] ROW_ID_COLUMN         i32  (-1 under PAYLOAD_KIND 1)
+ *   [56] INDEX_SECTIONS_OFFSET u64  (absolute offset of RG_BLOCK_OFFSET, 8-byte aligned)
  *
- * SECTIONS (in file order, each derived from the header counts):
- *   RG_FIRST_KEY      u32 x (INDEX_RG_COUNT + 1)   first key of each index row group, plus a
- *                                                  KEY_COUNT sentinel; padded to an 8-byte boundary
- *   RG_ROW_ID_MIN     i64 x INDEX_RG_COUNT
- *   RG_ROW_ID_MAX     i64 x INDEX_RG_COUNT
- *   DATA_RG_BOUNDARY  i64 x (DATA_RG_COUNT + 1)
- *   RG_COL_RANGE      (u64 offset, u64 length) x INDEX_RG_COUNT x INDEX_COLUMN_COUNT
+ *   [64..] column descriptors (32B each), then the UTF-8 name blob padded to 8 bytes
+ *
+ * ROW GROUP BLOCK (8-byte aligned, one per index row group, located via RG_BLOCK_OFFSET):
+ *   [0]  NUM_ROWS  u64
+ *   [8..] column chunks (64B each), then the out-of-line stat region
+ *
+ * INDEX SECTIONS (at INDEX_SECTIONS_OFFSET, each 8-byte aligned and padded up):
+ *   RG_BLOCK_OFFSET   u32 x INDEX_RG_COUNT        block byte offset from file start, &gt;&gt; 3
+ *   RG_FIRST_KEY      u32 x (INDEX_RG_COUNT + 1)  smallest key id per row group, plus a
+ *                                                 KEY_COUNT sentinel
+ *   DATA_RG_BOUNDARY  i64 x (DATA_RG_COUNT + 1)   cumulative data.parquet row counts
  *   CRC32             u32  over [8, IM_FILE_SIZE - 4)
  * </pre>
+ * <p>
+ * {@code INDEX_SECTIONS_OFFSET} is read from the header, never derived: a
+ * row group block's size depends on the length of its out-of-line stat
+ * region, which is recorded nowhere, and deriving the offset backwards from
+ * the CRC would give the two reader implementations two chains of inferences
+ * to keep in step instead of one value to compare.
  * <p>
  * <b>Ownership:</b> {@link #openAndMapRO(FilesFacade, LPSZ, IndexMetaFileReader)}
  * leaves the reader owning the mapping, released by {@link #close()}; the file
@@ -76,36 +97,88 @@ import io.questdb.std.str.LPSZ;
  */
 public class IndexMetaFileReader implements QuietCloseable {
 
-    public static final int IM_HEADER_SIZE = 48;
+    public static final int IM_HEADER_SIZE = 64;
     public static final int IM_TRAILER_SIZE = 4;
+    // Index sections and row group blocks start on this boundary, which is what
+    // lets RG_BLOCK_OFFSET store a byte offset right-shifted by 3 in a u32.
+    private static final int BLOCK_ALIGNMENT = 8;
+    private static final int BLOCK_ALIGNMENT_SHIFT = 3;
+    // Column chunk layout (64B per chunk, starting at row group block offset + 8),
+    // identical to _pm's; see ParquetMetaFileReader.
+    private static final int COLUMN_CHUNK_BYTE_RANGE_START_OFF = 16;
+    private static final int COLUMN_CHUNK_CODEC_OFF = 0;
+    private static final int COLUMN_CHUNK_DISTINCT_COUNT_OFF = 40;
+    private static final int COLUMN_CHUNK_ENCODINGS_OFF = 1;
+    private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
+    private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
+    private static final int COLUMN_CHUNK_NULL_COUNT_OFF = 32;
+    private static final int COLUMN_CHUNK_NUM_VALUES_OFF = 8;
+    private static final int COLUMN_CHUNK_SIZE = 64;
+    private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
+    private static final int COLUMN_CHUNK_STAT_SIZES_OFF = 3;
+    private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
+    private static final int COLUMN_DESCRIPTOR_SIZE = 32;
+    // Column descriptor layout (32B each, starting right after the header),
+    // identical to _pm's; see ParquetMetaFileReader.
+    private static final int COL_DESC_COL_TYPE_OFF = 12;
+    private static final int COL_DESC_FLAGS_OFF = 16;
+    private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_NAME_LENGTH_OFF = 24;
+    private static final int COL_DESC_NAME_OFFSET_OFF = 0;
+    private static final int COL_DESC_PHYSICAL_TYPE_OFF = 28;
     // First byte covered by the CRC; IM_FILE_SIZE at offset 0 is excluded
     // because the writer patches it last as the commit signal.
     private static final int IM_CRC_AREA_OFF = 8;
-    private static final int IM_FORMAT_VERSION = 1;
-    private static final int OFF_DATA_RG_COUNT = 28;
-    private static final int OFF_FEATURE_FLAGS = 8;
-    private static final int OFF_FORMAT_VERSION = 16;
+    private static final int IM_FORMAT_VERSION = 2;
+    // The bytes QDBIDX\0\2 at offset 8. Disambiguates _im from _pm, which
+    // carries FEATURE_FLAGS at the same offset.
+    private static final long IM_MAGIC = 0x0200_5844_4942_4451L;
+    private static final int OFF_COLUMN_COUNT = 32;
+    private static final int OFF_DATA_RG_COUNT = 40;
+    private static final int OFF_FEATURE_FLAGS = 16;
+    private static final int OFF_FORMAT_VERSION = 24;
     private static final int OFF_IM_FILE_SIZE = 0;
-    private static final int OFF_INDEX_COLUMN_COUNT = 32;
-    private static final int OFF_INDEX_RG_COUNT = 24;
-    private static final int OFF_KEY_COUNT = 36;
-    private static final int OFF_PAYLOAD_KIND = 20;
+    private static final int OFF_IM_MAGIC = 8;
+    private static final int OFF_INDEX_RG_COUNT = 36;
+    private static final int OFF_INDEX_SECTIONS_OFFSET = 56;
+    private static final int OFF_KEY_COUNT = 44;
+    private static final int OFF_KEY_ID_COLUMN = 48;
+    private static final int OFF_PAYLOAD_KIND = 28;
+    private static final int OFF_ROW_ID_COLUMN = 52;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
+    // Each row group block starts with an 8-byte NUM_ROWS u64 prefix.
+    private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
+    // Each RG_BLOCK_OFFSET entry is a u32 holding a byte offset >> 3.
+    private static final int ROW_GROUP_ENTRY_SIZE = 4;
+    // Stat flag bits within the column chunk stat_flags byte, mirroring the
+    // Rust StatFlags: bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
+    // bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT.
+    private static final int STAT_FLAG_MAX_INLINED = 1 << 4;
+    private static final int STAT_FLAG_MAX_PRESENT = 1 << 3;
+    private static final int STAT_FLAG_MIN_INLINED = 1 << 1;
+    private static final int STAT_FLAG_MIN_PRESENT = 1;
+    private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
-    private long colRangeOffset;
+    private int columnCount;
     private long dataBoundaryOffset;
     private int dataRowGroupCount;
+    private long featureFlags;
     private FilesFacade ff;
-    private int indexColumnCount;
     private int indexRowGroupCount;
     private int keyCount;
+    private int keyIdColumn;
     // Size of the mapping this reader owns, 0 when the buffer belongs to the caller.
     private long mappedSize;
+    // End of the column descriptors, and so the lowest offset a name string or
+    // a row group block may start at.
+    private long namesStart;
     private int payloadKind;
+    // The header's INDEX_SECTIONS_OFFSET, validated at bind time. It doubles as
+    // the exclusive upper bound of the row group block region.
+    private long rgBlockOffsetOffset;
     private long rgFirstKeyOffset;
-    private long rowIdMaxOffset;
-    private long rowIdMinOffset;
+    private int rowIdColumn;
     // Committed IM_FILE_SIZE the reader is bound to, never the filesystem length.
     private long size;
 
@@ -203,15 +276,17 @@ public class IndexMetaFileReader implements QuietCloseable {
         ff = null;
         addr = 0;
         size = 0;
+        featureFlags = 0;
+        namesStart = 0;
+        rgBlockOffsetOffset = 0;
         rgFirstKeyOffset = 0;
-        rowIdMinOffset = 0;
-        rowIdMaxOffset = 0;
         dataBoundaryOffset = 0;
-        colRangeOffset = 0;
+        columnCount = 0;
         indexRowGroupCount = 0;
         dataRowGroupCount = 0;
-        indexColumnCount = 0;
         keyCount = 0;
+        keyIdColumn = 0;
+        rowIdColumn = 0;
         payloadKind = 0;
     }
 
@@ -228,23 +303,236 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
-     * Length in bytes of the {@code column}'s chunk within {@code rowGroup}.
-     */
-    public long getColumnByteRangeLength(int rowGroup, int column) {
-        return Unsafe.getLong(addr + columnByteRangeOffset(rowGroup, column) + Long.BYTES);
-    }
-
-    /**
      * Byte offset of the {@code column}'s chunk within {@code rowGroup},
-     * relative to the start of the index parquet file.
+     * relative to the start of {@code <col>.pidx.parquet}.
      */
-    public long getColumnByteRangeOffset(int rowGroup, int column) {
-        return Unsafe.getLong(addr + columnByteRangeOffset(rowGroup, column));
+    public long getChunkByteRangeStart(int rowGroup, int column) {
+        return Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_BYTE_RANGE_START_OFF);
     }
 
     /**
-     * Row id boundary {@code i} of the data partition the index was built
-     * over. There are {@code getDataRowGroupCount() + 1} boundaries.
+     * Compression codec the chunk's pages are compressed with, as the raw
+     * codec byte: 0 uncompressed, 1 snappy, 2 gzip, 3 lzo, 4 brotli, 5 lz4,
+     * 6 zstd, 7 lz4 raw.
+     */
+    public int getChunkCodec(int rowGroup, int column) {
+        return Unsafe.getByte(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_CODEC_OFF) & 0xFF;
+    }
+
+    /**
+     * Distinct value count of the chunk. Meaningful only when the
+     * {@code DISTINCT_COUNT_PRESENT} bit of {@link #getChunkStatFlags} is set.
+     */
+    public long getChunkDistinctCount(int rowGroup, int column) {
+        return Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_DISTINCT_COUNT_OFF);
+    }
+
+    /**
+     * Bitmask of the encodings present in the chunk: bit 0 PLAIN,
+     * bit 1 RLE_DICTIONARY, bit 2 DELTA_BINARY_PACKED,
+     * bit 3 DELTA_LENGTH_BYTE_ARRAY, bit 4 DELTA_BYTE_ARRAY,
+     * bit 5 BYTE_STREAM_SPLIT. Page headers carry the per-page encoding; this
+     * is the union over the chunk.
+     */
+    public int getChunkEncodings(int rowGroup, int column) {
+        return Unsafe.getByte(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_ENCODINGS_OFF) & 0xFF;
+    }
+
+    /**
+     * Inline maximum statistic of the chunk. Valid only when
+     * {@link #hasChunkMaxStat} and {@link #isChunkMaxStatInline} both hold;
+     * otherwise use {@link #getChunkMaxStatAddr} and
+     * {@link #getChunkMaxStatLength}.
+     */
+    public long getChunkMaxStat(int rowGroup, int column) {
+        final long chunkAddr = columnChunkAddr(rowGroup, column);
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
+                == (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED)
+                : "max_stat absent or not inlined for row group " + rowGroup + ", column " + column;
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF);
+    }
+
+    /**
+     * Address of the chunk's out-of-line maximum statistic within the row
+     * group block's out-of-line region. Valid only when
+     * {@link #hasChunkMaxStat} holds and {@link #isChunkMaxStatInline} does
+     * not.
+     *
+     * @throws CairoException if the stat reference points outside the block
+     */
+    public long getChunkMaxStatAddr(int rowGroup, int column) {
+        final long chunkAddr = columnChunkAddr(rowGroup, column);
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED))
+                == STAT_FLAG_MAX_PRESENT
+                : "max_stat absent or inlined for row group " + rowGroup + ", column " + column;
+        return outOfLineStatAddr(rowGroup, column, Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MAX_STAT_OFF));
+    }
+
+    /**
+     * Byte length of the chunk's out-of-line maximum statistic. Valid under
+     * the same condition as {@link #getChunkMaxStatAddr}.
+     */
+    public int getChunkMaxStatLength(int rowGroup, int column) {
+        return (int) (Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_MAX_STAT_OFF) & 0xFFFFL);
+    }
+
+    /**
+     * Declared byte width of the chunk's inline maximum statistic, from the
+     * high nibble of STAT_SIZES.
+     */
+    public int getChunkMaxStatSize(int rowGroup, int column) {
+        return (Unsafe.getByte(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_STAT_SIZES_OFF) >> 4) & 0x0F;
+    }
+
+    /**
+     * Inline minimum statistic of the chunk. Valid only when
+     * {@link #hasChunkMinStat} and {@link #isChunkMinStatInline} both hold;
+     * otherwise use {@link #getChunkMinStatAddr} and
+     * {@link #getChunkMinStatLength}.
+     */
+    public long getChunkMinStat(int rowGroup, int column) {
+        final long chunkAddr = columnChunkAddr(rowGroup, column);
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
+                == (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED)
+                : "min_stat absent or not inlined for row group " + rowGroup + ", column " + column;
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
+    }
+
+    /**
+     * Address of the chunk's out-of-line minimum statistic within the row
+     * group block's out-of-line region. Valid only when
+     * {@link #hasChunkMinStat} holds and {@link #isChunkMinStatInline} does
+     * not.
+     *
+     * @throws CairoException if the stat reference points outside the block
+     */
+    public long getChunkMinStatAddr(int rowGroup, int column) {
+        final long chunkAddr = columnChunkAddr(rowGroup, column);
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED))
+                == STAT_FLAG_MIN_PRESENT
+                : "min_stat absent or inlined for row group " + rowGroup + ", column " + column;
+        return outOfLineStatAddr(rowGroup, column, Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF));
+    }
+
+    /**
+     * Byte length of the chunk's out-of-line minimum statistic. Valid under
+     * the same condition as {@link #getChunkMinStatAddr}.
+     */
+    public int getChunkMinStatLength(int rowGroup, int column) {
+        return (int) (Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_MIN_STAT_OFF) & 0xFFFFL);
+    }
+
+    /**
+     * Declared byte width of the chunk's inline minimum statistic, from the
+     * low nibble of STAT_SIZES.
+     */
+    public int getChunkMinStatSize(int rowGroup, int column) {
+        return Unsafe.getByte(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_STAT_SIZES_OFF) & 0x0F;
+    }
+
+    /**
+     * Null count of the chunk. When it equals {@link #getChunkNumValues} the
+     * chunk is entirely null and the reader can materialise nulls without
+     * fetching or decoding anything.
+     */
+    public long getChunkNullCount(int rowGroup, int column) {
+        return Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_NULL_COUNT_OFF);
+    }
+
+    public long getChunkNumValues(int rowGroup, int column) {
+        return Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_NUM_VALUES_OFF);
+    }
+
+    /**
+     * Raw STAT_FLAGS byte of the chunk: bit 0 MIN_PRESENT, bit 1 MIN_INLINED,
+     * bit 2 MIN_EXACT, bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT,
+     * bit 6 DISTINCT_COUNT_PRESENT, bit 7 NULL_COUNT_PRESENT.
+     */
+    public int getChunkStatFlags(int rowGroup, int column) {
+        return Unsafe.getByte(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
+    }
+
+    /**
+     * Compressed byte length of the chunk. Together with
+     * {@link #getChunkByteRangeStart} this is the range to fetch from cold
+     * storage; contiguous row groups coalesce into one request.
+     */
+    public long getChunkTotalCompressed(int rowGroup, int column) {
+        return Unsafe.getLong(columnChunkAddr(rowGroup, column) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
+    }
+
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    /**
+     * Raw FLAGS bitfield of the column descriptor.
+     */
+    public int getColumnFlags(int column) {
+        return Unsafe.getInt(columnDescriptorAddr(column) + COL_DESC_FLAGS_OFF);
+    }
+
+    /**
+     * The column's QuestDB writer index, or {@code -1} for the synthetic
+     * {@code key_id} and {@code row_id} columns. Writer indices are used
+     * rather than positional table indices because they survive
+     * {@code DROP COLUMN}.
+     */
+    public int getColumnId(int column) {
+        return Unsafe.getInt(columnDescriptorAddr(column) + COL_DESC_ID_OFF);
+    }
+
+    /**
+     * Index of the column whose descriptor ID matches the given QuestDB
+     * writer index, or {@code -1} when no column matches. This is how a
+     * query's required cover columns become a parquet column projection.
+     * <p>
+     * Mirrors the Rust reader's first-match linear scan, so passing
+     * {@code -1} returns the first synthetic column rather than a miss; use
+     * {@link #getKeyIdColumn()} and {@link #getRowIdColumn()} for those.
+     */
+    public int getColumnIndexById(int id) {
+        for (int i = 0; i < columnCount; i++) {
+            if (getColumnId(i) == id) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the column name as a flyweight over the mapped {@code _im}
+     * data. The returned reference is reused across calls - callers must not
+     * hold it past the next call. The name range was bounds-checked when the
+     * reader was bound.
+     */
+    public DirectUtf8String getColumnName(int column) {
+        final long descAddr = columnDescriptorAddr(column);
+        final long nameAddr = addr + Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+        final int nameLength = Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
+        return flyweightColName.of(nameAddr, nameAddr + nameLength, true);
+    }
+
+    /**
+     * Parquet physical type of the column, as the raw descriptor byte.
+     */
+    public int getColumnPhysicalType(int column) {
+        return Unsafe.getByte(columnDescriptorAddr(column) + COL_DESC_PHYSICAL_TYPE_OFF) & 0xFF;
+    }
+
+    /**
+     * QuestDB column type of the column.
+     */
+    public int getColumnType(int column) {
+        return Unsafe.getInt(columnDescriptorAddr(column) + COL_DESC_COL_TYPE_OFF);
+    }
+
+    /**
+     * Cumulative row count at {@code data.parquet} row group boundary
+     * {@code i}. There are {@code getDataRowGroupCount() + 1} entries, the
+     * first is {@code 0} and the array is non-decreasing, so a binary search
+     * over it maps a row id to the data row groups a non-covering query must
+     * read.
      */
     public long getDataRowGroupBoundary(int i) {
         assert i >= 0 && i <= dataRowGroupCount;
@@ -255,6 +543,10 @@ public class IndexMetaFileReader implements QuietCloseable {
         return dataRowGroupCount;
     }
 
+    public long getFeatureFlags() {
+        return featureFlags;
+    }
+
     /**
      * Committed {@code IM_FILE_SIZE} the reader is bound to.
      */
@@ -262,27 +554,52 @@ public class IndexMetaFileReader implements QuietCloseable {
         return size;
     }
 
-    public int getIndexColumnCount() {
-        return indexColumnCount;
-    }
-
     public int getIndexRowGroupCount() {
         return indexRowGroupCount;
+    }
+
+    /**
+     * The header's {@code INDEX_SECTIONS_OFFSET}: the absolute file offset of
+     * the first index section, {@code RG_BLOCK_OFFSET}.
+     */
+    public long getIndexSectionsOffset() {
+        return rgBlockOffsetOffset;
     }
 
     public int getKeyCount() {
         return keyCount;
     }
 
+    /**
+     * Index of the synthetic {@code key_id} column in the descriptors.
+     */
+    public int getKeyIdColumn() {
+        return keyIdColumn;
+    }
+
+    /**
+     * {@code 0} = row per posting, {@code 1} = row per key.
+     */
     public int getPayloadKind() {
         return payloadKind;
+    }
+
+    /**
+     * The smallest key id present in index row group {@code i}. Index
+     * {@code getIndexRowGroupCount()} is the sentinel and equals
+     * {@link #getKeyCount()}.
+     */
+    public int getRowGroupFirstKey(int i) {
+        assert i >= 0 && i <= indexRowGroupCount;
+        return firstKeyAt(i);
     }
 
     /**
      * Index of the last index row group that can hold {@code key}, or
      * {@code -1} when {@code key} is outside the covered key space. Together
      * with {@link #getRowGroupLoForKey(int)} this is the inclusive row group
-     * range the key's postings live in.
+     * range the key's postings live in, and it is contiguous, so the key's
+     * postings and covered values are one byte range per column.
      */
     public int getRowGroupHiForKey(int key) {
         if (getRowGroupLoForKey(key) < 0) {
@@ -314,19 +631,47 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
-     * Largest data row id held by {@code rowGroup}, from the zone map.
+     * NUM_ROWS of the index row group's block, located through
+     * RG_BLOCK_OFFSET.
+     *
+     * @throws CairoException if the block offset points outside the block region
      */
-    public long getRowIdMax(int rowGroup) {
-        assert rowGroup >= 0 && rowGroup < indexRowGroupCount;
-        return Unsafe.getLong(addr + rowIdMaxOffset + (long) rowGroup * Long.BYTES);
+    public long getRowGroupNumRows(int rowGroup) {
+        return Unsafe.getLong(rowGroupBlockAddr(rowGroup));
     }
 
     /**
-     * Smallest data row id held by {@code rowGroup}, from the zone map.
+     * Index of the synthetic {@code row_id} column in the descriptors, or
+     * {@code -1} under payload kind {@code 1}.
      */
-    public long getRowIdMin(int rowGroup) {
-        assert rowGroup >= 0 && rowGroup < indexRowGroupCount;
-        return Unsafe.getLong(addr + rowIdMinOffset + (long) rowGroup * Long.BYTES);
+    public int getRowIdColumn() {
+        return rowIdColumn;
+    }
+
+    public boolean hasChunkMaxStat(int rowGroup, int column) {
+        return (getChunkStatFlags(rowGroup, column) & STAT_FLAG_MAX_PRESENT) != 0;
+    }
+
+    public boolean hasChunkMinStat(int rowGroup, int column) {
+        return (getChunkStatFlags(rowGroup, column) & STAT_FLAG_MIN_PRESENT) != 0;
+    }
+
+    /**
+     * True when the chunk's maximum statistic fits in the 8 inline bytes.
+     * Otherwise the field holds an {@code (offset << 16) | length} reference
+     * into the row group block's out-of-line region.
+     */
+    public boolean isChunkMaxStatInline(int rowGroup, int column) {
+        return (getChunkStatFlags(rowGroup, column) & STAT_FLAG_MAX_INLINED) != 0;
+    }
+
+    /**
+     * True when the chunk's minimum statistic fits in the 8 inline bytes.
+     * Otherwise the field holds an {@code (offset << 16) | length} reference
+     * into the row group block's out-of-line region.
+     */
+    public boolean isChunkMinStatInline(int rowGroup, int column) {
+        return (getChunkStatFlags(rowGroup, column) & STAT_FLAG_MIN_INLINED) != 0;
     }
 
     public boolean isOpen() {
@@ -335,7 +680,7 @@ public class IndexMetaFileReader implements QuietCloseable {
 
     /**
      * Binds the reader to an {@code _im} buffer the caller owns: validates the
-     * header, verifies the CRC32 and computes the section offsets. The reader
+     * header, verifies the CRC32 and resolves the section offsets. The reader
      * does not take ownership of {@code addr}, so {@link #close()} will not
      * release it.
      *
@@ -366,6 +711,14 @@ public class IndexMetaFileReader implements QuietCloseable {
         parse();
     }
 
+    /**
+     * Rounds a section size up to the 8-byte boundary the next section starts
+     * on. The Java spelling of the Rust reader's {@code aligned_footprint}.
+     */
+    private static long alignUp(long size) {
+        return (size + BLOCK_ALIGNMENT - 1) & ~((long) BLOCK_ALIGNMENT - 1);
+    }
+
     private static int crc32(long address, long len) {
         int crc = 0;
         long remaining = len;
@@ -378,10 +731,22 @@ public class IndexMetaFileReader implements QuietCloseable {
         return crc;
     }
 
-    private long columnByteRangeOffset(int rowGroup, int column) {
-        assert rowGroup >= 0 && rowGroup < indexRowGroupCount;
-        assert column >= 0 && column < indexColumnCount;
-        return colRangeOffset + ((long) rowGroup * indexColumnCount + column) * 2 * Long.BYTES;
+    /**
+     * Address of a column chunk within a row group block: chunks start after
+     * the block's NUM_ROWS prefix and are 64 bytes each.
+     */
+    private long columnChunkAddr(int rowGroup, int column) {
+        assert column >= 0 && column < columnCount;
+        return rowGroupBlockAddr(rowGroup) + ROW_GROUP_BLOCK_HEADER_SIZE + (long) column * COLUMN_CHUNK_SIZE;
+    }
+
+    /**
+     * Address of a column descriptor: descriptors start right after the fixed
+     * header and are 32 bytes each.
+     */
+    private long columnDescriptorAddr(int column) {
+        assert column >= 0 && column < columnCount;
+        return addr + IM_HEADER_SIZE + (long) column * COLUMN_DESCRIPTOR_SIZE;
     }
 
     private int firstKeyAt(int i) {
@@ -390,7 +755,8 @@ public class IndexMetaFileReader implements QuietCloseable {
 
     /**
      * Index of the first row group whose first key is greater than or equal to
-     * {@code key}; {@code indexRowGroupCount} when there is none.
+     * {@code key}; {@code indexRowGroupCount} when there is none. Bounded at
+     * {@code INDEX_RG_COUNT}, so the sentinel is never read by the search.
      */
     private int lowerBound(int key) {
         int lo = 0;
@@ -407,28 +773,63 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
-     * Validates the header and the CRC32, then derives the five section
-     * offsets. The arithmetic mirrors {@code IndexMetaReader::new} in
-     * {@code qdb-parquet-meta} field for field; {@code (afterKeys + 7) & ~7L}
-     * is the Java spelling of Rust's {@code next_multiple_of(8)}. Any drift
-     * here shifts every section after the key directory.
+     * Resolves an {@code (offset << 16) | length} out-of-line stat reference
+     * to an address, bounding it by the block's out-of-line region: from the
+     * end of the last column chunk to the start of the index sections, which
+     * is where the Rust reader bounds it too. A block's own end is not
+     * recorded, so this is the tightest bound both implementations can agree
+     * on.
+     */
+    private long outOfLineStatAddr(int rowGroup, int column, long encoded) {
+        final long regionStart = rowGroupBlockAddr(rowGroup) + ROW_GROUP_BLOCK_HEADER_SIZE
+                + (long) columnCount * COLUMN_CHUNK_SIZE;
+        final long regionSize = addr + rgBlockOffsetOffset - regionStart;
+        final long statOffset = encoded >>> 16;
+        final long statLength = encoded & 0xFFFFL;
+        if (statOffset > regionSize || statLength > regionSize - statOffset) {
+            throw CairoException.critical(0)
+                    .put("_im out of line stat out of bounds [rowGroup=").put(rowGroup)
+                    .put(", column=").put(column)
+                    .put(", statOffset=").put(statOffset)
+                    .put(", statLength=").put(statLength)
+                    .put(", regionSize=").put(regionSize).put(']');
+        }
+        return regionStart + statOffset;
+    }
+
+    /**
+     * Validates the header and the CRC32, then validates the header's
+     * {@code INDEX_SECTIONS_OFFSET} and resolves the three index sections
+     * forward from it. The arithmetic mirrors {@code IndexMetaReader::new} in
+     * {@code qdb-parquet-meta} step for step; {@link #alignUp(long)} is the
+     * Java spelling of its {@code aligned_footprint}. Any drift here shifts
+     * every section after the one that moved.
      */
     private void parse() {
         final long addr = this.addr;
         final long size = this.size;
 
+        final long magic = Unsafe.getLong(addr + OFF_IM_MAGIC);
+        if (magic != IM_MAGIC) {
+            throw CairoException.critical(0)
+                    .put("bad _im IM_MAGIC [magic=0x").put(Long.toHexString(magic))
+                    .put(", expected=0x").put(Long.toHexString(IM_MAGIC)).put(']');
+        }
         final int version = Unsafe.getInt(addr + OFF_FORMAT_VERSION);
         if (version != IM_FORMAT_VERSION) {
             throw CairoException.critical(0)
                     .put("unsupported _im FORMAT_VERSION [version=").put(version)
                     .put(", expected=").put(IM_FORMAT_VERSION).put(']');
         }
-        final long unknownRequired = Unsafe.getLong(addr + OFF_FEATURE_FLAGS) & REQUIRED_FEATURE_MASK;
+        final long featureFlags = Unsafe.getLong(addr + OFF_FEATURE_FLAGS);
+        final long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
         if (unknownRequired != 0) {
             throw CairoException.critical(0)
                     .put("unsupported required _im FEATURE_FLAGS [flags=0x")
                     .put(Long.toHexString(unknownRequired)).put(']');
         }
+
+        // Nothing below this point may be trusted until the CRC agrees.
         final long crcEnd = size - IM_TRAILER_SIZE;
         final int storedCrc = Unsafe.getInt(addr + crcEnd);
         final int computedCrc = crc32(addr + IM_CRC_AREA_OFF, crcEnd - IM_CRC_AREA_OFF);
@@ -438,31 +839,77 @@ public class IndexMetaFileReader implements QuietCloseable {
                     .put(", computed=").put(computedCrc).put(']');
         }
 
-        this.indexRowGroupCount = readCount(addr + OFF_INDEX_RG_COUNT, "INDEX_RG_COUNT");
-        this.dataRowGroupCount = readCount(addr + OFF_DATA_RG_COUNT, "DATA_RG_COUNT");
-        this.indexColumnCount = readCount(addr + OFF_INDEX_COLUMN_COUNT, "INDEX_COLUMN_COUNT");
-        this.rgFirstKeyOffset = IM_HEADER_SIZE;
-        final long afterKeys = rgFirstKeyOffset + (indexRowGroupCount + 1L) * Integer.BYTES;
-        this.rowIdMinOffset = (afterKeys + 7) & ~7L;
-        this.rowIdMaxOffset = rowIdMinOffset + indexRowGroupCount * (long) Long.BYTES;
-        this.dataBoundaryOffset = rowIdMaxOffset + indexRowGroupCount * (long) Long.BYTES;
-        this.colRangeOffset = dataBoundaryOffset + (dataRowGroupCount + 1L) * Long.BYTES;
-        // Same test as the Rust reader's
-        //   needed = col_range_off + rg_count * col_count * 16 + IM_TRAILER_SIZE > end
-        // rearranged into a division so the u32 x u32 x 16 product cannot
-        // overflow a signed long on a corrupt header.
-        final long colRangeEntries = (long) indexRowGroupCount * indexColumnCount;
-        if (colRangeOffset + IM_TRAILER_SIZE > size
-                || colRangeEntries > (size - colRangeOffset - IM_TRAILER_SIZE) / (2L * Long.BYTES)) {
+        final int columnCount = readCount(addr + OFF_COLUMN_COUNT, "COLUMN_COUNT");
+        final int indexRowGroupCount = readCount(addr + OFF_INDEX_RG_COUNT, "INDEX_RG_COUNT");
+        final int dataRowGroupCount = readCount(addr + OFF_DATA_RG_COUNT, "DATA_RG_COUNT");
+
+        // The header records where the index sections start; a reader never
+        // derives it. What it must do is validate the value against everything
+        // else the header claims, with every step checked: the counts and the
+        // offset come straight off a file that may be crafted.
+        final long indexSectionsOffset = Unsafe.getLong(addr + OFF_INDEX_SECTIONS_OFFSET);
+        // Each section starts 8-byte aligned, so the first one must be too.
+        if ((indexSectionsOffset & (BLOCK_ALIGNMENT - 1)) != 0) {
             throw CairoException.critical(0)
-                    .put("_im file truncated [colRangeOffset=").put(colRangeOffset)
-                    .put(", indexRowGroupCount=").put(indexRowGroupCount)
-                    .put(", indexColumnCount=").put(indexColumnCount)
-                    .put(", size=").put(size).put(']');
+                    .put("_im INDEX_SECTIONS_OFFSET is not 8 byte aligned [offset=")
+                    .put(indexSectionsOffset).put(']');
+        }
+        // A u64 at or above 2^63 reads back negative here. The three sections
+        // are at least 16 bytes, so an offset at or past the CRC leaves them
+        // nowhere to fit; rejecting both up front also keeps every sum below
+        // from overflowing.
+        if (indexSectionsOffset < 0 || indexSectionsOffset > crcEnd) {
+            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
+        }
+        // The sections start at or after the column descriptors and the name
+        // strings they point at.
+        final long namesStart = IM_HEADER_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
+        if (namesStart > indexSectionsOffset) {
+            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
+        }
+        // Descriptors are in bounds now, so their name entries can be read to
+        // bound the end of the name blob. Doing it here rather than on first
+        // access is what makes both implementations reject the same files.
+        for (int i = 0; i < columnCount; i++) {
+            final long descAddr = addr + IM_HEADER_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
+            final long nameOffset = Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+            final long nameLength = Integer.toUnsignedLong(Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF));
+            // nameOffset is a u64: at or above 2^63 it reads back negative and
+            // fails the lower bound rather than being sign-extended into an
+            // address. Comparing the length against the space that remains
+            // keeps the end of the name from wrapping.
+            if (nameOffset < namesStart || nameOffset > indexSectionsOffset
+                    || nameLength > indexSectionsOffset - nameOffset) {
+                throw CairoException.critical(0)
+                        .put("invalid _im column name pointer [column=").put(i)
+                        .put(", nameOffset=").put(nameOffset)
+                        .put(", nameLength=").put(nameLength)
+                        .put(", namesStart=").put(namesStart)
+                        .put(", indexSectionsOffset=").put(indexSectionsOffset).put(']');
+            }
         }
 
-        this.keyCount = Unsafe.getInt(addr + OFF_KEY_COUNT);
+        // The three sections, sized from the header counts, each padded up so
+        // the next starts 8-byte aligned, must fit ahead of the CRC.
+        final long rgFirstKeyOffset = indexSectionsOffset + alignUp((long) indexRowGroupCount * Integer.BYTES);
+        final long dataBoundaryOffset = rgFirstKeyOffset + alignUp((indexRowGroupCount + 1L) * Integer.BYTES);
+        final long sectionsEnd = dataBoundaryOffset + (dataRowGroupCount + 1L) * Long.BYTES;
+        if (sectionsEnd > crcEnd) {
+            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
+        }
+
+        this.featureFlags = featureFlags;
         this.payloadKind = Unsafe.getInt(addr + OFF_PAYLOAD_KIND);
+        this.columnCount = columnCount;
+        this.indexRowGroupCount = indexRowGroupCount;
+        this.dataRowGroupCount = dataRowGroupCount;
+        this.keyCount = Unsafe.getInt(addr + OFF_KEY_COUNT);
+        this.keyIdColumn = Unsafe.getInt(addr + OFF_KEY_ID_COLUMN);
+        this.rowIdColumn = Unsafe.getInt(addr + OFF_ROW_ID_COLUMN);
+        this.namesStart = namesStart;
+        this.rgBlockOffsetOffset = indexSectionsOffset;
+        this.rgFirstKeyOffset = rgFirstKeyOffset;
+        this.dataBoundaryOffset = dataBoundaryOffset;
     }
 
     /**
@@ -481,8 +928,39 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * Address of an index row group's block, read from RG_BLOCK_OFFSET and
+     * shifted back by 3. The block must start at or after the descriptors and
+     * end at or before the index sections, which is the same window the Rust
+     * reader hands to its {@code RowGroupBlockReader}.
+     */
+    private long rowGroupBlockAddr(int rowGroup) {
+        assert rowGroup >= 0 && rowGroup < indexRowGroupCount;
+        final int stored = Unsafe.getInt(addr + rgBlockOffsetOffset + (long) rowGroup * ROW_GROUP_ENTRY_SIZE);
+        final long offset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
+        final long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
+        if (offset < namesStart || offset > rgBlockOffsetOffset - minBlockSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _im row group block offset [rowGroup=").put(rowGroup)
+                    .put(", offset=").put(offset)
+                    .put(", namesStart=").put(namesStart)
+                    .put(", indexSectionsOffset=").put(rgBlockOffsetOffset).put(']');
+        }
+        return addr + offset;
+    }
+
+    private CairoException truncated(long indexSectionsOffset, int columnCount, int indexRowGroupCount, int dataRowGroupCount) {
+        return CairoException.critical(0)
+                .put("_im sections do not fit [indexSectionsOffset=").put(indexSectionsOffset)
+                .put(", columnCount=").put(columnCount)
+                .put(", indexRowGroupCount=").put(indexRowGroupCount)
+                .put(", dataRowGroupCount=").put(dataRowGroupCount)
+                .put(", size=").put(size).put(']');
+    }
+
+    /**
      * Index of the first row group whose first key is strictly greater than
-     * {@code key}; {@code indexRowGroupCount} when there is none.
+     * {@code key}; {@code indexRowGroupCount} when there is none. Bounded at
+     * {@code INDEX_RG_COUNT}, so the sentinel is never read by the search.
      */
     private int upperBound(int key) {
         int lo = 0;

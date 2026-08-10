@@ -22,7 +22,19 @@
  *
  ******************************************************************************/
 
-//! JNI bindings for `IndexMetaFileWriter` (Java class `io.questdb.cairo.IndexMetaFileWriter`).
+//! JNI bindings for `IndexMetaFileWriter` (Java class `io.questdb.cairo.IndexMetaFileWriter`),
+//! the `_im` covering-index metadata file writer, format version 2.
+//!
+//! The surface mirrors the `_pm` writer bindings in the sibling `writer`
+//! module: create / populate / finish / destroy against a boxed
+//! [`IndexMetaWriter`], with the finished bytes handed back through a second
+//! boxed [`IndexMetaBuiltFile`].
+//!
+//! Populating a row group is one call per row group, not one per field: Java
+//! lays out the `COLUMN_COUNT` 64-byte `ColumnChunkRaw` structures itself and
+//! passes a single pointer, so a wide index schema does not cost a JNI
+//! transition per chunk field. Stats too wide to inline are patched onto the
+//! last row group afterwards, exactly as `_pm`'s `addBloomFilter` does.
 //!
 //! These `extern "system"` functions are called from Java via JNI. Raw pointer
 //! parameters are null-checked via the `check_not_null!` macro before
@@ -30,10 +42,14 @@
 //! `unsafe` because they must match the JNI calling convention.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use crate::parquet::error::fmt_err;
+use crate::parquet::error::{fmt_err, parquet_meta_err};
+use crate::parquet_metadata::error::ParquetMetaErrorKind;
+use crate::parquet_metadata::header::ColumnDescriptorRaw;
 use crate::parquet_metadata::index_meta::IndexMetaWriter;
+use crate::parquet_metadata::types::{ColumnFlags, COLUMN_CHUNK_SIZE};
+use crate::parquet_metadata::{ColumnChunkRaw, RowGroupBlockBuilder};
 use jni::objects::JClass;
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
 use std::slice;
 
@@ -60,34 +76,197 @@ macro_rules! check_not_null {
     };
 }
 
+/// Appends an index column: the `_pm` 32-byte descriptor plus its name. `id`
+/// carries the covered column's QuestDB writer index, or `-1` for the
+/// synthetic `key_id` / `row_id` columns.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addColumn(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut IndexMetaWriter,
+    name_ptr: *const u8,
+    name_len: jint,
+    id: jint,
+    col_type: jint,
+    flags: jint,
+    fixed_byte_len: jint,
+    physical_type: jint,
+    max_rep_level: jint,
+    max_def_level: jint,
+) {
+    let env = &mut env;
+    check_not_null!(env, ptr, "IndexMetaFileWriter");
+    check_not_null!(env, name_ptr, "IndexMetaFileWriter column name");
+    // A negative jint would become an enormous slice length below.
+    check_not_negative!(env, name_len, "IndexMetaFileWriter column name");
+    let physical_type = match u8::try_from(physical_type) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = fmt_err!(
+                InvalidType,
+                "physical_type {} out of u8 range",
+                physical_type
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+    };
+    let max_rep_level = match u8::try_from(max_rep_level) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = fmt_err!(
+                InvalidType,
+                "max_rep_level {} out of u8 range",
+                max_rep_level
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+    };
+    let max_def_level = match u8::try_from(max_def_level) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = fmt_err!(
+                InvalidType,
+                "max_def_level {} out of u8 range",
+                max_def_level
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+    };
+    let name_bytes = unsafe { slice::from_raw_parts(name_ptr, name_len as usize) };
+    let name = match std::str::from_utf8(name_bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "invalid UTF-8 in index column name: {}",
+                e
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+    };
+    let writer = unsafe { &mut *ptr };
+    // name_offset / name_length are owned by the writer and backpatched on
+    // finish, so whatever is passed here would be discarded.
+    writer.add_column(
+        name,
+        ColumnDescriptorRaw {
+            name_offset: 0,
+            id,
+            col_type,
+            flags: ColumnFlags(flags).0,
+            fixed_byte_len,
+            name_length: 0,
+            physical_type,
+            max_rep_level,
+            max_def_level,
+            _reserved: 0,
+        },
+    );
+}
+
+/// Patches a min or max stat of the most recently added row group's column
+/// chunk into the block's out-of-line region. Used for covered columns whose
+/// statistics exceed the 8 inline bytes: `UUID`, `LONG256`, `VARCHAR` and
+/// friends.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addOutOfLineStat(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut IndexMetaWriter,
+    col_index: jint,
+    is_min: jboolean,
+    data_ptr: *const u8,
+    data_len: jint,
+) {
+    let env = &mut env;
+    check_not_null!(env, ptr, "IndexMetaFileWriter");
+    check_not_null!(env, data_ptr, "IndexMetaFileWriter out-of-line stat");
+    // A negative jint would become an enormous slice length below.
+    check_not_negative!(env, data_len, "IndexMetaFileWriter out-of-line stat");
+    check_not_negative!(
+        env,
+        col_index,
+        "IndexMetaFileWriter out-of-line stat column"
+    );
+    let writer = unsafe { &mut *ptr };
+    let data = unsafe { slice::from_raw_parts(data_ptr, data_len as usize) };
+    if let Err(err) =
+        writer.add_out_of_line_stat_to_last_row_group(col_index as usize, is_min != 0, data)
+    {
+        let mut err: crate::parquet::error::ParquetError = err.into();
+        err.add_context("error in IndexMetaFileWriter.addOutOfLineStat");
+        err.into_cairo_exception().throw::<()>(env);
+    }
+}
+
+/// Appends one index row group: its first (smallest) key id, `NUM_ROWS`, and
+/// `chunk_count` column chunks read from `chunks_ptr`. The buffer holds
+/// `chunk_count` consecutive 64-byte `ColumnChunkRaw` structures in on-disk
+/// layout, so a row group costs one JNI transition regardless of schema width.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *mut IndexMetaWriter,
     first_key: jint,
-    row_id_min: jlong,
-    row_id_max: jlong,
-    col_ranges_ptr: *const u64,
-    col_count: jint,
+    num_rows: jlong,
+    chunks_ptr: *const u8,
+    chunk_count: jint,
 ) {
     let env = &mut env;
     check_not_null!(env, ptr, "IndexMetaFileWriter");
-    check_not_null!(env, col_ranges_ptr, "IndexMetaFileWriter col ranges");
-    // A negative jint would become an enormous slice length below.
-    check_not_negative!(env, col_count, "IndexMetaFileWriter col ranges");
+    check_not_null!(env, chunks_ptr, "IndexMetaFileWriter column chunks");
+    // A negative jint would become an enormous chunk count below.
+    check_not_negative!(env, chunk_count, "IndexMetaFileWriter column chunks");
+    if num_rows < 0 {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "row group num rows {} is negative",
+            num_rows
+        );
+        return err.into_cairo_exception().throw(env);
+    }
+    debug_assert!(
+        (chunk_count as usize) * COLUMN_CHUNK_SIZE <= 1 << 30,
+        "implausible column chunk buffer length: {}",
+        chunk_count
+    );
+    let mut block = RowGroupBlockBuilder::new(chunk_count as u32);
+    block.set_num_rows(num_rows as u64);
+    let chunks = chunks_ptr as *const ColumnChunkRaw;
+    for i in 0..chunk_count as usize {
+        // read_unaligned: the buffer comes from a Java-side allocation whose
+        // alignment the JVM does not guarantee to be 8.
+        let chunk = unsafe { std::ptr::read_unaligned(chunks.add(i)) };
+        if let Err(err) = block.set_column_chunk(i, chunk) {
+            let mut err: crate::parquet::error::ParquetError = err.into();
+            err.add_context("error in IndexMetaFileWriter.addRowGroup");
+            return err.into_cairo_exception().throw(env);
+        }
+    }
     let writer = unsafe { &mut *ptr };
-    let raw = unsafe { slice::from_raw_parts(col_ranges_ptr, (col_count as usize) * 2) };
-    let ranges: Vec<(u64, u64)> = raw.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-    writer.add_row_group(first_key as u32, row_id_min, row_id_max, &ranges);
+    writer.add_row_group(first_key as u32, block);
 }
 
+/// Creates a writer. `key_id_column` and `row_id_column` are indices into the
+/// columns added with `addColumn`; `row_id_column` is `-1` under the
+/// row-per-key payload kind.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_create(
     _env: JNIEnv,
     _class: JClass,
+    payload_kind: jint,
+    key_count: jint,
+    key_id_column: jint,
+    row_id_column: jint,
 ) -> *mut IndexMetaWriter {
-    Box::into_raw(Box::new(IndexMetaWriter::new(0, 0)))
+    Box::into_raw(Box::new(IndexMetaWriter::new(
+        payload_kind as u32,
+        key_count as u32,
+        key_id_column,
+        row_id_column,
+    )))
 }
 
 #[no_mangle]
@@ -112,6 +291,8 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_destroyWriter(
     }
 }
 
+/// Finishes building the _im file. Borrows (does not consume) the writer.
+/// The caller must still call `destroyWriter` to free the writer.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_finish(
     mut env: JNIEnv,
@@ -173,6 +354,8 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
     writer.set_data_row_group_boundaries(boundaries);
 }
 
+/// Overwrites the payload kind and key count passed to `create`, for callers
+/// that only learn them once the index build has run.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setPayload(
     mut env: JNIEnv,

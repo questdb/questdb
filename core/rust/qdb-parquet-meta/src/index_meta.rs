@@ -146,6 +146,32 @@ impl IndexMetaWriter {
         self
     }
 
+    /// Appends an out-of-line stat to the most recently added row group's
+    /// block, patching that column chunk's min or max stat into an
+    /// `(offset << 16) | length` reference.
+    ///
+    /// Mirrors [`ParquetMetaWriter::add_bloom_filter_to_last_row_group`]: the
+    /// JNI layer hands over a row group's 64-byte chunks in one call and then
+    /// patches the stats that do not fit inline, which must happen after the
+    /// chunk itself is in place.
+    ///
+    /// [`ParquetMetaWriter::add_bloom_filter_to_last_row_group`]: crate::writer::ParquetMetaWriter::add_bloom_filter_to_last_row_group
+    pub fn add_out_of_line_stat_to_last_row_group(
+        &mut self,
+        col_index: usize,
+        is_min: bool,
+        data: &[u8],
+    ) -> ParquetMetaResult<&mut Self> {
+        let (_, block) = self.row_groups.last_mut().ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "no row group to add an out-of-line stat to"
+            )
+        })?;
+        block.add_out_of_line_stat(col_index, is_min, data)?;
+        Ok(self)
+    }
+
     /// Sets `data.parquet`'s cumulative row-group boundaries. The array has
     /// `DATA_RG_COUNT + 1` entries, starts at `0` and is non-decreasing.
     pub fn set_data_row_group_boundaries(&mut self, boundaries: &[i64]) -> &mut Self {
@@ -1335,6 +1361,63 @@ mod tests {
         // DATA_RG_BOUNDARY 16, CRC 4.
         assert_eq!(bytes.len(), 64 + 96 + 16 + (8 + 192 + 32) + 8 + 8 + 16 + 4);
         assert_eq!(bytes.len(), 444);
+    }
+
+    /// The JNI layer cannot borrow the block it just handed over, so it
+    /// patches wide stats through the writer afterwards. The bytes must come
+    /// out identical to patching the block before it was added.
+    #[test]
+    fn test_out_of_line_stat_added_through_the_last_row_group() {
+        let min_uuid = [0x11u8; 16];
+        let max_uuid = [0xEEu8; 16];
+
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 50, 0, 1);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.add_column("uid", descriptor(4, TYPE_UUID));
+
+        let mut block = RowGroupBlockBuilder::new(3);
+        block.set_num_rows(64);
+        block.set_column_chunk(0, key_id_chunk(7, 7, 64)).unwrap();
+        block.set_column_chunk(1, row_id_chunk(0, 63, 64)).unwrap();
+        let mut uid = ColumnChunkRaw::zeroed();
+        uid.codec = Codec::Zstd as u8;
+        uid.stat_flags = StatFlags::new()
+            .with_min(false, true)
+            .with_max(false, true)
+            .0;
+        uid.num_values = 64;
+        block.set_column_chunk(2, uid).unwrap();
+        w.add_row_group(7, block);
+        w.add_out_of_line_stat_to_last_row_group(2, true, &min_uuid)
+            .unwrap();
+        w.add_out_of_line_stat_to_last_row_group(2, false, &max_uuid)
+            .unwrap();
+        w.set_data_row_group_boundaries(&[0, 64]);
+
+        let bytes = w.finish().unwrap();
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        let block = r.row_group_block(0).unwrap();
+        let chunk = block.column_chunk(2).unwrap();
+        let ool = block.out_of_line_region();
+        let min_off = (chunk.min_stat >> 16) as usize;
+        assert_eq!(&ool[min_off..min_off + 16], &min_uuid);
+        let max_off = (chunk.max_stat >> 16) as usize;
+        assert_eq!(&ool[max_off..max_off + 16], &max_uuid);
+        // Byte-identical to the block-patched fixture above.
+        assert_eq!(bytes.len(), 444);
+    }
+
+    #[test]
+    fn test_out_of_line_stat_without_a_row_group_is_rejected() {
+        let mut w = minimal_writer();
+        // `unwrap_err` would require the writer itself to be Debug, so match.
+        let err = match w.add_out_of_line_stat_to_last_row_group(0, true, &[0u8; 16]) {
+            Ok(_) => panic!("expected an error"),
+            Err(err) => err,
+        };
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("no row group"), "{}", err.msg);
     }
 
     // ── Writer validation ──────────────────────────────────────────────
