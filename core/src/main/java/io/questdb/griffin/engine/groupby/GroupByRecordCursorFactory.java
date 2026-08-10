@@ -134,6 +134,38 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Stable iff every key function and aggregate (either may evaluate arbitrary expressions,
+    // for example rnd_timestamp(...) as a group key) and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (keyFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
