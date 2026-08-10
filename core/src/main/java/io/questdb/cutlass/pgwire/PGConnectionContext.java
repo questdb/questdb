@@ -1134,6 +1134,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 pipelineCurrentEntry.ofEmpty(activeSqlText);
                 pipelineCurrentEntry.setStateExec(true);
             }
+        } catch (PGMessageProcessingException ex) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            // The exception is backed by pipelineCurrentEntry's error sink. Appending it through
+            // msgKaput().put(ex) would append that sink to itself and duplicate the client message.
+            throw ex;
         } catch (Throwable ex) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;

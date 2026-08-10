@@ -69,6 +69,19 @@ public class PGUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayResumeBinSizeDoesNotOverflow() {
+        final int firstOverflow = Integer.MAX_VALUE / (Integer.BYTES + Long.BYTES) + 1;
+        Assert.assertEquals(
+                (long) (Integer.BYTES + Long.BYTES) * firstOverflow,
+                PGUtils.calculateArrayResumeColBinSize(firstOverflow, 0)
+        );
+        Assert.assertEquals(
+                (long) Integer.BYTES * Integer.MAX_VALUE,
+                PGUtils.calculateArrayResumeColBinSize(0, Integer.MAX_VALUE)
+        );
+    }
+
+    @Test
     public void testDecimalBinSizeMatchesPgNumericLayout() throws Exception {
         assertMemoryLeak(() -> {
             final DecimalRecord record = new DecimalRecord();
@@ -119,13 +132,13 @@ public class PGUtilsTest extends AbstractCairoTest {
         final int precision = ColumnType.getDecimalPrecision(columnType);
         final int scale = ColumnType.getDecimalScale(columnType);
         record.of(unscaled, scale);
-        final int actual = calculateBinSize(record, columnType);
+        final long actual = calculateBinSize(record, columnType);
         final String context = " [precision=" + precision + ", scale=" + scale + ", unscaled=" + unscaled + ']';
         Assert.assertEquals("layout model disagrees" + context, expectedBinSize(unscaled, scale), actual);
         Assert.assertEquals("encoder wrote a different number of bytes" + context, actual, sink.encode(record, columnType));
     }
 
-    private static int calculateBinSize(DecimalRecord record, int columnType) throws PGMessageProcessingException {
+    private static long calculateBinSize(DecimalRecord record, int columnType) throws PGMessageProcessingException {
         return PGUtils.calculateColumnBinSize(null, sqlExecutionContext, record, 0, columnType, 0, Long.MAX_VALUE, -1);
     }
 
