@@ -4234,6 +4234,37 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLateralLeftCountAsSecondJoinModelOuterRefExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.val
+                        FROM (SELECT 1 AS z) d
+                        CROSS JOIN (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t2
+                            2\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testNestedLateralLeftCountDirectBodyExactSourceExpressions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT)");
@@ -6073,79 +6104,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The compensation template captures t0.a, which is not a visible alias inside
-    // the outer lateral body that receives the template; resolution must skip the
-    // template and keep the uncompensated NULL instead of failing to compile.
-    @Test
-    public void testNestedLateralLeftCountOuterRefFallback() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.val
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT l2.val
-                        FROM t1
-                        LEFT JOIN LATERAL (
-                            SELECT count(*) + t0.a AS val
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) l2
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tval
-                            1\t3
-                            2\tnull
-                            """);
-        });
-    }
-
-    // Same fallback through the wildcard/marker path: the template's outer ref is
-    // not visible in the receiving body scope, so resolution must drop it.
-    @Test
-    public void testNestedLateralLeftCountOuterRefFallbackWildcard() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.*
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT l2.*
-                        FROM t1
-                        LEFT JOIN LATERAL (
-                            SELECT c.* FROM (
-                                SELECT count(*) + t0.a AS val
-                                FROM t2
-                                WHERE t2.x = t0.a
-                            ) c
-                        ) l2
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tval
-                            1\t3
-                            2\tnull
-                            """);
-        });
-    }
-
     @Test
     public void testNestedLateralLeftCountOuterRefKeyPhysicalColumnCharacterization() throws Exception {
         // T11 (characterization, pre-existing boundary): a physical column
@@ -6178,6 +6136,186 @@ public class LateralJoinTest extends AbstractCairoTest {
                             a\tv\tcnt
                             1\t7\t1
                             2\t7\t0
+                            """);
+        });
+    }
+
+    // Three lateral levels: each enclosing round rewrites the template leaf it
+    // owns, so the count body's t0 reference resolves through two clone hops.
+    @Test
+    public void testNestedLateralLeftCountOuterRefThreeLevels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t1b (m INT)");
+            execute("INSERT INTO t1b VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT l3.val
+                            FROM t1b
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) + t0.a AS val
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) l3
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    // The compensation template captures t0.a two lateral levels up; the enclosing
+    // lateral's push-down rewrites the template leaf to its outer-ref clone column,
+    // so the compensation resolves inside the receiving body.
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    // An empty middle body yields no rows at all: the compensation inside it has
+    // nothing to apply to and the outer row keeps its LEFT JOIN NULL.
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevelsEmptyMiddle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\tnull
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevelsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (NULL)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a\tval
+                            null\tnull
+                            """);
+        });
+    }
+
+    // The same two-level capture through the wildcard/marker path: the rewritten
+    // template leaf resolves via marker provenance in the receiving body scope.
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevelsWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT c.* FROM (
+                                SELECT count(*) + t0.a AS val
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) c
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\t2
                             """);
         });
     }
