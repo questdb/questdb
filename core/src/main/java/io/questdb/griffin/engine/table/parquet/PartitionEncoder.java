@@ -170,6 +170,22 @@ public class PartitionEncoder {
 
     public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
 
+    /**
+     * Closes the current row group at a caller-chosen boundary rather than at the
+     * {@code rowGroupSize} the writer was created with.
+     * <p>
+     * The row group is emitted by the next drain call,
+     * {@code writeStreamingParquetChunk(writerPtr, 0, 0)}, which is the same protocol the
+     * fixed-size path already uses. Callers must drain before writing further rows,
+     * otherwise those rows join the flushed row group.
+     * <p>
+     * A flush with no pending rows is a no-op, so two flushes in a row cannot emit an
+     * empty row group.
+     *
+     * @param writerPtr streaming writer handle
+     */
+    public static native void flushRowGroup(long writerPtr) throws CairoException;
+
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
         final TableReaderMetadata metadata = tableReader.getMetadata();
         final int readerTimestampIndex = metadata.getTimestampIndex();

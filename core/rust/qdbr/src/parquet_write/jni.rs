@@ -1064,6 +1064,9 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
+    // Armed by `flushRowGroup` to close a row group at a caller-chosen boundary
+    // instead of at `row_group_size`. Cleared when that row group is emitted.
+    force_row_group: bool,
     pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
@@ -1189,6 +1192,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             chunked_writer,
             additional_data,
             row_group_size: effective_row_group_size,
+            force_row_group: false,
             pending_partitions: Vec::new(),
             first_partition_start: 0,
             accumulated_rows: 0,
@@ -1250,32 +1254,94 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
-fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
-    if encoder.accumulated_rows >= encoder.row_group_size {
-        // SAFETY: Truncating to zero is always valid.
-        unsafe {
-            encoder.current_buffer.set_len(0);
-        }
-        write_pending_row_group(encoder)?;
-        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        debug_assert!(
-            encoder.current_buffer.len() >= 16,
-            "streaming parquet writer must produce at least a 16-byte header",
-        );
-        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
-        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-        encoder.current_buffer[8..16]
-            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
-        Ok(encoder.current_buffer.as_ptr())
-    } else {
-        Ok(std::ptr::null())
+/// Closes the current row group at a caller-chosen boundary rather than at the
+/// configured `row_group_size`.
+///
+/// The row group is emitted by the next drain call
+/// (`writeStreamingParquetChunk(writerPtr, 0, 0)`), which is the same protocol the
+/// threshold path already uses. Callers must drain before writing further rows,
+/// otherwise those rows join the flushed row group.
+///
+/// A flush with no pending rows is a no-op: the current row group is already closed,
+/// and arming the flush would both force the next chunk into a row group of its own
+/// and risk an empty row group.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_flushRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+) {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    if encoder.accumulated_rows > 0 {
+        encoder.force_row_group = true;
     }
 }
 
-fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResult<()> {
-    let row_group_size = encoder.row_group_size;
+/// Number of rows the next row group must close over, or `None` when no row group
+/// is due yet.
+///
+/// A caller-armed flush closes whatever is pending; the fixed `row_group_size`
+/// threshold closes exactly one full row group. An armed flush with nothing pending
+/// yields `None`, so two flushes in a row cannot emit an empty row group: the parquet
+/// spec permits one, but `ParquetMetaFileReader` treats a zero-row row group as
+/// corruption.
+fn due_row_group_row_count(
+    accumulated_rows: usize,
+    row_group_size: usize,
+    force_row_group: bool,
+) -> Option<usize> {
+    if force_row_group && accumulated_rows > 0 {
+        Some(accumulated_rows)
+    } else if accumulated_rows >= row_group_size {
+        Some(row_group_size)
+    } else {
+        None
+    }
+}
+
+fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
+    match due_row_group_row_count(
+        encoder.accumulated_rows,
+        encoder.row_group_size,
+        encoder.force_row_group,
+    ) {
+        Some(row_group_rows) => {
+            encoder.force_row_group = false;
+            // SAFETY: Truncating to zero is always valid.
+            unsafe {
+                encoder.current_buffer.set_len(0);
+            }
+            write_pending_row_group(encoder, row_group_rows)?;
+            // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+            debug_assert!(
+                encoder.current_buffer.len() >= 16,
+                "streaming parquet writer must produce at least a 16-byte header",
+            );
+            let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
+            encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+            encoder.current_buffer[8..16]
+                .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
+            Ok(encoder.current_buffer.as_ptr())
+        }
+        None => Ok(std::ptr::null()),
+    }
+}
+
+fn write_pending_row_group(
+    encoder: &mut StreamingParquetWriter,
+    row_group_rows: usize,
+) -> ParquetResult<()> {
     let first_start = encoder.first_partition_start;
-    let mut rows_needed = row_group_size;
+    let mut rows_needed = row_group_rows;
     let mut last_partition_idx = 0;
     let mut last_partition_end = 0;
 
@@ -1311,8 +1377,9 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         last_partition_end,
     )?;
 
-    // Track rows written to row groups (always row_group_size for intermediate flushes)
-    encoder.rows_written_to_row_groups += row_group_size;
+    // Track rows written to row groups (row_group_size for threshold flushes, the
+    // pending row count for caller-armed ones)
+    encoder.rows_written_to_row_groups += row_group_rows;
 
     let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
 
@@ -2148,6 +2215,19 @@ mod validation_tests {
             checked_non_negative_usize(jlong::MIN, "row count"),
             "row count must not be negative: -9223372036854775808",
         );
+    }
+
+    #[test]
+    fn streaming_double_flush_does_not_emit_an_empty_row_group() {
+        // An armed flush closes whatever is pending, ignoring the fixed threshold.
+        assert_eq!(due_row_group_row_count(3, 1_000_000, true), Some(3));
+        // Flushing again straight away has nothing left to close. Emitting a zero-row
+        // row group here would be read back as a corrupt file.
+        assert_eq!(due_row_group_row_count(0, 1_000_000, true), None);
+        assert_eq!(due_row_group_row_count(0, 1_000_000, false), None);
+        // The fixed-size path is unchanged.
+        assert_eq!(due_row_group_row_count(8, 4, false), Some(4));
+        assert_eq!(due_row_group_row_count(3, 4, false), None);
     }
 
     #[test]
