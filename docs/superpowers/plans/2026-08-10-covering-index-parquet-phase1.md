@@ -29,6 +29,7 @@ cargo test --lib
 ```
 - The `_im` format is little-endian only, matching `_pm` (`core/rust/qdb-parquet-meta/src/types.rs` has `compile_error!` on big-endian targets).
 - Do **not** run multiple `mvn test` commands in parallel.
+- **Any new `PropertyKey` breaks `ServerMainTest#testShowParameters`.** `PropServerConfiguration.getString` registers every non-debug key it reads into `allPairs`, so a new property appears in `SHOW PARAMETERS`, and that test asserts exact set equality. Adding a property means adding its line to `expectedProps` in the same commit.
 - **Any Java test that exercises JNI needs the native library rebuilt**: run `mvn` with `-Pbuild-rust-library` (profile defined at `core/pom.xml:522`). Without it the JNI symbols are missing and the test fails with an `UnsatisfiedLinkError` that does not name the cause. This applies to `IndexMetaFileReaderTest` and `ParquetRowGroupFlushTest`, not to `PropServerConfigurationTest`.
 - Rust builds run under `-D warnings` (`core/pom.xml:52`), so an unused `mut` is a build failure, not a lint nit.
 - All Java files carry the standard QuestDB Apache-2.0 header comment; copy it verbatim from a neighbouring file in the same package.
@@ -1308,10 +1309,12 @@ cargo fmt && cargo check --all-targets && cargo clippy --all-targets && cargo te
 cd ~/claude/wt/pidx-parquet/core/rust/qdb-parquet-meta
 cargo fmt -- --check && cargo clippy --all-targets && cargo test --lib
 cd ~/claude/wt/pidx-parquet
-mvn -q -pl core -Pbuild-rust-library -Dtest='PropServerConfigurationTest,IndexMetaFileReaderTest,ParquetRowGroupFlushTest' test
-mvn -q -pl core -Dtest='PostingIndex*Test,Covering*Test' test
+mvn -pl core -Pbuild-rust-library -Dtest='PropServerConfigurationTest,PostingIndexParquetConfigurationTest,IndexMetaFileReaderTest,ParquetRowGroupFlushTest,ServerMainTest#testShowParameters' test
+mvn -pl core -Dtest='PostingIndex*Test,Covering*Test' -DfailIfNoSpecifiedTests=false test
 ```
 
 Both directories must be gated. A run from `qdbr` alone is blind to `qdb-parquet-meta`: it runs none of its tests, reformats none of its files, and lints none of its code.
+
+Read the surefire reports under `core/target/surefire-reports` for the real Tests-run counts; with `-DfailIfNoSpecifiedTests=false` a pattern matching nothing also reports BUILD SUCCESS, and a shell exit code taken after a pipe is the last pipeline stage's, not Maven's.
 
 The second Java command is the regression gate: Phase 1 changes no existing behaviour, so the whole posting and covering suite must stay green. If it does not, the cause is in Phase 1's diff, not a pre-existing flake — confirm by re-running the same command on `origin/master` before concluding otherwise.
