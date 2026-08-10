@@ -39,9 +39,10 @@ pub mod jni;
 pub mod skip;
 
 pub use qdb_parquet_meta::{
-    column_chunk, error, footer, header, reader, row_group, types, writer, ColumnChunkRaw,
-    ColumnDescriptorRaw, FileHeader, FileHeaderBuilder, Footer, FooterBuilder, ParquetMetaReader,
-    ParquetMetaUpdateWriter, ParquetMetaWriter, RowGroupBlockBuilder, RowGroupBlockReader,
+    column_chunk, error, footer, header, index_meta, reader, row_group, types, writer,
+    ColumnChunkRaw, ColumnDescriptorRaw, FileHeader, FileHeaderBuilder, Footer, FooterBuilder,
+    ParquetMetaReader, ParquetMetaUpdateWriter, ParquetMetaWriter, RowGroupBlockBuilder,
+    RowGroupBlockReader,
 };
 
 pub use convert::{
