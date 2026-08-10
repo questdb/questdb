@@ -85,6 +85,56 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }));
     }
 
+    /**
+     * The 4 row group sample ends the key directory at 68 and pads to 72, so it
+     * only ever exercises the padded branch of the alignment rule. 3 row groups
+     * end it at 64, already aligned, so nothing is padded. Without this case an
+     * alignment rule change would go undetected in Java and Rust at once.
+     * <p>
+     * Layout for 3 index row groups / 2 index columns / 3 data boundaries:
+     * <pre>
+     * 0   header (48 bytes)
+     * 48  RG_FIRST_KEY, 3 entries plus the key count sentinel at 60
+     * 64  RG_ROW_ID_MIN, 3 x 8 bytes, no padding before it
+     * 88  RG_ROW_ID_MAX, 3 x 8 bytes
+     * 112 DATA_RG_BOUNDARY, 3 x 8 bytes
+     * 136 RG_COL_RANGE, 3 x 2 x 16 bytes
+     * 232 CRC32
+     * 236 total
+     * </pre>
+     */
+    @Test
+    public void testFileLayoutByteOffsetsOddRowGroupCount() throws Exception {
+        assertMemoryLeak(() -> withOddRowGroupSample(reader -> {
+            final long addr = reader.getAddr();
+            Assert.assertEquals(236, reader.getFileSize());
+            Assert.assertEquals(236, Unsafe.getUnsafe().getLong(addr));
+            Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + 48));
+            Assert.assertEquals(300, Unsafe.getUnsafe().getInt(addr + 52));
+            Assert.assertEquals(700, Unsafe.getUnsafe().getInt(addr + 56));
+            Assert.assertEquals(900, Unsafe.getUnsafe().getInt(addr + 60));
+            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + 64));
+            Assert.assertEquals(100, Unsafe.getUnsafe().getLong(addr + 72));
+            Assert.assertEquals(99, Unsafe.getUnsafe().getLong(addr + 88));
+            Assert.assertEquals(299, Unsafe.getUnsafe().getLong(addr + 104));
+            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + 112));
+            Assert.assertEquals(150, Unsafe.getUnsafe().getLong(addr + 120));
+            Assert.assertEquals(300, Unsafe.getUnsafe().getLong(addr + 128));
+            Assert.assertEquals(4, Unsafe.getUnsafe().getLong(addr + 136));
+            Assert.assertEquals(100, Unsafe.getUnsafe().getLong(addr + 144));
+            Assert.assertEquals(484, Unsafe.getUnsafe().getLong(addr + 216));
+            Assert.assertEquals(80, Unsafe.getUnsafe().getLong(addr + 224));
+            Assert.assertEquals(3, reader.getIndexRowGroupCount());
+            Assert.assertEquals(2, reader.getIndexColumnCount());
+            Assert.assertEquals(2, reader.getDataRowGroupCount());
+            Assert.assertEquals(900, reader.getKeyCount());
+            Assert.assertEquals(2, reader.getRowGroupLoForKey(700));
+            Assert.assertEquals(2, reader.getRowGroupHiForKey(700));
+            Assert.assertEquals(484, reader.getColumnByteRangeOffset(2, 1));
+            Assert.assertEquals(80, reader.getColumnByteRangeLength(2, 1));
+        }));
+    }
+
     @Test
     public void testKeyOutOfRangeReturnsMinusOne() throws Exception {
         assertMemoryLeak(() -> withSample(reader ->
@@ -283,6 +333,23 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    private static void buildOddRowGroupSample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, 0, 900);
+        addRowGroup(writerPtr, 0, 0, 99, 4, 100, 104, 200);
+        addRowGroup(writerPtr, 300, 100, 199, 304, 50, 354, 60);
+        addRowGroup(writerPtr, 700, 200, 299, 414, 70, 484, 80);
+        setDataRowGroupBoundaries(writerPtr, 0L, 150L, 300L);
+    }
+
+    private static void buildSample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, 0, 11_405);
+        addRowGroup(writerPtr, 0, 0, 99_999, 4, 100, 104, 200);
+        addRowGroup(writerPtr, 11_403, 100_000, 157_999, 304, 50, 354, 60);
+        addRowGroup(writerPtr, 11_403, 158_000, 240_000, 414, 70, 484, 80);
+        addRowGroup(writerPtr, 11_404, 240_001, 999_999, 564, 90, 654, 10);
+        setDataRowGroupBoundaries(writerPtr, 0L, 500_000L, 1_000_000L);
+    }
+
     private static void flipByte(FilesFacade ff, LPSZ path, long offset) {
         final long fd = ff.openRW(path, 0);
         Assert.assertTrue(fd >= 0);
@@ -297,6 +364,18 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             }
         } finally {
             ff.close(fd);
+        }
+    }
+
+    private static void setDataRowGroupBoundaries(long writerPtr, long b0, long b1, long b2) {
+        long boundaries = Unsafe.malloc(3 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putLong(boundaries, b0);
+            Unsafe.getUnsafe().putLong(boundaries + 8, b1);
+            Unsafe.getUnsafe().putLong(boundaries + 16, b2);
+            IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, boundaries, 3);
+        } finally {
+            Unsafe.free(boundaries, 3 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -320,38 +399,16 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void withSample(SampleAssertion assertion) {
-        withSampleBytes((dataPtr, dataLen) -> {
-            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
-                reader.ofAddress(dataPtr, dataLen);
-                assertion.run(reader);
-            }
-        });
-    }
-
     /**
-     * Builds the sample _im file with the Rust writer and hands the finished
-     * bytes to {@code assertion}. The buffer is owned by the native result and
-     * freed on every path, including the exceptional one.
+     * Builds an _im file with the Rust writer and hands the finished bytes to
+     * {@code assertion}. The buffer is owned by the native result and freed on
+     * every path, including the exceptional one.
      */
-    private void withSampleBytes(BytesAssertion assertion) {
+    private void withBytes(SampleBuilder builder, BytesAssertion assertion) {
         long writerPtr = IndexMetaFileWriter.create();
         long resultPtr = 0;
         try {
-            IndexMetaFileWriter.setPayload(writerPtr, 0, 11_405);
-            addRowGroup(writerPtr, 0, 0, 99_999, 4, 100, 104, 200);
-            addRowGroup(writerPtr, 11_403, 100_000, 157_999, 304, 50, 354, 60);
-            addRowGroup(writerPtr, 11_403, 158_000, 240_000, 414, 70, 484, 80);
-            addRowGroup(writerPtr, 11_404, 240_001, 999_999, 564, 90, 654, 10);
-            long boundaries = Unsafe.malloc(3 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try {
-                Unsafe.getUnsafe().putLong(boundaries, 0L);
-                Unsafe.getUnsafe().putLong(boundaries + 8, 500_000L);
-                Unsafe.getUnsafe().putLong(boundaries + 16, 1_000_000L);
-                IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, boundaries, 3);
-            } finally {
-                Unsafe.free(boundaries, 3 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
+            builder.build(writerPtr);
             resultPtr = IndexMetaFileWriter.finish(writerPtr);
             assertion.run(
                     IndexMetaFileWriter.resultDataPtr(resultPtr),
@@ -365,6 +422,27 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    private void withOddRowGroupSample(SampleAssertion assertion) {
+        withReader(IndexMetaFileReaderTest::buildOddRowGroupSample, assertion);
+    }
+
+    private void withReader(SampleBuilder builder, SampleAssertion assertion) {
+        withBytes(builder, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                assertion.run(reader);
+            }
+        });
+    }
+
+    private void withSample(SampleAssertion assertion) {
+        withReader(IndexMetaFileReaderTest::buildSample, assertion);
+    }
+
+    private void withSampleBytes(BytesAssertion assertion) {
+        withBytes(IndexMetaFileReaderTest::buildSample, assertion);
+    }
+
     @FunctionalInterface
     private interface BytesAssertion {
         void run(long dataPtr, long dataLen);
@@ -373,5 +451,10 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface SampleAssertion {
         void run(IndexMetaFileReader reader);
+    }
+
+    @FunctionalInterface
+    private interface SampleBuilder {
+        void build(long writerPtr);
     }
 }

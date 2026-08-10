@@ -1451,9 +1451,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
 
-        // A captured boundary that was never drained still has to split the tail: emit the
-        // captured row group first, then whatever remains as the final row group. Without
-        // this the two runs either side of the boundary would silently merge.
+        // Defensive: drain a captured boundary that was never drained, so the captured row
+        // group can never merge into the final one. No caller reaches finish with a live
+        // capture today -- writeStreamingParquetChunk always ends in flush_pending_partitions,
+        // so the only route here is flush -> finish, where forced == accumulated_rows and the
+        // output is byte-identical either way. The block holds the invariant for a future
+        // caller that captures a boundary and finishes without draining it; it is not dead
+        // code covering a reachable merge.
         let forced_row_group_rows = encoder.forced_row_group_rows.take();
         if let Some(forced_rows) =
             capped_forced_row_count(encoder.accumulated_rows, forced_row_group_rows)

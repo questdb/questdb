@@ -114,8 +114,8 @@ impl IndexMetaWriter {
     }
 
     /// Serialises the complete `_im` file. Takes `&self` — matching
-    /// `ParquetMetaWriter::finish` — so the JNI layer can build the buffer
-    /// without consuming the boxed writer that Java still owns and will
+    /// `ParquetMetaUpdateWriter::finish` — so the JNI layer can build the
+    /// buffer without consuming the boxed writer that Java still owns and will
     /// later hand to `destroyWriter`.
     pub fn finish(&self) -> ParquetMetaResult<Vec<u8>> {
         if self.data_boundaries.is_empty() {
@@ -138,6 +138,37 @@ impl IndexMetaWriter {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
                     "row group first keys must be non-decreasing at index {i}"
+                ));
+            }
+        }
+        // Both readers answer "absent" for key >= KEY_COUNT, so a first key at
+        // or above it would make every posting in that row group unreachable:
+        // the query returns zero rows and nothing reports an error. First keys
+        // are non-decreasing by the check above, so the last one bounds them all.
+        if let Some(last) = self.row_groups.last() {
+            if last.first_key >= self.key_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row group first key {} must be below key count {}",
+                    last.first_key,
+                    self.key_count
+                ));
+            }
+        }
+        if self.data_boundaries[0] != 0 {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "first data row group boundary must be 0, got {}",
+                self.data_boundaries[0]
+            ));
+        }
+        // A binary search over a non-monotone boundary array maps row ids to the
+        // wrong data row group without failing.
+        for i in 1..self.data_boundaries.len() {
+            if self.data_boundaries[i] < self.data_boundaries[i - 1] {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "data row group boundaries must be non-decreasing at index {i}"
                 ));
             }
         }
@@ -257,9 +288,19 @@ impl<'a> IndexMetaReader<'a> {
         let row_id_max_off = row_id_min_off + index_rg_count * 8;
         let data_boundary_off = row_id_max_off + index_rg_count * 8;
         let col_range_off = data_boundary_off + (data_rg_count + 1) * 8;
-        let needed = col_range_off + index_rg_count * index_column_count * 16 + IM_TRAILER_SIZE;
-        if needed > end {
-            return Err(parquet_meta_err!(ParquetMetaErrorKind::Truncated));
+        // The counts come straight off the header, so on a crafted file the
+        // product overflows usize and `needed` wraps below `end`: the file would
+        // pass this check and panic later in `column_byte_range`. The Java reader
+        // rearranges the same test into a division for the same reason; see
+        // IndexMetaFileReader.of.
+        let needed = index_rg_count
+            .checked_mul(index_column_count)
+            .and_then(|entries| entries.checked_mul(16))
+            .and_then(|bytes| bytes.checked_add(col_range_off))
+            .and_then(|off| off.checked_add(IM_TRAILER_SIZE));
+        match needed {
+            Some(needed) if needed <= end => {}
+            _ => return Err(parquet_meta_err!(ParquetMetaErrorKind::Truncated)),
         }
 
         Ok(Self {
@@ -382,6 +423,27 @@ mod tests {
         w.finish().unwrap()
     }
 
+    /// 3 index row groups end the key directory at `48 + 4 * 4 = 64`, which is
+    /// already 8-aligned, so `align_to_8` adds nothing. Every other sample uses
+    /// an even count and therefore only ever exercises the padded case.
+    fn build_odd_row_group_sample() -> Vec<u8> {
+        let mut w = IndexMetaWriter::new(0, 900);
+        w.add_row_group(0, 0, 99, &[(4, 100), (104, 200)]);
+        w.add_row_group(300, 100, 199, &[(304, 50), (354, 60)]);
+        w.add_row_group(700, 200, 299, &[(414, 70), (484, 80)]);
+        w.set_data_row_group_boundaries(&[0, 150, 300]);
+        w.finish().unwrap()
+    }
+
+    /// Overwrites a header `u32` and repairs the CRC trailer, so the reader
+    /// reaches the section arithmetic instead of failing the checksum first.
+    fn patch_header_u32(bytes: &mut [u8], off: usize, value: u32) {
+        bytes[off..off + 4].copy_from_slice(&value.to_le_bytes());
+        let crc_end = bytes.len() - IM_TRAILER_SIZE;
+        let crc = crc32fast::hash(&bytes[IM_CRC_AREA_OFF..crc_end]);
+        bytes[crc_end..crc_end + 4].copy_from_slice(&crc.to_le_bytes());
+    }
+
     #[test]
     fn test_round_trip_header_fields() {
         let bytes = build_sample();
@@ -446,6 +508,80 @@ mod tests {
         let bytes = build_sample();
         let err = IndexMetaReader::new(&bytes[..40]).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+    }
+
+    #[test]
+    fn test_first_key_at_or_above_key_count_is_rejected() {
+        let mut w = IndexMetaWriter::new(0, 10);
+        w.add_row_group(0, 0, 99, &[(4, 100)]);
+        w.add_row_group(10, 100, 199, &[(104, 100)]);
+        w.set_data_row_group_boundaries(&[0, 200]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("must be below key count"), "{}", err.msg);
+    }
+
+    #[test]
+    fn test_first_data_boundary_must_be_zero() {
+        let mut w = IndexMetaWriter::new(0, 10);
+        w.add_row_group(0, 0, 99, &[(4, 100)]);
+        w.set_data_row_group_boundaries(&[1, 200]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("first data row group boundary must be 0"),
+            "{}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_data_boundaries_must_be_non_decreasing() {
+        let mut w = IndexMetaWriter::new(0, 10);
+        w.add_row_group(0, 0, 99, &[(4, 100)]);
+        w.set_data_row_group_boundaries(&[0, 200, 150]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("non-decreasing at index 2"), "{}", err.msg);
+    }
+
+    /// A header claiming `u32::MAX` row groups and `u32::MAX` columns makes the
+    /// col-range size product overflow usize. Unchecked, `needed` wraps below
+    /// `end`, the file passes validation, and `column_byte_range` panics later.
+    #[test]
+    fn test_col_range_size_overflow_is_rejected() {
+        let mut bytes = build_sample();
+        patch_header_u32(&mut bytes, OFF_INDEX_RG_COUNT, u32::MAX);
+        patch_header_u32(&mut bytes, OFF_INDEX_COLUMN_COUNT, u32::MAX);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+    }
+
+    #[test]
+    fn test_odd_row_group_count_leaves_key_directory_unpadded() {
+        let bytes = build_odd_row_group_sample();
+        assert_eq!(bytes.len(), 236);
+        assert_eq!(read_u32(&bytes, 48), 0);
+        assert_eq!(read_u32(&bytes, 52), 300);
+        assert_eq!(read_u32(&bytes, 56), 700);
+        // Key count sentinel ends the directory at 64, so RG_ROW_ID_MIN starts
+        // there with no padding byte in between.
+        assert_eq!(read_u32(&bytes, 60), 900);
+        assert_eq!(read_u64(&bytes, 64), 0);
+        assert_eq!(read_u64(&bytes, 88), 99);
+        assert_eq!(read_u64(&bytes, 112), 0);
+        assert_eq!(read_u64(&bytes, 216), 484);
+        assert_eq!(read_u64(&bytes, 224), 80);
+
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        assert_eq!(r.index_row_group_count(), 3);
+        assert_eq!(r.index_column_count(), 2);
+        assert_eq!(r.data_row_group_count(), 2);
+        assert_eq!(r.row_id_min(0), 0);
+        assert_eq!(r.row_id_max(2), 299);
+        assert_eq!(r.data_row_group_boundary(2), 300);
+        assert_eq!(r.column_byte_range(2, 1), (484, 80));
+        assert_eq!(r.row_group_range_for_key(700), Some((2, 2)));
     }
 
     #[test]
