@@ -173,6 +173,7 @@ public class IndexMetaFileReader implements QuietCloseable {
             try {
                 reader.ofAddress(addr, imFileSize);
             } catch (Throwable th) {
+                reader.clear();
                 ff.munmap(addr, imFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 throw th;
             }
