@@ -114,13 +114,24 @@ public class GroupByLongHashSetFuzzTest extends AbstractCairoTest {
 
                 referenceSet.clear();
                 for (int i = 0; i < N; i++) {
-                    long val = rnd.nextPositiveLong() + 1;
-                    long index = set.keyIndex(val);
-                    Assert.assertTrue(index >= 0 || referenceSet.contains(val));
-                    if (index >= 0) {
-                        set.addAt(index, val);
+                    long val;
+                    do {
+                        val = rnd.nextPositiveLong() + 1;
+                    } while (val == noKeyValue);
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        boolean isNew = referenceSet.add(val);
+                        long index = set.keyIndex(val);
+                        Assert.assertEquals(isNew, index >= 0);
+                        if (index >= 0) {
+                            set.addAt(index, val);
+                        }
                     }
-                    referenceSet.add(val);
+                }
+
+                Assert.assertEquals(referenceSet.size(), set.size());
+                Assert.assertTrue(set.capacity() >= referenceSet.size());
+                for (long val : referenceSet) {
+                    Assert.assertTrue(set.keyIndex(val) < 0);
                 }
             }
         });
