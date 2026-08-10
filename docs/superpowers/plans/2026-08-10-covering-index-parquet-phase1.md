@@ -29,6 +29,8 @@ cargo test --lib
 ```
 - The `_im` format is little-endian only, matching `_pm` (`core/rust/qdb-parquet-meta/src/types.rs` has `compile_error!` on big-endian targets).
 - Do **not** run multiple `mvn test` commands in parallel.
+- **Any Java test that exercises JNI needs the native library rebuilt**: run `mvn` with `-Pbuild-rust-library` (profile defined at `core/pom.xml:522`). Without it the JNI symbols are missing and the test fails with an `UnsatisfiedLinkError` that does not name the cause. This applies to `IndexMetaFileReaderTest` and `ParquetRowGroupFlushTest`, not to `PropServerConfigurationTest`.
+- Rust builds run under `-D warnings` (`core/pom.xml:52`), so an unused `mut` is a build failure, not a lint nit.
 - All Java files carry the standard QuestDB Apache-2.0 header comment; copy it verbatim from a neighbouring file in the same package.
 
 ## Phase Map
@@ -1247,7 +1249,7 @@ If no such test exists, build the fixture from `PartitionEncoder.populateFromTab
 
 ```bash
 cd ~/claude/wt/pidx-parquet
-mvn -q -pl core -Dtest=ParquetRowGroupFlushTest test
+mvn -q -pl core -Pbuild-rust-library -Dtest=ParquetRowGroupFlushTest test
 ```
 
 Expected: compilation failure — `cannot find symbol: method flushRowGroup(long)`.
@@ -1274,7 +1276,7 @@ In `core/src/main/java/io/questdb/griffin/engine/table/parquet/PartitionEncoder.
 cd ~/claude/wt/pidx-parquet/core/rust/qdbr
 cargo fmt && cargo check --all-targets && cargo clippy --all-targets && cargo test --lib
 cd ~/claude/wt/pidx-parquet
-mvn -q -pl core -Dtest=ParquetRowGroupFlushTest test
+mvn -q -pl core -Pbuild-rust-library -Dtest=ParquetRowGroupFlushTest test
 ```
 
 Expected: all four Rust checks clean; the Java test PASSES with row group sizes `3, 5`.
@@ -1306,7 +1308,7 @@ cargo fmt && cargo check --all-targets && cargo clippy --all-targets && cargo te
 cd ~/claude/wt/pidx-parquet/core/rust/qdb-parquet-meta
 cargo fmt -- --check && cargo clippy --all-targets && cargo test --lib
 cd ~/claude/wt/pidx-parquet
-mvn -q -pl core -Dtest='PropServerConfigurationTest,IndexMetaFileReaderTest,ParquetRowGroupFlushTest' test
+mvn -q -pl core -Pbuild-rust-library -Dtest='PropServerConfigurationTest,IndexMetaFileReaderTest,ParquetRowGroupFlushTest' test
 mvn -q -pl core -Dtest='PostingIndex*Test,Covering*Test' test
 ```
 
