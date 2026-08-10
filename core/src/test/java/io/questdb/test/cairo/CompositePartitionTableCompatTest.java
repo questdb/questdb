@@ -130,14 +130,18 @@ public class CompositePartitionTableCompatTest extends AbstractCairoTest {
             Assert.assertEquals(day1, raw1.getQuick(0));
             Assert.assertEquals("no flags set -> maskedSize == rowCount", 5L, raw1.getQuick(1));
             Assert.assertEquals(500L, raw1.getQuick(2));
-            Assert.assertEquals("no parquet file generated", -1L, raw1.getQuick(3));
+            // Slot 3 is master's multiplexed PARTITION_VERSION_OFFSET word (parquet file size for a
+            // parquet partition, last-modifying seqTxn for a native one). A cleared slot is written as
+            // 0L today; -1L is the legacy encoding older binaries wrote, and both fold to "cleared" via
+            // TxReader#isPartitionOffset3Cleared. This asserted the legacy -1L before the master merge.
+            Assert.assertEquals("no parquet file generated / no seqTxn stamp -> cleared slot", 0L, raw1.getQuick(3));
             // Partition 1 (day2) starts EXACTLY at raw index 4 -- if a phantom cellKey slot existed at
             // index 4, this ts value would instead be misread from index 5, and the assertion right
             // below (that index 4 holds day2's timestamp) would fail.
             Assert.assertEquals("no fifth slot: partition 1 must start at raw index 4, not 5", day2, raw1.getQuick(4));
             Assert.assertEquals(7L, raw1.getQuick(5));
             Assert.assertEquals(501L, raw1.getQuick(6));
-            Assert.assertEquals(-1L, raw1.getQuick(7));
+            Assert.assertEquals(0L, raw1.getQuick(7));
         });
     }
 

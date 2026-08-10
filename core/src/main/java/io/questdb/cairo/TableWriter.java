@@ -16846,6 +16846,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (PostingIndexWriter.COVERING_FASTPATH_DISABLED) {
             return o3Lo;
         }
+        // Composite-partitioning guard (master-merge 2026-08-10): this path appends the block's
+        // columns straight onto the writer's single shared "last partition" handles via
+        // cthAppendWalColumnToLastPartition + applyFromWalLagToLastPartition -- the SAME cell-blind
+        // copy that applyFromWalLagToLastPartitionPossible refuses for composite tables (see its docs:
+        // those handles are keyed by day only and are never repointed at a real <day>/<cell> segment,
+        // so any row taking this path would land in the orphan bare day directory). This method is
+        // NEW on master and never had a composite gate.
+        // Measured before adding this: a routed composite table DOES enter here (blockRows=1000,
+        // plainInsert=true, pure append into the last partition) and is currently rejected only
+        // incidentally, by the unrelated `isLastPartitionClosed() && !isEmptyTable()` guard below --
+        // composite happens never to keep the bare day partition open. That is safety by accident;
+        // nothing pins it, and the composite fast-append work is precisely about keeping cell
+        // segments open. Reject explicitly instead, mirroring the single-txn gate.
+        // Regression-locked by CompositeBlockFastAppendGateTest.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0) {
+            return o3Lo;
+        }
         final long blockRows = o3LoHi - o3Lo;
         final long blockMin = segmentCopyInfo.getMinTimestamp();
         // Guards (fall back to the unchanged O3 path on any). Only a PURE APPEND
