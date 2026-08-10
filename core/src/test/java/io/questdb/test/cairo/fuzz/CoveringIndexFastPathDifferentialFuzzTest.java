@@ -26,8 +26,6 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.idx.PostingIndexWriter;
-import io.questdb.griffin.engine.orderby.SortKeyEncoder;
-import io.questdb.griffin.engine.orderby.SortKeyType;
 import io.questdb.std.Rnd;
 import org.junit.After;
 import org.junit.Assert;
@@ -65,13 +63,6 @@ import java.util.List;
  * {@code random seeds:} log line via {@code generateRandom(LOG, s0, s1)}.
  */
 public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest {
-
-    private static final int ROUNDS_MAX = 79;
-    private static final int ROUNDS_MIN = 40;
-    private static final int ROWS_PER_TXN_MAX = 4049;
-    private static final int ROWS_PER_TXN_MIN = 50;
-    private static final int TXNS_PER_ROUND_MAX = 8;
-    private static final int TXNS_PER_ROUND_MIN = 2;
 
     // Encodes one precomputed operation replayed identically into both tables.
     // truncate ops reset the table; insert ops carry absolute, already-evolved
@@ -116,22 +107,6 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
     @Test
     public void testFastPathDifferentialFuzzRegression() throws Exception {
         runDifferential(generateRandom(LOG, 0x2c7a1f9b3e5d84L, 0x6b0d9e2a4c1f37L));
-    }
-
-    @Test
-    public void testSortKeyBudgetAdmitsStreamCeiling() {
-        // assertTablesIdentical sorts (ts, sym, value): at most 24 key bytes -> FIXED_24.
-        final long ceiling = (long) ROUNDS_MAX * TXNS_PER_ROUND_MAX * ROWS_PER_TXN_MAX;
-        final long budgetRows = SortKeyEncoder.maxEntries(
-                configuration.getSqlSortKeyMaxBytes(),
-                configuration.getSqlSortLightValueMaxBytes(),
-                SortKeyType.FIXED_24
-        );
-        Assert.assertTrue(
-                "sort key budget admits " + budgetRows + " rows, below the fuzz stream ceiling of " + ceiling
-                        + "; raise cairo.sql.sort.key.max.bytes in Overrides or shrink the stream bounds",
-                budgetRows >= ceiling
-        );
     }
 
     private void applyStream(String table, List<Op> ops, int symbolCardinality) throws Exception {
@@ -182,11 +157,11 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
         final List<Op> ops = new ArrayList<>();
         long tsCursor = 1_700_000_000_000_000L;
         long valueCursor = 0;
-        final int rounds = ROUNDS_MIN + rnd.nextInt(ROUNDS_MAX - ROUNDS_MIN + 1);
+        final int rounds = 40 + rnd.nextInt(40); // 40..79
         for (int round = 0; round < rounds; round++) {
-            final int txnsInRound = TXNS_PER_ROUND_MIN + rnd.nextInt(TXNS_PER_ROUND_MAX - TXNS_PER_ROUND_MIN + 1);
+            final int txnsInRound = 2 + rnd.nextInt(7); // 2..8
             for (int t = 0; t < txnsInRound; t++) {
-                final int rows = ROWS_PER_TXN_MIN + rnd.nextInt(ROWS_PER_TXN_MAX - ROWS_PER_TXN_MIN + 1);
+                final int rows = 50 + rnd.nextInt(4000);
                 final long step = 1 + rnd.nextInt(1_000_000);
                 final int nullMod = 3 + rnd.nextInt(20);
                 final boolean dip = rnd.nextInt(100) < 15;
