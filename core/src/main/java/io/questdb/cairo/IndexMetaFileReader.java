@@ -719,7 +719,19 @@ public class IndexMetaFileReader implements QuietCloseable {
         // The committed IM_FILE_SIZE, not the caller's buffer length, bounds
         // every read below - exactly as the Rust reader bounds itself.
         this.size = imFileSize;
-        parse();
+        try {
+            parse();
+        } catch (Throwable th) {
+            // A reader that failed to bind must not go on claiming to be open:
+            // its column count, row group count and section offsets are all
+            // still zero, so every accessor would answer nonsense. There is
+            // nothing to release either way - mappedSize is 0 at this point,
+            // and the buffer belongs to the caller - so this is about the
+            // object not lying about its state. The Rust reader cannot reach
+            // this state at all: its constructor returns a Result.
+            clear();
+            throw th;
+        }
     }
 
     /**

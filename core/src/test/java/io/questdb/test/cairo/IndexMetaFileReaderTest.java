@@ -407,6 +407,34 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * A failed bind must not leave the reader claiming to be open. Its column
+     * count, row group count and section offsets are all zero at that point,
+     * so a direct {@code ofAddress} caller that catches CairoException would
+     * hold a reader that says it is open and answers nonsense.
+     * {@link IndexMetaFileReader#openAndMapRO} masks this with its own
+     * {@code clear()}, but the object itself must not lie. The Rust reader
+     * cannot reach this state at all: its constructor returns a Result.
+     */
+    @Test
+    public void testOfAddressFailureLeavesReaderClosed() throws Exception {
+        // IM_MAGIC is at offset 8, and it is checked before anything is
+        // resolved, so the reader fails with its fields still zeroed.
+        assertMemoryLeak(() -> withPatchedBytes(IndexMetaFileReaderTest::buildSample, 8, 0, Long.BYTES, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                try {
+                    reader.ofAddress(dataPtr, dataLen);
+                    Assert.fail("expected CairoException from the IM_MAGIC check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "bad _im IM_MAGIC");
+                }
+                Assert.assertFalse(reader.isOpen());
+                Assert.assertEquals(0, reader.getAddr());
+                Assert.assertEquals(0, reader.getFileSize());
+            }
+        }));
+    }
+
+    /**
      * A byte flipped inside the CRC coverage window must surface as a clean
      * CairoException, and the failing open must leave nothing mapped -- the
      * enclosing assertMemoryLeak checks the error path did not leak the
