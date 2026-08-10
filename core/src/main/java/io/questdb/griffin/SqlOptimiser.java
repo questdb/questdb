@@ -195,6 +195,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> lateralCountTemplateMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LateralJoinRewriter lateralJoinRewriter;
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
@@ -341,7 +342,6 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
-
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -377,7 +377,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-
     @TestOnly
     public static IQueryModel replaceAndTransferDependentsForTesting(IQueryModel oldModel, IQueryModel newModel) {
         return replaceAndTransferDependents(oldModel, newModel);
@@ -409,6 +408,7 @@ public class SqlOptimiser implements Mutable {
         groupByAliases.clear();
         groupByNodes.clear();
         innerWindowModels.clear();
+        lateralCountCarrierRefCounts.clear();
         lateralCountTemplateMap.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
@@ -4913,9 +4913,8 @@ public class SqlOptimiser implements Mutable {
     // guard to judge the compensated value. Emit the decision as SQL:
     //   case when <guard> then <compensated template> else null end
     // A lifted-filter guard references the count through a placeholder, which becomes
-    // the compensated template here. Every consumer of a compensated ref - the carrier
-    // projection and hoisted WHERE terms alike - must go through this shape, or
-    // guard-false rows would diverge between the column and the predicate.
+    // the compensated template here. The carrier projection owns this function; hoisted
+    // WHERE terms read the carrier alias so all consumers observe the same guarded value.
     private ExpressionNode guardedLateralCountTemplate(ExpressionNode template, ExpressionNode guard) {
         if (guard == null) {
             return ExpressionNode.deepClone(expressionNodePool, template);
@@ -4974,8 +4973,7 @@ public class SqlOptimiser implements Mutable {
             IQueryModel baseModel,
             IQueryModel translatingModel,
             IQueryModel innerVirtualModel,
-            IQueryModel carrierModel,
-            ExpressionNode guard
+            IQueryModel carrierModel
     ) throws SqlException {
         if (lateralCountTemplateMap.size() == 0
                 || !baseModel.isOptimisable()
@@ -4994,7 +4992,7 @@ public class SqlOptimiser implements Mutable {
                         isLegacyPrecedence,
                         expressionNodePool,
                         hoisted,
-                        rewriteLateralCountCompensatedRefs(term, translatingModel, innerVirtualModel, baseModel, guard)
+                        rewriteLateralCountCompensatedRefs(term, translatingModel, innerVirtualModel, baseModel)
                 );
             } else {
                 retained = concatFilters(isLegacyPrecedence, expressionNodePool, retained, term);
@@ -5416,17 +5414,22 @@ public class SqlOptimiser implements Mutable {
         return lastNullingJoinAfterOrderedPosition(maxExecPos);
     }
 
-    private ExpressionNode lateralCountTemplateForRef(CharSequence token, IQueryModel translatingModel, IQueryModel baseModel) {
+    private CharSequence lateralCountCarrierAliasForRef(CharSequence token, IQueryModel translatingModel, IQueryModel baseModel) {
         CharSequence alias = translatingModel.getColumnNameToAliasMap().get(token);
         if (alias == null) {
             QueryColumn column = translatingModel.getAliasToColumnMap().get(token);
             if (column == null) {
                 return null;
             }
-            ExpressionNode template = lateralCountTemplateMap.get(column.getAlias());
-            return template != null && !isAmbiguousColumn(baseModel, token) ? template : null;
+            alias = column.getAlias();
+            return lateralCountTemplateMap.get(alias) != null && !isAmbiguousColumn(baseModel, token) ? alias : null;
         }
-        return lateralCountTemplateMap.get(alias);
+        return lateralCountTemplateMap.get(alias) != null ? alias : null;
+    }
+
+    private ExpressionNode lateralCountTemplateForRef(CharSequence token, IQueryModel translatingModel, IQueryModel baseModel) {
+        CharSequence alias = lateralCountCarrierAliasForRef(token, translatingModel, baseModel);
+        return alias != null ? lateralCountTemplateMap.get(alias) : null;
     }
 
     // Walks only the nested-model chain (not join models) because named windows are defined
@@ -5528,26 +5531,21 @@ public class SqlOptimiser implements Mutable {
             );
             carrierColumn.setGenerated(sourceColumn.isGenerated());
             carrierModel.addBottomUpColumn(carrierColumn);
+            if (template != null) {
+                // collectColumnRefCount() treats a same-named child column as the target of a
+                // model's own WHERE reference. The lateral carrier deliberately replaces that
+                // child value with its guarded projection under the same alias, so account for
+                // those references here and let parent references add to the same normal count.
+                carrierModel.incrementColumnRefCount(
+                        sourceColumn.getAlias(),
+                        lateralCountCarrierRefCounts.get(sourceColumn.getAlias())
+                );
+            }
             hasMaterializedCount |= template != null;
         }
+        lateralCountCarrierRefCounts.clear();
         lateralCountTemplateMap.clear();
         return hasMaterializedCount;
-    }
-
-    private ExpressionNode substituteLateralCountPlaceholder(ExpressionNode node, ExpressionNode replacement) {
-        if (node == null) {
-            return null;
-        }
-        if (node.type == LITERAL
-                && Chars.equals(node.token, LateralJoinRewriter.LATERAL_COUNT_PLACEHOLDER)) {
-            return ExpressionNode.deepClone(expressionNodePool, replacement);
-        }
-        node.lhs = substituteLateralCountPlaceholder(node.lhs, replacement);
-        node.rhs = substituteLateralCountPlaceholder(node.rhs, replacement);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            node.args.setQuick(i, substituteLateralCountPlaceholder(node.args.getQuick(i), replacement));
-        }
-        return node;
     }
 
     private void mergeConstIntoPostJoinWhereClause(IQueryModel model) {
@@ -7938,7 +7936,7 @@ public class SqlOptimiser implements Mutable {
         QueryColumn markerColumn = null;
         for (int j = 0, jn = joinModels.size(); j < jn; j++) {
             markerColumn = joinModels.getQuick(j).getAliasToColumnMap().get(markerAlias);
-            if (markerColumn != null) {
+            if (markerColumn != null && markerColumn.isGenerated()) {
                 modelIndex = j;
                 break;
             }
@@ -8028,6 +8026,7 @@ public class SqlOptimiser implements Mutable {
             IQueryModel innerVirtualModel,
             IQueryModel baseModel
     ) throws SqlException {
+        lateralCountCarrierRefCounts.clear();
         lateralCountTemplateMap.clear();
         ObjList<QueryColumn> templates = model.getLateralCountTemplates();
         for (int i = 0, n = templates.size(); i < n; i++) {
@@ -8687,20 +8686,25 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode node,
             IQueryModel translatingModel,
             IQueryModel innerVirtualModel,
-            IQueryModel baseModel,
-            ExpressionNode guard
+            IQueryModel baseModel
     ) throws SqlException {
         if (node == null) {
             return null;
         }
         if (node.type == LITERAL) {
-            ExpressionNode template = lateralCountTemplateForRef(node.token, translatingModel, baseModel);
-            if (template != null) {
-                return guardedLateralCountTemplate(template, guard);
+            CharSequence carrierAlias = lateralCountCarrierAliasForRef(node.token, translatingModel, baseModel);
+            if (carrierAlias != null) {
+                lateralCountCarrierRefCounts.put(
+                        carrierAlias,
+                        lateralCountCarrierRefCounts.get(carrierAlias) + 1
+                );
+                node.token = carrierAlias;
+                return node;
             }
             CharSequence alias = translatingModel.getColumnNameToAliasMap().get(node.token);
             if (alias == null) {
-                if (translatingModel.getAliasToColumnMap().contains(node.token)) {
+                if (translatingModel.getAliasToColumnMap().contains(node.token)
+                        && columnNotExistsInJoinModels(baseModel, node.token)) {
                     return node;
                 }
                 alias = createColumnAlias(node.token, translatingModel);
@@ -8719,11 +8723,11 @@ public class SqlOptimiser implements Mutable {
             return node;
         }
         if (node.paramCount < 3) {
-            node.lhs = rewriteLateralCountCompensatedRefs(node.lhs, translatingModel, innerVirtualModel, baseModel, guard);
-            node.rhs = rewriteLateralCountCompensatedRefs(node.rhs, translatingModel, innerVirtualModel, baseModel, guard);
+            node.lhs = rewriteLateralCountCompensatedRefs(node.lhs, translatingModel, innerVirtualModel, baseModel);
+            node.rhs = rewriteLateralCountCompensatedRefs(node.rhs, translatingModel, innerVirtualModel, baseModel);
         } else {
             for (int i = 0, n = node.args.size(); i < n; i++) {
-                node.args.setQuick(i, rewriteLateralCountCompensatedRefs(node.args.getQuick(i), translatingModel, innerVirtualModel, baseModel, guard));
+                node.args.setQuick(i, rewriteLateralCountCompensatedRefs(node.args.getQuick(i), translatingModel, innerVirtualModel, baseModel));
             }
         }
         return node;
@@ -10955,8 +10959,7 @@ public class SqlOptimiser implements Mutable {
                     baseModel,
                     activeTranslatingModel,
                     innerVirtualModel,
-                    lateralCountModel,
-                    model.getLateralCountCoalesceGuard()
+                    lateralCountModel
             );
             hasLateralCountCarrier = materializeLateralCountCarrier(
                     activeTranslatingModel,
@@ -11771,6 +11774,22 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
+    private ExpressionNode substituteLateralCountPlaceholder(ExpressionNode node, ExpressionNode replacement) {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == LITERAL
+                && Chars.equals(node.token, LateralJoinRewriter.LATERAL_COUNT_PLACEHOLDER)) {
+            return ExpressionNode.deepClone(expressionNodePool, replacement);
+        }
+        node.lhs = substituteLateralCountPlaceholder(node.lhs, replacement);
+        node.rhs = substituteLateralCountPlaceholder(node.rhs, replacement);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, substituteLateralCountPlaceholder(node.args.getQuick(i), replacement));
+        }
+        return node;
+    }
+
     /**
      * Moves reversible join clauses, such as a.x = b.x from table "from" to table "to".
      *
@@ -12241,7 +12260,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
     }
-
 
     /**
      * Validates that WHERE, ORDER BY, and JOIN ON clauses do not contain window functions.

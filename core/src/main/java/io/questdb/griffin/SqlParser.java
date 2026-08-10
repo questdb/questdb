@@ -144,7 +144,7 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountAndWindowExpressionsRef = this::rewriteCountAndWindowExpressions;
     private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
@@ -6215,6 +6215,13 @@ public class SqlParser {
         }
     }
 
+    private void rewriteCountAndWindowExpressions(ExpressionNode node) throws SqlException {
+        if (node.windowExpression != null) {
+            rewriteWindowExpression(node.windowExpression);
+        }
+        rewriteCount(node);
+    }
+
     private ExpressionNode rewriteDeclaredVariables(
             ExpressionNode expr,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
@@ -6303,8 +6310,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
-        rewriteWindowExpressions(parent);
-        traversalAlgo.traverse(parent, rewriteCountRef);
+        traversalAlgo.traverse(parent, rewriteCountAndWindowExpressionsRef);
         traversalAlgo.traverse(parent, rewriteCaseRef);
         traversalAlgo.traverse(parent, rewriteConcatRef);
         traversalAlgo.traverse(parent, rewritePgCastRef);
@@ -6416,30 +6422,11 @@ public class SqlParser {
         rewriteWindowSubExpression(windowExpression.getRowsHiExpr());
     }
 
-    // PostOrderTreeTraversalAlgo never descends into ExpressionNode.windowExpression.
-    private void rewriteWindowExpressions(ExpressionNode node) throws SqlException {
-        if (node == null) {
-            return;
-        }
-        if (node.windowExpression != null) {
-            rewriteWindowExpression(node.windowExpression);
-        }
-        if (node.paramCount < 3) {
-            rewriteWindowExpressions(node.lhs);
-            rewriteWindowExpressions(node.rhs);
-        } else {
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                rewriteWindowExpressions(node.args.getQuick(i));
-            }
-        }
-    }
-
     private void rewriteWindowSubExpression(ExpressionNode node) throws SqlException {
         if (node == null) {
             return;
         }
-        rewriteWindowExpressions(node);
-        traversalAlgo.traverse(node, rewriteCountRef);
+        traversalAlgo.traverse(node, rewriteCountAndWindowExpressionsRef);
         traversalAlgo.traverse(node, rewriteCaseRef);
         traversalAlgo.traverse(node, rewriteConcatRef);
         traversalAlgo.traverse(node, rewritePgCastRef);
