@@ -267,7 +267,13 @@ Reader:
 3. Map exactly `IM_FILE_SIZE` bytes.
 4. Check `IM_MAGIC` and `FORMAT_VERSION`; reject unknown required feature bits.
 5. Verify the CRC over `[8, IM_FILE_SIZE - 4)` before trusting any offset.
-6. Resolve the index sections from the header counts, then row group blocks via `RG_BLOCK_OFFSET`.
+6. Read `INDEX_SECTIONS_OFFSET` and validate it (8-byte aligned; at or after the end of the column
+   descriptors and every descriptor's name range; the three sections it implies fit within
+   `IM_FILE_SIZE - 4`). Resolve the three sections forward from it using the header counts, then
+   row group blocks via `RG_BLOCK_OFFSET`.
+7. Because step 6 validates every descriptor's `NAME_OFFSET` / `NAME_LENGTH`, a bad name entry is
+   rejected at open time rather than on first access. Both reader implementations must do this, or
+   they disagree on which files are valid.
 
 ## Validation the writer performs
 
