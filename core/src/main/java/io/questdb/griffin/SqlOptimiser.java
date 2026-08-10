@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -4907,6 +4908,28 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // The guard decides at execution time whether the compensated row stands: a LIMIT
+    // known only per execution (a bind variable), or a body filter lifted into the
+    // guard to judge the compensated value. Emit the decision as SQL:
+    //   case when <guard> then <compensated template> else null end
+    // A lifted-filter guard references the count through a placeholder, which becomes
+    // the compensated template here. Every consumer of a compensated ref - the carrier
+    // projection and hoisted WHERE terms alike - must go through this shape, or
+    // guard-false rows would diverge between the column and the predicate.
+    private ExpressionNode guardedLateralCountTemplate(ExpressionNode template, ExpressionNode guard) {
+        if (guard == null) {
+            return ExpressionNode.deepClone(expressionNodePool, template);
+        }
+        ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, template.position);
+        caseNode.paramCount = 3;
+        caseNode.args.add(expressionNodePool.next().of(CONSTANT, "null", 0, template.position));
+        caseNode.args.add(ExpressionNode.deepClone(expressionNodePool, template));
+        caseNode.args.add(substituteLateralCountPlaceholder(
+                ExpressionNode.deepClone(expressionNodePool, guard), template
+        ));
+        return caseNode;
+    }
+
     private boolean hasLateralCountCompensatedRef(ExpressionNode node, IQueryModel translatingModel, IQueryModel baseModel) {
         if (node == null) {
             return false;
@@ -4951,7 +4974,8 @@ public class SqlOptimiser implements Mutable {
             IQueryModel baseModel,
             IQueryModel translatingModel,
             IQueryModel innerVirtualModel,
-            IQueryModel carrierModel
+            IQueryModel carrierModel,
+            ExpressionNode guard
     ) throws SqlException {
         if (lateralCountTemplateMap.size() == 0
                 || !baseModel.isOptimisable()
@@ -4970,7 +4994,7 @@ public class SqlOptimiser implements Mutable {
                         isLegacyPrecedence,
                         expressionNodePool,
                         hoisted,
-                        rewriteLateralCountCompensatedRefs(term, translatingModel, innerVirtualModel, baseModel)
+                        rewriteLateralCountCompensatedRefs(term, translatingModel, innerVirtualModel, baseModel, guard)
                 );
             } else {
                 retained = concatFilters(isLegacyPrecedence, expressionNodePool, retained, term);
@@ -5494,23 +5518,8 @@ public class SqlOptimiser implements Mutable {
             QueryColumn sourceColumn = columns.getQuick(i);
             ExpressionNode template = lateralCountTemplateMap.get(sourceColumn.getAlias());
             ExpressionNode ast = template != null
-                    ? template
+                    ? guardedLateralCountTemplate(template, guard)
                     : expressionNodePool.next().of(LITERAL, sourceColumn.getAlias(), 0, 0);
-            if (template != null && guard != null) {
-                // The lateral body carried a LIMIT whose value is only known per execution
-                // (a bind variable), so whether the aggregate row survived it cannot be
-                // folded at compile time - a cached plan may be re-executed with a different
-                // value. Emit the decision as SQL instead:
-                //   case when <guard> then <compensated template> else <source column> end
-                // guard false means the LIMIT dropped the row, and the uncompensated
-                // source column (NULL for the missing group) is then correct.
-                ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, template.position);
-                caseNode.paramCount = 3;
-                caseNode.args.add(expressionNodePool.next().of(LITERAL, sourceColumn.getAlias(), 0, 0));
-                caseNode.args.add(template);
-                caseNode.args.add(ExpressionNode.deepClone(expressionNodePool, guard));
-                ast = caseNode;
-            }
             QueryColumn carrierColumn = queryColumnPool.next().of(
                     sourceColumn.getAlias(),
                     ast,
@@ -5523,6 +5532,22 @@ public class SqlOptimiser implements Mutable {
         }
         lateralCountTemplateMap.clear();
         return hasMaterializedCount;
+    }
+
+    private ExpressionNode substituteLateralCountPlaceholder(ExpressionNode node, ExpressionNode replacement) {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == LITERAL
+                && Chars.equals(node.token, LateralJoinRewriter.LATERAL_COUNT_PLACEHOLDER)) {
+            return ExpressionNode.deepClone(expressionNodePool, replacement);
+        }
+        node.lhs = substituteLateralCountPlaceholder(node.lhs, replacement);
+        node.rhs = substituteLateralCountPlaceholder(node.rhs, replacement);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, substituteLateralCountPlaceholder(node.args.getQuick(i), replacement));
+        }
+        return node;
     }
 
     private void mergeConstIntoPostJoinWhereClause(IQueryModel model) {
@@ -6162,6 +6187,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
+
         int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -6187,6 +6213,12 @@ public class SqlOptimiser implements Mutable {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
+            }
+        } else if (tableToken.isLiveView()) {
+            // live views have _meta but no column data files — read metadata directly
+            try (TableReaderMetadata metadata = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration(), tableToken)) {
+                metadata.loadMetadata();
+                enumerateColumns(model, metadata);
             }
         } else {
             try (TableReader reader = executionContext.getReader(tableToken)) {
@@ -6602,6 +6634,9 @@ public class SqlOptimiser implements Mutable {
                 case IQueryModel.SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
                     break;
+                case IQueryModel.SHOW_CREATE_LIVE_VIEW:
+                    tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
+                    break;
                 case IQueryModel.SHOW_CREATE_MAT_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
                     break;
@@ -6613,6 +6648,14 @@ public class SqlOptimiser implements Mutable {
                     break;
             }
             model.setTableNameFunction(tableFactory);
+            // Every branch above builds its cursor here rather than through the function parser, so
+            // nothing else records that this statement reads one. A WAL UPDATE may not read a cursor
+            // at all - it is replicated as SQL and re-executed per node, and a SHOW returns
+            // node-local state (the tables this process knows, this node's partition sizes on disk,
+            // this node's configuration, this node's ACL) that nothing keeps aligned across nodes.
+            // Several SHOW kinds set no table name expression at all, so the model's table-name walk
+            // cannot see them either.
+            functionParser.markCursorFunctionInstantiated();
         } else {
             // if we haven't initialised the model, initialise it
             if (model.getTableNameFunction() == null) {
@@ -8052,6 +8095,7 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
         }
         ac.copySpecFrom(namedWindow, expressionNodePool);
+        ac.setResolvedWindow(windowName, namedWindow.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE);
     }
 
     /**
@@ -8643,7 +8687,8 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode node,
             IQueryModel translatingModel,
             IQueryModel innerVirtualModel,
-            IQueryModel baseModel
+            IQueryModel baseModel,
+            ExpressionNode guard
     ) throws SqlException {
         if (node == null) {
             return null;
@@ -8651,7 +8696,7 @@ public class SqlOptimiser implements Mutable {
         if (node.type == LITERAL) {
             ExpressionNode template = lateralCountTemplateForRef(node.token, translatingModel, baseModel);
             if (template != null) {
-                return ExpressionNode.deepClone(expressionNodePool, template);
+                return guardedLateralCountTemplate(template, guard);
             }
             CharSequence alias = translatingModel.getColumnNameToAliasMap().get(node.token);
             if (alias == null) {
@@ -8674,11 +8719,11 @@ public class SqlOptimiser implements Mutable {
             return node;
         }
         if (node.paramCount < 3) {
-            node.lhs = rewriteLateralCountCompensatedRefs(node.lhs, translatingModel, innerVirtualModel, baseModel);
-            node.rhs = rewriteLateralCountCompensatedRefs(node.rhs, translatingModel, innerVirtualModel, baseModel);
+            node.lhs = rewriteLateralCountCompensatedRefs(node.lhs, translatingModel, innerVirtualModel, baseModel, guard);
+            node.rhs = rewriteLateralCountCompensatedRefs(node.rhs, translatingModel, innerVirtualModel, baseModel, guard);
         } else {
             for (int i = 0, n = node.args.size(); i < n; i++) {
-                node.args.setQuick(i, rewriteLateralCountCompensatedRefs(node.args.getQuick(i), translatingModel, innerVirtualModel, baseModel));
+                node.args.setQuick(i, rewriteLateralCountCompensatedRefs(node.args.getQuick(i), translatingModel, innerVirtualModel, baseModel, guard));
             }
         }
         return node;
@@ -10906,7 +10951,13 @@ public class SqlOptimiser implements Mutable {
                     ? windowJoinModel
                     : (isHorizonJoin ? horizonJoinModel : translatingModel);
             resolveLateralCountTemplates(model, activeTranslatingModel, innerVirtualModel, baseModel);
-            hoistLateralCountWhereClause(baseModel, activeTranslatingModel, innerVirtualModel, lateralCountModel);
+            hoistLateralCountWhereClause(
+                    baseModel,
+                    activeTranslatingModel,
+                    innerVirtualModel,
+                    lateralCountModel,
+                    model.getLateralCountCoalesceGuard()
+            );
             hasLateralCountCarrier = materializeLateralCountCarrier(
                     activeTranslatingModel,
                     lateralCountModel,

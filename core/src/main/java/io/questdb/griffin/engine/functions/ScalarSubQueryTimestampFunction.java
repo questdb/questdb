@@ -39,7 +39,9 @@ import io.questdb.std.Numbers;
 
 public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
 
-    private final Function cursorFunction;
+    // Not final: releaseCursorFunction() hands the compiled sub-query to a declined bound's residual
+    // filter so it does not have to be generated twice.
+    private Function cursorFunction;
     private final RecordCursorFactory factory;
     private final int position;
     private ScalarTimestampBoundHolder publishHolder;
@@ -55,7 +57,21 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
 
     @Override
     public void close() {
-        Misc.free(cursorFunction);
+        cursorFunction = Misc.free(cursorFunction);
+    }
+
+    /**
+     * Detaches the compiled sub-query and transfers ownership to the caller, leaving this wrapper
+     * empty. Used when the pruning bound is declined: rather than freeing a sub-query that the
+     * retained residual filter is about to generate again, the compile is handed over.
+     * <p>
+     * The wrapper is dead once this returns - {@code factory} still points at the released function's
+     * factory - so the caller must free the shell immediately and never init() or evaluate it.
+     */
+    public Function releaseCursorFunction() {
+        final Function f = cursorFunction;
+        cursorFunction = null;
+        return f;
     }
 
     @Override
@@ -70,6 +86,12 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // Disarm before re-opening the sub-query, so the residual-side assertion is live on every
+        // execution rather than only the first one, and so a readTimestamp() failure below leaves the
+        // holder unpublished instead of silently retaining the previous execution's bound.
+        if (publishHolder != null) {
+            publishHolder.reset();
+        }
         cursorFunction.init(symbolTableSource, executionContext);
         value = ScalarSubQueryUtils.readTimestamp(factory, executionContext, position);
         // Publish the single per-execution value so the retained residual filter (and its per-worker

@@ -121,6 +121,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ScalarSubQueryCompileCache;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -162,6 +163,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
+    private boolean cursorFunctionInstantiated;
+    private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -227,7 +230,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public void clear() {
         this.positionStack.clear();
         this.functionStack.clear();
+        this.lastFunctionFactorySignature = null;
         this.sqlExecutionContext = null;
+        this.cursorFunctionInstantiated = false;
+    }
+
+    /**
+     * Signature of the factory that produced the most recent top-level parsed
+     * function. Consumed immediately by the SQL code generator for checkpoint
+     * identity, so the selected overload is not inferred from a runtime class.
+     */
+    public String getLastFunctionFactorySignature() {
+        return lastFunctionFactorySignature;
     }
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
@@ -278,6 +292,40 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
+     * Whether a function factory has produced a CURSOR-typed function since the last
+     * {@link #resetCursorFunctionInstantiated()}. The flag is raised on the <em>instantiated</em>
+     * function rather than on the factory or the name, because the same name can be either: the
+     * {@code sleep} factory yields a cursor in one signature and a plain boolean in another, and only
+     * the boolean one is legal in a WAL {@code UPDATE}. It is also raised wherever the function
+     * stands - a FROM source, a projected column or a predicate operand all reach
+     * {@code checkAndCreateFunction} - which is what makes the WAL {@code UPDATE} check that reads it
+     * position-independent.
+     * <p>
+     * A sub-query written as {@code (SELECT ...)} does not raise it: that is an
+     * {@link ExpressionNode#QUERY} node, not a factory call, and the tables it names are visible in
+     * the model tree and checked there.
+     *
+     * @see SqlCompilerImpl#generateUpdate
+     * @see #markCursorFunctionInstantiated()
+     */
+    public boolean isCursorFunctionInstantiated() {
+        return cursorFunctionInstantiated;
+    }
+
+    /**
+     * Raises the same flag {@link #isCursorFunctionInstantiated()} reports for a cursor the compiler
+     * builds without going through a function factory. {@code SHOW} is the case that exists:
+     * {@code SqlOptimiser#parseFunctionAndEnumerateColumns} constructs the factory for it directly
+     * and hands it to {@code IQueryModel#setTableNameFunction}, so nothing here would ever see it.
+     * The invariant the flag stands for is "the compiler materialised a cursor for this statement",
+     * not "a function factory was called", and this keeps the two construction paths on the same
+     * side of it.
+     */
+    public void markCursorFunctionInstantiated() {
+        cursorFunctionInstantiated = true;
+    }
+
+    /**
      * Creates function instance. When node type is {@link ExpressionNode#LITERAL} a column or parameter
      * function is returned. We will be using the supplied {@link #metadata} to resolve type of column. When node token
      * begins with ':' parameter is looked up from the supplied bindVariableService.
@@ -310,6 +358,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             SqlExecutionContext executionContext
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
+        this.lastFunctionFactorySignature = null;
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -345,6 +394,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 this.metadata = metadataStack.poll();
             }
         }
+    }
+
+    public void resetCursorFunctionInstantiated() {
+        cursorFunctionInstantiated = false;
     }
 
     public void setSqlCodeGenerator(SqlCodeGenerator sqlCodeGenerator) {
@@ -657,7 +710,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args, ex);
             throw ex;
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            final SqlException exception = SqlException.nonDeterministicColumn(node.position, node.token);
+            // The same guard is armed for both a materialized view and a live view
+            // SELECT; name the kind actually being compiled so the reject reads right.
+            final SqlException exception = SqlException.nonDeterministicColumn(
+                    node.position,
+                    node.token,
+                    sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+            );
             if (args != null) {
                 args.clear(); // newInstance() transferred argument ownership to function
             }
@@ -671,6 +730,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
+        if (ColumnType.isCursor(function.getType())) {
+            cursorFunctionInstantiated = true;
+        }
+        lastFunctionFactorySignature = factory.getSignature();
         return function;
     }
 
@@ -796,6 +859,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // pruning bound's single frozen value instead.
             return new ScalarSubQueryBoundRefFunction(scalarBoundHolder);
         }
+        final ScalarSubQueryCompileCache compileCache = node.scalarBoundCompileCache;
+        if (compileCache != null) {
+            // This sub-query was already compiled as a speculative pruning bound that was then
+            // declined. Nothing froze its value - the bound was not provably stable - so reuse the
+            // compiled function itself and evaluate it here, exactly as a fresh generation would,
+            // instead of generating the identical sub-query a second time. An empty slot (a later
+            // per-worker clone, or a parser that already released it) falls through and compiles.
+            final Function reused = compileCache.take();
+            if (reused != null) {
+                return reused;
+            }
+        }
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
@@ -806,7 +881,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // function. Do NOT consult isNonDeterministic() here: it is a fail-safe optimizer hint that
             // defaults to true, so 97 of 114 factories would make legal SQL illegal by accident.
             if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.getRecordCursorFactory().usesExternalDataSource()) {
-                final SqlException exception = SqlException.nonDeterministicColumn(node.position, "sub-query");
+                final SqlException exception = SqlException.nonDeterministicColumn(
+                        node.position,
+                        "sub-query",
+                        sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+                );
                 try {
                     function.close();
                 } catch (Throwable cleanupFailure) {

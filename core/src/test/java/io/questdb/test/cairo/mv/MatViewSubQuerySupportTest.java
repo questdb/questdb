@@ -120,6 +120,22 @@ public class MatViewSubQuerySupportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMonotonicWrapperOverIndexedSubQueries() throws Exception {
+        // Unlike the bare-ts shapes in the other corpora, which the interval model absorbs whole, a
+        // monotonic wrapper over the designated timestamp keeps the original predicate as a residual
+        // filter that re-reads the pruning bound through ScalarSubQueryBoundRefFunction. With cfg.k
+        // indexed the sub-query factory's fail-safe determinism hint reports true, so this corpus
+        // fails if that hint ever leaks into the mat-view guard again (see
+        // ScalarSubQueryBoundRefFunction for the polarity note).
+        assertAccepted(
+                true,
+                "dateadd('h', 1, ts) >= (SELECT lim FROM cfg WHERE k = 'a' LIMIT 1)",
+                "dateadd('h', 1, ts) >= (SELECT max(lim) FROM cfg WHERE k = 'a')",
+                "ts > (SELECT lim FROM cfg WHERE k = 'a' LIMIT 1)"
+        );
+    }
+
+    @Test
     public void testNestedAndCteSubQueries() throws Exception {
         assertAccepted(
                 "ts > (SELECT max(lim) FROM (SELECT lim FROM cfg))",
@@ -163,9 +179,14 @@ public class MatViewSubQuerySupportTest extends AbstractCairoTest {
     }
 
     private void assertAccepted(String... predicates) throws Exception {
+        assertAccepted(false, predicates);
+    }
+
+    private void assertAccepted(boolean indexedCfg, String... predicates) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE cfg (ts TIMESTAMP, k SYMBOL, lim TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE cfg (ts TIMESTAMP, k SYMBOL" + (indexedCfg ? " INDEX" : "")
+                    + ", lim TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO cfg VALUES ('2024-01-01T00:00:00Z', 'a', '2024-01-01T00:00:00Z', 1)");
             drainWalQueue();
             for (String predicate : predicates) {

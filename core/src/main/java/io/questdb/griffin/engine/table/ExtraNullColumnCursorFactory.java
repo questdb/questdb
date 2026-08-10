@@ -498,6 +498,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public boolean hasActivePushdownFilter() {
+            return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }

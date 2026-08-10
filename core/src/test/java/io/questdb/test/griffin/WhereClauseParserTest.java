@@ -4218,6 +4218,44 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampOrWithNullBindVariableOnLeft() throws Exception {
+        // A NULL runtime bound is the empty-set identity under UNION: it must contribute no interval
+        // and drop only its own disjunct. Every OR disjunct - including the first - is accumulated
+        // with unionRuntimeTimestamp for exactly this reason. Anchoring the first disjunct with
+        // intersectRuntimeTimestamp instead collapses the whole disjunction to the empty set when
+        // that bound is NULL, silently returning zero rows for a predicate $2 still matches.
+        // The residual filter is removed (intrinsicValue = TRUE), so nothing downstream recovers it.
+        long day2 = 2 * 24L * 3600 * 1000 * 1000;  // 1970-01-03T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+        bindVariableService.setTimestamp(1, day2);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-03T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithNullBindVariableOnRight() throws Exception {
+        // Mirror of testTimestampOrWithNullBindVariableOnLeft. A non-anchor NULL disjunct always
+        // unioned correctly; pairing the two pins the symmetry so the anchor cannot regress alone.
+        long day1 = 24L * 3600 * 1000 * 1000;  // 1970-01-02T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day1);
+        bindVariableService.setTimestamp(1, Numbers.LONG_NULL);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
     public void testTimestampOrWithPeriodicIntervals() throws Exception {
         // OR with periodic intervals - each IN produces multiple interval pairs
         // '2020-01-01;1d;1M;3' = 3 monthly intervals, each spanning 1 day

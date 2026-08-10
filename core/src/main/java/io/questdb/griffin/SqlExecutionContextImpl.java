@@ -94,6 +94,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
     private int jitMode;
+    private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
     private long nowMicros;
     private long nowNanos;
@@ -176,16 +177,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long rowsLo,
             char rowsLoUnit,
             int rowsLoExprPos,
+            int rowsLoKindPos,
             long rowsHi,
             char rowsHiUnit,
             int rowsHiExprPos,
+            int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
             int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
-    ) {
+    ) throws SqlException {
         windowContext.of(
                 partitionByRecord,
                 partitionBySink,
@@ -197,9 +200,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsLo,
                 rowsLoUnit,
                 rowsLoExprPos,
+                rowsLoKindPos,
                 rowsHi,
                 rowsHiUnit,
                 rowsHiExprPos,
+                rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
                 timestampIndex,
@@ -207,6 +212,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ignoreNulls,
                 nullsDescPos
         );
+        // Re-stamp the live-view flag on every configuration: the code generator
+        // clears the window context after each window function it compiles (and
+        // clear() resets the flag), while setLiveViewCompile scopes the flag to
+        // the whole statement - so a multi-window-function live view must have
+        // the flag re-applied per function, not rely on the first stamp surviving.
+        windowContext.setLiveView(liveViewCompile);
     }
 
     @Override
@@ -366,6 +377,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isLiveViewCompile() {
+        return liveViewCompile;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -467,6 +483,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.intervalPlanGeneration = 0;
         this.validationOnly = false;
         this.validationSecurityContext = null;
+        // Defensive: production callers arm live-view compile mode inside a try/finally
+        // that disarms it, so this is currently a backstop rather than a reachable leak,
+        // but a reused per-connection context must never inherit a stale live-view flag.
+        // setLiveViewCompile also clears the mirrored windowContext flag.
+        setLiveViewCompile(false);
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;
@@ -521,6 +542,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setLiveViewCompile(boolean value) {
+        this.liveViewCompile = value;
+        this.windowContext.setLiveView(value);
     }
 
     @Override

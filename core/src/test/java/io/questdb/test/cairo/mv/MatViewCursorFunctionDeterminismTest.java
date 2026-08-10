@@ -65,6 +65,34 @@ public class MatViewCursorFunctionDeterminismTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectsNonDeterministicScalarBoundDespiteMonotonicWrapper() throws Exception {
+        // Reject-direction pin for the shared-holder residual path: ScalarSubQueryBoundRefFunction
+        // deliberately does not forward the sub-query factory's fail-safe determinism hint to the
+        // guard, so genuinely non-deterministic bounds must keep being rejected by the guard firing
+        // on the offending function itself while the sub-query body is generated - before any
+        // pruning holder exists. If that generation-time rejection ever regresses, this fails.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertNonDeterministicBoundRejected(
+                    "CREATE MATERIALIZED VIEW mv AS SELECT ts, sum(v) AS s FROM base " +
+                            "WHERE dateadd('h', 1, ts) >= (SELECT now()) SAMPLE BY 1h", "now");
+            assertNonDeterministicBoundRejected(
+                    "CREATE MATERIALIZED VIEW mv AS SELECT ts, sum(v) AS s FROM base " +
+                            "WHERE dateadd('h', 1, ts) >= (SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) SAMPLE BY 1h", "rnd_timestamp");
+        });
+    }
+
+    private static void assertNonDeterministicBoundRejected(String sql, String offendingFunction) {
+        try {
+            execute(sql);
+            Assert.fail("expected non-deterministic rejection naming " + offendingFunction);
+        } catch (Throwable e) {
+            io.questdb.test.tools.TestUtils.assertContains(e.getMessage(),
+                    "non-deterministic function cannot be used in materialized view: " + offendingFunction);
+        }
+    }
+
+    @Test
     public void testRejectsBooleanSubQuery() throws Exception {
         assertMatViewRejected(
                 "true",

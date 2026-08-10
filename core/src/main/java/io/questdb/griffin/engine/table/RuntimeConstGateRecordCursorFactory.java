@@ -42,6 +42,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
@@ -79,17 +80,30 @@ import org.jetbrains.annotations.Nullable;
  * while a non-table base such as {@code read_parquet()} - whose page-frame cursor is a plain
  * {@link PageFrameCursor} - gets a plain wrapper, so the gate never advertises a table contract
  * it cannot honor.
+ * <p>
+ * The gate is "nothing but a filter" over a base with identical metadata, so it also advertises
+ * {@link #supportsFilterStealing()} (when the base supports page frames and the original filter
+ * expression was retained). This matters for consumers that cannot use the gate's page frames:
+ * the ASOF/LT join fast paths need a TIME-frame cursor on the slave, which the gate does not
+ * provide, so they unwrap the gate via stealing and run the filtered fast join over the base -
+ * without it a runtime-const slave WHERE would fall back to scanning and hashing the whole slave
+ * prefix. Consumers that can ride the gate's page frames directly (parallel GROUP BY, TopK,
+ * window/horizon join masters) must prefer them over stealing: the passthrough evaluates the
+ * filter zero times per row and yields zero frames when false, both of which stealing would
+ * forfeit.
  */
 public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFactory {
     private RecordCursorFactory base;
     private EmptyPageFrameCursor emptyPageFrameCursor;
     private EmptyTablePageFrameCursor emptyTablePageFrameCursor;
     private Function filter;
+    private final ExpressionNode filterExpr;
 
-    public RuntimeConstGateRecordCursorFactory(RecordCursorFactory base, Function filter) {
+    public RuntimeConstGateRecordCursorFactory(RecordCursorFactory base, Function filter, @Nullable ExpressionNode filterExpr) {
         super(base.getMetadata());
         this.base = base;
         this.filter = filter;
+        this.filterExpr = filterExpr;
     }
 
     @Override
@@ -161,6 +175,24 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         return base.getScanDirection();
     }
 
+    // Contract: non-null whenever supportsFilterStealing() is true; steal consumers pass it to
+    // collectColumnIndexes/compileWorkerFiltersConditionally without a null check.
+    @Override
+    public ExpressionNode getStealFilterExpr() {
+        return filterExpr;
+    }
+
+    // Closes everything but base factory and filter (interface contract): the steal consumer
+    // adopts base and filter, so only the gate's own wrappers are released here. base/filter
+    // stay referenced so a pre-adoption failure that closes this shell still frees them exactly
+    // once; after successful adoption the shell is abandoned unclosed, like the async filter
+    // factories after their halfClose().
+    @Override
+    public void halfClose() {
+        emptyPageFrameCursor = Misc.free(emptyPageFrameCursor);
+        emptyTablePageFrameCursor = Misc.free(emptyTablePageFrameCursor);
+    }
+
     @Override
     public TableToken getTableToken() {
         return base.getTableToken();
@@ -185,6 +217,17 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    // The gate is a pure filter over a base with identical metadata, so parents may steal the
+    // filter and use the base directly - the ASOF/LT join fast paths depend on this because they
+    // need the base's time-frame cursor, which the gate does not forward. Guarded on the base's
+    // page-frame support because steal consumers assert it on the unwrapped base (parallel GROUP
+    // BY), and on the retained expression because getStealFilterExpr() must honor its non-null
+    // contract. Never a bare true.
+    @Override
+    public boolean supportsFilterStealing() {
+        return filterExpr != null && base != null && base.supportsPageFrameCursor();
     }
 
     // The gate keeps the base's page-frame capability: TRUE delegates to the base cursor (full

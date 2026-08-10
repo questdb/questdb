@@ -2562,33 +2562,8 @@ public class QueryModel implements IQueryModel {
     }
 
     private static void unitToSink(CharSink<?> sink, char timeUnit) {
-        switch (timeUnit) {
-            case 0:
-                break;
-            case WindowExpression.TIME_UNIT_NANOSECOND:
-                sink.putAscii(" nanosecond");
-                break;
-            case WindowExpression.TIME_UNIT_MICROSECOND:
-                sink.putAscii(" microsecond");
-                break;
-            case WindowExpression.TIME_UNIT_MILLISECOND:
-                sink.putAscii(" millisecond");
-                break;
-            case WindowExpression.TIME_UNIT_SECOND:
-                sink.putAscii(" second");
-                break;
-            case WindowExpression.TIME_UNIT_MINUTE:
-                sink.putAscii(" minute");
-                break;
-            case WindowExpression.TIME_UNIT_HOUR:
-                sink.putAscii(" hour");
-                break;
-            case WindowExpression.TIME_UNIT_DAY:
-                sink.putAscii(" day");
-                break;
-            default:
-                sink.putAscii(" [unknown unit]");
-                break;
+        if (timeUnit != 0) {
+            sink.putAscii(' ').putAscii(WindowExpression.timeUnitName(timeUnit));
         }
     }
 

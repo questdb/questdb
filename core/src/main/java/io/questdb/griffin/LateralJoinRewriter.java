@@ -68,12 +68,28 @@ class LateralJoinRewriter implements Mutable {
 
     private static final String COUNT_CARRIER_PREFIX = "__qdb_count_carrier__";
     private static final String COUNT_DRIVER_PREFIX = "__qdb_count_driver__";
+    // Stands in for the compensated count inside a lifted filter guard.
+    // materializeLateralCountCarrier substitutes the compensated template for it, which
+    // is the value the filter has to judge - the raw column is NULL for an outer row
+    // with no group, and NULL fails every comparison.
+    static final String LATERAL_COUNT_PLACEHOLDER = "__qdb_lateral_count__";
     // sentinel for a LIMIT term that is not a compile-time constant; a bare
     // CONSTANT token is unsigned so a real limit can never collide with it
     private static final long LIMIT_NOT_CONSTANT = Long.MIN_VALUE;
-    private static final int LIMIT_DROPS_ROW = 1;
-    private static final int LIMIT_KEEPS_ROW = 0;
-    private static final int LIMIT_UNPROVABLE = 2;
+    // Verdict on what one lateral body layer does to the single row a scalar
+    // count emits: the row provably survives, it provably goes, or it cannot be
+    // decided at compile time. Introduced for LIMIT, now applied to every layer
+    // that could remove the aggregate row.
+    private static final int ROW_DROPPED = 1;
+    private static final int ROW_KEPT = 0;
+    private static final int ROW_UNPROVABLE = 2;
+    private static final int CMP_EQ = 0;
+    private static final int CMP_GE = 5;
+    private static final int CMP_GT = 4;
+    private static final int CMP_LE = 3;
+    private static final int CMP_LT = 2;
+    private static final int CMP_NE = 1;
+    private static final int CMP_NONE = -1;
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private static final int SCALAR_BODY_NONE = 0;
     private static final int SCALAR_BODY_PLAIN = 1;
@@ -113,12 +129,24 @@ class LateralJoinRewriter implements Mutable {
     private boolean hasCorrelation;
     private boolean hasZeroOnEmptyLeaf;
     private int outerRefId;
+    // set by scalarAggregateBodyKind when the body carries a filter that must be lifted
+    // into the guard rather than left to run inside the body; read immediately by
+    // the caller, which copies it before any nested call can overwrite it
+    private boolean scalarCountFilterLiftable;
     // guard for the lateral body currently being decorrelated; see accumulateScalarCountGuard
     private ExpressionNode scalarCountGuard;
     // set when a run-time LIMIT reads an outer column: such a guard cannot be
     // evaluated in the outer projection, so a scalar-count body must be rejected
     private ExpressionNode scalarCountGuardBlocker;
+    // set once the push-down descent crosses an aggregation layer: a LIMIT below
+    // the aggregate only caps its input and can never drop the aggregate row, so
+    // it must not enter the guard (a run-time 0 would masquerade as NULL)
+    private boolean scalarCountGuardDisarmed;
     private int templateNodeBudget;
+    // truth interval of the wrapper predicate currently being analysed, over the
+    // count column's domain; written by truthIntervalOf
+    private long truthHi;
+    private long truthLo;
 
     LateralJoinRewriter(
             CharacterStore characterStore,
@@ -176,8 +204,10 @@ class LateralJoinRewriter implements Mutable {
         hasCorrelation = false;
         hasZeroOnEmptyLeaf = false;
         outerRefId = 0;
+        scalarCountFilterLiftable = false;
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
+        scalarCountGuardDisarmed = false;
         sharedModels.clear();
         templateBuffer.clear();
         templateNodeBudget = 0;
@@ -283,6 +313,12 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean isCountAggregate(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase(node.token, "count");
     }
 
     private static boolean isOuterRefToken(ExpressionNode node, CharSequence outerRefAlias) {
@@ -544,8 +580,15 @@ class LateralJoinRewriter implements Mutable {
         if (!hasAggregateTail) {
             return;
         }
+        // A carrier column cannot be threaded through a GROUP BY layer (it would be
+        // neither key nor aggregate) or a union branch (the other branches do not
+        // grow the matching column), so such chains only admit self templates,
+        // which reference the body's own output and add no carriers.
+        boolean isSelfTemplateOnly = false;
         for (int i = 0, n = carrierChain.size(); i < n; i++) {
-            ObjList<CharSequence> aliases = carrierChain.getQuick(i).getAliasToColumnMap().keys();
+            IQueryModel layer = carrierChain.getQuick(i);
+            isSelfTemplateOnly |= layer.getGroupBy().size() > 0 || layer.getUnionModel() != null;
+            ObjList<CharSequence> aliases = layer.getAliasToColumnMap().keys();
             for (int j = 0, m = aliases.size(); j < m; j++) {
                 CharSequence alias = aliases.getQuick(j);
                 if (alias != null) {
@@ -563,11 +606,16 @@ class LateralJoinRewriter implements Mutable {
                 continue;
             }
             if (ast.isWildcard()) {
-                processWildcardSources(0, depth);
+                if (!isSelfTemplateOnly) {
+                    processWildcardSources(0, depth);
+                }
                 continue;
             }
             if (isBareZeroOnEmptyColumn(ast, 0)) {
                 addSelfCountTemplate(column.getAlias(), ast.position);
+                continue;
+            }
+            if (isSelfTemplateOnly) {
                 continue;
             }
             if (ast.type == ExpressionNode.FUNCTION
@@ -729,9 +777,18 @@ class LateralJoinRewriter implements Mutable {
     //  2. All branches are INNER/CROSS/RIGHT (no LEFT/FULL row preservation)
     //  3. Table-model branches have no correlated ON (can't create clone)
     //  4. At least one correlated branch exists (alignment needs a source)
+    //  5. No main chain layer carries a LIMIT. Lateral semantics apply a body
+    //     LIMIT per outer row, but per-side push keeps the chain unkeyed, so
+    //     the LIMIT would run globally over the decorrelated result, and the
+    //     scalar-count guard would never be built (compensateLimit is not
+    //     reached for chain layers on this path). The general path partitions
+    //     the LIMIT per outer row and guards the count compensation.
     private boolean canPerSidePush(IQueryModel model, int depth) {
         IQueryModel m = model;
         while (m != null) {
+            if (m.getLimitLo() != null || m.getLimitHi() != null) {
+                return false;
+            }
             if (m.isOwnCorrelatedAtDepth(depth, ~CORRELATED_JOIN_ON)) {
                 return false;
             }
@@ -1586,9 +1643,17 @@ class LateralJoinRewriter implements Mutable {
 
                 // Push down outer refs
                 boolean isPerSidePush = canPerSidePush(topInner, depth);
-                int scalarBodyKind = scalarAggregateBodyKind(topInner);
+                int scalarBodyKind = scalarAggregateBodyKind(topInner, true);
+                // lifted before push-down: nested calls reset the liftable field, and the
+                // LIMIT rewrite folds a row_number filter into the same WHERE, which must
+                // not enter the lifted conjunction
+                final ExpressionNode liftedScalarCountFilters =
+                        scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY && scalarCountFilterLiftable
+                                ? liftNonTotalFilters(topInner)
+                                : null;
                 scalarCountGuard = null;
                 scalarCountGuardBlocker = null;
+                scalarCountGuardDisarmed = false;
                 int templateBase = templateBuffer.size();
                 if (scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY) {
                     buildCountTemplates(topInner, depth);
@@ -1667,7 +1732,9 @@ class LateralJoinRewriter implements Mutable {
                             ? model : parent;
                     rejectCorrelatedScalarCountLimit();
                     selectModel.setLateralCountCoalesceRequired(true);
-                    selectModel.setLateralCountCoalesceGuard(scalarCountGuard);
+                    selectModel.setLateralCountCoalesceGuard(
+                            andScalarCountGuard(liftedScalarCountFilters)
+                    );
                     transferCountTemplates(selectModel, joinModel.getAlias(), templateBase);
                 } else {
                     templateBuffer.setPos(templateBase);
@@ -2041,6 +2108,72 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    private boolean bodyProjectsOnlyScalarCount(IQueryModel model) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        if (columns.size() != 1) {
+            return false;
+        }
+        final ExpressionNode ast = columns.getQuick(0).getAst();
+        if (ast == null) {
+            return false;
+        }
+        return isCountAggregate(ast)
+                || (ast.type == ExpressionNode.LITERAL && resolvesToScalarCount(ast.token, model, 0));
+    }
+
+    // Removes every filter that rejects part of the count domain and returns them
+    // ANDed together, with the count replaced by a placeholder. Called only after
+    // the body has been admitted, so each filter found here was proved decidable.
+    private ExpressionNode andScalarCountGuard(ExpressionNode lifted) {
+        if (lifted == null) {
+            return scalarCountGuard;
+        }
+        return scalarCountGuard == null ? lifted : createBinaryOp("and", scalarCountGuard, lifted);
+    }
+
+    private ExpressionNode liftNonTotalFilters(IQueryModel model) {
+        ExpressionNode lifted = null;
+        IQueryModel current = model;
+        int guard = 0;
+        while (current != null && guard++ < 64) {
+            if (hasAggregateFunctions(current)) {
+                // at and below the aggregate a filter constrains the counted input
+                // rather than the aggregate row - including the correlation
+                // predicate itself, which must never be lifted
+                break;
+            }
+            final ExpressionNode where = current.getWhereClause();
+            if (where != null && !filterAcceptsEveryCount(where, current)) {
+                final ExpressionNode templated = cloneWithCountPlaceholder(where, current);
+                lifted = lifted == null ? templated : createBinaryOp("and", lifted, templated);
+                current.setWhereClause(null);
+            }
+            current = current.getNestedModel();
+        }
+        return lifted;
+    }
+
+    private ExpressionNode cloneWithCountPlaceholder(ExpressionNode node, IQueryModel layer) {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.LITERAL && resolvesToScalarCount(node.token, layer, 0)) {
+            return expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, LATERAL_COUNT_PLACEHOLDER, 0, node.position
+            );
+        }
+        final ExpressionNode copy = expressionNodePool.next().of(
+                node.type, node.token, node.precedence, node.position
+        );
+        copy.paramCount = node.paramCount;
+        copy.lhs = cloneWithCountPlaceholder(node.lhs, layer);
+        copy.rhs = cloneWithCountPlaceholder(node.rhs, layer);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(cloneWithCountPlaceholder(node.args.getQuick(i), layer));
+        }
+        return copy;
+    }
+
     private boolean hasUnmappedOuterRefLiteral(
             ExpressionNode node,
             CharSequence outerRefAlias,
@@ -2170,25 +2303,25 @@ class LateralJoinRewriter implements Mutable {
     // LIMIT lo,hi selects the half-open row range (lo, hi].
     private static int classifyLateralLimit(ExpressionNode limitLo, ExpressionNode limitHi) {
         if (limitLo == null && limitHi == null) {
-            return LIMIT_KEEPS_ROW;
+            return ROW_KEPT;
         }
         final long lo = constLimitValue(limitLo);
         final long hi = constLimitValue(limitHi);
         if (lo == LIMIT_NOT_CONSTANT || hi == LIMIT_NOT_CONSTANT) {
-            return LIMIT_UNPROVABLE;
+            return ROW_UNPROVABLE;
         }
         if (limitHi == null) {
             // negative limit keeps the last |lo| rows, which for a one-row body is the row
-            return lo == 0 ? LIMIT_DROPS_ROW : LIMIT_KEEPS_ROW;
+            return lo == 0 ? ROW_DROPPED : ROW_KEPT;
         }
         if (limitLo == null) {
-            return hi == 0 ? LIMIT_DROPS_ROW : LIMIT_KEEPS_ROW;
+            return hi == 0 ? ROW_DROPPED : ROW_KEPT;
         }
         if (lo < 0 || hi < 0) {
             // negative two-sided windows are rejected by compensateLimit
-            return LIMIT_UNPROVABLE;
+            return ROW_UNPROVABLE;
         }
-        return (lo <= 0 && hi >= 1) ? LIMIT_KEEPS_ROW : LIMIT_DROPS_ROW;
+        return (lo <= 0 && hi >= 1) ? ROW_KEPT : ROW_DROPPED;
     }
 
     // QuestDB parses `LIMIT -N` as unary minus applied to a CONSTANT, never as a
@@ -2217,13 +2350,432 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Classifies what a GROUP BY sitting above the aggregate does to the single
+    // count row. Grouping by a value that row functionally determines yields
+    // exactly one group, so the row survives; grouping by anything this method
+    // cannot tie back to the count stays unprovable.
+    // Every branch after this one must yield nothing when the count is zero. Only
+    // UNION ALL qualifies: the deduplicating set operations decide row identity
+    // across branches, which this analysis says nothing about.
+    private boolean unionBranchesRejectZeroRow(IQueryModel model) {
+        IQueryModel branch = model.getUnionModel();
+        int guard = 0;
+        while (branch != null && guard++ < 16) {
+            if (branch.getSetOperationType() != IQueryModel.SET_OPERATION_UNION_ALL) {
+                return false;
+            }
+            if (!branchRejectsZeroCountRow(branch)) {
+                return false;
+            }
+            branch = branch.getUnionModel();
+        }
+        return true;
+    }
+
+    // True when some filter in the branch provably excludes a count of zero, so
+    // the branch contributes no row for an unmatched outer row.
+    private boolean branchRejectsZeroCountRow(IQueryModel branch) {
+        IQueryModel m = branch;
+        int guard = 0;
+        while (m != null && guard++ < 16) {
+            final ExpressionNode where = m.getWhereClause();
+            if (where != null
+                    && truthIntervalOf(where, m, 0, false)
+                    && (truthLo > 0 || truthHi < 0)) {
+                return true;
+            }
+            m = m.getNestedModel();
+        }
+        return false;
+    }
+
+    private boolean joinKeepsSingleRow(IQueryModel layer) {
+        final ObjList<IQueryModel> joinModels = layer.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel jm = joinModels.getQuick(i);
+            final int joinType = jm.getJoinType();
+            if (joinType != IQueryModel.JOIN_CROSS && joinType != IQueryModel.JOIN_INNER) {
+                return false;
+            }
+            if (jm.getJoinCriteria() != null) {
+                // a predicate can reject the pairing, so the row is no longer certain
+                return false;
+            }
+            if (!isProvablyOneRowRelation(jm)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // True only for a constant projection with no source, which yields exactly one
+    // row by construction. Anything reading a table could be empty or hold many
+    // rows, and neither is knowable here.
+    private boolean isProvablyOneRowRelation(IQueryModel jm) {
+        IQueryModel m = jm;
+        int depth = 0;
+        while (m != null && depth++ < 16) {
+            // a projection cannot change the row count, but any of these can
+            if (m.getWhereClause() != null
+                    || m.getPostJoinWhereClause() != null
+                    || m.getLimitLo() != null
+                    || m.getLimitHi() != null
+                    || m.getJoinModels().size() > 1
+                    || m.getGroupBy().size() > 0
+                    || m.getSampleBy() != null
+                    || m.getLatestBy().size() > 0
+                    || m.getUnionModel() != null
+                    || m.isDistinct()) {
+                return false;
+            }
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null) {
+                return isSingleRowGenerator(tableNameExpr);
+            }
+            final IQueryModel nested = m.getNestedModel();
+            if (nested == null) {
+                return false;
+            }
+            m = nested;
+        }
+        return false;
+    }
+
+    // A constant SELECT with no FROM is parsed as long_sequence(1), the only
+    // source whose cardinality is known here. A table could be empty or hold any
+    // number of rows, and long_sequence(n) for any other n is not one row.
+    private static boolean isSingleRowGenerator(ExpressionNode tableNameExpr) {
+        return tableNameExpr.type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase(tableNameExpr.token, "long_sequence")
+                && tableNameExpr.paramCount == 1
+                && tableNameExpr.rhs != null
+                && tableNameExpr.rhs.type == ExpressionNode.CONSTANT
+                && constLimitValue(tableNameExpr.rhs) == 1;
+    }
+
+    private int classifyGroupByOnZeroCountRow(IQueryModel layer) {
+        final ObjList<ExpressionNode> groupBy = layer.getGroupBy();
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            final ExpressionNode g = groupBy.getQuick(i);
+            if (g == null
+                    || g.type != ExpressionNode.LITERAL
+                    || !resolvesToScalarCount(g.token, layer, 0)) {
+                return ROW_UNPROVABLE;
+            }
+        }
+        return ROW_KEPT;
+    }
+
+    // True when a filter above the aggregate provably accepts the count column's
+    // whole domain, so it can never remove a row and the compensation below it
+    // stays sound. Anything this method cannot describe answers false and the
+    // caller keeps suppressing, which is always safe: suppressing only ever
+    // leaves a NULL where a 0 was wanted, never a 0 where a NULL was wanted.
+    private boolean filterAcceptsEveryCount(ExpressionNode filter, IQueryModel layer) {
+        if (filter == null) {
+            return true;
+        }
+        if (!truthIntervalOf(filter, layer, 0, false)) {
+            return false;
+        }
+        // count() is non-negative, so covering [0, Long.MAX_VALUE] covers the domain
+        return truthLo <= 0 && truthHi == Long.MAX_VALUE;
+    }
+
+    // Under-approximates the set of count values for which a predicate holds, as
+    // a single interval left in truthLo/truthHi. Returns false when the truth set
+    // cannot be described that way. count() never produces NULL, so two-valued
+    // logic is sound here; any operand that is not the count or an integer
+    // constant ends the analysis rather than being guessed at. `negated` carries
+    // an enclosing NOT down by De Morgan instead of complementing intervals.
+    private boolean truthIntervalOf(ExpressionNode pred, IQueryModel layer, int depth, boolean negated) {
+        if (pred == null || depth > 24) {
+            return false;
+        }
+        final CharSequence token = pred.token;
+        final boolean isAnd = SqlKeywords.isAndKeyword(token);
+        if (isAnd || SqlKeywords.isOrKeyword(token)) {
+            if (!truthIntervalOf(pred.lhs, layer, depth + 1, negated)) {
+                return false;
+            }
+            final long aLo = truthLo;
+            final long aHi = truthHi;
+            if (!truthIntervalOf(pred.rhs, layer, depth + 1, negated)) {
+                return false;
+            }
+            // negation swaps the connective, so AND under a NOT unions instead
+            if (isAnd != negated) {
+                truthLo = Math.max(aLo, truthLo);
+                truthHi = Math.min(aHi, truthHi);
+                return true;
+            }
+            return unionInterval(aLo, aHi, truthLo, truthHi);
+        }
+        if (SqlKeywords.isNotKeyword(token)) {
+            return truthIntervalOf(pred.rhs != null ? pred.rhs : pred.lhs, layer, depth + 1, !negated);
+        }
+        if (pred.type == ExpressionNode.CONSTANT) {
+            if (SqlKeywords.isTrueKeyword(token)) {
+                return constantTruth(!negated);
+            }
+            return SqlKeywords.isFalseKeyword(token) && constantTruth(negated);
+        }
+
+        int op = comparisonOp(token);
+        if (op == CMP_NONE) {
+            return false;
+        }
+        final boolean lhsIsCount = isScalarCountRef(pred.lhs, layer);
+        final boolean rhsIsCount = isScalarCountRef(pred.rhs, layer);
+        final long lhsConst = constOperand(pred.lhs);
+        final long rhsConst = constOperand(pred.rhs);
+        if (negated) {
+            op = negateComparison(op);
+        }
+        if (lhsIsCount == rhsIsCount) {
+            // both sides constant folds to a verdict; anything else is undecidable
+            if (lhsIsCount || lhsConst == LIMIT_NOT_CONSTANT || rhsConst == LIMIT_NOT_CONSTANT) {
+                return false;
+            }
+            return constantTruth(compare(op, lhsConst, rhsConst));
+        }
+        final long k = lhsIsCount ? rhsConst : lhsConst;
+        if (k == LIMIT_NOT_CONSTANT) {
+            return false;
+        }
+        if (rhsIsCount) {
+            // normalise to `count OP constant`
+            op = flipComparison(op);
+        }
+        return countIntervalFor(op, k);
+    }
+
+    private boolean countIntervalFor(int op, long k) {
+        switch (op) {
+            case CMP_EQ:
+                truthLo = k;
+                truthHi = k;
+                return true;
+            case CMP_NE:
+                // the complement of a point is two intervals; only a negative k,
+                // which no count can equal, collapses back to the whole domain
+                if (k >= 0) {
+                    return false;
+                }
+                truthLo = Long.MIN_VALUE;
+                truthHi = Long.MAX_VALUE;
+                return true;
+            case CMP_LT:
+                if (k == Long.MIN_VALUE) {
+                    return constantTruth(false);
+                }
+                truthLo = Long.MIN_VALUE;
+                truthHi = k - 1;
+                return true;
+            case CMP_LE:
+                truthLo = Long.MIN_VALUE;
+                truthHi = k;
+                return true;
+            case CMP_GT:
+                if (k == Long.MAX_VALUE) {
+                    return constantTruth(false);
+                }
+                truthLo = k + 1;
+                truthHi = Long.MAX_VALUE;
+                return true;
+            default:
+                truthLo = k;
+                truthHi = Long.MAX_VALUE;
+                return true;
+        }
+    }
+
+    private boolean constantTruth(boolean holds) {
+        if (holds) {
+            truthLo = Long.MIN_VALUE;
+            truthHi = Long.MAX_VALUE;
+        } else {
+            // empty interval
+            truthLo = Long.MAX_VALUE;
+            truthHi = Long.MIN_VALUE;
+        }
+        return true;
+    }
+
+    // Two intervals only union back into one when they overlap or abut; a gap
+    // between them cannot be described here and ends the analysis.
+    private boolean unionInterval(long aLo, long aHi, long bLo, long bHi) {
+        if (aLo > aHi) {
+            truthLo = bLo;
+            truthHi = bHi;
+            return true;
+        }
+        if (bLo > bHi) {
+            truthLo = aLo;
+            truthHi = aHi;
+            return true;
+        }
+        if (aLo > bLo) {
+            // order so the lower-starting interval is first
+            final long tLo = aLo;
+            final long tHi = aHi;
+            aLo = bLo;
+            aHi = bHi;
+            bLo = tLo;
+            bHi = tHi;
+        }
+        if (aHi != Long.MAX_VALUE && aHi + 1 < bLo) {
+            return false;
+        }
+        truthLo = aLo;
+        truthHi = aHi >= bHi ? aHi : bHi;
+        return true;
+    }
+
+    private boolean isScalarCountRef(ExpressionNode node, IQueryModel layer) {
+        return node != null
+                && node.type == ExpressionNode.LITERAL
+                && resolvesToScalarCount(node.token, layer, 0);
+    }
+
+    private static long constOperand(ExpressionNode node) {
+        if (node == null) {
+            return LIMIT_NOT_CONSTANT;
+        }
+        if (node.type != ExpressionNode.CONSTANT && !isUnaryMinusConstant(node)) {
+            return LIMIT_NOT_CONSTANT;
+        }
+        return constLimitValue(node);
+    }
+
+    private static boolean compare(int op, long l, long r) {
+        switch (op) {
+            case CMP_EQ:
+                return l == r;
+            case CMP_NE:
+                return l != r;
+            case CMP_LT:
+                return l < r;
+            case CMP_LE:
+                return l <= r;
+            case CMP_GT:
+                return l > r;
+            default:
+                return l >= r;
+        }
+    }
+
+    private static int comparisonOp(CharSequence token) {
+        if (Chars.equals(token, "=")) {
+            return CMP_EQ;
+        }
+        if (Chars.equals(token, "!=") || Chars.equals(token, "<>")) {
+            return CMP_NE;
+        }
+        if (Chars.equals(token, "<")) {
+            return CMP_LT;
+        }
+        if (Chars.equals(token, "<=")) {
+            return CMP_LE;
+        }
+        if (Chars.equals(token, ">")) {
+            return CMP_GT;
+        }
+        return Chars.equals(token, ">=") ? CMP_GE : CMP_NONE;
+    }
+
+    // operand swap: `k < count` becomes `count > k`
+    private static int flipComparison(int op) {
+        switch (op) {
+            case CMP_LT:
+                return CMP_GT;
+            case CMP_LE:
+                return CMP_GE;
+            case CMP_GT:
+                return CMP_LT;
+            case CMP_GE:
+                return CMP_LE;
+            default:
+                return op;
+        }
+    }
+
+    private static int negateComparison(int op) {
+        switch (op) {
+            case CMP_EQ:
+                return CMP_NE;
+            case CMP_NE:
+                return CMP_EQ;
+            case CMP_LT:
+                return CMP_GE;
+            case CMP_LE:
+                return CMP_GT;
+            case CMP_GT:
+                return CMP_LE;
+            default:
+                return CMP_LT;
+        }
+    }
+
+    private static boolean isUnaryMinusConstant(ExpressionNode node) {
+        return node.type == ExpressionNode.OPERATION
+                && node.paramCount == 1
+                && node.lhs == null
+                && node.rhs != null
+                && Chars.equals(node.token, '-');
+    }
+
+    // Resolves a column referenced by a layer above the aggregate to the scalar
+    // count below it, following pure renames down the projection chain. Anything
+    // that is not a straight rename of the count breaks the chain and the caller
+    // treats the reference as unknown.
+    private boolean resolvesToScalarCount(CharSequence token, IQueryModel layer, int depth) {
+        if (token == null || layer == null || depth > 16) {
+            return false;
+        }
+        final IQueryModel below = layer.getNestedModel();
+        if (below == null) {
+            return false;
+        }
+        CharSequence name = token;
+        final int dot = Chars.indexOfLastUnquoted(name, '.');
+        if (dot >= 0) {
+            name = name.subSequence(dot + 1, name.length());
+        }
+        final ObjList<QueryColumn> cols = below.getBottomUpColumns();
+        if (cols.size() == 0) {
+            // a layer that projects nothing of its own passes the name straight down
+            return resolvesToScalarCount(token, below, depth + 1);
+        }
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            final QueryColumn col = cols.getQuick(i);
+            if (Chars.equalsIgnoreCase(col.getAlias(), name)) {
+                final ExpressionNode ast = col.getAst();
+                if (isCountAggregate(ast)) {
+                    return true;
+                }
+                if (ast != null && ast.type == ExpressionNode.LITERAL) {
+                    return resolvesToScalarCount(ast.token, below, depth + 1);
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
     // Builds the row-1 evaluation of the row_number filter for one body layer and
     // ANDs it into the guard for the lateral body currently being rewritten.
     private void accumulateScalarCountGuard(ExpressionNode limitLo, ExpressionNode limitHi, boolean readsColumn) {
         if (limitLo == null && limitHi == null) {
             return;
         }
-        if (classifyLateralLimit(limitLo, limitHi) != LIMIT_UNPROVABLE) {
+        if (scalarCountGuardDisarmed) {
+            // below an aggregation layer: this LIMIT caps the aggregate's input,
+            // not the aggregate row itself - the coalesce compensation stays valid
+            // with no guard (and an outer-column LIMIT here needs no blocker)
+            return;
+        }
+        if (classifyLateralLimit(limitLo, limitHi) != ROW_UNPROVABLE) {
             // compile-time decidable: scalarAggregateBodyKind already folded it, no guard needed
             return;
         }
@@ -2606,6 +3158,11 @@ class LateralJoinRewriter implements Mutable {
         } else if (hasGroupBy || hasAggregates) {
             compensateAggregate(current);
         }
+        if (current.getSampleBy() != null || hasGroupBy || hasAggregates) {
+            // deeper layers feed this aggregation: their LIMITs cap its input and
+            // cannot drop the aggregate row, so they stay out of the guard
+            scalarCountGuardDisarmed = true;
+        }
         if (hasWindowColumns(current)) {
             compensateWindow(current, outerRefJoinModel.getAlias().token);
         }
@@ -2734,9 +3291,16 @@ class LateralJoinRewriter implements Mutable {
         CharSequence cloneAlias = clonedOuterRef.getAlias().token;
         int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
 
-        int scalarBodyKind = scalarAggregateBodyKind(jmNested);
+        int scalarBodyKind = scalarAggregateBodyKind(jmNested, false);
+        // Branch-local guard scope: consumed below onto localCountModel; the caller's
+        // guard state must be restored, or this branch's guard would leak onto the
+        // outer model (and a leftover blocker would spuriously reject valid queries)
+        final ExpressionNode savedScalarCountGuard = scalarCountGuard;
+        final ExpressionNode savedScalarCountGuardBlocker = scalarCountGuardBlocker;
+        final boolean savedScalarCountGuardDisarmed = scalarCountGuardDisarmed;
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
+        scalarCountGuardDisarmed = false;
         int templateBase = templateBuffer.size();
         if (scalarBodyKind == SCALAR_BODY_ZERO_ON_EMPTY) {
             buildCountTemplates(jmNested, depth);
@@ -2756,6 +3320,9 @@ class LateralJoinRewriter implements Mutable {
         } else {
             templateBuffer.setPos(templateBase);
         }
+        scalarCountGuard = savedScalarCountGuard;
+        scalarCountGuardBlocker = savedScalarCountGuardBlocker;
+        scalarCountGuardDisarmed = savedScalarCountGuardDisarmed;
 
         ExpressionNode alignCriteria = jm.getJoinCriteria();
         IQueryModel jmTop = jm.getNestedModel();
@@ -2831,7 +3398,7 @@ class LateralJoinRewriter implements Mutable {
             if (isLeftJoin
                     && branchNested != null
                     && branchNested.isCorrelatedAtDepth(depth)
-                    && scalarAggregateBodyKind(branchNested) == SCALAR_BODY_ZERO_ON_EMPTY) {
+                    && scalarAggregateBodyKind(branchNested, false) == SCALAR_BODY_ZERO_ON_EMPTY) {
                 scalarCountBodyNested = branchNested;
                 scalarCountDriver = cloneOuterRef(outerRefJoinModel, COUNT_DRIVER_PREFIX, terminateLevel);
                 terminateJoins.insert(1, 1, null);
@@ -2844,6 +3411,11 @@ class LateralJoinRewriter implements Mutable {
         }
 
         CharSequence firstCloneAlias = scalarCountDriver != null ? scalarCountDriver.getAlias().token : null;
+        // Branch-local guards are consumed inside the loop; the caller's guard state
+        // must survive it, or the last branch's guard would leak onto the outer model
+        final ExpressionNode savedScalarCountGuard = scalarCountGuard;
+        final ExpressionNode savedScalarCountGuardBlocker = scalarCountGuardBlocker;
+        final boolean savedScalarCountGuardDisarmed = scalarCountGuardDisarmed;
         for (int bi = 1, bn = terminateJoins.size(); bi < bn; bi++) {
             IQueryModel branch = terminateLevel.getJoinModels().getQuick(bi);
             IQueryModel branchNested = branch.getNestedModel();
@@ -2875,9 +3447,10 @@ class LateralJoinRewriter implements Mutable {
             boolean isScalarCountBody = isLeftJoin
                     && scalarCountDriver != null
                     && (branchNested == scalarCountBodyNested
-                            || scalarAggregateBodyKind(branchNested) == SCALAR_BODY_ZERO_ON_EMPTY);
+                            || scalarAggregateBodyKind(branchNested, false) == SCALAR_BODY_ZERO_ON_EMPTY);
             scalarCountGuard = null;
             scalarCountGuardBlocker = null;
+            scalarCountGuardDisarmed = false;
             int templateBase = templateBuffer.size();
             if (isScalarCountBody) {
                 buildCountTemplates(branchNested, depth);
@@ -2941,6 +3514,9 @@ class LateralJoinRewriter implements Mutable {
 
             restoreOuterToInnerAlias(aliasSaveBase);
         }
+        scalarCountGuard = savedScalarCountGuard;
+        scalarCountGuardBlocker = savedScalarCountGuardBlocker;
+        scalarCountGuardDisarmed = savedScalarCountGuardDisarmed;
 
         if (firstCloneAlias != null) {
             // Identity-tracked propagation: walk the projection layers between
@@ -3486,10 +4062,24 @@ class LateralJoinRewriter implements Mutable {
         return aliasSaveBase;
     }
 
-    private int scalarAggregateBodyKind(IQueryModel model) throws SqlException {
+    private int scalarAggregateBodyKind(IQueryModel model, boolean allowFilterLift) throws SqlException {
+        scalarCountFilterLiftable = false;
+        // Lifting a filter out of the body exposes every other column of that body
+        // to rows the filter would have removed, and only the count is compensated.
+        // While the body projects nothing but the count there is no other column to
+        // get wrong.
+        final boolean liftable = allowFilterLift && bodyProjectsOnlyScalarCount(model);
+        boolean liftRequired = false;
         IQueryModel current = model;
         boolean hasUnprovableLimit = false;
-        while (current != null && current.getUnionModel() == null) {
+        while (current != null) {
+            // The compensation can only ever produce one row, so a set operation is
+            // admissible only while every other branch is empty for the zero row.
+            // Then SQL's answer for an unmatched outer row is exactly this branch's
+            // aggregate row, which is what the coalesce reproduces.
+            if (current.getUnionModel() != null && !unionBranchesRejectZeroRow(current)) {
+                return SCALAR_BODY_NONE;
+            }
             ExpressionNode limitHi = current.getLimitHi();
             ExpressionNode limitLo = current.getLimitLo();
             // report a provable negative with the specific message, ahead of the
@@ -3497,10 +4087,10 @@ class LateralJoinRewriter implements Mutable {
             rejectNegativeLateralLimit(limitLo);
             rejectNegativeLateralLimit(limitHi);
             switch (classifyLateralLimit(limitLo, limitHi)) {
-                case LIMIT_DROPS_ROW:
+                case ROW_DROPPED:
                     // body provably yields no rows: NULL fill is correct, no compensation
                     return SCALAR_BODY_NONE;
-                case LIMIT_UNPROVABLE:
+                case ROW_UNPROVABLE:
                     // decided at execution time by the guard accumulateScalarCountGuard
                     // builds; only the guarded zero-on-empty compensation may proceed
                     hasUnprovableLimit = true;
@@ -3508,10 +4098,18 @@ class LateralJoinRewriter implements Mutable {
                 default:
                     break;
             }
-            if (current.getGroupBy().size() > 0
-                    || current.getSampleBy() != null
+            if (current.getSampleBy() != null
                     || current.getFillStride() != null
                     || current.getLatestBy().size() > 0) {
+                return SCALAR_BODY_NONE;
+            }
+            // A GROUP BY on the aggregate's own layer partitions the counted input,
+            // so the empty group really is gone and NULL is right. A GROUP BY above
+            // the aggregate instead groups the single count row by a value that row
+            // determines: one group in, one group out, so the row survives.
+            if (current.getGroupBy().size() > 0
+                    && (hasAggregateFunctions(current)
+                    || classifyGroupByOnZeroCountRow(current) != ROW_KEPT)) {
                 return SCALAR_BODY_NONE;
             }
             if (hasAggregateFunctions(current)) {
@@ -3552,16 +4150,40 @@ class LateralJoinRewriter implements Mutable {
                     hasZeroOnEmpty |= containsZeroOnEmptyAggregate(ast);
                 }
                 if (hasZeroOnEmpty) {
+                    scalarCountFilterLiftable = liftRequired;
                     return SCALAR_BODY_ZERO_ON_EMPTY;
                 }
                 // a plain scalar body has no run-time guard mechanism, so promoting
                 // the join is only sound when the LIMIT provably keeps the row
                 return hasUnprovableLimit ? SCALAR_BODY_NONE : SCALAR_BODY_PLAIN;
             }
-            if (current.getWhereClause() != null
-                    || current.getPostJoinWhereClause() != null
-                    || current.getJoinModels().size() > 1) {
+            // A join above the aggregate keeps the count row exactly once only when
+            // every other operand yields exactly one row. An empty operand removes
+            // the row, and an N-row operand repeats it N times, while the coalesce
+            // above can only ever produce a single compensated row - the general
+            // path has no way to reproduce either. The per-join-model path handles
+            // arbitrary cardinality and is reached when the count body is not the
+            // first operand; this arm only has to be sound, not complete.
+            if (current.getJoinModels().size() > 1 && !joinKeepsSingleRow(current)) {
                 return SCALAR_BODY_NONE;
+            }
+            // A filter above the aggregate that accepts every count can stay where
+            // it is: it never removes a row, so the compensation below it is sound.
+            // One that rejects some counts cannot stay, because coalesce(cnt, 0)
+            // cannot tell a group the filter rejected from a group that never
+            // existed - both reach the outer projection as NULL. Such a filter is
+            // instead lifted into the guard, where it judges the compensated value
+            // and the two cases separate again.
+            if (!filterAcceptsEveryCount(current.getPostJoinWhereClause(), current)) {
+                return SCALAR_BODY_NONE;
+            }
+            final ExpressionNode where = current.getWhereClause();
+            if (!filterAcceptsEveryCount(where, current)) {
+                // decidable over the count domain, or there is nothing to lift
+                if (!liftable || !truthIntervalOf(where, current, 0, false)) {
+                    return SCALAR_BODY_NONE;
+                }
+                liftRequired = true;
             }
             current = current.getNestedModel();
         }

@@ -598,6 +598,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean hasActivePushdownFilter() {
+            return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }

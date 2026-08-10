@@ -4557,6 +4557,49 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagWideDecimalStatefulDefaultRewindsWithCursor() throws Exception {
+        // The third lag argument is evaluated once per not-yet-warm row, so a stateful
+        // default advances with the cursor and must rewind with it. The wide-decimal
+        // partitioned lag functions own their ring layout, so they forward toTop() to
+        // the default themselves; the un-partitioned shapes inherit the forwarding from
+        // BaseLagFunction. timestamp_sequence() advances on every evaluation and rewinds
+        // only via toTop(), so the second cursor pass of this assertion reproduces these
+        // values only when the forwarding is in place. The plan is pinned to the
+        // streaming Window factory: a cached factory would replay materialized values
+        // on the second pass and hide a missing rewind.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            assertQuery("SELECT ts, " +
+                    "lag(v128, 2, timestamp_sequence(1, 1)::long::decimal(38, 6)) OVER (PARTITION BY grp ORDER BY ts) lg128, " +
+                    "lag(v256, 2, timestamp_sequence(1, 1)::long::decimal(60, 0)) OVER (PARTITION BY grp ORDER BY ts) lg256, " +
+                    "lag(v128, 2, timestamp_sequence(10, 1)::long::decimal(38, 6)) OVER (ORDER BY ts) g128, " +
+                    "lag(v256, 2, timestamp_sequence(10, 1)::long::decimal(60, 0)) OVER (ORDER BY ts) g256 " +
+                    "FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [lag(v128, 2, timestamp_sequence(1,1)::long::DECIMAL(38,6)) over (partition by [grp]),lag(v256, 2, timestamp_sequence(1,1)::long::DECIMAL(60,0)) over (partition by [grp]),lag(v128, 2, timestamp_sequence(10,1)::long::DECIMAL(38,6)) over (),lag(v256, 2, timestamp_sequence(10,1)::long::DECIMAL(60,0)) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tlg128\tlg256\tg128\tg256
+                            2024-01-01T00:00:00.000000Z\t1.000000\t1\t10.000000\t10
+                            2024-01-01T00:01:00.000000Z\t2.000000\t2\t11.000000\t11
+                            2024-01-01T00:02:00.000000Z\t3.000000\t3\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t4.000000\t4\t4.000000\t4
+                            2024-01-01T00:04:00.000000Z\t6.000000\t6\t8.000000\t8
+                            2024-01-01T00:05:00.000000Z\t4.000000\t4\t2.000000\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testLagWithNullDefault() throws Exception {
         // lag(v, 1, null) — same as lag(v, 1). v64: 6.00, 4.00, 8.00, 2.00, 10.00
         assertMemoryLeak(() -> {
