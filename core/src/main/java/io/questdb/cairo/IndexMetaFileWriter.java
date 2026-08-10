@@ -93,8 +93,14 @@ public class IndexMetaFileWriter {
      * and {@code chunkCount} column chunks read from {@code chunksPtr}, which
      * must address {@code chunkCount * } {@link #CHUNK_SIZE} zeroed bytes laid
      * out with the {@code CHUNK_*} offsets.
+     * <p>
+     * {@code chunksLen} is the buffer's own byte length and must equal
+     * {@code chunkCount * } {@link #CHUNK_SIZE}. The count alone decides how
+     * far the native side reads, so without the length a caller that miscounts
+     * produces an out-of-bounds native read that neither side can detect; a
+     * mismatch throws instead.
      */
-    public static native void addRowGroup(long writerPtr, int firstKey, long numRows, long chunksPtr, int chunkCount) throws CairoException;
+    public static native void addRowGroup(long writerPtr, int firstKey, long numRows, long chunksPtr, long chunksLen, int chunkCount) throws CairoException;
 
     /**
      * Creates a writer. {@code keyIdColumn} and {@code rowIdColumn} are

@@ -231,6 +231,78 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The chunk count alone used to decide how far the native side read, and
+     * the buffer's real length never crossed JNI: a count one too high read 64
+     * bytes of heap past the allocation and wrote them into the file, with no
+     * error on either side. The length now crosses with the pointer and must
+     * account for the count exactly.
+     */
+    @Test
+    public void testAddRowGroupRejectsChunkBufferLengthMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final long writerPtr = IndexMetaFileWriter.create(
+                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 0, 1);
+            long resultPtr = 0;
+            try {
+                IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 50);
+                addColumn(writerPtr, "key_id", -1, TYPE_INT);
+                addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+                final long chunksSize = 2L * IndexMetaFileWriter.CHUNK_SIZE;
+                final long chunksPtr = Unsafe.calloc(chunksSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    putKeyIdChunk(chunksPtr, 0, 7, 7, 64);
+                    putRowIdChunk(chunksPtr, 1, 0, 63, 64);
+                    // One chunk more than the buffer holds: the third chunk
+                    // would come from past the end of the allocation.
+                    try {
+                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, 3);
+                        Assert.fail("expected CairoException from the chunk buffer length check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column chunk buffer length");
+                    }
+                    // A buffer longer than the count claims is a mismatch too:
+                    // it means the two sides disagree about the layout.
+                    try {
+                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, 1);
+                        Assert.fail("expected CairoException from the chunk buffer length check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column chunk buffer length");
+                    }
+                    // The negative count guard still comes first.
+                    try {
+                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, -1);
+                        Assert.fail("expected CairoException from the negative count check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "count is negative");
+                    }
+                    // The matching length is accepted, and the row group it
+                    // builds still produces a readable file.
+                    IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, 2);
+                } finally {
+                    Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+                }
+                setDataRowGroupBoundaries(writerPtr, 0L, 64L);
+                resultPtr = IndexMetaFileWriter.finish(writerPtr);
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(
+                            IndexMetaFileWriter.resultDataPtr(resultPtr),
+                            IndexMetaFileWriter.resultDataLen(resultPtr)
+                    );
+                    Assert.assertEquals(2, reader.getColumnCount());
+                    Assert.assertEquals(1, reader.getIndexRowGroupCount());
+                    Assert.assertEquals(64, reader.getRowGroupNumRows(0));
+                    Assert.assertEquals(64, reader.getChunkNumValues(0, 1));
+                }
+            } finally {
+                if (resultPtr != 0) {
+                    IndexMetaFileWriter.destroyResult(resultPtr);
+                }
+                IndexMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    /**
      * A column index reaches an address computation, so the chunk accessors
      * bound it rather than trusting the caller: an out-of-range one would land
      * hundreds of megabytes past a mapping of IM_FILE_SIZE bytes, and an
@@ -870,7 +942,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         try {
             putKeyIdChunk(chunksPtr, 0, firstKey, firstKey, rows);
             putRowIdChunk(chunksPtr, 1, rowIdMin, rowIdMax, rows);
-            IndexMetaFileWriter.addRowGroup(writerPtr, firstKey, rows, chunksPtr, 2);
+            IndexMetaFileWriter.addRowGroup(writerPtr, firstKey, rows, chunksPtr, chunksSize, 2);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -893,7 +965,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             try {
                 putKeyIdChunk(chunksPtr, 0, firstKeys[i], firstKeys[i] + 99, 100);
                 putRowIdChunk(chunksPtr, 1, i * 100L, i * 100L + 99, 100);
-                IndexMetaFileWriter.addRowGroup(writerPtr, firstKeys[i], 100, chunksPtr, 3);
+                IndexMetaFileWriter.addRowGroup(writerPtr, firstKeys[i], 100, chunksPtr, chunksSize, 3);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -932,7 +1004,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             putChunk(chunksPtr, 2, CODEC_ZSTD, 0,
                     STAT_MIN_PRESENT | STAT_MIN_EXACT | STAT_MAX_PRESENT | STAT_MAX_EXACT,
                     0, 64, 0, 0, 0, 0, 0, 0);
-            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, 3);
+            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, 3);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -986,7 +1058,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                         100 + i,
                         900 + i
                 );
-                IndexMetaFileWriter.addRowGroup(writerPtr, (int) spec[0], rows, chunksPtr, 3);
+                IndexMetaFileWriter.addRowGroup(writerPtr, (int) spec[0], rows, chunksPtr, chunksSize, 3);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -1019,7 +1091,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 putChunk(chunksPtr, 2, CODEC_ZSTD, 0,
                         STAT_MIN_PRESENT | STAT_MIN_EXACT | STAT_MAX_PRESENT | STAT_MAX_EXACT,
                         0, 64, 0, 0, 0, 0, 0, 0);
-                IndexMetaFileWriter.addRowGroup(writerPtr, firstKeys[i], 64, chunksPtr, 3);
+                IndexMetaFileWriter.addRowGroup(writerPtr, firstKeys[i], 64, chunksPtr, chunksSize, 3);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }

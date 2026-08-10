@@ -204,6 +204,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addOutOfLineSta
 /// `chunk_count` column chunks read from `chunks_ptr`. The buffer holds
 /// `chunk_count` consecutive 64-byte `ColumnChunkRaw` structures in on-disk
 /// layout, so a row group costs one JNI transition regardless of schema width.
+///
+/// `chunks_len` is the buffer's own byte length, and `chunk_count` chunks must
+/// account for exactly that many bytes. Without it the count alone decides how
+/// far the loop below reads, and a caller that miscounts produces an
+/// out-of-bounds native read that nothing on either side can detect.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     mut env: JNIEnv,
@@ -212,6 +217,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     first_key: jint,
     num_rows: jlong,
     chunks_ptr: *const u8,
+    chunks_len: jlong,
     chunk_count: jint,
 ) {
     let env = &mut env;
@@ -227,11 +233,20 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
         );
         return err.into_cairo_exception().throw(env);
     }
-    debug_assert!(
-        (chunk_count as usize) * COLUMN_CHUNK_SIZE <= 1 << 30,
-        "implausible column chunk buffer length: {}",
-        chunk_count
-    );
+    // chunk_count is non-negative by the check above, so this product is exact
+    // in i64 and the comparison bounds the reads that follow by the buffer the
+    // caller actually allocated.
+    let expected_len = chunk_count as i64 * COLUMN_CHUNK_SIZE as i64;
+    if chunks_len != expected_len {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "column chunk buffer length {} does not match {} chunks of {} bytes",
+            chunks_len,
+            chunk_count,
+            COLUMN_CHUNK_SIZE
+        );
+        return err.into_cairo_exception().throw(env);
+    }
     let mut block = RowGroupBlockBuilder::new(chunk_count as u32);
     block.set_num_rows(num_rows as u64);
     let chunks = chunks_ptr as *const ColumnChunkRaw;
