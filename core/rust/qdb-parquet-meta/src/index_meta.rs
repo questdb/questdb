@@ -190,7 +190,7 @@ impl IndexMetaWriter {
 }
 
 fn align_to_8(buf: &mut Vec<u8>) {
-    while buf.len() % 8 != 0 {
+    while !buf.len().is_multiple_of(8) {
         buf.push(0);
     }
 }
@@ -218,7 +218,8 @@ impl<'a> IndexMetaReader<'a> {
             return Err(parquet_meta_err!(ParquetMetaErrorKind::Truncated));
         }
         let im_file_size = read_u64(data, OFF_IM_FILE_SIZE);
-        if im_file_size as usize > data.len() || (im_file_size as usize) < IM_HEADER_SIZE + IM_TRAILER_SIZE
+        if im_file_size as usize > data.len()
+            || (im_file_size as usize) < IM_HEADER_SIZE + IM_TRAILER_SIZE
         {
             return Err(parquet_meta_err!(ParquetMetaErrorKind::Truncated));
         }
