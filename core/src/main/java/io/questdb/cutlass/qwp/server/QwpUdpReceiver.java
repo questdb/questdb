@@ -430,12 +430,15 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     // refusal from applyPendingStructureChanges, and a stale
                     // entry whose buffered rows could not be salvaged, both
                     // surface here the same way. There is no ack on the UDP
-                    // path, so drop the whole datagram and heal on the next
-                    // one. Counted separately from parse errors.
+                    // path, so count the datagram dropped and heal on the next
+                    // one. Rows already appended for earlier table blocks stay
+                    // buffered and commit through the normal paths, so keep
+                    // their state bits alongside DATAGRAM_DROPPED. Counted
+                    // separately from parse errors.
                     droppedStaleTableCount++;
                     LOG.error().$("dropping datagram, table update details unavailable: ")
                             .$(e.getFlyweightMessage()).$();
-                    return DATAGRAM_DROPPED;
+                    return datagramState | DATAGRAM_DROPPED;
                 }
                 if (tud == null) {
                     LOG.error().$("failed to get table update details for: ").$(tableBlock.getTableName()).$();
@@ -455,7 +458,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         } catch (Throwable t) {
             droppedParseErrorCount++;
             LOG.error().$("datagram processing error: ").$(t.getMessage()).$();
-            return DATAGRAM_DROPPED;
+            // Keep the bits earlier table blocks accumulated: their appended
+            // rows stay buffered and must still count toward the forced-commit
+            // threshold.
+            return datagramState | DATAGRAM_DROPPED;
         }
         return datagramState;
     }
