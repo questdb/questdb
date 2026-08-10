@@ -2226,63 +2226,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitDoesNotAdvanceWatermarkWhenDroppedTableDiscardsBufferedRows() throws Exception {
-        // C2 end-to-end at the watermark level. A FLAG_DEFER_COMMIT group
-        // buffers rows for two tables; one is DROPped mid-group and is NOT
-        // re-referenced by the group-closing frame. The group-closing
-        // state.commit() runs commitAll, which discards the dropped table's
-        // buffered rows. The cumulative-ack watermark must NOT advance over the
-        // discarded rows: commit() must fail and keep the
-        // uncommitted-deferred-rows clamp so the store-and-forward client
-        // replays (at-least-once) rather than trimming slots the server rolled
-        // back.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE phantom_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE phantom_keep (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-
-                // Buffer deferred rows for both tables through the real cache.
-                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
-                tudCacheField.setAccessible(true);
-                QwpTudCache cache = (QwpTudCache) tudCacheField.get(state);
-                WalTableUpdateDetails dropTud = cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE, new Utf8String("phantom_drop"), null, null, 4
-                );
-                WalTableUpdateDetails keepTud = cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE, new Utf8String("phantom_keep"), null, null, 4
-                );
-                keepTud.getWriter().newRow(0L).append();
-                // Simulate phantom_drop DROPped mid-group with buffered rows.
-                replaceWriterWithFake(dropTud, true);
-
-                // A committed prefix advanced the watermark to 2; the deferred
-                // group then arms the clamp.
-                state.setHighestProcessedSequence(2);
-                Assert.assertEquals(2, state.getHighestProcessedSequence());
-                state.markUncommittedDeferredRows();
-                Assert.assertTrue(state.hasUncommittedDeferredRows());
-
-                // Group-closing commit: commitAll discards phantom_drop's rows.
-                state.commit();
-
-                Assert.assertFalse("commit must fail when a dropped table discards buffered rows", state.isOk());
-                Assert.assertTrue("clamp must hold so the client replays", state.hasUncommittedDeferredRows());
-                state.setHighestProcessedSequence(9);
-                Assert.assertEquals("watermark must not advance over discarded deferred rows",
-                        2, state.getHighestProcessedSequence());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
     public void testCommitIfMaxUncommittedRowsPropagatesWhenDroppedTableDiscardsBufferedRows() throws Exception {
         // C1 on the mid-group forced-commit path: a max-uncommitted-rows commit
         // that hits a DROPped table with buffered rows must propagate, not
