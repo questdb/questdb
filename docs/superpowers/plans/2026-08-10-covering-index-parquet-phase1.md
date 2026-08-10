@@ -17,7 +17,8 @@
 - Log messages must be **strictly ASCII**.
 - Tests use `assertMemoryLeak()` unless they are narrow unit tests that allocate no native memory.
 - Underscore thousands separators in numbers with 5 or more digits (`100_000`).
-- Rust: the crate lives in `core/rust/qdbr/`; `qdb-parquet-meta` is a sibling crate. Before any Rust task is complete, all four of `cargo fmt`, `cargo check --all-targets`, `cargo clippy --all-targets`, `cargo test --lib` must pass with **zero errors and zero warnings**.
+- Rust: the crate lives in `core/rust/qdbr/`; `qdb-parquet-meta` is a **sibling package, not a workspace member**. Before any Rust task is complete, all four of `cargo fmt`, `cargo check --all-targets`, `cargo clippy --all-targets`, `cargo test --lib` must pass with **zero errors and zero warnings**.
+- **A bare `cargo test --lib` from `core/rust/qdbr` runs only qdbr's own tests — it executes zero tests from `qdb-parquet-meta`.** Any task that adds tests to `qdb-parquet-meta` must additionally run `cargo test --lib -p qdb-parquet-meta` and report that output; the bare run alone is not evidence for that crate.
 - The `_im` format is little-endian only, matching `_pm` (`core/rust/qdb-parquet-meta/src/types.rs` has `compile_error!` on big-endian targets).
 - Do **not** run multiple `mvn test` commands in parallel.
 - All Java files carry the standard QuestDB Apache-2.0 header comment; copy it verbatim from a neighbouring file in the same package.
@@ -1293,10 +1294,14 @@ Run once all four tasks are committed:
 
 ```bash
 cd ~/claude/wt/pidx-parquet/core/rust/qdbr
-cargo fmt && cargo check --all-targets && cargo clippy --all-targets && cargo test --lib
+cargo fmt && cargo check --all-targets && cargo clippy --all-targets
+cargo test --lib
+cargo test --lib -p qdb-parquet-meta
 cd ~/claude/wt/pidx-parquet
 mvn -q -pl core -Dtest='PropServerConfigurationTest,IndexMetaFileReaderTest,ParquetRowGroupFlushTest' test
 mvn -q -pl core -Dtest='PostingIndex*Test,Covering*Test' test
 ```
+
+Both `cargo test --lib` invocations are required: the bare one covers `qdbr`, the `-p qdb-parquet-meta` one covers the `_im` format. Neither runs the other's tests.
 
 The second Java command is the regression gate: Phase 1 changes no existing behaviour, so the whole posting and covering suite must stay green. If it does not, the cause is in Phase 1's diff, not a pre-existing flake — confirm by re-running the same command on `origin/master` before concluding otherwise.
