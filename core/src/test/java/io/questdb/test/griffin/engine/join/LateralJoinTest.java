@@ -2585,6 +2585,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t1\t10
                             3\t0\tnull
                             """);
+
+            assertQuery("""
+                    SELECT o.id, sub.mx, sub.tag
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT max(qty) AS mx, 'T' AS tag
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tmx\ttag
+                            1\t10\tT
+                            3\tnull\tT
+                            """);
         });
     }
 
