@@ -36,6 +36,7 @@ import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -57,10 +58,7 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.log.HttpLogRecordUtf8Sink.CRLF;
 
@@ -264,16 +262,20 @@ public class LogAlertSocketTest {
     }
 
     @Test
-    public void testFailOverSingleHostWaitsReconnectDelay() throws Exception {
+    public void testFailOverSingleHostRequestsReconnectDelay() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long reconnectDelayNanos = TimeUnit.MILLISECONDS.toNanos(200);
+            final AtomicInteger connectAttempts = new AtomicInteger();
+            final StringSink reconnectEvents = new StringSink();
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
                 public int connectAddrInfo(long fd, long pAddrInfo) {
+                    connectAttempts.incrementAndGet();
+                    reconnectEvents.put("connect;");
                     return -1;
                 }
             };
-            final LogAlertSocket alertSkt = new LogAlertSocket(
+            try (LogAlertSocket alertSkt = new LogAlertSocket(
                     nf,
                     "localhost:1234",
                     LogAlertSocket.IN_BUFFER_SIZE,
@@ -282,50 +284,30 @@ public class LogAlertSocketTest {
                     LogAlertSocket.DEFAULT_HOST,
                     LogAlertSocket.DEFAULT_PORT,
                     LOG
-            );
-            Thread thread = null;
-            try {
+            )) {
+                final LongList reconnectSleeps = new LongList();
+                alertSkt.setReconnectSleeper(millis -> {
+                    reconnectSleeps.add(millis);
+                    reconnectEvents.put("sleep;");
+                });
                 final HttpLogRecordUtf8Sink builder = new HttpLogRecordUtf8Sink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
                 builder.rewindToMark().put("Something").put(CRLF).$();
 
-                AtomicBoolean hasSent = new AtomicBoolean(true);
-                AtomicBoolean isInterrupted = new AtomicBoolean();
-                AtomicLong elapsedNanos = new AtomicLong();
-                AtomicReference<Throwable> error = new AtomicReference<>();
-                // A bounded helper thread makes a broken nanos-to-millis conversion fail
-                // the test instead of hanging the fork for multiple days.
-                thread = new Thread(() -> {
-                    Thread.currentThread().interrupt();
-                    long start = System.nanoTime();
-                    try {
-                        hasSent.set(alertSkt.send(builder.size()));
-                    } catch (Throwable th) {
-                        error.set(th);
-                    } finally {
-                        elapsedNanos.set(System.nanoTime() - start);
-                        isInterrupted.set(Thread.currentThread().isInterrupted());
-                    }
-                });
-                thread.setDaemon(true);
-                thread.start();
-                thread.join(TimeUnit.SECONDS.toMillis(10));
-
-                Assert.assertFalse(thread.isAlive());
-                Assert.assertNull(error.get());
-                Assert.assertFalse(hasSent.get());
-                Assert.assertTrue(isInterrupted.get());
-                // single host, two attempts -> the reconnect delay is paid twice
-                Assert.assertTrue(
-                        "send waited only " + TimeUnit.NANOSECONDS.toMillis(elapsedNanos.get()) + "ms across reconnects",
-                        elapsedNanos.get() >= 2 * reconnectDelayNanos
-                );
-            } finally {
-                // Closing the native buffers while send() is still using them can crash the JVM.
-                if (thread == null || !thread.isAlive()) {
-                    alertSkt.close();
+                Thread.currentThread().interrupt();
+                try {
+                    Assert.assertFalse(alertSkt.send(builder.size()));
+                    Assert.assertTrue(Thread.currentThread().isInterrupted());
+                } finally {
+                    Thread.interrupted();
                 }
+
+                Assert.assertEquals(2, reconnectSleeps.size());
+                Assert.assertEquals(2, connectAttempts.get());
+                Assert.assertEquals(200, reconnectSleeps.getQuick(0));
+                Assert.assertEquals(200, reconnectSleeps.getQuick(1));
+                TestUtils.assertEquals("sleep;connect;sleep;connect;", reconnectEvents);
             }
         });
     }

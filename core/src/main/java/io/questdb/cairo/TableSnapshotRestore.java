@@ -66,6 +66,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -89,6 +91,12 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
+    @TestOnly
+    @Nullable
+    private volatile Runnable beforeFutureGetHook;
+    @TestOnly
+    @Nullable
+    private volatile Runnable futureGetInterruptedHook;
     private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
@@ -133,6 +141,12 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     public void abortParallelTasks() {
         abortParallelTasks.set(true);
+    }
+
+    @TestOnly
+    public void setFutureGetHooks(@Nullable Runnable beforeGetHook, @Nullable Runnable interruptedHook) {
+        this.beforeFutureGetHook = beforeGetHook;
+        this.futureGetInterruptedHook = interruptedHook;
     }
 
     @Override
@@ -224,7 +238,12 @@ public class TableSnapshotRestore implements QuietCloseable {
         String firstErrorMessage = null;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
-                futures.getQuick(i).get();
+                final Future<?> future = futures.getQuick(i);
+                final Runnable hook = beforeFutureGetHook;
+                if (hook != null) {
+                    hook.run();
+                }
+                future.get();
             } catch (InterruptedException e) {
                 // Keep draining: abandoning a running task risks a use-after-free
                 // on the shared readers. get() cleared the interrupt status, so
@@ -232,6 +251,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                 abortParallelTasks.set(true);
                 isInterrupted = true;
                 isWaitInterrupted = true;
+                final Runnable hook = futureGetInterruptedHook;
+                if (hook != null) {
+                    hook.run();
+                }
                 //noinspection AssignmentToForLoopParameter
                 i--;
             } catch (Throwable e) {

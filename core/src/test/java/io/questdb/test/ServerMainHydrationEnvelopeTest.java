@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.wal.QdbrWalLocker;
+import io.questdb.lifecycle.Component;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -41,6 +42,7 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Regression test for #079 (Phase 9 Cycle 2 Critical).
@@ -82,21 +84,7 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
             final SOCountDownLatch hydrationStarted = new SOCountDownLatch(1);
             final SOCountDownLatch releaseHydration = new SOCountDownLatch(1);
 
-            Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
-                @Override
-                public CairoEngine newCairoEngine() {
-                    CairoConfiguration cfg = getConfiguration().getCairoConfiguration();
-                    return new CairoEngine(cfg, new QdbrWalLocker(), true) {
-                        @Override
-                        public void hydrateRecentWriteTracker() {
-                            hydrationStarted.countDown();
-                            releaseHydration.await();
-                        }
-                    };
-                }
-            };
-
-            ServerMain serverMain = new ServerMain(bootstrap);
+            ServerMain serverMain = newServerMainWithBlockedHydration(hydrationStarted, releaseHydration);
             Thread awaitStartupThread = null;
             try {
                 serverMain.start(false);
@@ -129,6 +117,92 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                 releaseHydration.countDown();
                 if (awaitStartupThread != null) {
                     awaitStartupThread.join(TimeUnit.SECONDS.toMillis(10));
+                }
+                serverMain.close();
+            }
+        });
+    }
+
+    @Test
+    public void hydrationStopWaitsForHydrationAndConsumesInterrupts() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean hasStopReturned = new AtomicBoolean();
+            final AtomicBoolean isInterruptedAfterStop = new AtomicBoolean(true);
+            final AtomicReference<Throwable> stopError = new AtomicReference<>();
+            final AtomicReference<Thread> viewCompilerThread = new AtomicReference<>();
+            final SOCountDownLatch compileViewsFinished = new SOCountDownLatch(1);
+            final SOCountDownLatch hydrationStarted = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseHydration = new SOCountDownLatch(1);
+            final SOCountDownLatch stopStarted = new SOCountDownLatch(1);
+
+            ServerMain serverMain = newServerMainWithBlockedHydration(
+                    hydrationStarted,
+                    releaseHydration,
+                    compileViewsFinished,
+                    viewCompilerThread
+            );
+            Thread stopThread = null;
+            try {
+                serverMain.start(false);
+                Assert.assertTrue(
+                        "metadata hydration did not start",
+                        hydrationStarted.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                Assert.assertTrue(
+                        "view compilation did not finish",
+                        compileViewsFinished.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                final Thread compilerThread = viewCompilerThread.get();
+                Assert.assertNotNull("view compiler thread was not captured", compilerThread);
+                compilerThread.join(TimeUnit.SECONDS.toMillis(5));
+                Assert.assertFalse("view compiler thread did not stop", compilerThread.isAlive());
+
+                final Component hydration = serverMain.getOrchestrator().getComponent("hydration");
+                stopThread = new Thread(() -> {
+                    Thread.currentThread().interrupt();
+                    stopStarted.countDown();
+                    try {
+                        hydration.stop();
+                    } catch (Throwable th) {
+                        stopError.set(th);
+                    } finally {
+                        isInterruptedAfterStop.set(Thread.currentThread().isInterrupted());
+                        hasStopReturned.set(true);
+                    }
+                }, "stop-hydration-test");
+                stopThread.setDaemon(true);
+                stopThread.start();
+
+                Assert.assertTrue(
+                        "hydration stop thread did not start",
+                        stopStarted.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                final Thread thread = stopThread;
+                TestUtils.assertEventually(
+                        () -> Assert.assertFalse("hydration stop did not consume the initial interrupt", thread.isInterrupted()),
+                        5
+                );
+                Assert.assertFalse("hydration stop returned before hydration completed", hasStopReturned.get());
+
+                thread.interrupt();
+                TestUtils.assertEventually(
+                        () -> Assert.assertFalse("hydration stop did not consume the mid-join interrupt", thread.isInterrupted()),
+                        5
+                );
+                Assert.assertFalse("hydration stop returned after a mid-join interrupt", hasStopReturned.get());
+
+                releaseHydration.countDown();
+                stopThread.join(TimeUnit.SECONDS.toMillis(10));
+
+                Assert.assertFalse("hydration stop thread did not stop", stopThread.isAlive());
+                Assert.assertNull(stopError.get());
+                Assert.assertTrue("hydration stop did not return", hasStopReturned.get());
+                Assert.assertFalse("hydration stop restored interrupt status", isInterruptedAfterStop.get());
+            } finally {
+                releaseHydration.countDown();
+                if (stopThread != null) {
+                    stopThread.interrupt();
+                    stopThread.join(TimeUnit.SECONDS.toMillis(10));
                 }
                 serverMain.close();
             }
@@ -173,5 +247,52 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                 );
             }
         });
+    }
+
+    private ServerMain newServerMainWithBlockedHydration(
+            SOCountDownLatch hydrationStarted,
+            SOCountDownLatch releaseHydration
+    ) {
+        return newServerMainWithBlockedHydration(hydrationStarted, releaseHydration, null, null);
+    }
+
+    private ServerMain newServerMainWithBlockedHydration(
+            SOCountDownLatch hydrationStarted,
+            SOCountDownLatch releaseHydration,
+            SOCountDownLatch compileViewsFinished,
+            AtomicReference<Thread> viewCompilerThread
+    ) {
+        Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
+            @Override
+            public CairoEngine newCairoEngine() {
+                CairoConfiguration cfg = getConfiguration().getCairoConfiguration();
+                return new CairoEngine(cfg, new QdbrWalLocker(), true) {
+                    @Override
+                    public void hydrateRecentWriteTracker() {
+                        hydrationStarted.countDown();
+                        releaseHydration.await();
+                    }
+
+                    @Override
+                    public ViewCompilerExecutionContext createViewCompilerContext(int workerCount) {
+                        if (compileViewsFinished == null) {
+                            return super.createViewCompilerContext(workerCount);
+                        }
+                        viewCompilerThread.set(Thread.currentThread());
+                        return new ViewCompilerExecutionContext(this, workerCount) {
+                            @Override
+                            public void close() {
+                                try {
+                                    super.close();
+                                } finally {
+                                    compileViewsFinished.countDown();
+                                }
+                            }
+                        };
+                    }
+                };
+            }
+        };
+        return new ServerMain(bootstrap);
     }
 }

@@ -446,6 +446,76 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testLogSequenceReleasePreservesRenderingFailureWhenEolFails() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                    consumerSequence.set(seq);
+                    return new LogWriter() {
+                        @Override
+                        public void bindProperties(LogFactory factory) {
+                        }
+
+                        @Override
+                        public boolean run(@NotNull WorkerContext workerContext) {
+                            return false;
+                        }
+                    };
+                }));
+                factory.bind();
+
+                final Log logger = factory.create("x");
+                final SCSequence sequence = consumerSequence.get();
+
+                final RuntimeException objectFailure = new RuntimeException("object rendering failure");
+                assertRenderingFailureWithFailingEol(
+                        logger.info(),
+                        sequence,
+                        0,
+                        objectFailure,
+                        record -> record.$(new Object() {
+                            @Override
+                            public String toString() {
+                                throw objectFailure;
+                            }
+                        })
+                );
+
+                final RuntimeException sinkableFailure = new RuntimeException("sinkable rendering failure");
+                assertRenderingFailureWithFailingEol(
+                        logger.info(),
+                        sequence,
+                        1,
+                        sinkableFailure,
+                        record -> record.$((Sinkable) sink -> {
+                            throw sinkableFailure;
+                        })
+                );
+
+                final RuntimeException throwableFailure = new RuntimeException("throwable rendering failure");
+                assertRenderingFailureWithFailingEol(
+                        logger.info(),
+                        sequence,
+                        2,
+                        throwableFailure,
+                        record -> record.$(new Throwable() {
+                            @Override
+                            public String getMessage() {
+                                throw throwableFailure;
+                            }
+                        })
+                );
+
+                logger.info().$("after failures").$();
+                final long cursor = sequence.next();
+                Assert.assertEquals(3, cursor);
+                sequence.done(cursor);
+            }
+        });
+    }
+
+    @Test
     public void testLogSequenceIsReleasedWhenAbandonedErrorPrintingThrows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
@@ -1536,6 +1606,60 @@ public class LogFactoryTest {
         r.$();
     }
 
+    private static void assertRenderingFailureWithFailingEol(
+            LogRecord record,
+            SCSequence sequence,
+            long expectedCursor,
+            RuntimeException renderingFailure,
+            LogOperation operation
+    ) throws Exception {
+        final Class<?> recordClass = record.getClass();
+        final Field sinkField = recordClass.getDeclaredField("sink");
+        sinkField.setAccessible(true);
+        final Object originalSink = sinkField.get(record);
+        final Field inProgressField = recordClass.getDeclaredField("isLogRecordInProgress");
+        inProgressField.setAccessible(true);
+        final RuntimeException eolFailure = new RuntimeException("EOL failure at cursor " + expectedCursor);
+        final AtomicInteger eolCallCount = new AtomicInteger();
+
+        try {
+            sinkField.set(record, new LogRecordUtf8Sink(0, 0) {
+                @Override
+                public Utf8Sink putAscii(CharSequence cs) {
+                    return this;
+                }
+
+                @Override
+                public Utf8Sink putEOL() {
+                    eolCallCount.incrementAndGet();
+                    throw eolFailure;
+                }
+            });
+
+            try {
+                operation.run(record);
+                Assert.fail("expected log rendering to fail");
+            } catch (RuntimeException e) {
+                Assert.assertSame(renderingFailure, e);
+                Assert.assertArrayEquals(new Throwable[]{eolFailure}, e.getSuppressed());
+            }
+
+            Assert.assertFalse(inProgressField.getBoolean(record));
+            record.$();
+            record.I$();
+            Assert.assertEquals(1, eolCallCount.get());
+
+            final long cursor = sequence.next();
+            Assert.assertEquals(expectedCursor, cursor);
+            sequence.done(cursor);
+        } finally {
+            sinkField.set(record, originalSink);
+            if (inProgressField.getBoolean(record)) {
+                record.$();
+            }
+        }
+    }
+
     private static Log getLogger() {
         try {
             final Field field = QueryProgress.class.getDeclaredField("LOG");
@@ -1758,6 +1882,11 @@ public class LogFactoryTest {
         Assert.assertTrue(fileCount > 0);
         Assert.assertEquals(expectedFileCount, Files.getOpenFileCount());
         Assert.assertEquals(expectedMemUsage, Unsafe.getMemUsed());
+    }
+
+    @FunctionalInterface
+    private interface LogOperation {
+        void run(LogRecord record);
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {

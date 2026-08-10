@@ -36,6 +36,7 @@ import org.junit.Test;
 
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,6 +65,55 @@ public class TimerShardsTest {
         } finally {
             shards.shutdown();
         }
+    }
+
+    @Test
+    public void testConcurrentHaltAndShutdownSerializeJoin() throws Exception {
+        final TimerShards shards = new TimerShards(1, "test-concurrent-stop", LOG);
+        final CyclicBarrier startBarrier = new CyclicBarrier(3);
+        final AtomicInteger joinCalls = new AtomicInteger();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        shards.setJoinThreadsHook(() -> {
+            joinCalls.incrementAndGet();
+            Assert.assertTrue("join must hold the TimerShards monitor", Thread.holdsLock(shards));
+        });
+
+        final Thread haltThread = new Thread(() -> {
+            try {
+                startBarrier.await(5, TimeUnit.SECONDS);
+                shards.halt();
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        }, "test-concurrent-halt");
+        final Thread shutdownThread = new Thread(() -> {
+            try {
+                startBarrier.await(5, TimeUnit.SECONDS);
+                shards.shutdown();
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        }, "test-concurrent-shutdown");
+
+        try {
+            haltThread.start();
+            shutdownThread.start();
+            startBarrier.await(5, TimeUnit.SECONDS);
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
+        } finally {
+            shards.setJoinThreadsHook(null);
+            haltThread.interrupt();
+            shutdownThread.interrupt();
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
+            shards.halt();
+        }
+
+        Assert.assertFalse("halt thread did not stop", haltThread.isAlive());
+        Assert.assertFalse("shutdown thread did not stop", shutdownThread.isAlive());
+        Assert.assertNull("concurrent lifecycle call failed", failure.get());
+        Assert.assertEquals(2, joinCalls.get());
     }
 
     @Test

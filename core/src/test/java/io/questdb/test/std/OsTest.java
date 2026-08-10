@@ -32,6 +32,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -178,32 +179,49 @@ public class OsTest {
 
     @Test
     public void testSleepEnds() throws Exception {
-        CyclicBarrier barrier = new CyclicBarrier(2);
+        final int sleepInProgress = 1;
+        final int sleepDone = 2;
+        AtomicBoolean isInterruptedAfterSleep = new AtomicBoolean();
         AtomicLong sleepNanos = new AtomicLong();
+        AtomicInteger sleepPhase = new AtomicInteger();
         AtomicReference<Throwable> error = new AtomicReference<>();
         Thread t = new Thread(() -> {
             try {
-                TestUtils.await(barrier);
                 long start = System.nanoTime();
+                sleepPhase.set(sleepInProgress);
                 try {
                     Os.sleep(1000);
                 } finally {
+                    isInterruptedAfterSleep.set(Thread.currentThread().isInterrupted());
                     sleepNanos.set(System.nanoTime() - start);
+                    sleepPhase.set(sleepDone);
                 }
             } catch (Throwable th) {
                 error.set(th);
             }
-        });
+        }, "os-sleep-test");
 
         t.setDaemon(true);
         t.start();
 
-        TestUtils.await(barrier);
-        t.interrupt();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (sleepPhase.get() == 0 && System.nanoTime() < deadline) {
+            Os.pause();
+        }
+        Assert.assertEquals("sleeper did not enter Os.sleep", sleepInProgress, sleepPhase.get());
+
+        long interruptCount = 0;
+        while (sleepPhase.get() == sleepInProgress && System.nanoTime() < deadline) {
+            t.interrupt();
+            interruptCount++;
+            Os.pause();
+        }
         t.join(TimeUnit.SECONDS.toMillis(10));
 
         Assert.assertFalse(t.isAlive());
         Assert.assertNull(error.get());
+        assertTrue("sleeper was not interrupted", interruptCount > 0);
+        assertTrue("sleep() cleared the interrupt flag", isInterruptedAfterSleep.get());
         long sleepTimeMs = TimeUnit.NANOSECONDS.toMillis(sleepNanos.get());
         assertTrue("slept only " + sleepTimeMs + "ms", sleepTimeMs >= 1000);
     }

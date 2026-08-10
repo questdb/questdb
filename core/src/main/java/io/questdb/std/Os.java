@@ -268,6 +268,14 @@ public final class Os {
     }
 
     /**
+     * Parks like {@link #park()}, recording {@code blocker} for diagnostics and
+     * deterministic observation via {@link LockSupport#getBlocker(Thread)}.
+     */
+    public static void park(@NotNull Object blocker) {
+        LockSupport.parkNanos(blocker, PARK_NANOS_MAX);
+    }
+
+    /**
      * Yields the CPU to another runnable thread. Does not clear the calling
      * thread's interrupt flag.
      */

@@ -105,6 +105,7 @@ public class ConcurrentHashMapTreeBinTest {
         TestUtils.assertInterruptedWaitDoesNotSpin(
                 "tree-bin contended lock",
                 operation,
+                treeBin,
                 () -> {
                     final Object waiter = Unsafe.getObjectVolatile(treeBin, waiterOffset);
                     if (!(waiter instanceof Thread waiterThread)) {

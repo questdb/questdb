@@ -67,7 +67,7 @@ public final class SimpleWaitingLock {
                         return true;
                     }
                     // CAS succeeded, but there was an owner before -> we are a waiter
-                    LockSupport.parkNanos(remainingNanos);
+                    LockSupport.parkNanos(this, remainingNanos);
                     // Consume interrupts so the next park can block; restore the flag on exit.
                     isInterrupted |= Thread.interrupted();
                 }

@@ -38,7 +38,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
+import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
@@ -58,23 +60,27 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         for (ThreadInfo threadInfo : threadInfos) {
             // it turns out it is possible to have null "infos"
             if (threadInfo != null) {
-                final LogRecord record = LOG.advisory();
-                try {
-                    final Thread.State state = threadInfo.getThreadState();
-                    record.$('\n');
-                    record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-                    final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-                    for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                        record.$("\n\t\tat ").$(stackTraceElement);
-                    }
-                    record.$("\n\n");
-                } catch (Throwable th) {
-                    System.err.println("error dumping threads");
-                    th.printStackTrace(System.err);
-                } finally {
-                    record.$();
-                }
+                dumpThreadStack(threadInfo, LOG.advisory(), System.err);
             }
+        }
+    }
+
+    @TestOnly
+    public static void dumpThreadStack(ThreadInfo threadInfo, LogRecord record, PrintStream errorStream) {
+        try {
+            final Thread.State state = threadInfo.getThreadState();
+            record.$('\n');
+            record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+            final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+            for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                record.$("\n\t\tat ").$(stackTraceElement);
+            }
+            record.$("\n\n");
+        } catch (Throwable th) {
+            errorStream.println("error dumping threads");
+            th.printStackTrace(errorStream);
+        } finally {
+            record.$();
         }
     }
 

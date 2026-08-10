@@ -36,11 +36,13 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.function.LongConsumer;
 
 public class LogAlertSocket implements Closeable {
 
@@ -64,6 +66,7 @@ public class LogAlertSocket implements Closeable {
     private final long reconnectDelayMillis;
     private final Runnable onReconnectRef = this::onReconnect;
     private final StringSink responseSink = new StringSink();
+    private LongConsumer reconnectSleeper = Os::sleep;
     private long addressInfoAddr = -1; // tcp/ip host:port address
     private int alertHostIdx;
     private int alertHostsCount;
@@ -191,6 +194,11 @@ public class LogAlertSocket implements Closeable {
     @TestOnly
     public long getReconnectDelayMillis() {
         return reconnectDelayMillis;
+    }
+
+    @TestOnly
+    public void setReconnectSleeper(@NotNull LongConsumer reconnectSleeper) {
+        this.reconnectSleeper = reconnectSleeper;
     }
 
     @TestOnly
@@ -382,7 +390,7 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void onReconnect() {
-        Os.sleep(reconnectDelayMillis);
+        reconnectSleeper.accept(reconnectDelayMillis);
     }
 
     private void parseAlertTargets() {

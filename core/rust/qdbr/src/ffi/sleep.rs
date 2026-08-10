@@ -47,6 +47,8 @@ const MAX_SLEEP_MILLIS: u64 = u32::MAX as u64 - 1;
 #[no_mangle]
 pub extern "C" fn qdb_sleep_millis(millis: i64) {
     if millis > 0 {
+        // Rust retries EINTR on Unix. Its rare non-EINTR failure policy is
+        // intentionally retained; a panic here would abort across this C ABI.
         sleep_millis(millis as u64, thread::sleep);
     }
 }

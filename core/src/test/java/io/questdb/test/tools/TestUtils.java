@@ -898,18 +898,20 @@ public final class TestUtils {
     public static void assertInterruptedWaitDoesNotSpin(
             String operation,
             Runnable wait,
+            @NotNull Object waitBlocker,
             Runnable release
     ) throws Exception {
-        assertInterruptedWaitDoesNotSpin(operation, wait, null, release);
+        assertInterruptedWaitDoesNotSpin(operation, wait, waitBlocker, null, release);
     }
 
     public static void assertInterruptedWaitDoesNotSpin(
             String operation,
             Runnable wait,
+            @NotNull Object waitBlocker,
             @Nullable EventualCode waitReady,
             Runnable release
     ) throws Exception {
-        assertWaitDoesNotSpin(operation, wait, waitReady, release, true);
+        assertWaitDoesNotSpin(operation, wait, waitBlocker, waitReady, release, true);
     }
 
     public static void assertInterruptedWaitTimesOutWithoutSpin(
@@ -945,9 +947,10 @@ public final class TestUtils {
     public static void assertNonInterruptedWaitDoesNotSpin(
             String operation,
             Runnable wait,
+            @NotNull Object waitBlocker,
             Runnable release
     ) throws Exception {
-        assertWaitDoesNotSpin(operation, wait, null, release, false);
+        assertWaitDoesNotSpin(operation, wait, waitBlocker, null, release, false);
     }
 
     /**
@@ -2748,6 +2751,7 @@ public final class TestUtils {
     private static void assertWaitDoesNotSpin(
             String operation,
             Runnable wait,
+            @NotNull Object waitBlocker,
             @Nullable EventualCode waitReady,
             Runnable release,
             boolean isInitiallyInterrupted
@@ -2757,6 +2761,7 @@ public final class TestUtils {
                     scope.getBean(),
                     operation,
                     wait,
+                    waitBlocker,
                     waitReady,
                     release,
                     isInitiallyInterrupted
@@ -2768,6 +2773,7 @@ public final class TestUtils {
             ThreadMXBean bean,
             String operation,
             Runnable wait,
+            @NotNull Object waitBlocker,
             @Nullable EventualCode waitReady,
             Runnable release,
             boolean isInitiallyInterrupted
@@ -2806,6 +2812,14 @@ public final class TestUtils {
             Assert.assertTrue(
                     operation + " waiter did not start",
                     waiterStarted.await(10, TimeUnit.SECONDS)
+            );
+            assertEventually(
+                    () -> Assert.assertSame(
+                            operation + " waiter did not enter the target park",
+                            waitBlocker,
+                            LockSupport.getBlocker(waiter)
+                    ),
+                    5
             );
             if (waitReady != null) {
                 assertEventually(waitReady, 5);

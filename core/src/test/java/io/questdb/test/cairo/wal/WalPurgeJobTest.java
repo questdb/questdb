@@ -31,7 +31,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Chars;
@@ -44,6 +46,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -759,6 +762,88 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLogicDoesNotRetryNativeUnlockWhenDiagnosticLoggingFails() throws Exception {
+        final AtomicBoolean failDiagnostic = new AtomicBoolean();
+        final AtomicInteger diagnosticAttempts = new AtomicInteger();
+        final AtomicInteger nativeUnlocks = new AtomicInteger();
+        final AtomicInteger unlockAttempts = new AtomicInteger();
+        final RuntimeException diagnosticFailure = new RuntimeException("diagnostic failure");
+        final TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false) {
+            @Override
+            public void toSink(CharSink<?> sink) {
+                if (failDiagnostic.get()) {
+                    diagnosticAttempts.incrementAndGet();
+                    throw diagnosticFailure;
+                }
+                super.toSink(sink);
+            }
+        };
+
+        class CountingWalLocker extends QdbrWalLocker {
+            private boolean locked;
+
+            public void forceUnlock(TableToken token, int walId) {
+                if (locked) {
+                    super.unlockPurge(token, walId);
+                    locked = false;
+                }
+            }
+
+            @Override
+            public int lockPurge(TableToken token, int walId) {
+                final int maxSegmentLocked = super.lockPurge(token, walId);
+                locked = true;
+                return maxSegmentLocked;
+            }
+
+            @Override
+            public void unlockPurge(TableToken token, int walId) {
+                unlockAttempts.incrementAndGet();
+                if (locked) {
+                    super.unlockPurge(token, walId);
+                    locked = false;
+                    nativeUnlocks.incrementAndGet();
+                }
+            }
+        }
+
+        final WalLocker originalWalLocker = engine.getWalLocker();
+        try (CountingWalLocker countingWalLocker = new CountingWalLocker()) {
+            engine.setWalLocker(countingWalLocker);
+            try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                final Field tableTokenField = WalPurgeJob.class.getDeclaredField("tableToken");
+                tableTokenField.setAccessible(true);
+                tableTokenField.set(job, tableToken);
+                final Field logicField = WalPurgeJob.class.getDeclaredField("logic");
+                logicField.setAccessible(true);
+                final WalPurgeJob.Logic logic = (WalPurgeJob.Logic) logicField.get(job);
+
+                Assert.assertEquals(WalUtils.SEG_NONE_ID, countingWalLocker.lockPurge(tableToken, 1));
+                try {
+                    logic.reset(tableToken);
+                    logic.endWalTracking(logic.trackDiscoveredWal(1), 0, true);
+
+                    failDiagnostic.set(true);
+                    try {
+                        logic.run();
+                    } finally {
+                        failDiagnostic.set(false);
+                    }
+
+                    Assert.assertEquals(1, diagnosticAttempts.get());
+                    Assert.assertEquals(1, unlockAttempts.get());
+                    Assert.assertEquals(1, nativeUnlocks.get());
+                    Assert.assertFalse(countingWalLocker.isWalLocked(tableToken, 1));
+                } finally {
+                    countingWalLocker.forceUnlock(tableToken, 1);
+                }
+            } finally {
+                engine.setWalLocker(originalWalLocker);
+            }
+        }
+    }
+
+    @Test
     public void testLogicReleaseLocksHandlesTruncatedWalEntry() throws ReflectiveOperationException {
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
@@ -801,6 +886,36 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         Assert.assertEquals(2, deleter.unlocked.size());
         Assert.assertEquals(1, deleter.unlocked.getQuick(0));
         Assert.assertEquals(3, deleter.unlocked.getQuick(1));
+    }
+
+    @Test
+    public void testLogicReservesWalHeaderAtomically() throws NoSuchFieldException {
+        final OutOfMemoryError capacityFailure = new OutOfMemoryError("capacity failure");
+        final LongList discovered = new LongList(1) {
+            @Override
+            public void checkCapacity(int capacity) {
+                if (capacity == 3) {
+                    throw capacityFailure;
+                }
+                super.checkCapacity(capacity);
+            }
+        };
+        final TestDeleter deleter = new TestDeleter();
+        final WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        logic.reset(new TableToken("test", "test~1", null, 42, true, false, false));
+
+        final Field discoveredField = WalPurgeJob.Logic.class.getDeclaredField("discovered");
+        Unsafe.putObject(logic, Unsafe.objectFieldOffset(discoveredField), discovered);
+
+        final OutOfMemoryError error = Assert.assertThrows(
+                OutOfMemoryError.class,
+                () -> logic.trackDiscoveredWal(1)
+        );
+        Assert.assertSame(capacityFailure, error);
+        Assert.assertEquals(0, discovered.size());
+
+        logic.releaseLocks();
+        Assert.assertEquals(0, deleter.unlocked.size());
     }
 
     @Test
@@ -866,6 +981,29 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         Assert.assertEquals(1, deleter.events.size());
         Assert.assertEquals(new DeletionEvent(1), deleter.events.get(0));
+        Assert.assertEquals(2, deleter.unlocked.size());
+        Assert.assertEquals(1, deleter.unlocked.getQuick(0));
+        Assert.assertEquals(2, deleter.unlocked.getQuick(1));
+    }
+
+    @Test
+    public void testLogicReleasesLocksWhenSleepFails() {
+        final Error sleepFailure = new Error("sleep failed");
+        final TestDeleter deleter = new TestDeleter();
+        final WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 1) {
+            @Override
+            protected void sleepBeforeDelete() {
+                throw sleepFailure;
+            }
+        };
+        logic.reset(new TableToken("test", "test~1", null, 42, true, false, false));
+        logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
+        logic.endWalTracking(logic.trackDiscoveredWal(2), WalUtils.SEG_NONE_ID, true);
+
+        final Error error = Assert.assertThrows(Error.class, logic::run);
+
+        Assert.assertSame(sleepFailure, error);
+        Assert.assertEquals(0, deleter.events.size());
         Assert.assertEquals(2, deleter.unlocked.size());
         Assert.assertEquals(1, deleter.unlocked.getQuick(0));
         Assert.assertEquals(2, deleter.unlocked.getQuick(1));
@@ -1599,6 +1737,67 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             assertWalNotLocked(tableName, 1);
+        });
+    }
+
+    @Test
+    public void testTrackingFailurePreservesUnlockFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("""
+                    CREATE TABLE %s (
+                        x LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """.formatted(tableName));
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+
+            engine.releaseInactive();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            final OutOfMemoryError trackingFailure = new OutOfMemoryError("tracking failure");
+            final RuntimeException unlockFailure = new RuntimeException("unlock failure");
+            final AtomicBoolean failUnlock = new AtomicBoolean();
+            final AtomicInteger unlockAttempts = new AtomicInteger();
+            final WalLocker originalWalLocker = engine.getWalLocker();
+
+            try (QdbrWalLocker failingWalLocker = new QdbrWalLocker() {
+                @Override
+                public void unlockPurge(TableToken token, int walId) {
+                    super.unlockPurge(token, walId);
+                    if (failUnlock.compareAndSet(true, false)) {
+                        unlockAttempts.incrementAndGet();
+                        throw unlockFailure;
+                    }
+                }
+            }) {
+                engine.setWalLocker(failingWalLocker);
+                try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                    final WalPurgeJob.Logic failingLogic = new WalPurgeJob.Logic(new TestDeleter(), 0) {
+                        @Override
+                        public int trackDiscoveredWal(int walId) {
+                            throw trackingFailure;
+                        }
+                    };
+                    final Field logicField = WalPurgeJob.class.getDeclaredField("logic");
+                    Unsafe.putObject(job, Unsafe.objectFieldOffset(logicField), failingLogic);
+
+                    failUnlock.set(true);
+                    final OutOfMemoryError error;
+                    try {
+                        error = Assert.assertThrows(OutOfMemoryError.class, () -> job.drain(0));
+                    } finally {
+                        failUnlock.set(false);
+                    }
+
+                    Assert.assertSame(trackingFailure, error);
+                    Assert.assertEquals(1, error.getSuppressed().length);
+                    Assert.assertSame(unlockFailure, error.getSuppressed()[0]);
+                    Assert.assertEquals(1, unlockAttempts.get());
+                    Assert.assertFalse(failingWalLocker.isWalLocked(tableToken, 1));
+                } finally {
+                    engine.setWalLocker(originalWalLocker);
+                }
+            }
         });
     }
 

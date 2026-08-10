@@ -41,6 +41,7 @@ public class InterruptedWaitTest {
         TestUtils.assertInterruptedWaitDoesNotSpin(
                 "timed SOCountDownLatch await",
                 () -> Assert.assertTrue(latch.await(TimeUnit.SECONDS.toNanos(30))),
+                latch,
                 latch::countDown
         );
 
@@ -48,6 +49,7 @@ public class InterruptedWaitTest {
         TestUtils.assertNonInterruptedWaitDoesNotSpin(
                 "non-interrupted timed SOCountDownLatch await",
                 () -> Assert.assertTrue(nonInterruptedLatch.await(TimeUnit.SECONDS.toNanos(30))),
+                nonInterruptedLatch,
                 nonInterruptedLatch::countDown
         );
     }
@@ -55,12 +57,13 @@ public class InterruptedWaitTest {
     @Test
     public void testCountDownLatchUntimedAwait() throws Exception {
         final SOCountDownLatch latch = new SOCountDownLatch(1);
-        TestUtils.assertInterruptedWaitDoesNotSpin("SOCountDownLatch await", latch::await, latch::countDown);
+        TestUtils.assertInterruptedWaitDoesNotSpin("SOCountDownLatch await", latch::await, latch, latch::countDown);
 
         final SOCountDownLatch nonInterruptedLatch = new SOCountDownLatch(1);
         TestUtils.assertNonInterruptedWaitDoesNotSpin(
                 "non-interrupted SOCountDownLatch await",
                 nonInterruptedLatch::await,
+                nonInterruptedLatch,
                 nonInterruptedLatch::countDown
         );
     }
@@ -72,14 +75,14 @@ public class InterruptedWaitTest {
         TestUtils.assertInterruptedWaitDoesNotSpin("SimpleWaitingLock tryLock", () -> {
             Assert.assertTrue(lock.tryLock(30, TimeUnit.SECONDS));
             lock.unlock();
-        }, lock::unlock);
+        }, lock, lock::unlock);
 
         final SimpleWaitingLock nonInterruptedLock = new SimpleWaitingLock();
         Assert.assertTrue(nonInterruptedLock.tryLock());
         TestUtils.assertNonInterruptedWaitDoesNotSpin("non-interrupted SimpleWaitingLock tryLock", () -> {
             Assert.assertTrue(nonInterruptedLock.tryLock(30, TimeUnit.SECONDS));
             nonInterruptedLock.unlock();
-        }, nonInterruptedLock::unlock);
+        }, nonInterruptedLock, nonInterruptedLock::unlock);
     }
 
     @Test
@@ -88,6 +91,7 @@ public class InterruptedWaitTest {
         TestUtils.assertInterruptedWaitDoesNotSpin(
                 "SOUnboundedCountDownLatch await",
                 () -> latch.await(1),
+                latch,
                 latch::countDown
         );
 
@@ -95,6 +99,7 @@ public class InterruptedWaitTest {
         TestUtils.assertNonInterruptedWaitDoesNotSpin(
                 "non-interrupted SOUnboundedCountDownLatch await",
                 () -> nonInterruptedLatch.await(1),
+                nonInterruptedLatch,
                 nonInterruptedLatch::countDown
         );
     }

@@ -791,7 +791,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             try {
                 // Keep the delay in the cleanup scope so a downcall failure still releases every discovered lock.
                 if (n > 0 && waitBeforeDelete > 0) {
-                    Os.sleep(waitBeforeDelete);
+                    sleepBeforeDelete();
                 }
                 while (i < n) {
                     final int walId = (int) discovered.get(i);
@@ -836,6 +836,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             } finally {
                 unlockDiscovered(i);
             }
+        }
+
+        protected void sleepBeforeDelete() {
+            Os.sleep(waitBeforeDelete);
         }
 
         public void trackBackupLockedPart(long partNo) {

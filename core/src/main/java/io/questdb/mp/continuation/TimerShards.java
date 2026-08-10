@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
 
@@ -75,6 +77,9 @@ public final class TimerShards {
     private final DelayHeap<DelayedFireable>[] shards;
     private final String threadNamePrefix;
     private final Thread[] threads;
+    @TestOnly
+    @Nullable
+    private volatile Runnable joinThreadsHook;
     private volatile boolean hasTimedOutThread;
     private volatile boolean running;
 
@@ -181,6 +186,11 @@ public final class TimerShards {
         return total;
     }
 
+    @TestOnly
+    public void setJoinThreadsHook(@Nullable Runnable hook) {
+        this.joinThreadsHook = hook;
+    }
+
     /**
      * Launches one daemon thread per shard. Each thread loops on {@code shard.take()},
      * calls {@code expire()} on the popped entry, and survives any throwable so a
@@ -202,6 +212,10 @@ public final class TimerShards {
     }
 
     private synchronized void joinThreadsQuietly() {
+        final Runnable hook = joinThreadsHook;
+        if (hook != null) {
+            hook.run();
+        }
         boolean isInterrupted = Thread.interrupted();
         try {
             if (hasTimedOutThread) {
