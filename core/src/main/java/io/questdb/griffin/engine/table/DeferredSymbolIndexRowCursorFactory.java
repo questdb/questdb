@@ -86,6 +86,13 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         return false;
     }
 
+    // Stable within the execution iff the deferred symbol key function is stable (literal/bind yes,
+    // rnd_* no); the key is resolved against the execution-fixed symbol table on every open.
+    @Override
+    public boolean isStableWithinExecution() {
+        return symbol == null || symbol.isStableWithinExecution();
+    }
+
     @Override
     public boolean isUsingIndex() {
         return true;
