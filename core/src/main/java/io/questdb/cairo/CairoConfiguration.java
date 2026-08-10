@@ -693,6 +693,14 @@ public interface CairoConfiguration {
         return 0.0;
     }
 
+    default byte getPostingIndexParquetPartitionFormat() {
+        return PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
+    }
+
+    default byte getPostingIndexParquetPayload() {
+        return PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_POSTING;
+    }
+
     default byte getPostingIndexRowIdEncoding() {
         return PostingIndexUtils.ENCODING_ADAPTIVE;
     }
