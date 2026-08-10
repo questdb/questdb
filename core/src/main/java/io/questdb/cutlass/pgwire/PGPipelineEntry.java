@@ -65,7 +65,6 @@ import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
@@ -104,8 +103,11 @@ import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
 import static io.questdb.cutlass.pgwire.PGOids.*;
+import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_NEG;
+import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_POS;
 import static io.questdb.cutlass.pgwire.PGUtils.calculateColumnBinSize;
 import static io.questdb.cutlass.pgwire.PGUtils.estimateColumnTxtSize;
+import static io.questdb.cutlass.pgwire.PGUtils.outColBinDecimal;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
@@ -115,10 +117,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
+    // message type + message length + column count
+    private static final int DATA_ROW_HEADER_SIZE = Byte.BYTES + Integer.BYTES + Short.BYTES;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
     private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
-    private static final short NUMERIC_NEG = 0x4000;
-    private static final short NUMERIC_POS = 0x0000;
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private static final int SYNC_BIND = 1;
@@ -741,6 +743,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // fall-through
                 case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
+                case CompiledQuery.CREATE_LIVE_VIEW:
+                    // fall-through
                 case CompiledQuery.DROP:
                     executeDdlFenced(sqlExecutionContext, tempSequence, false);
                     break;
@@ -1179,6 +1183,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private long calculateRecordTailSize(
+            SqlExecutionContext sqlExecutionContext,
             Record record,
             int columnCount,
             long maxBlobSize,
@@ -1202,6 +1207,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
             final int columnValueSize = calculateColumnBinSize(
                     this,
+                    sqlExecutionContext,
                     record,
                     i,
                     columnType,
@@ -1399,10 +1405,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
-    // Used to estimate required column size (or full record size in case of text format)
-    // to be reported to the user in the insufficient send buffer size case.
-    private long estimateRecordSize(Record record, int columnCount) throws PGMessageProcessingException {
-        long recordSize = 0;
+    // Used to estimate the size of the whole DataRow message, header included, to be reported to the
+    // user in the insufficient send buffer size case. The number must be a send buffer size the row
+    // actually fits into, so it covers the header outRecord() writes before the first column value.
+    private long estimateRecordSize(
+            SqlExecutionContext sqlExecutionContext,
+            Record record,
+            int columnCount
+    ) throws PGMessageProcessingException {
+        long recordSize = DATA_ROW_HEADER_SIZE;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
@@ -1414,9 +1425,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
-                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+                columnValueSize = estimateColumnTxtSize(record, i, columnType);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, columnType, geohashSize, Long.MAX_VALUE, -1);
+                columnValueSize = calculateColumnBinSize(
+                        this,
+                        sqlExecutionContext,
+                        record,
+                        i,
+                        columnType,
+                        geohashSize,
+                        Long.MAX_VALUE,
+                        -1
+                );
             }
 
             if (columnValueSize < 0) {
@@ -1944,250 +1964,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else {
             utf8Sink.setNullValue();
         }
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
-        if (decimal256.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal256.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal256.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal256.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal256.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal256.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal256.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal256.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal128 decimal128, int type) {
-        if (decimal128.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal128.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal128.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal128.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal128.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal128.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal128.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal128.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
-    }
-
-    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type) {
-        if (decimal64.isNull()) {
-            utf8Sink.setNullValue();
-            return;
-        }
-
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
-
-        short sign = NUMERIC_POS;
-        if (decimal64.isNegative()) {
-            sign = NUMERIC_NEG;
-            decimal64.negate();
-        }
-
-        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
-        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
-        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
-        // be encoded as an array of 2 shorts: [12, 3400].
-
-        long startAddress = utf8Sink.getSendBufferPtr();
-        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
-
-        utf8Sink.putNetworkShort((short) 0); // ndigits, same
-        utf8Sink.putNetworkShort((short) 0); // weight, same
-        utf8Sink.putNetworkShort(sign); // sign
-        utf8Sink.putNetworkShort((short) scale); // dscale
-
-        if (decimal64.isZero()) {
-            return;
-        }
-
-        boolean writing = false;
-        int digit = 0;
-        int weight = 0;
-        int pow = precision;
-
-
-        // We start with the whole part of the decimal
-        final int wholePartPrecision = precision - scale;
-        for (int i = wholePartPrecision - 1; i >= 0; i--) {
-            final int mul = decimal64.getDigitAtPowerOfTen(--pow);
-            digit = digit * 10 + mul;
-            decimal64.subtractPowerOfTenMultiple(pow, mul);
-            if (i % 4 == 0 && (writing || digit != 0)) {
-                if (!writing) {
-                    writing = true;
-                    weight = (i + 3) / 4;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-                digit = 0;
-            }
-        }
-
-        // And then the decimal part
-        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
-            digit = 0;
-            for (int j = 0; j < 4; j++) {
-                final int mul = pow > 0 ? decimal64.getDigitAtPowerOfTen(--pow) : 0;
-                digit = digit * 10 + mul;
-                decimal64.subtractPowerOfTenMultiple(pow, mul);
-            }
-            if (writing || digit != 0) {
-                if (!writing) {
-                    writing = true;
-                    weight = -i - 1;
-                }
-                utf8Sink.putNetworkShort((short) digit);
-            }
-        }
-
-        // We now need to fix previous values
-        long endAddress = utf8Sink.getSendBufferPtr();
-        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
-        // Patching the whole type len
-        utf8Sink.putNetworkInt(startAddress, typeLen);
-        // Patching the number of digits (remove the static attributes first)
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
-        // Patching the weight
-        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
     }
 
     private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2957,7 +2733,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 if (utf8Sink.getWrittenBytes() == 0) {
                     // We had nothing but the record in the send buffer,
                     // so we can estimate the required size to be reported to the user.
-                    final long estimatedSize = estimateRecordSize(record, columnCount);
+                    final long estimatedSize = estimateRecordSize(sqlExecutionContext, record, columnCount);
                     e.setBytesRequired(estimatedSize);
                 }
             } else {
@@ -2967,6 +2743,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     assert sizeInBuffer > 0;
                     try {
                         final long recordTailSize = calculateRecordTailSize(
+                                sqlExecutionContext,
                                 record,
                                 columnCount,
                                 utf8Sink.getMaxBlobSize(),
@@ -2981,7 +2758,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (utf8Sink.getWrittenBytes() == 0) {
                                 // We had nothing but the record in the send buffer,
                                 // so we can estimate the required size to be reported to the user.
-                                e.setBytesRequired(estimateRecordSize(record, columnCount));
+                                e.setBytesRequired(estimateRecordSize(sqlExecutionContext, record, columnCount));
                             }
                         }
                     } catch (PGMessageProcessingException bpe) {
@@ -3451,6 +3228,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.DROP:
                 // fall-through
             case CompiledQuery.CREATE_MAT_VIEW:
+                // fall-through
+            case CompiledQuery.CREATE_LIVE_VIEW:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
                 operation = cq.getOperation();

@@ -300,6 +300,19 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         sink.child(slaveFactory);
     }
 
+    // A join reads externally if either input does. getBaseFactory() cannot express this because it
+    // returns a single child, so the two-child propagation is explicit here, mirroring
+    // AbstractJoinRecordCursorFactory. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
     @Override
     protected void _close() {
         final RecordMetadata metadata = detachMetadata();

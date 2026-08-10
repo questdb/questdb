@@ -99,6 +99,69 @@ public class PostingIndexWriter implements IndexWriter {
     private static final int FSST_SAMPLE_TARGET_COUNT = 1024;
     private static final int INITIAL_KEY_CAPACITY = 64;
     private static final Log LOG = LogFactory.getLog(PostingIndexWriter.class);
+    // @TestOnly observability for the covering WAL-apply seal. A2 (fast-lag on
+    // the in-order block-apply path) should route the block through the fast-lag
+    // covered publish and DEFER compaction, so a covering block-apply must NOT
+    // full-reseal: COVERING_FULL_RESEAL_COUNT (bumped in rebuildSidecars) stays
+    // 0, while COVERING_FASTLAG_COMMIT_COUNT (bumped when the fast-lag covered
+    // publish commits) advances.
+    //
+    // The counters below are pure test observability. To keep test state out of
+    // the production hot path they are gated by COVERING_COUNTERS_ENABLED, which
+    // is false in production so the JIT dead-code-eliminates the always-false
+    // branch (and the AtomicLong op it guards). Only CoveringIndexBlockApplySealTest
+    // flips it true (in @Before) and back to false (in @After); it is a
+    // single-fork test-only switch and MUST NOT be relied on outside that class.
+    // A plain (non-volatile) boolean is sufficient: the tests apply the WAL
+    // synchronously via drainWalQueue() on the same thread that sets the flag,
+    // so there is no cross-thread visibility hazard, and a plain field lets the
+    // JIT fold the always-false production branch away entirely.
+    @TestOnly
+    public static boolean COVERING_COUNTERS_ENABLED = false;
+    // @TestOnly override: when true, TableWriter.tryFastAppendInOrderBlock returns
+    // immediately, forcing every block through the unchanged O3 + rebuildSidecars
+    // path. Only the differential-equivalence fuzz flips it (to apply the SAME
+    // stream both with and without the fast path and assert byte-identical
+    // results). Default false -> never set in production, so the JIT
+    // dead-code-eliminates the always-false guard at the top of the fast path.
+    // Plain (non-volatile) boolean: the tests apply the WAL synchronously on the
+    // thread that sets the flag, so there is no cross-thread visibility hazard.
+    @TestOnly
+    public static boolean COVERING_FASTPATH_DISABLED = false;
+    // @TestOnly: how many times TableWriter.tryFastAppendInOrderBlock actually
+    // committed a block. Distinct from COVERING_FASTLAG_COMMIT_COUNT, which counts
+    // the SHARED fast-lag covered publish that the pre-existing single-txn path
+    // also drives -- a test asserting only that one cannot tell this PR's
+    // block-apply fast path from the path that was already there on master.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_BLOCK_FASTPATH_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_FASTLAG_COMMIT_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_FULL_RESEAL_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly hard-cap observability. COVERING_AUTOSEAL_COUNT bumps each time
+    // flushAllPending's inline MAX_GEN_COUNT auto-seal fires; COVERING_MAX_GENCOUNT_OBSERVED
+    // tracks the largest genCount seen right after the gen-append (must never
+    // exceed MAX_GEN_COUNT). Together they let a test DIRECTLY assert the 128-gen
+    // ceiling is reached AND enforced on the fast-lag path, not merely inferred
+    // from correct reads.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_AUTOSEAL_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_MAX_GENCOUNT_OBSERVED = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly: largest segmentCopyInfo.getSegmentCount() observed in
+    // processWalCommitBlock. Lets a test prove a block was GENUINELY multi-segment
+    // (> 1) before asserting the sorted fast path fired. Gated by
+    // COVERING_COUNTERS_ENABLED like the others.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_MAX_SEGCOUNT_OBSERVED = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly: number of times publishToChain COW-migrated a legacy format-0
+    // covering head to format 1 before an in-place extend (the universal
+    // aliased-footer fix). Lets a test PROVE the COW actually fires on the
+    // unguardable O3-merge / syncColumns extend paths. Gated by
+    // COVERING_COUNTERS_ENABLED like the others.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_COW_MIGRATE_COUNT = new java.util.concurrent.atomic.AtomicLong();
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
     private final double alignedBitWidthThreshold;
@@ -843,6 +906,63 @@ public class PostingIndexWriter implements IndexWriter {
         return encodeCtx.adaptiveDeltaAtOrAbove;
     }
 
+    // @TestOnly: force new covering entries to the LEGACY (aliased, format-0)
+    // layout so a test can synthesise a pre-9.4.x on-disk fixture for the
+    // eager-migration path. Never set in production.
+    @TestOnly
+    public static boolean FORCE_LEGACY_COVERING_FORMAT = false;
+
+    // Covering-format a NEW entry this writer publishes should carry: covering
+    // (coverCount>0) => de-aliased (format 1); non-covering => format-0-equivalent.
+    private int newEntryCoveringFormat() {
+        return (coverCount > 0 && !FORCE_LEGACY_COVERING_FORMAT)
+                ? PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                : PostingIndexUtils.COVERING_FORMAT_LEGACY;
+    }
+
+
+    // The head entry's OWN stored covering format. The head may pre-date the
+    // writer's current coverCount (e.g. a coverCount=0 seal that predates
+    // configureCovering, which rebuildSidecars then reads before appending a new
+    // format-1 entry), so its layout must be read from the entry, not derived
+    // from the writer's live coverCount.
+    private int headStoredCoveringFormat() {
+        return PostingIndexChainEntry.unpackCoveringFormat(keyMem.getInt(chain.getHeadEntryOffset() + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
+    }
+
+    /**
+     * True when this covering index's HEAD chain entry is the LEGACY (format-0,
+     * aliased-footer) layout written by 9.4.x. The fast-lag block-apply gate uses
+     * this to fall back to O3 rather than extend a format-0 head in place (which
+     * would re-expose the concurrent covered-read OOB). The O3 reseal then writes
+     * a fresh format-1 entry, migrating the head; subsequent block-applies see a
+     * format-1 head and fast-path. Cheap: one mapped int read.
+     */
+    public boolean isHeadCoveringFormatLegacy() {
+        // Self-contained property of the on-disk head entry (independent of the
+        // writer's live coverCount, which may be unconfigured at gate time): a
+        // LEGACY (format-0) head that actually carries covering data (its own
+        // cover count > 0). A non-covering POSTING head is also format 0 but has
+        // cover count 0, so it is correctly NOT flagged. Such a head must reseal
+        // (O3) to format 1 rather than be extended in place.
+        return keyMem.isOpen() && chain.hasHead() && headStoredCoveringFormat() == PostingIndexUtils.COVERING_FORMAT_LEGACY && headStoredCoverCount() > 0;
+    }
+
+    // The head entry's OWN cover count. A format-1 head reports the count it was
+    // sealed with; only a format-0 head falls back to deriving it from LEN. That
+    // matters because publishToChain feeds this value to resolveGenDirOffset for
+    // the slot it is about to write: a count above the head's real one would put
+    // the footer republish on top of gen-dir slot 0, including the TXN_AT_SEAL
+    // every reader uses to decide whether the entry is visible.
+    private int headStoredCoverCount() {
+        return PostingIndexChainEntry.resolveEntryCoverCount(
+                keyMem, chain.getHeadEntryOffset(), chain.getRegionLimit());
+    }
+
+    private long resolveHeadGenDirOffset(int gen) {
+        return PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen, headStoredCoveringFormat(), headStoredCoverCount());
+    }
+
     @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();
@@ -852,9 +972,8 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         LongList values = new LongList();
-        long headEntryOffset = chain.getHeadEntryOffset();
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(headEntryOffset, gen);
+            long dirOffset = resolveHeadGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
@@ -1351,8 +1470,11 @@ public class PostingIndexWriter implements IndexWriter {
         if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
             return;
         }
+        if (COVERING_COUNTERS_ENABLED) {
+            COVERING_FULL_RESEAL_COUNT.incrementAndGet();
+        }
         closeSidecarMems();
-        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long gen0DirOffset = resolveHeadGenDirOffset(0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
         if (gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0) {
@@ -1485,7 +1607,7 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long gen0DirOffset = resolveHeadGenDirOffset(0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
         // Single dense gen: already sealed, sidecars from prior seal still valid.
@@ -1512,7 +1634,7 @@ public class PostingIndexWriter implements IndexWriter {
                 && partitionPath.size() > 0;
         if (isIncrementalCandidate) {
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long dirOffset = resolveHeadGenDirOffset(g);
                 int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 if (gkc >= 0) {
                     isIncrementalCandidate = false;
@@ -2161,7 +2283,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private int accumulateDenseGen0Counts(long totalCountsAddr) {
-        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long dirOffset = resolveHeadGenDirOffset(0);
         long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         long keyIdsBase = valueMem.addressOf(genFileOffset);
@@ -3318,6 +3440,9 @@ public class PostingIndexWriter implements IndexWriter {
         writeSidecarGenData((int) totalValues, genCount);
 
         genCount++;
+        if (COVERING_COUNTERS_ENABLED) {
+            COVERING_MAX_GENCOUNT_OBSERVED.accumulateAndGet(genCount, Math::max);
+        }
         this.maxValue = maxValue;
         // Persist the in-memory state to the chain. extendHead bumps the
         // head entry's GEN_COUNT/LEN/VALUE_MEM_SIZE/MAX_VALUE; appendNewEntry
@@ -3355,6 +3480,9 @@ public class PostingIndexWriter implements IndexWriter {
         // Soft cap on per-entry gen count; trades seal frequency against
         // entry size.
         if (genCount >= MAX_GEN_COUNT) {
+            if (COVERING_COUNTERS_ENABLED) {
+                COVERING_AUTOSEAL_COUNT.incrementAndGet();
+            }
             seal();
         }
     }
@@ -3947,7 +4075,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Decode from sparse gens 1..N
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+            long dirOffset = resolveHeadGenDirOffset(g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
@@ -4242,6 +4370,25 @@ public class PostingIndexWriter implements IndexWriter {
         // would force a newEntry append at this.sealTxn = head.sealTxn,
         // tripping the appendNewEntry monotonicity assertion.
         boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
+        // Universal aliased-footer fix. Before ANY in-place gen-dir/footer
+        // mutation of a same-sealTxn head, migrate a legacy format-0 covering
+        // head to the de-aliased format 1 via a crash-safe copy-on-write. Because
+        // every publish funnels through here, this closes the concurrent
+        // covered-read OOB on EVERY extend path by construction -- including the
+        // ones no call-site guard can reach: the O3 partition-merge index commit
+        // (o3ConsumePartitionUpdates -> o3CopySafe -> commit) and syncColumns ->
+        // commit. After migration the footer lives at the fixed entry+56 offset,
+        // so appending gen (genCount-1)'s gen-dir slot never overwrites it. The
+        // COW reuses the SAME sealTxn / .pv / .pc (only the .pk entry layout
+        // changes -- the sidecar data is format-agnostic), so no file is
+        // superseded and nothing is purged; the superseded format-0 entry becomes
+        // an unreachable gap. No-op for format-1 or non-covering heads.
+        if (!newEntry && isHeadCoveringFormatLegacy()) {
+            chain.migrateHeadToFormat1(keyMem);
+            if (COVERING_COUNTERS_ENABLED) {
+                COVERING_COW_MIGRATE_COUNT.incrementAndGet();
+            }
+        }
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
 
         // For a same-sealTxn head extension the new gen-dir written below
@@ -4261,7 +4408,34 @@ public class PostingIndexWriter implements IndexWriter {
             coverEndOffsetsCache.clear();
         }
 
-        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
+        // A new entry carries the writer's current covering format/coverCount; a
+        // same-sealTxn extend must match the existing head's on-disk layout.
+        int writeFormat = newEntry ? newEntryCoveringFormat() : headStoredCoveringFormat();
+        int writeCoverCount = newEntry ? coverCount : headStoredCoverCount();
+        // A format-1 extend writes into the head's fixed cover reserve using the
+        // HEAD's own coverCount (writeCoverCount above), so the footer fits by
+        // construction. When covering is actively configured (coverCount>0), the
+        // writer's cover set must match the head's -- a genuine cover-set change
+        // (ALTER add/drop covered column) must roll a NEW sealTxn (appendNewEntry),
+        // never extend in place. coverCount==0 (covering not configured this cycle,
+        // e.g. an O3 pool rebuild) is legitimate: captureCoverEndOffsets then
+        // republishes the head's own cached extents, so the footer stays the head's
+        // width. This throws rather than asserts because production runs with
+        // assertions off on some deployments: extendHead would write coverCount
+        // footer slots into a reserve sized for the head's smaller count, and the
+        // overflow lands on gen-dir slot 0 -- clobbering the TXN_AT_SEAL every
+        // reader consults to decide whether the entry is visible. Failing the
+        // publish leaves the chain untouched and lets the caller retry.
+        if (!newEntry
+                && writeFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                && coverCount > 0
+                && coverCount != writeCoverCount) {
+            throw CairoException.critical(0)
+                    .put("posting index cover set changed without a new seal [index=").put(indexName)
+                    .put(", writer=").put(coverCount)
+                    .put(", head=").put(writeCoverCount).put(']');
+        }
+        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
@@ -4329,11 +4503,11 @@ public class PostingIndexWriter implements IndexWriter {
                     /* keyCount */ keyCount,
                     /* genCount */ newGenCount,
                     /* blockCapacity */ blockCapacity,
-                    /* coveringFormat */ 0,
+                    /* coveringFormat */ newEntryCoveringFormat(),
                     coverEndOffsetsScratch
             );
         } else {
-            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch);
+            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
     }
 
@@ -4562,7 +4736,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                long dirOffset = resolveHeadGenDirOffset(gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long keyIdsBase = valueMem.addressOf(genFileOffset);
@@ -5211,7 +5385,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Decode this stride's keys from all generations into strideValsAddr.
                 // keyOffsets serves as write cursor during decode (advanced per key).
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                    long dirOffset = resolveHeadGenDirOffset(gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                     int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genBase = valueMem.addressOf(genFileOffset);
@@ -5348,7 +5522,7 @@ public class PostingIndexWriter implements IndexWriter {
             genMetaStrideCounts = new int[genCount];
         }
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+            long dirOffset = resolveHeadGenDirOffset(gen);
             genMetaBases[gen] = valueMem.addressOf(keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET));
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             genMetaKeyCounts[gen] = genKeyCount;
@@ -5500,7 +5674,7 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.setMemory(dirtyStridesAddr, sc, (byte) 0);
             dirtyCount = 0;
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long dirOffset = resolveHeadGenDirOffset(g);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
@@ -5538,7 +5712,7 @@ public class PostingIndexWriter implements IndexWriter {
         // may be remapped (mremap) when the seal loop extends it to write
         // new stride data. Use gen0FileOffset and recompute the address each
         // time it's needed.
-        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long gen0DirOffset = resolveHeadGenDirOffset(0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         // Incremental-candidate invariant (gated in seal()): gen 0 is dense and
@@ -5598,7 +5772,7 @@ public class PostingIndexWriter implements IndexWriter {
             // Sparse gens 1..N: add each key's count. Sparse gens only touch
             // dirty strides, so clean strides keep a 0 here and are skipped.
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long dirOffset = resolveHeadGenDirOffset(g);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
