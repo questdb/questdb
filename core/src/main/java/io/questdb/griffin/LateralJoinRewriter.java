@@ -4098,11 +4098,9 @@ class LateralJoinRewriter implements Mutable {
                     // body provably yields no rows: NULL fill is correct, no compensation
                     return SCALAR_BODY_NONE;
                 }
-                case ROW_UNPROVABLE -> {
-                    // decided at execution time by the guard accumulateScalarCountGuard
+                case ROW_UNPROVABLE -> // decided at execution time by the guard accumulateScalarCountGuard
                     // builds; only the guarded zero-on-empty compensation may proceed
-                    hasUnprovableLimit = true;
-                }
+                        hasUnprovableLimit = true;
                 default -> {
                 }
             }
