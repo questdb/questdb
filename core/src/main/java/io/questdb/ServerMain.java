@@ -35,7 +35,6 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalApplyFiberJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpRequestHandler;
@@ -1085,18 +1084,7 @@ public class ServerMain implements Closeable {
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {
-        if (sharedPoolWrite.isFiberHost()) {
-            final WalApplyFiberJob job = new WalApplyFiberJob(
-                    engine,
-                    sharedQueryWorkerCount,
-                    sharedPoolWrite.getFiberRuntime(),
-                    sharedPoolWrite.getWorkerCount()
-            );
-            sharedPoolWrite.freeResourceOnExit(job);
-            sharedPoolWrite.assign(job);
-        } else {
-            sharedPoolWrite.assign(new ApplyWal2TableJob(engine, sharedQueryWorkerCount));
-        }
+        sharedPoolWrite.assign(new ApplyWal2TableJob(engine, sharedQueryWorkerCount));
     }
 
     protected String webConsoleSchema() {

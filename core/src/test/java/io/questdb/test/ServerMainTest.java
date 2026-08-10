@@ -1504,7 +1504,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "telemetry.table.ttl.weeks\tQDB_TELEMETRY_TABLE_TTL_WEEKS\t4\tdefault\tfalse\tfalse\n" +
                                     "telemetry.event.throttle.interval\tQDB_TELEMETRY_EVENT_THROTTLE_INTERVAL\t60000000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.affinity\tQDB_WAL_APPLY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "wal.apply.worker.fiber.enabled\tQDB_WAL_APPLY_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +

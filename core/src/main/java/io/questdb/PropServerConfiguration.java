@@ -646,7 +646,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walApplyWorkerCount;
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerNapThreshold;
-    private final WorkerPoolMode walApplyWorkerPoolMode;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
@@ -1538,12 +1537,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerNapThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
-            this.walApplyWorkerPoolMode = readWorkerPoolMode(
-                    properties,
-                    env,
-                    PropertyKey.WAL_APPLY_WORKER_FIBER_ENABLED,
-                    false
-            );
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
@@ -2296,11 +2289,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             final boolean isSharedNetworkFiberHost =
                     (pgEnabled && pgWorkerCount < 1 && pgFiberEnabled)
                             || (httpServerEnabled && httpWorkerCount < 1 && httpFiberEnabled);
-            final boolean isSharedWriteFiberHost = !isReadOnlyInstance
-                    && walSupported
-                    && walApplyEnabled
-                    && walApplyWorkerCount < 1
-                    && walApplyWorkerPoolMode == WorkerPoolMode.FIBER_HOST;
             sharedWorkerPoolNetworkConfiguration.workerPoolMode = readWorkerPoolMode(
                     properties,
                     env,
@@ -2317,7 +2305,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     properties,
                     env,
                     PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED,
-                    isSharedWriteFiberHost
+                    false
             );
             configureFiberPools(properties, env);
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
@@ -2703,7 +2691,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         configureFiberPool(sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(sharedWorkerPoolQueryConfiguration, maxLiveCount, mountBudget, retainedCount);
         configureFiberPool(sharedWorkerPoolWriteConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(walApplyPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
     }
 
     private int configureSharedThreadPool(
@@ -7801,7 +7788,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropWalApplyPoolConfiguration extends PropFiberWorkerPoolConfiguration {
+    private class PropWalApplyPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -7835,11 +7822,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return walApplyWorkerCount;
-        }
-
-        @Override
-        public WorkerPoolMode getWorkerPoolMode() {
-            return walApplyWorkerPoolMode;
         }
 
         @Override

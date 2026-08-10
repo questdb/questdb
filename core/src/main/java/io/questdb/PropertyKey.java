@@ -596,7 +596,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PREFERENCES_STRING_POOL_CAPACITY("cairo.preferences.string.pool.capacity"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
-    WAL_APPLY_WORKER_FIBER_ENABLED("wal.apply.worker.fiber.enabled"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
     WAL_APPLY_WORKER_NAP_THRESHOLD("wal.apply.worker.nap.threshold"),
     WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
