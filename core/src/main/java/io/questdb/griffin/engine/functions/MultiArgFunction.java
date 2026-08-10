@@ -100,6 +100,20 @@ public interface MultiArgFunction extends Function {
         return false;
     }
 
+    // Within-execution stability composes independently of determinism: an arg may be
+    // non-deterministic yet stable (bind variable, now()), or appear deterministic through
+    // isNonDeterministic() yet be unstable (a cursor arg wrapping an rnd_* projection).
+    @Override
+    default boolean isStableWithinExecution() {
+        final ObjList<Function> args = args();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (!args.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     default boolean isRandom() {
         final ObjList<Function> args = args();
