@@ -78,7 +78,13 @@ const OFF_DATA_RG_COUNT: usize = 40;
 const OFF_KEY_COUNT: usize = 44;
 const OFF_KEY_ID_COLUMN: usize = 48;
 const OFF_ROW_ID_COLUMN: usize = 52;
-const OFF_RESERVED: usize = 56;
+const OFF_INDEX_SECTIONS_OFFSET: usize = 56;
+
+/// Field offsets inside `_pm`'s 32-byte column descriptor, used to bound the
+/// name strings without materialising a descriptor before the layout has been
+/// validated.
+const DESC_OFF_NAME_OFFSET: usize = std::mem::offset_of!(ColumnDescriptorRaw, name_offset);
+const DESC_OFF_NAME_LENGTH: usize = std::mem::offset_of!(ColumnDescriptorRaw, name_length);
 
 /// Bits 32-63 of `FEATURE_FLAGS` are required: a reader that does not know
 /// them must reject the file.
@@ -255,7 +261,19 @@ impl IndexMetaWriter {
             // chunks on the lookup hot path is cache-hostile; it must agree
             // with the chunk stats it duplicates, or the fast path and the
             // slow path answer differently.
-            let min_stat = block.column_chunk_raw(key_id_column).min_stat;
+            let key_chunk = block.column_chunk_raw(key_id_column);
+            // The comparison is only meaningful against an inline stat: an
+            // out-of-line stat is `(offset << 16) | length`, which for a short
+            // out-of-line payload near the start of the region is a small
+            // integer and could collide with a small key id.
+            let stat_flags = key_chunk.stat_flags();
+            if !stat_flags.has_min_stat() || !stat_flags.is_min_inlined() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row group {i} key id chunk min stat must be present and inline"
+                ));
+            }
+            let min_stat = key_chunk.min_stat;
             if min_stat != *first_key as u64 {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
@@ -306,7 +324,9 @@ impl IndexMetaWriter {
         buf.extend_from_slice(&self.key_count.to_le_bytes());
         buf.extend_from_slice(&self.key_id_column.to_le_bytes());
         buf.extend_from_slice(&self.row_id_column.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes()); // RESERVED
+        // INDEX_SECTIONS_OFFSET placeholder, backpatched once the sections are
+        // laid out. Readers use it rather than deriving the position.
+        buf.extend_from_slice(&0u64.to_le_bytes());
         debug_assert_eq!(buf.len(), IM_HEADER_SIZE);
 
         // Column descriptors, backpatched once the name offsets are known.
@@ -351,8 +371,13 @@ impl IndexMetaWriter {
             block_offsets.push(shifted);
         }
 
-        // Index sections, each 8-byte aligned.
+        // Index sections, each 8-byte aligned. The offset of the first one is
+        // recorded in the header: it cannot be derived forwards, because a
+        // block's out-of-line stat region has no recorded length.
         align_to_8(&mut buf);
+        let index_sections_offset = buf.len() as u64;
+        buf[OFF_INDEX_SECTIONS_OFFSET..OFF_INDEX_SECTIONS_OFFSET + 8]
+            .copy_from_slice(&index_sections_offset.to_le_bytes());
         for offset in &block_offsets {
             buf.extend_from_slice(&offset.to_le_bytes());
         }
@@ -410,6 +435,8 @@ pub struct IndexMetaReader<'a> {
     key_id_column: i32,
     row_id_column: i32,
     names_start: usize,
+    /// The header's `INDEX_SECTIONS_OFFSET`, validated at construction. It
+    /// doubles as the exclusive upper bound of the row group block region.
     rg_block_offset_off: usize,
     rg_first_key_off: usize,
     data_boundary_off: usize,
@@ -475,35 +502,29 @@ impl<'a> IndexMetaReader<'a> {
         let index_rg_count = read_u32(data, OFF_INDEX_RG_COUNT) as usize;
         let data_rg_count = read_u32(data, OFF_DATA_RG_COUNT) as usize;
 
-        // The index sections sit at the end of the file with fixed sizes, so
-        // they are resolved backwards from the CRC. Every step is checked: the
-        // counts come straight off the header, so on a crafted file an
-        // unchecked product wraps and the section offsets land inside the
-        // header or past the end.
+        // The header records where the index sections start; a reader never
+        // derives it. What it must do is validate the value against everything
+        // else the header claims, with every step checked: the counts and the
+        // offset come straight off a file that may be crafted, so an unchecked
+        // product or sum wraps and the sections land inside the header or past
+        // the end.
+        let index_sections_offset = read_u64(data, OFF_INDEX_SECTIONS_OFFSET);
         let truncated = || {
-            parquet_meta_err!(ParquetMetaErrorKind::Truncated, "_im sections do not fit: column_count {}, index_rg_count {}, data_rg_count {}, size {}", column_count, index_rg_count, data_rg_count, end)
+            parquet_meta_err!(ParquetMetaErrorKind::Truncated, "_im sections at offset {} do not fit: column_count {}, index_rg_count {}, data_rg_count {}, size {}", index_sections_offset, column_count, index_rg_count, data_rg_count, end)
         };
-        let boundary_bytes = data_rg_count
-            .checked_add(1)
-            .and_then(|n| n.checked_mul(8))
-            .ok_or_else(truncated)?;
-        let data_boundary_off = crc_off.checked_sub(boundary_bytes).ok_or_else(truncated)?;
-        let first_key_bytes = index_rg_count
-            .checked_add(1)
-            .and_then(|n| n.checked_mul(4))
-            .and_then(aligned_footprint)
-            .ok_or_else(truncated)?;
-        let rg_first_key_off = data_boundary_off
-            .checked_sub(first_key_bytes)
-            .ok_or_else(truncated)?;
-        let block_offset_bytes = index_rg_count
-            .checked_mul(4)
-            .and_then(aligned_footprint)
-            .ok_or_else(truncated)?;
-        let rg_block_offset_off = rg_first_key_off
-            .checked_sub(block_offset_bytes)
-            .ok_or_else(truncated)?;
+        // Each section starts 8-byte aligned, so the first one must be too.
+        if !index_sections_offset.is_multiple_of(BLOCK_ALIGNMENT as u64) {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Alignment,
+                "index sections offset {} is not 8-byte aligned",
+                index_sections_offset
+            ));
+        }
+        let rg_block_offset_off =
+            usize::try_from(index_sections_offset).map_err(|_| truncated())?;
 
+        // The sections start at or after the column descriptors and the name
+        // strings they point at.
         let names_start = (column_count as usize)
             .checked_mul(COLUMN_DESCRIPTOR_SIZE)
             .and_then(|n| n.checked_add(IM_HEADER_SIZE))
@@ -511,14 +532,46 @@ impl<'a> IndexMetaReader<'a> {
         if names_start > rg_block_offset_off {
             return Err(truncated());
         }
-        // All three section offsets share a residue mod 8, so one check covers
-        // them; a file whose size does not match its counts fails here.
-        if !rg_block_offset_off.is_multiple_of(BLOCK_ALIGNMENT) {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::Alignment,
-                "index section offset {} is not 8-byte aligned",
-                rg_block_offset_off
-            ));
+        // Descriptors are in bounds now, so their name entries can be read to
+        // bound the end of the name blob.
+        for i in 0..column_count as usize {
+            let desc_off = IM_HEADER_SIZE + i * COLUMN_DESCRIPTOR_SIZE;
+            let name_off = usize::try_from(read_u64(data, desc_off + DESC_OFF_NAME_OFFSET))
+                .unwrap_or(usize::MAX);
+            let name_end = name_off
+                .checked_add(read_u32(data, desc_off + DESC_OFF_NAME_LENGTH) as usize)
+                .ok_or_else(truncated)?;
+            if name_off < names_start || name_end > rg_block_offset_off {
+                return Err(truncated());
+            }
+        }
+
+        // The three sections, sized from the header counts, each padded up so
+        // the next starts 8-byte aligned, must fit ahead of the CRC.
+        let block_offset_bytes = index_rg_count
+            .checked_mul(4)
+            .and_then(aligned_footprint)
+            .ok_or_else(truncated)?;
+        let rg_first_key_off = rg_block_offset_off
+            .checked_add(block_offset_bytes)
+            .ok_or_else(truncated)?;
+        let first_key_bytes = index_rg_count
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(4))
+            .and_then(aligned_footprint)
+            .ok_or_else(truncated)?;
+        let data_boundary_off = rg_first_key_off
+            .checked_add(first_key_bytes)
+            .ok_or_else(truncated)?;
+        let boundary_bytes = data_rg_count
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(8))
+            .ok_or_else(truncated)?;
+        let sections_end = data_boundary_off
+            .checked_add(boundary_bytes)
+            .ok_or_else(truncated)?;
+        if sections_end > crc_off {
+            return Err(truncated());
         }
 
         Ok(Self {
@@ -579,9 +632,10 @@ impl<'a> IndexMetaReader<'a> {
         self.row_id_column
     }
 
-    /// Reserved header word; readers only assert it is zero in tests.
-    pub fn reserved(&self) -> u64 {
-        read_u64(self.data, OFF_RESERVED)
+    /// Absolute file offset of the first index section (`RG_BLOCK_OFFSET`), as
+    /// recorded in the header and validated at construction.
+    pub fn index_sections_offset(&self) -> u64 {
+        self.rg_block_offset_off as u64
     }
 
     /// Returns the column descriptor at `index`, zero-copy.
@@ -964,7 +1018,9 @@ mod tests {
         assert_eq!(r.key_count(), 11_405);
         assert_eq!(r.key_id_column(), 0);
         assert_eq!(r.row_id_column(), 1);
-        assert_eq!(r.reserved(), 0);
+        // The header points at the sections; nothing is inferred.
+        assert_eq!(r.index_sections_offset(), 984);
+        assert_eq!(read_u64(&bytes, OFF_INDEX_SECTIONS_OFFSET), 984);
     }
 
     #[test]
@@ -1087,7 +1143,7 @@ mod tests {
         assert_eq!(read_u32(&bytes, 44), 11_405); // KEY_COUNT
         assert_eq!(read_u32(&bytes, 48), 0); // KEY_ID_COLUMN
         assert_eq!(read_u32(&bytes, 52), 1); // ROW_ID_COLUMN
-        assert_eq!(read_u64(&bytes, 56), 0); // RESERVED
+        assert_eq!(read_u64(&bytes, 56), 984); // INDEX_SECTIONS_OFFSET
 
         // Descriptors: 64 + 3 * 32 = 160.
         assert_eq!(read_u64(&bytes, 64), 160); // col 0 name offset
@@ -1139,6 +1195,7 @@ mod tests {
         let bytes = build_aligned_sample();
         assert_eq!(bytes.len(), 836);
         assert_eq!(read_u32(&bytes, 36), 3); // INDEX_RG_COUNT
+        assert_eq!(read_u64(&bytes, 56), 776); // INDEX_SECTIONS_OFFSET
 
         // Names: 16 bytes at 160..176, no padding.
         assert_eq!(&bytes[160..176], b"key_idrow_idpxpx");
@@ -1165,6 +1222,7 @@ mod tests {
         assert_eq!(read_u64(&bytes, 824) as i64, 300);
 
         let r = IndexMetaReader::new(&bytes).unwrap();
+        assert_eq!(r.index_sections_offset(), 776);
         assert_eq!(r.column_name(2).unwrap(), "pxpx");
         assert_eq!(r.row_group_block(2).unwrap().num_rows(), 100);
         assert_eq!(r.row_group_range_for_key(700), Some((2, 2)));
@@ -1313,6 +1371,49 @@ mod tests {
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
             err.msg.contains("does not match key id chunk min stat"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// An out-of-line stat is `(offset << 16) | length`, so a 16-byte payload
+    /// at offset 0 encodes as 16 and would silently satisfy the cross-check for
+    /// a row group whose first key is 16. Key ids are 4-byte ints, so requiring
+    /// the stat to be inline costs nothing and closes the hole.
+    #[test]
+    fn test_out_of_line_key_id_min_stat_is_rejected() {
+        let mut w = minimal_writer();
+        let mut block = minimal_block(16, 5);
+        let mut key_id = key_id_chunk(16, 16, 5);
+        key_id.stat_flags = StatFlags::new()
+            .with_min(false, true)
+            .with_max(true, true)
+            .0;
+        block.set_column_chunk(0, key_id).unwrap();
+        block.add_out_of_line_stat(0, true, &[0u8; 16]).unwrap();
+        // The reference encodes as (offset 0 << 16) | length 16, which is the
+        // collision the check has to catch.
+        assert_eq!(block.column_chunk_raw(0).min_stat, 16);
+        w.add_row_group(16, block);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("min stat must be present and inline"),
+            "{}",
+            err.msg
+        );
+
+        // A missing min stat is rejected by the same check.
+        let mut w = minimal_writer();
+        let mut block = minimal_block(0, 5);
+        let mut key_id = key_id_chunk(0, 0, 5);
+        key_id.stat_flags = StatFlags::new().with_max(true, true).0;
+        block.set_column_chunk(0, key_id).unwrap();
+        w.add_row_group(0, block);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("min stat must be present and inline"),
             "{}",
             err.msg
         );
@@ -1467,9 +1568,9 @@ mod tests {
     }
 
     /// A header claiming `u32::MAX` row groups and columns makes every section
-    /// size product enormous. Unchecked, the backwards resolution wraps and the
-    /// section offsets land inside the header, so the reader would hand out
-    /// garbage or panic instead of rejecting the file.
+    /// size product enormous. Unchecked, the sums wrap and the section offsets
+    /// land inside the header, so the reader would hand out garbage or panic
+    /// instead of rejecting the file.
     #[test]
     fn test_crafted_counts_are_rejected_by_checked_arithmetic() {
         let mut bytes = build_sample();
@@ -1490,14 +1591,65 @@ mod tests {
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
 
+    /// Every section starts 8-byte aligned, and `row_group_block` hands out a
+    /// `#[repr(C)]` view of the bytes the first one addresses.
     #[test]
-    fn test_misaligned_file_size_is_rejected() {
+    fn test_misaligned_index_sections_offset_is_rejected() {
         let mut bytes = build_sample();
-        bytes.push(0);
-        let size = bytes.len() as u64;
-        patch_header_u64(&mut bytes, OFF_IM_FILE_SIZE, size);
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 985);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Alignment));
+        assert!(err.msg.contains("not 8-byte aligned"), "{}", err.msg);
+    }
+
+    /// The names run 160..177 in the fixture, so 168 is 8-aligned and past the
+    /// descriptors but still inside the name blob: the sections would overlap
+    /// the strings the descriptors point at.
+    #[test]
+    fn test_index_sections_offset_inside_name_strings_is_rejected() {
+        let mut bytes = build_sample();
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 168);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+
+        // Inside the descriptors themselves is rejected by the same bound.
+        let mut bytes = build_sample();
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 128);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+    }
+
+    /// The fixture's sections need 64 bytes; pointing at the CRC, or anywhere
+    /// with less than that ahead of it, leaves them nowhere to fit.
+    #[test]
+    fn test_index_sections_offset_leaving_no_room_is_rejected() {
+        let mut bytes = build_sample();
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 1_048); // at the CRC
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+
+        // 8 bytes short of the 64 the three sections occupy.
+        let mut bytes = build_sample();
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 992);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+
+        // Past the committed size entirely.
+        let mut bytes = build_sample();
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 2_048);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+    }
+
+    /// An 8-aligned offset one section-size below `u64::MAX`: added to the
+    /// section sizes unchecked it wraps to a small value that passes every
+    /// bound, so the reader would resolve the sections inside the header.
+    #[test]
+    fn test_index_sections_offset_overflowing_the_size_sum_is_rejected() {
+        let mut bytes = build_sample();
+        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, u64::MAX - 7);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
 
     #[test]
@@ -1519,12 +1671,20 @@ mod tests {
 
     #[test]
     fn test_crafted_name_offset_is_rejected() {
+        // Push the name entry past the block region; the sum overflows, which
+        // the construction-time bound on the name blob catches.
         let mut bytes = build_sample();
-        // Push the name entry past the block region.
         bytes[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
         repair_crc(&mut bytes);
-        let r = IndexMetaReader::new(&bytes).unwrap();
-        assert!(r.column_name(0).is_err());
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+
+        // A name starting inside the descriptors is rejected the same way.
+        let mut bytes = build_sample();
+        bytes[64..72].copy_from_slice(&64u64.to_le_bytes());
+        repair_crc(&mut bytes);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
 
     /// The committed size is the only boundary: bytes from a later,
