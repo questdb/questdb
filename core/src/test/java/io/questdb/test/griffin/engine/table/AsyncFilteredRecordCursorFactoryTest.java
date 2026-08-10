@@ -57,6 +57,7 @@ import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactor
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -661,10 +662,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             FROM t1
                             WINDOW JOIN t2 ON (0 = 1)
                             RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
-                            WHERE now() = now()
+                            WHERE length(rnd_str('a', 'b')) > 0
                             """
             )) {
                 Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+            }
+            try (RecordCursorFactory factory = select(
+                    """
+                            SELECT t1.s, t1.ts, sum(t2.y)
+                            FROM t1
+                            WINDOW JOIN t2 ON (0 = 1)
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                            WHERE now() = now()
+                            """
+            )) {
+                Assert.assertTrue(containsFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
             }
             try (RecordCursorFactory factory = select(
                     """

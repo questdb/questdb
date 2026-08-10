@@ -1526,7 +1526,14 @@ public class ViewQueryTest extends AbstractViewTest {
                     "SELECT * FROM " + TABLE1 + " WHERE wait_wal_table('" + TABLE1 + "')",
                     TABLE1
             );
-            final String sql = "UPDATE " + TABLE1 + " t SET v = t.v + 1 FROM " + VIEW1 + " x WHERE t.ts = x.ts";
+            final String walSql = "UPDATE " + TABLE1 + " t SET v = t.v + 1 FROM " + VIEW1 + " x WHERE t.ts = x.ts";
+            assertExceptionNoLeakCheck(
+                    walSql,
+                    0,
+                    "UPDATE statements with join are not supported yet for WAL tables"
+            );
+            execute("CREATE TABLE plain (ts TIMESTAMP, v LONG)");
+            final String sql = "UPDATE plain t SET v = t.v + 1 FROM " + VIEW1 + " x WHERE t.ts = x.ts";
             assertExceptionNoLeakCheck(
                     sql,
                     sql.indexOf(VIEW1),

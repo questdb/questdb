@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -56,6 +57,11 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE notwal (v LONG)");
             try (RecordCursorFactory factory = select("SELECT * FROM notwal WHERE wait_wal_table('notwal')")) {
+                Assert.assertTrue(containsFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                Assert.assertFalse(containsFactory(factory, FilteredRecordCursorFactory.class));
+                Assert.assertTrue(factory.supportsPageFrameCursor());
+            }
+            try (RecordCursorFactory factory = select("SELECT * FROM notwal WHERE wait_wal_table('notwal') AND v > 0")) {
                 Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
                 Assert.assertFalse(containsFactory(factory, FilteredRecordCursorFactory.class));
             }
