@@ -307,7 +307,11 @@ public class PushdownFilterExtractor implements Mutable {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (SqlKeywords.isAndKeyword(node.token)) {
+                if (node.token == null) {
+                    // tokenless node (e.g. subquery); not extractable, skip it -
+                    // extraction is best-effort and fewer conditions is always safe
+                    node = null;
+                } else if (SqlKeywords.isAndKeyword(node.token)) {
                     if (node.rhs != null) {
                         stack.push(node.rhs);
                     }
@@ -513,6 +517,10 @@ public class PushdownFilterExtractor implements Mutable {
         while (cur != null || !orStack.isEmpty()) {
             if (cur == null) {
                 cur = orStack.poll();
+            }
+            if (cur.token == null) {
+                // tokenless OR operand (e.g. subquery); the whole OR chain is not extractable
+                return;
             }
             if (SqlKeywords.isOrKeyword(cur.token)) {
                 if (cur.lhs == null || cur.rhs == null) {

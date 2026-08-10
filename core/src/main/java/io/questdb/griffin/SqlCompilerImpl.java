@@ -170,6 +170,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // Raised from two places: once on the parsed model, where it has to win over the more general
+    // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
+    // introduces. Shared so the two cannot drift apart.
+    private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
@@ -578,6 +582,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return functionParser.getFunctionFactoryCache();
     }
 
+    @TestOnly
+    public int getWhereClauseParserPoolSizeForTesting() {
+        return codeGenerator.getWhereClauseParserPoolSizeForTesting();
+    }
+
     @Override
     public QueryBuilder query() {
         queryBuilder.clear();
@@ -780,6 +789,84 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return indexValueBlockSize;
     }
 
+    /**
+     * Returns the {@code LITERAL} table source reachable from {@code model} that is not
+     * {@code targetTableName}, or {@code null} when every table the model names is the target. The
+     * target's own name may occur any number of times - an UPDATE reads and writes the same table,
+     * and a sub-query may name it again - so this counts distinct sources, not occurrences. Names
+     * are compared the way the name registry itself compares them, case-insensitively, so a
+     * differently-spelled or quoted reference to the target is still the target.
+     * <p>
+     * Only a literal source is examined here. {@code SqlParser#parseSelectFrom} records a model's
+     * source as either a {@code LITERAL}/{@code CONSTANT} name or a {@code FUNCTION} call and
+     * rejects anything else outright, and a function source has to return a cursor
+     * ({@code TableUtils#createCursorFunction}) - so a function source is caught, wherever it
+     * stands, by the cursor-function rejection in {@link #generateUpdate} instead. That split is
+     * deliberate: a table name is only comparable to the target in the model, while a function is
+     * only classifiable once instantiated.
+     * <p>
+     * A {@code SHOW} model is skipped for the same reason. Its table name expression is an argument
+     * and not always a table - {@code SHOW USER bob} names a user, {@code SHOW GROUPS g} a group -
+     * and several kinds set none at all, so the name here answers neither question. Every one of
+     * them materialises a cursor in {@code SqlOptimiser#parseFunctionAndEnumerateColumns}, which is
+     * where they are caught, with a message that does not have to guess what the name denotes.
+     * <p>
+     * The traversal is the same one {@code SqlCodeGenerator} uses to reach every model of a compiled
+     * query: down the nested-model chain, into each join model, into the union branch, and into the
+     * sub-query hanging off each expression model. That last one is what carries a scalar sub-query,
+     * an {@code IN (SELECT ...)} that was not rewritten into a join, and everything nested inside
+     * them; {@code IQueryModel#getExpressionModels()} is populated by the parser
+     * ({@code ExpressionTreeBuilder#onNode}) and survives code generation, which matters because
+     * {@code WhereClauseParser} may by then have lifted the sub-query out of the WHERE clause it was
+     * written in. A CTE needs no separate case: the parser inlines it as a nested model wherever it
+     * is referenced ({@code SqlParser#parseSelectFrom}).
+     */
+    private static ExpressionNode findForeignTableSource(IQueryModel model, CharSequence targetTableName) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null
+                    && tableNameExpr.type == ExpressionNode.LITERAL
+                    && m.getSelectModelType() != IQueryModel.SELECT_MODEL_SHOW
+                    && !Chars.equalsIgnoreCase(targetTableName, unquote(tableNameExpr.token))) {
+                return tableNameExpr;
+            }
+
+            final ObjList<ExpressionNode> expressionModels = m.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                // null once the optimiser has converted the sub-query into a join; the join model
+                // below then carries the same table.
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    final ExpressionNode foreignSource = findForeignTableSource(expressionModel, targetTableName);
+                    if (foreignSource != null) {
+                        return foreignSource;
+                    }
+                }
+            }
+
+            // index 0 is the model itself
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final ExpressionNode foreignSource = findForeignTableSource(joinModels.getQuick(i), targetTableName);
+                if (foreignSource != null) {
+                    return foreignSource;
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final ExpressionNode foreignSource = findForeignTableSource(unionModel, targetTableName);
+                if (foreignSource != null) {
+                    return foreignSource;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return null;
+    }
+
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
@@ -789,6 +876,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Rejects a WAL {@code UPDATE} that names any table other than the one it targets.
+     * <p>
+     * A WAL UPDATE is recorded as SQL text and re-executed on every node that applies it, so it may
+     * only read what re-execution is guaranteed to see identically. Its own target qualifies: the
+     * apply job holds that table's writer and applies seqTxn in order, so the table stands at
+     * exactly seqTxn-1 on every node. No other table does - sequencing is per-table and there is no
+     * cross-table barrier - and unlike the RNG seed and the clock, which the WAL event carries
+     * precisely so that replay is identical, nothing pins a second table's watermark. Left to run,
+     * such a statement would write different rows on different nodes and nothing would notice,
+     * because replication tracks seqTxn progress and not content.
+     * <p>
+     * This covers the tables the model names. The other way into node-local state is a cursor
+     * function, which names nothing in the model; {@link #generateUpdate} rejects those.
+     * <p>
+     * This runs while the execution model is compiled, ahead of code generation. Column-level
+     * authorization is applied as the update factory is generated, so on a WAL table this rejection
+     * reaches the caller before any permission check can deny the statement: a user lacking SELECT
+     * on the referenced columns sees the shape error rather than an access-denied one. The non-WAL
+     * path does not reach here and still reports the permission failure first.
+     * <p>
+     * Called only off the WAL apply path. A statement of this shape sequenced by an older build has
+     * to keep applying after an upgrade; refusing it there would suspend every table still holding
+     * one, which is a worse outcome than the divergence this prevents.
+     */
+    private static void rejectWalUpdateAcrossTables(IQueryModel updateQueryModel, TableToken tableToken) throws SqlException {
+        // UPDATE ... FROM is the other route to a second table and has always been rejected, further
+        // down in generateUpdate(). Its message is the more specific of the two, so raise it here
+        // rather than let the general one claim the shape first; generateUpdate() keeps its own copy
+        // of the check for the joins the optimiser derives from other shapes.
+        if (updateQueryModel.getNestedModel().containsJoin()) {
+            throw SqlException.position(0).put(UPDATE_WITH_JOIN_NOT_SUPPORTED);
+        }
+        final ExpressionNode foreignSource = findForeignTableSource(updateQueryModel, tableToken.getTableName());
+        if (foreignSource != null) {
+            throw SqlException.position(0)
+                    .put("UPDATE statements that reference another table are not supported for WAL tables [table=")
+                    .put(unquote(foreignSource.token))
+                    .put("]; the statement is replicated as SQL and re-executed on every node, and the referenced table is not synchronised with this one, so nodes could write different data");
+        }
     }
 
     private int addColumnWithType(
@@ -2019,6 +2148,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "materialized view name");
         assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final CharSequence matViewName = unquote(tok);
+        // Before any resolution, for the same reason as in compileAlterTable. A mat view cannot be
+        // renamed, but DROP + CREATE can still hand its name to a different view between the ALTER
+        // being sequenced and WAL-applied, and only the writer knows which view the statement meant.
+        executionContext.setStatementTargetTableName(matViewName);
         final TableToken matViewToken = viewExistsOrFail(matViewName, executionContext, SqlException.matViewDoesNotExist(matViewNamePosition, matViewName));
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
@@ -2366,7 +2499,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "table name");
         assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, unquote(tok), executionContext);
+        final CharSequence targetTableName = unquote(tok);
+        // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
+        executionContext.setStatementTargetTableName(targetTableName);
+        final TableToken tableToken = tableExistsOrFail(tableNamePosition, targetTableName, executionContext);
         checkViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
@@ -3157,8 +3293,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             case ExecutionModel.UPDATE:
                 final IQueryModel queryModel = (IQueryModel) model;
+                // Must precede every resolution below, including the nested model's own scan inside
+                // optimiseUpdate(): the target name occurs twice in an UPDATE, as the target and as
+                // the scanned table, and on the WAL apply path both must resolve to the writer's
+                // table while any other table in the statement resolves normally.
+                executionContext.setStatementTargetTableName(queryModel.getTableName());
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    // Before optimiseUpdate(), which is what fixes the check to this spot rather
+                    // than to generateUpdate() where the WAL join rejection lives: optimising an
+                    // UPDATE rewrites its model into fresh instances that no longer carry the
+                    // parser's record of which sub-queries the statement contains.
+                    if (metadata.isWalEnabled() && !executionContext.isWalApplication()) {
+                        rejectWalUpdateAcrossTables(queryModel, tableToken);
+                        // Opens the window generateUpdate() closes. It has to start here rather than
+                        // at code generation because optimiseUpdate() already instantiates the
+                        // cursor function of a FROM source and caches it on the model
+                        // (SqlOptimiser#parseFunctionAndEnumerateColumns), so by code generation time
+                        // that one is never instantiated again. Everything instantiated between here
+                        // and there belongs to this statement.
+                        functionParser.resetCursorFunctionInstantiated();
+                    }
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
@@ -4088,7 +4243,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (Throwable th) {
             if (executionModel != null) {
-                freeTableNameFunctions(executionModel.getQueryModel());
+                try {
+                    SqlCodeGenerator.freeTableNameFunctions(executionModel.getQueryModel(), th);
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != th) {
+                        th.addSuppressed(cleanupFailure);
+                    }
+                }
             }
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
@@ -5029,24 +5190,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return affectedPartitions;
     }
 
-    private void freeTableNameFunctions(IQueryModel queryModel) {
-        if (queryModel == null) {
-            return;
-        }
-
-        do {
-            final ObjList<IQueryModel> joinModels = queryModel.getJoinModels();
-            if (joinModels.size() > 1) {
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    freeTableNameFunctions(joinModels.getQuick(i));
-                }
-            }
-
-            Misc.free(queryModel.getTableNameFunction());
-            queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
-    }
-
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
             IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
@@ -5119,7 +5262,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             recordCursorFactory.close();
 
             if (selectQueryModel.containsJoin()) {
-                throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
+                throw SqlException.position(0).put(UPDATE_WITH_JOIN_NOT_SUPPORTED);
+            }
+
+            // The second half of the cross-table rejection begun in compileExecutionModel0(): the
+            // tables a WAL UPDATE may read are checked there, on the names in the model, and the
+            // node-local state it may read is checked here, on the functions the statement actually
+            // instantiated. A cursor-typed function reads a table it names through the execution
+            // context (table_partitions, table_columns, wal_transactions), a node-local file
+            // (read_parquet), or this process's own state (all_tables, tables, query_activity,
+            // reader_pool, memory_metrics, ...) - none of which the WAL event pins the way it pins
+            // the RNG seed and the clock, so re-execution on another node can compute other rows.
+            // The purely generative ones, long_sequence and generate_series, are refused with the
+            // rest: telling them apart needs a list of names, and three rounds of this guard showed
+            // that a list of names is what goes stale.
+            //
+            // Keyed on the instantiated function's type rather than on the factory or the name,
+            // because one name can be both: sleep(long) is a cursor while sleep(boolean) is a plain
+            // boolean, and only the cursor one is a hazard. That is also what makes the check
+            // position-independent - a FROM source, a projected column and a predicate operand all
+            // reach FunctionParser#checkAndCreateFunction - which the earlier per-position checks
+            // were not.
+            if (functionParser.isCursorFunctionInstantiated()) {
+                throw SqlException.position(0)
+                        .put("UPDATE statements that read a cursor function are not supported for WAL tables")
+                        .put("; the statement is replicated as SQL and re-executed on every node, and a cursor function reads a table or node-local state that is not synchronised with this one, so nodes could write different data");
             }
 
             return new UpdateOperation(

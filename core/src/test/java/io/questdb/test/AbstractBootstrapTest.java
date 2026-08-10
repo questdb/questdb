@@ -95,6 +95,10 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
         Map<String, String> envMap = new HashMap<>();
         for (int i = 0; i < envs.length; i += 2) {
+            // PropServerConfiguration ignores QuestDB property paths in the environment map.
+            // Callers must pass recognized QuestDB settings via PropertyKey.getEnvVarName().
+            assert PropertyKey.getByString(envs[i]).isEmpty()
+                    : "QuestDB property path passed as env var; use PropertyKey.getEnvVarName(): " + envs[i];
             envMap.put(envs[i], envs[i + 1]);
         }
         TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(root, envMap));
