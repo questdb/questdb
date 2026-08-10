@@ -5048,15 +5048,18 @@ public class WalWriterTest extends AbstractCairoTest {
         // write, via WalColumnarRowAppender.cancelColumnarWrite() ->
         // WalWriter.cancelColumnarWrite(startRowId) -> setAppendPosition() --
         // the same IO-performing rollback call as
-        // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(), but reached
-        // with no try/catch anywhere on that path and no distressed marking on
-        // failure. Routing close() purely on isDistressed() (as rollback0()'s
-        // guarantee alone would suggest) would therefore hand this half-
+        // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(). Before the
+        // distressed latch was added to cleanupBeforeClose(), this path had
+        // no try/catch and no distressed marking on failure, so routing
+        // close() purely on isDistressed() would have handed this half-
         // cancelled, still-open writer back to the pool via returnToPool() --
         // a poisoned instance handed to the next acquirer, worse than the
-        // plain stranding covered above. The fix instead tracks whether
-        // cleanupBeforeClose() completed at all (isCleanedUp), independent of
-        // the distressed flag.
+        // plain stranding covered above. WalWriterTenant.close() still routes
+        // on isCleanedUp, not just isDistressed(), so this stays correct even
+        // if a future cleanup failure mode doesn't latch. This test pins both:
+        // the pool routing above, and that the latch stops the expel branch's
+        // retry from re-running the failing IO (mapFailures == 1, asserted
+        // below).
         setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16_384);
         AtomicBoolean armed = new AtomicBoolean(false);
         AtomicInteger mapFailures = new AtomicInteger();
