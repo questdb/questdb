@@ -43,7 +43,11 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 public class FuzzRunnerTest extends AbstractCairoTest {
-    // Short enough to keep the deadline test sub-second, long enough to fit several 100ms backoffs.
+    // Ample budget: a couple of 100ms backoffs recover well within it even under a slow sleep, so the
+    // retry-then-succeed tests never flake on timing.
+    private static final long AMPLE_RETRY_TIMEOUT_MILLIS = 10_000;
+    // Deliberately small: testReadTimeoutRethrownAfterDeadline spends the whole budget, so it must stay
+    // sub-second.
     private static final long RETRY_TIMEOUT_MILLIS = 300;
     private final FuzzRunner fuzzer = new FuzzRunner();
 
@@ -168,7 +172,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
                 },
                 false,
                 null,
-                RETRY_TIMEOUT_MILLIS
+                AMPLE_RETRY_TIMEOUT_MILLIS
         );
         Assert.assertEquals("reader", reader);
         Assert.assertEquals(3, attempts.get());
