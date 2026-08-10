@@ -3215,6 +3215,43 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotWithTokenlessSubQueryOperand() throws Exception {
+        // sub-query expression nodes carry a null token; the NOT intrinsic arm
+        // must not dereference it (used to throw NPE)
+        IntrinsicModel m = modelOf("not (select * from x)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testAndOffsetWithTokenlessSubQueryPredicate() throws Exception {
+        // and_offset recurses into its predicate argument; a sub-query predicate
+        // has a null token and must not be treated as an intrinsic (used to throw NPE)
+        IntrinsicModel m = modelOf("and_offset((select * from x), 'h', 1)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testBareTokenlessSubQueryPredicateKeptAsFilter() throws Exception {
+        // a sub-query used directly as a boolean predicate has a null token;
+        // it is not an intrinsic and must survive extraction as a regular filter
+        // (used to throw NPE)
+        IntrinsicModel m = modelOf("(select * from x)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testIntervalExtractedAroundTokenlessSubQueryConjunct() throws Exception {
+        // the timestamp intrinsic must still be extracted while the tokenless
+        // sub-query conjunct stays in the residual filter (used to throw NPE)
+        IntrinsicModel m = modelOf("timestamp in '2015-02-23' and (select * from x)");
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]"), intervalToString(m));
+        Assert.assertNotNull(m.filter);
+    }
+
+    @Test
     public void testNotInIntervalIntersect() throws Exception {
         IntrinsicModel m = modelOf("timestamp not between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z' and timestamp in '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
@@ -3727,6 +3764,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrSubqueryOnLeft() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) or timestamp = '2018-01-01'");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2018-01-01' timestamp = (select-choose * from (x)) or");
+    }
+
+    @Test
+    public void testTimestampEqualsOrSubqueryOnRight() throws Exception {
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (select * from x)");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "(select-choose * from (x)) '2018-01-01' timestamp = or");
+    }
+
+    @Test
     public void testTimestampEqualsRejectedSubqueryCloseFailureClosesOnce() throws Exception {
         ThrowingCloseFunction function = new ThrowingCloseFunction(false, false, null, new RuntimeException("injected close failure"));
         try {
@@ -4162,6 +4213,44 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, null);
         TestUtils.assertEquals(
                 replaceTimestampSuffix("[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z},{lo=1970-01-03T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithNullBindVariableOnLeft() throws Exception {
+        // A NULL runtime bound is the empty-set identity under UNION: it must contribute no interval
+        // and drop only its own disjunct. Every OR disjunct - including the first - is accumulated
+        // with unionRuntimeTimestamp for exactly this reason. Anchoring the first disjunct with
+        // intersectRuntimeTimestamp instead collapses the whole disjunction to the empty set when
+        // that bound is NULL, silently returning zero rows for a predicate $2 still matches.
+        // The residual filter is removed (intrinsicValue = TRUE), so nothing downstream recovers it.
+        long day2 = 2 * 24L * 3600 * 1000 * 1000;  // 1970-01-03T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+        bindVariableService.setTimestamp(1, day2);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-03T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithNullBindVariableOnRight() throws Exception {
+        // Mirror of testTimestampOrWithNullBindVariableOnLeft. A non-anchor NULL disjunct always
+        // unioned correctly; pairing the two pins the symmetry so the anchor cannot regress alone.
+        long day1 = 24L * 3600 * 1000 * 1000;  // 1970-01-02T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day1);
+        bindVariableService.setTimestamp(1, Numbers.LONG_NULL);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]"),
                 intervalToString(m)
         );
     }
