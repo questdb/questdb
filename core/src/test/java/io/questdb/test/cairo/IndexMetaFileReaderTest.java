@@ -67,6 +67,24 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     private static final int STAT_MIN_INLINED = 1 << 1;
     private static final int STAT_MIN_PRESENT = 1;
     private static final int STAT_NULL_COUNT_PRESENT = 1 << 7;
+    // Absolute layout of buildTwoBlockOutOfLineStatSample, pinned by
+    // testTwoBlockOutOfLineStatSampleLayout so the crafted offsets below keep
+    // addressing what they are meant to address. These are the offsets the
+    // Rust test_two_block_out_of_line_sample_layout pins.
+    private static final int TWO_BLOCK_0_OFF = 176;
+    private static final int TWO_BLOCK_1_OFF = 408;
+    private static final int TWO_BLOCK_FILE_LEN = 684;
+    private static final byte TWO_BLOCK_MAX_FILL_0 = (byte) 0xEE;
+    private static final byte TWO_BLOCK_MAX_FILL_1 = (byte) 0xDD;
+    private static final byte TWO_BLOCK_MIN_FILL_0 = 0x11;
+    private static final byte TWO_BLOCK_MIN_FILL_1 = 0x22;
+    // Out-of-line region of each block: a 16-byte min followed by a 16-byte
+    // max, the second of which ends exactly at the block's end.
+    private static final int TWO_BLOCK_OOL_SIZE = 32;
+    private static final int TWO_BLOCK_SECTIONS_OFF = 640;
+    // MAX_STAT of the uid chunk, relative to the block start: past NUM_ROWS
+    // and the two preceding chunks, then 56 into the chunk.
+    private static final int TWO_BLOCK_UID_MAX_STAT = 8 + 2 * 64 + 56;
     // QuestDB column type tags, spelled out so the fixtures do not depend on
     // ColumnType's ordering, exactly as the Rust fixtures do.
     private static final int TYPE_DOUBLE = 10;
@@ -224,6 +242,10 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(-1, reader.getColumnIndexById(99));
             Assert.assertEquals(-1, reader.getColumnIndexById(0));
             Assert.assertEquals(-1, reader.getColumnIndexById(Integer.MAX_VALUE));
+            // -1 is the synthetic columns' sentinel, not a lookup key: it must
+            // miss rather than return the first of them.
+            Assert.assertEquals(-1, reader.getColumnIndexById(-1));
+            Assert.assertEquals(-1, reader.getColumnIndexById(Integer.MIN_VALUE));
             // The synthetic columns carry -1 and are located through the header.
             Assert.assertEquals(0, reader.getKeyIdColumn());
             Assert.assertEquals(1, reader.getRowIdColumn());
@@ -277,6 +299,30 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(-1, reader.getRowGroupLoForKey(-1));
             Assert.assertEquals(-1, reader.getRowGroupHiForKey(-1));
         }));
+    }
+
+    /**
+     * A block's extent is
+     * {@code [RG_BLOCK_OFFSET[i], RG_BLOCK_OFFSET[i + 1])}, so an entry that
+     * does not ascend leaves a block with an empty or inverted extent and no
+     * meaningful bound for its out-of-line stats. Rejecting the file at open
+     * time -- rather than per block on first access -- is the call both
+     * readers make, because it is what lets every later extent computation be
+     * trusted. Mirrors the Rust
+     * {@code test_non_ascending_block_offset_is_rejected_at_open}.
+     */
+    @Test
+    public void testNonAscendingRowGroupBlockOffsetIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Entry 1 below entry 0. RG_BLOCK_OFFSET is at 984 in the sample
+            // and holds 184 >> 3, 384 >> 3, 584 >> 3, 784 >> 3.
+            assertOpenRejected(988, (184 >> 3) - 1, "_im RG_BLOCK_OFFSET entries must ascend");
+            // Two blocks sharing an offset: the first would have an empty extent.
+            assertOpenRejected(988, 184 >> 3, "_im RG_BLOCK_OFFSET entries must ascend");
+            // A huge entry in front of the others is non-ascending too, so it
+            // no longer has to be caught later by the per-block bound.
+            assertOpenRejected(984, -1, "_im RG_BLOCK_OFFSET entries must ascend");
+        });
     }
 
     /**
@@ -452,6 +498,75 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The legitimate case the bound must not break: each block's max stat
+     * occupies the last 16 bytes of its own out-of-line region, so
+     * {@code offset + length} lands exactly on the block's end. A bound
+     * written with {@code >=} instead of {@code >} rejects this.
+     */
+    @Test
+    public void testOutOfLineStatAtBlockEndIsAccepted() throws Exception {
+        assertMemoryLeak(() -> withReader(IndexMetaFileReaderTest::buildTwoBlockOutOfLineStatSample, reader -> {
+            Assert.assertEquals(TWO_BLOCK_FILE_LEN, reader.getFileSize());
+            Assert.assertEquals(2, reader.getIndexRowGroupCount());
+            final byte[] minFills = {TWO_BLOCK_MIN_FILL_0, TWO_BLOCK_MIN_FILL_1};
+            final byte[] maxFills = {TWO_BLOCK_MAX_FILL_0, TWO_BLOCK_MAX_FILL_1};
+            for (int rg = 0; rg < 2; rg++) {
+                Assert.assertFalse(reader.isChunkMinStatInline(rg, 2));
+                Assert.assertFalse(reader.isChunkMaxStatInline(rg, 2));
+                Assert.assertEquals(16, reader.getChunkMinStatLength(rg, 2));
+                Assert.assertEquals(16, reader.getChunkMaxStatLength(rg, 2));
+                // The max stat ends exactly at the end of the block's region.
+                final long blockAddr = reader.getAddr() + (rg == 0 ? TWO_BLOCK_0_OFF : TWO_BLOCK_1_OFF);
+                final long regionStart = blockAddr + 8 + 3L * 64;
+                final long maxAddr = reader.getChunkMaxStatAddr(rg, 2);
+                Assert.assertEquals(TWO_BLOCK_OOL_SIZE, maxAddr - regionStart + reader.getChunkMaxStatLength(rg, 2));
+
+                final long minAddr = reader.getChunkMinStatAddr(rg, 2);
+                for (int i = 0; i < 16; i++) {
+                    Assert.assertEquals(minFills[rg], Unsafe.getByte(minAddr + i));
+                    Assert.assertEquals(maxFills[rg], Unsafe.getByte(maxAddr + i));
+                }
+            }
+        }));
+    }
+
+    /**
+     * Row group 0's max stat is repointed just past its own out-of-line
+     * region, which is where row group 1's block begins. Bounded only by the
+     * end of the whole row group region this resolves happily and hands back
+     * another row group's bytes as this one's statistic -- a silently wrong
+     * stat, and stats drive query pruning.
+     */
+    @Test
+    public void testOutOfLineStatIntoNextBlockIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final long patchOffset = TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT;
+            // Exactly the first 16 bytes of block 1.
+            assertOutOfLineStatRejected(patchOffset, encodeOutOfLineStat(TWO_BLOCK_OOL_SIZE, 16), 0);
+            // Straddling the boundary: the first 8 bytes are this block's, the
+            // last 8 belong to the next one.
+            assertOutOfLineStatRejected(patchOffset, encodeOutOfLineStat(TWO_BLOCK_OOL_SIZE - 8, 16), 0);
+            // One byte past the block's end is the off-by-one case.
+            assertOutOfLineStatRejected(patchOffset, encodeOutOfLineStat(TWO_BLOCK_OOL_SIZE, 1), 0);
+        });
+    }
+
+    /**
+     * The last block's extent ends at {@code INDEX_SECTIONS_OFFSET}, so a
+     * reference past its own region would address the key directory.
+     */
+    @Test
+    public void testOutOfLineStatPastIndexSectionsIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final long patchOffset = TWO_BLOCK_1_OFF + TWO_BLOCK_UID_MAX_STAT;
+            assertOutOfLineStatRejected(patchOffset, encodeOutOfLineStat(TWO_BLOCK_OOL_SIZE, 16), 1);
+            // An offset large enough to overflow a naive offset + length sum is
+            // rejected by the same comparison.
+            assertOutOfLineStatRejected(patchOffset, -1L, 1);
+        });
+    }
+
+    /**
      * A covered UUID column's min and max exceed the 8 inline bytes, so they
      * go to the block's out-of-line region as {@code (offset << 16) | length}.
      */
@@ -585,6 +700,26 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(0, reader.getDataRowGroupBoundary(0));
             Assert.assertEquals(500_000, reader.getDataRowGroupBoundary(1));
             Assert.assertEquals(1_000_000, reader.getDataRowGroupBoundary(2));
+        }));
+    }
+
+    /**
+     * Pins the fixture the crafted out-of-line references patch, so a layout
+     * change cannot quietly turn them into harmless offsets. These are the
+     * offsets the Rust {@code test_two_block_out_of_line_sample_layout} pins.
+     */
+    @Test
+    public void testTwoBlockOutOfLineStatSampleLayout() throws Exception {
+        assertMemoryLeak(() -> withReader(IndexMetaFileReaderTest::buildTwoBlockOutOfLineStatSample, reader -> {
+            final long addr = reader.getAddr();
+            Assert.assertEquals(TWO_BLOCK_FILE_LEN, reader.getFileSize());
+            Assert.assertEquals(TWO_BLOCK_SECTIONS_OFF, reader.getIndexSectionsOffset());
+            Assert.assertEquals(TWO_BLOCK_0_OFF >> 3, Unsafe.getUnsafe().getInt(addr + TWO_BLOCK_SECTIONS_OFF));
+            Assert.assertEquals(TWO_BLOCK_1_OFF >> 3, Unsafe.getUnsafe().getInt(addr + TWO_BLOCK_SECTIONS_OFF + 4));
+            // Block 1 is the last one, so its extent ends at the index sections.
+            Assert.assertEquals(TWO_BLOCK_SECTIONS_OFF - TWO_BLOCK_1_OFF, TWO_BLOCK_1_OFF - TWO_BLOCK_0_OFF);
+            Assert.assertEquals(64, reader.getRowGroupNumRows(0));
+            Assert.assertEquals(64, reader.getRowGroupNumRows(1));
         }));
     }
 
@@ -750,11 +885,55 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         setDataRowGroupBoundaries(writerPtr, 0L, 500_000L, 1_000_000L);
     }
 
+    /**
+     * Two row groups, each carrying a 16-byte out-of-line min and a 16-byte
+     * out-of-line max for a covered UUID column, so every block has a 32-byte
+     * out-of-line region and the last stat of a block ends exactly at that
+     * block's end. That is what makes the per-block bound testable: an
+     * off-by-one loosening lets block 0 address block 1. Mirrors the Rust
+     * {@code build_two_block_out_of_line_sample}.
+     */
+    private static void buildTwoBlockOutOfLineStatSample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 50);
+        addColumn(writerPtr, "key_id", -1, TYPE_INT);
+        addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+        addColumn(writerPtr, "uid", 4, TYPE_UUID);
+        final int[] firstKeys = {7, 20};
+        final byte[] minFills = {TWO_BLOCK_MIN_FILL_0, TWO_BLOCK_MIN_FILL_1};
+        final byte[] maxFills = {TWO_BLOCK_MAX_FILL_0, TWO_BLOCK_MAX_FILL_1};
+        for (int i = 0; i < firstKeys.length; i++) {
+            final long chunksSize = 3L * IndexMetaFileWriter.CHUNK_SIZE;
+            final long chunksPtr = Unsafe.calloc(chunksSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                putKeyIdChunk(chunksPtr, 0, firstKeys[i], firstKeys[i], 64);
+                putRowIdChunk(chunksPtr, 1, i * 64L, i * 64L + 63, 64);
+                putChunk(chunksPtr, 2, CODEC_ZSTD, 0,
+                        STAT_MIN_PRESENT | STAT_MIN_EXACT | STAT_MAX_PRESENT | STAT_MAX_EXACT,
+                        0, 64, 0, 0, 0, 0, 0, 0);
+                IndexMetaFileWriter.addRowGroup(writerPtr, firstKeys[i], 64, chunksPtr, 3);
+            } finally {
+                Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            // The out-of-line stats patch the row group that was just added.
+            putOutOfLineStat(writerPtr, 2, true, minFills[i], 16);
+            putOutOfLineStat(writerPtr, 2, false, maxFills[i], 16);
+        }
+        setDataRowGroupBoundaries(writerPtr, 0L, 128L);
+    }
+
     private static void buildZeroRowGroupSample(long writerPtr) {
         IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 100);
         addColumn(writerPtr, "key_id", -1, TYPE_INT);
         addColumn(writerPtr, "row_id", -1, TYPE_LONG);
         setDataRowGroupBoundaries(writerPtr, 0L, 20L);
+    }
+
+    /**
+     * The {@code (offset << 16) | length} encoding of an out-of-line stat
+     * reference, relative to its row group block's out-of-line region.
+     */
+    private static long encodeOutOfLineStat(long offset, long length) {
+        return (offset << 16) | length;
     }
 
     private static int encodeStatSizes(int minSize, int maxSize) {
@@ -895,6 +1074,49 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Patches a u32 of the standard sample and asserts the reader refuses to
+     * bind to the result, leaving nothing mapped.
+     */
+    private void assertOpenRejected(long patchOffset, int value, String expectedMessage) {
+        withPatchedBytes(IndexMetaFileReaderTest::buildSample, patchOffset, value, Integer.BYTES, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                Assert.fail("expected CairoException from the RG_BLOCK_OFFSET check");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            }
+        });
+    }
+
+    /**
+     * Patches the {@code uid} chunk's out-of-line max stat reference of the
+     * two-block sample and asserts that resolving it is refused. The file
+     * itself stays valid, so the rejection is the bound talking and not a
+     * broken header.
+     */
+    private void assertOutOfLineStatRejected(long patchOffset, long encoded, int rowGroup) {
+        withPatchedBytes(
+                IndexMetaFileReaderTest::buildTwoBlockOutOfLineStatSample,
+                patchOffset,
+                encoded,
+                Long.BYTES,
+                (dataPtr, dataLen) -> {
+                    try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                        reader.ofAddress(dataPtr, dataLen);
+                        try {
+                            reader.getChunkMaxStatAddr(rowGroup, 2);
+                            Assert.fail("expected CairoException from the out of line stat bound");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "_im out of line stat out of bounds");
+                        }
+                        // The block's own min stat is untouched and still resolves.
+                        Assert.assertNotEquals(0L, reader.getChunkMinStatAddr(rowGroup, 2));
+                    }
+                }
+        );
+    }
+
     private void withAlignedSample(SampleAssertion assertion) {
         withReader(IndexMetaFileReaderTest::buildAlignedSample, assertion);
     }
@@ -923,6 +1145,35 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             }
             IndexMetaFileWriter.destroyWriter(writerPtr);
         }
+    }
+
+    /**
+     * Copies a sample with one field overwritten and the CRC repaired, so the
+     * reader reaches the check under test instead of failing the checksum
+     * first, and hands the copy to {@code assertion}. The copy is freed on
+     * every path, including the exceptional one.
+     */
+    private void withPatchedBytes(SampleBuilder builder, long offset, long value, int width, BytesAssertion assertion) {
+        withBytes(builder, (dataPtr, dataLen) -> {
+            final long copyPtr = Unsafe.malloc(dataLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memcpy(copyPtr, dataPtr, dataLen);
+                if (width == Long.BYTES) {
+                    Unsafe.getUnsafe().putLong(copyPtr + offset, value);
+                } else {
+                    Unsafe.getUnsafe().putInt(copyPtr + offset, (int) value);
+                }
+                // The CRC covers [8, size - 4), so a patched field invalidates
+                // it unless it is recomputed here.
+                Unsafe.getUnsafe().putInt(
+                        copyPtr + dataLen - 4,
+                        Zip.crc32(0, copyPtr + 8, (int) (dataLen - 12))
+                );
+                assertion.run(copyPtr, dataLen);
+            } finally {
+                Unsafe.free(copyPtr, dataLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     /**

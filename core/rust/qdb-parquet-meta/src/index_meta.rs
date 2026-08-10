@@ -600,6 +600,24 @@ impl<'a> IndexMetaReader<'a> {
             return Err(truncated());
         }
 
+        // A block's extent comes from the next entry of RG_BLOCK_OFFSET, so
+        // the array must ascend: an entry that does not leaves a block with an
+        // empty or inverted extent and makes every out-of-line stat bound
+        // derived from it meaningless. Rejecting here rather than on first
+        // access is what makes every later extent computation trustworthy, and
+        // both reader implementations reject the same files.
+        let mut previous = -1i64;
+        for i in 0..index_rg_count {
+            let entry = read_u32(data, rg_block_offset_off + i * 4) as i64;
+            if entry <= previous {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "_im RG_BLOCK_OFFSET entries must ascend: row group {i} entry {entry} is not above {previous}"
+                ));
+            }
+            previous = entry;
+        }
+
         Ok(Self {
             data,
             im_file_size,
@@ -724,7 +742,17 @@ impl<'a> IndexMetaReader<'a> {
     /// Returns the index of the column whose descriptor `ID` matches the given
     /// QuestDB writer index, which is how `requiredCoverColumns` becomes a
     /// parquet column projection.
+    ///
+    /// A negative `ID` is not a lookup key and always misses: `-1` is the
+    /// descriptor sentinel for the synthetic `key_id` and `row_id` columns,
+    /// and matching it here would hand back the first synthetic column instead.
+    /// Those two are reached through the header's `KEY_ID_COLUMN` and
+    /// `ROW_ID_COLUMN`, which is the only sanctioned route. This matches
+    /// `ParquetMetaFileReader.getColumnIndexById`.
     pub fn column_index_by_id(&self, id: i32) -> ParquetMetaResult<Option<usize>> {
+        if id < 0 {
+            return Ok(None);
+        }
         for i in 0..self.column_count as usize {
             if self.column_descriptor(i)?.id == id {
                 return Ok(Some(i));
@@ -733,9 +761,13 @@ impl<'a> IndexMetaReader<'a> {
         Ok(None)
     }
 
-    /// Returns a reader over the row group block at `index`, located through
-    /// `RG_BLOCK_OFFSET`.
-    pub fn row_group_block(&self, index: usize) -> ParquetMetaResult<RowGroupBlockReader<'a>> {
+    /// Half-open byte extent `[start, end)` of the row group block at `index`.
+    ///
+    /// Block `i` runs from `RG_BLOCK_OFFSET[i]` to `RG_BLOCK_OFFSET[i + 1]`,
+    /// and the last block runs to `INDEX_SECTIONS_OFFSET`. The entries ascend,
+    /// which `new` rejected the file for otherwise, so `start < end` holds for
+    /// every block but the last, whose end is checked here.
+    fn row_group_block_extent(&self, index: usize) -> ParquetMetaResult<(usize, usize)> {
         if index >= self.index_rg_count {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -744,26 +776,86 @@ impl<'a> IndexMetaReader<'a> {
                 self.index_rg_count
             ));
         }
-        let shifted = read_u32(self.data, self.rg_block_offset_off + index * 4) as usize;
-        let offset = shifted
-            .checked_shl(BLOCK_ALIGNMENT_SHIFT)
-            .filter(|off| *off >= self.names_start && *off <= self.rg_block_offset_off)
-            .ok_or_else(|| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "row group {} block offset {} is outside the block region [{}, {})",
-                    index,
-                    shifted << BLOCK_ALIGNMENT_SHIFT,
-                    self.names_start,
-                    self.rg_block_offset_off
-                )
-            })?;
-        // Bounded by the start of the index sections so a block's out-of-line
-        // region can never run into the key directory.
-        RowGroupBlockReader::new(
-            &self.data[offset..self.rg_block_offset_off],
-            self.column_count,
-        )
+        let block_offset = |i: usize| {
+            (read_u32(self.data, self.rg_block_offset_off + i * 4) as u64) << BLOCK_ALIGNMENT_SHIFT
+        };
+        let bound = self.rg_block_offset_off as u64;
+        let start = block_offset(index);
+        let end = if index + 1 < self.index_rg_count {
+            block_offset(index + 1)
+        } else {
+            bound
+        };
+        if start < self.names_start as u64 || end > bound || start > end {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "row group {} block extent [{}, {}) is outside the block region [{}, {})",
+                index,
+                start,
+                end,
+                self.names_start,
+                self.rg_block_offset_off
+            ));
+        }
+        Ok((start as usize, end as usize))
+    }
+
+    /// Returns a reader over the row group block at `index`, located through
+    /// `RG_BLOCK_OFFSET` and bounded by the block's own extent, so a block can
+    /// never read the bytes of the one after it.
+    pub fn row_group_block(&self, index: usize) -> ParquetMetaResult<RowGroupBlockReader<'a>> {
+        let (start, end) = self.row_group_block_extent(index)?;
+        RowGroupBlockReader::new(&self.data[start..end], self.column_count)
+    }
+
+    /// Resolves a column chunk's out-of-line min or max statistic, the
+    /// `(offset << 16) | length` reference the chunk carries when the payload
+    /// exceeds the 8 inline bytes, to the bytes it addresses.
+    ///
+    /// The reference is relative to the block's out-of-line region and is
+    /// **bounded by the block's own extent**: a reference reaching into
+    /// another row group's block, or past the index sections, is rejected
+    /// rather than resolved to a silently wrong stat value. Stats drive query
+    /// pruning, so a wrong one is a wrong answer, not a decode failure.
+    pub fn out_of_line_stat(
+        &self,
+        row_group: usize,
+        column: usize,
+        is_min: bool,
+    ) -> ParquetMetaResult<&'a [u8]> {
+        let block = self.row_group_block(row_group)?;
+        let chunk = block.column_chunk(column)?;
+        let stat_flags = chunk.stat_flags();
+        debug_assert!(
+            if is_min {
+                stat_flags.has_min_stat() && !stat_flags.is_min_inlined()
+            } else {
+                stat_flags.has_max_stat() && !stat_flags.is_max_inlined()
+            },
+            "stat absent or inlined for row group {row_group}, column {column}"
+        );
+        let encoded = if is_min {
+            chunk.min_stat
+        } else {
+            chunk.max_stat
+        };
+        let region = block.out_of_line_region();
+        let region_size = region.len() as u64;
+        let stat_offset = encoded >> 16;
+        let stat_length = encoded & 0xFFFF;
+        if stat_offset > region_size || stat_length > region_size - stat_offset {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "_im out of line stat out of bounds: row group {}, column {}, offset {}, length {}, region size {}",
+                row_group,
+                column,
+                stat_offset,
+                stat_length,
+                region_size
+            ));
+        }
+        let start = stat_offset as usize;
+        Ok(&region[start..start + stat_length as usize])
     }
 
     /// The smallest key id present in row group `index`. Index
@@ -850,8 +942,34 @@ fn read_u64(data: &[u8], off: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Encodes an out-of-line stat reference the way a column chunk carries it:
+    /// `(offset << 16) | length`, relative to the row group block. Written as a
+    /// helper rather than inline arithmetic so an offset of `0` still reads as a
+    /// reference rather than collapsing to a bare length.
+    fn ool_ref(offset: u64, length: u64) -> u64 {
+        (offset << 16) | length
+    }
     use crate::column_chunk::ColumnChunkRaw;
     use crate::types::{encode_stat_sizes, Codec, ColumnFlags, EncodingMask, StatFlags};
+
+    // Absolute layout of `build_two_block_out_of_line_sample`, pinned by
+    // `test_two_block_out_of_line_sample_layout` so the crafted offsets below
+    // keep addressing what they are meant to address.
+    const TWO_BLOCK_0_OFF: usize = 176;
+    const TWO_BLOCK_1_OFF: usize = TWO_BLOCK_0_OFF + TWO_BLOCK_SIZE;
+    const TWO_BLOCK_FILE_LEN: usize = 684;
+    const TWO_BLOCK_MAX_FILL: [u8; 2] = [0xEE, 0xDD];
+    const TWO_BLOCK_MIN_FILL: [u8; 2] = [0x11, 0x22];
+    /// Out-of-line region of each block: a 16-byte min followed by a 16-byte
+    /// max, the second of which ends exactly at the block's end.
+    const TWO_BLOCK_OOL_SIZE: u64 = 32;
+    const TWO_BLOCK_SECTIONS_OFF: usize = TWO_BLOCK_1_OFF + TWO_BLOCK_SIZE;
+    /// 8 NUM_ROWS + 3 chunks of 64 + a 32-byte out-of-line region.
+    const TWO_BLOCK_SIZE: usize = 8 + 3 * 64 + 32;
+    /// MAX_STAT of the `uid` chunk, relative to the block start: past
+    /// NUM_ROWS and the two preceding chunks, then 56 into the chunk.
+    const TWO_BLOCK_UID_MAX_STAT: usize = 8 + 2 * 64 + 56;
 
     // QuestDB column type tags, spelled out so the fixtures do not depend on
     // qdb-core's enum ordering.
@@ -987,6 +1105,49 @@ mod tests {
         w.finish().unwrap()
     }
 
+    /// Two row groups, each carrying a 16-byte out-of-line min and a 16-byte
+    /// out-of-line max for a covered UUID column, so every block has a
+    /// 32-byte out-of-line region and the last stat of a block ends exactly at
+    /// that block's end. That is what makes the per-block bound testable: an
+    /// off-by-one loosening lets block 0 address block 1.
+    ///
+    /// Layout, pinned by `TWO_BLOCK_*` below: header 64, descriptors 96, the
+    /// names "key_idrow_iduid" 15 bytes padded to 16, then two blocks of
+    /// 8 + 3 * 64 + 32 = 232 bytes each, then the index sections.
+    fn build_two_block_out_of_line_sample() -> Vec<u8> {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 50, 0, 1);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.add_column("uid", descriptor(4, TYPE_UUID));
+        for (i, first_key) in [7u32, 20].iter().enumerate() {
+            let mut block = RowGroupBlockBuilder::new(3);
+            block.set_num_rows(64);
+            block
+                .set_column_chunk(0, key_id_chunk(*first_key, *first_key, 64))
+                .unwrap();
+            block
+                .set_column_chunk(1, row_id_chunk(i as i64 * 64, i as i64 * 64 + 63, 64))
+                .unwrap();
+            let mut uid = ColumnChunkRaw::zeroed();
+            uid.codec = Codec::Zstd as u8;
+            uid.stat_flags = StatFlags::new()
+                .with_min(false, true)
+                .with_max(false, true)
+                .0;
+            uid.num_values = 64;
+            block.set_column_chunk(2, uid).unwrap();
+            block
+                .add_out_of_line_stat(2, true, &[TWO_BLOCK_MIN_FILL[i]; 16])
+                .unwrap();
+            block
+                .add_out_of_line_stat(2, false, &[TWO_BLOCK_MAX_FILL[i]; 16])
+                .unwrap();
+            w.add_row_group(*first_key, block);
+        }
+        w.set_data_row_group_boundaries(&[0, 128]);
+        w.finish().unwrap()
+    }
+
     /// A minimal valid writer used by the validation tests, which then break
     /// exactly one invariant each.
     fn minimal_writer() -> IndexMetaWriter {
@@ -1009,14 +1170,14 @@ mod tests {
         block
     }
 
-    /// Overwrites a header field and repairs the CRC trailer, so the reader
-    /// reaches the check under test instead of failing the checksum first.
-    fn patch_header_u32(bytes: &mut [u8], off: usize, value: u32) {
+    /// Overwrites a field and repairs the CRC trailer, so the reader reaches
+    /// the check under test instead of failing the checksum first.
+    fn patch_u32(bytes: &mut [u8], off: usize, value: u32) {
         bytes[off..off + 4].copy_from_slice(&value.to_le_bytes());
         repair_crc(bytes);
     }
 
-    fn patch_header_u64(bytes: &mut [u8], off: usize, value: u64) {
+    fn patch_u64(bytes: &mut [u8], off: usize, value: u64) {
         bytes[off..off + 8].copy_from_slice(&value.to_le_bytes());
         repair_crc(bytes);
     }
@@ -1078,6 +1239,13 @@ mod tests {
         // column to a parquet projection.
         assert_eq!(r.column_index_by_id(7).unwrap(), Some(2));
         assert_eq!(r.column_index_by_id(99).unwrap(), None);
+        // -1 is the synthetic columns' sentinel, not a lookup key: it must
+        // miss rather than return the first of them. key_id and row_id are
+        // reached through the header instead.
+        assert_eq!(r.column_index_by_id(-1).unwrap(), None);
+        assert_eq!(r.column_index_by_id(i32::MIN).unwrap(), None);
+        assert_eq!(r.key_id_column(), 0);
+        assert_eq!(r.row_id_column(), 1);
         assert!(r.column_descriptor(3).is_err());
         assert!(r.column_name(3).is_err());
     }
@@ -1408,6 +1576,138 @@ mod tests {
         assert_eq!(bytes.len(), 444);
     }
 
+    /// Pins the fixture the crafted out-of-line references below patch, so a
+    /// layout change cannot quietly turn them into harmless offsets.
+    #[test]
+    fn test_two_block_out_of_line_sample_layout() {
+        let bytes = build_two_block_out_of_line_sample();
+        assert_eq!(bytes.len(), TWO_BLOCK_FILE_LEN);
+        assert_eq!(
+            read_u64(&bytes, OFF_INDEX_SECTIONS_OFFSET),
+            TWO_BLOCK_SECTIONS_OFF as u64
+        );
+        assert_eq!(
+            read_u32(&bytes, TWO_BLOCK_SECTIONS_OFF),
+            (TWO_BLOCK_0_OFF >> BLOCK_ALIGNMENT_SHIFT) as u32
+        );
+        assert_eq!(
+            read_u32(&bytes, TWO_BLOCK_SECTIONS_OFF + 4),
+            (TWO_BLOCK_1_OFF >> BLOCK_ALIGNMENT_SHIFT) as u32
+        );
+        // Block 1 is the last one, so its extent ends at the index sections.
+        assert_eq!(TWO_BLOCK_1_OFF + TWO_BLOCK_SIZE, TWO_BLOCK_SECTIONS_OFF);
+    }
+
+    /// The legitimate case the bound must not break: each block's max stat
+    /// occupies the last 16 bytes of its own out-of-line region, so
+    /// `offset + length` lands exactly on the block's end. A bound written
+    /// with `>=` instead of `>` rejects this.
+    #[test]
+    fn test_out_of_line_stat_at_the_block_end_is_accepted() {
+        let bytes = build_two_block_out_of_line_sample();
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        for rg in 0..2 {
+            let chunk = r.row_group_block(rg).unwrap().column_chunk(2).unwrap();
+            assert_eq!(chunk.min_stat, ool_ref(0, 16));
+            // The max stat ends exactly at the end of the block's region.
+            assert_eq!(chunk.max_stat, ool_ref(16, 16));
+            assert_eq!(
+                (chunk.max_stat >> 16) + (chunk.max_stat & 0xFFFF),
+                TWO_BLOCK_OOL_SIZE
+            );
+
+            assert_eq!(
+                r.out_of_line_stat(rg, 2, true).unwrap(),
+                &[TWO_BLOCK_MIN_FILL[rg]; 16]
+            );
+            assert_eq!(
+                r.out_of_line_stat(rg, 2, false).unwrap(),
+                &[TWO_BLOCK_MAX_FILL[rg]; 16]
+            );
+        }
+    }
+
+    /// Row group 0's max stat is repointed just past its own out-of-line
+    /// region, which is where row group 1's block begins. Bounded only by the
+    /// end of the whole row group region this resolves happily and hands back
+    /// another row group's bytes as this one's statistic - a silently wrong
+    /// stat, and stats drive query pruning.
+    #[test]
+    fn test_out_of_line_stat_reaching_into_the_next_block_is_rejected() {
+        // Exactly the first 16 bytes of block 1.
+        let mut bytes = build_two_block_out_of_line_sample();
+        patch_u64(
+            &mut bytes,
+            TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT,
+            ool_ref(TWO_BLOCK_OOL_SIZE, 16),
+        );
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        let err = r.out_of_line_stat(0, 2, false).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+        assert!(
+            err.msg.contains("out of line stat out of bounds"),
+            "{}",
+            err.msg
+        );
+        // Block 0's own stats are untouched, so the file is not simply broken.
+        assert_eq!(
+            r.out_of_line_stat(0, 2, true).unwrap(),
+            &[TWO_BLOCK_MIN_FILL[0]; 16]
+        );
+
+        // Straddling the boundary is rejected too: the first 8 bytes are this
+        // block's, the last 8 belong to the next one.
+        let mut bytes = build_two_block_out_of_line_sample();
+        patch_u64(
+            &mut bytes,
+            TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT,
+            ool_ref(TWO_BLOCK_OOL_SIZE - 8, 16),
+        );
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        assert!(r.out_of_line_stat(0, 2, false).is_err());
+
+        // One byte past the block's end is the off-by-one case.
+        let mut bytes = build_two_block_out_of_line_sample();
+        patch_u64(
+            &mut bytes,
+            TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT,
+            ool_ref(TWO_BLOCK_OOL_SIZE, 1),
+        );
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        assert!(r.out_of_line_stat(0, 2, false).is_err());
+    }
+
+    /// The last block's extent ends at `INDEX_SECTIONS_OFFSET`, so a reference
+    /// past its own region would address the key directory.
+    #[test]
+    fn test_out_of_line_stat_past_the_index_sections_is_rejected() {
+        let mut bytes = build_two_block_out_of_line_sample();
+        patch_u64(
+            &mut bytes,
+            TWO_BLOCK_1_OFF + TWO_BLOCK_UID_MAX_STAT,
+            ool_ref(TWO_BLOCK_OOL_SIZE, 16),
+        );
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        let err = r.out_of_line_stat(1, 2, false).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+        assert!(
+            err.msg.contains("out of line stat out of bounds"),
+            "{}",
+            err.msg
+        );
+
+        // An offset large enough to overflow a naive `offset + length` sum is
+        // rejected by the same comparison.
+        let mut bytes = build_two_block_out_of_line_sample();
+        patch_u64(
+            &mut bytes,
+            TWO_BLOCK_1_OFF + TWO_BLOCK_UID_MAX_STAT,
+            u64::MAX,
+        );
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        assert!(r.out_of_line_stat(1, 2, false).is_err());
+    }
+
     #[test]
     fn test_out_of_line_stat_without_a_row_group_is_rejected() {
         let mut w = minimal_writer();
@@ -1610,7 +1910,7 @@ mod tests {
     fn test_wrong_magic_is_rejected() {
         let mut bytes = build_sample();
         // A `_pm` file carries FEATURE_FLAGS where `_im` carries the magic.
-        patch_header_u64(&mut bytes, OFF_IM_MAGIC, 0);
+        patch_u64(&mut bytes, OFF_IM_MAGIC, 0);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("bad _im magic"), "{}", err.msg);
@@ -1620,7 +1920,7 @@ mod tests {
     fn test_version_mismatch_is_rejected() {
         let mut bytes = build_sample();
         // Version 1 is the interim layout and is not readable.
-        patch_header_u32(&mut bytes, OFF_FORMAT_VERSION, 1);
+        patch_u32(&mut bytes, OFF_FORMAT_VERSION, 1);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(
             err.kind,
@@ -1634,7 +1934,7 @@ mod tests {
     #[test]
     fn test_unknown_required_feature_bit_is_rejected() {
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_FEATURE_FLAGS, 1 << 32);
+        patch_u64(&mut bytes, OFF_FEATURE_FLAGS, 1 << 32);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(
             err.kind,
@@ -1645,7 +1945,7 @@ mod tests {
 
         // An unknown optional bit is ignored.
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_FEATURE_FLAGS, 1 << 7);
+        patch_u64(&mut bytes, OFF_FEATURE_FLAGS, 1 << 7);
         let r = IndexMetaReader::new(&bytes).unwrap();
         assert_eq!(r.feature_flags(), 1 << 7);
     }
@@ -1657,19 +1957,19 @@ mod tests {
     #[test]
     fn test_crafted_counts_are_rejected_by_checked_arithmetic() {
         let mut bytes = build_sample();
-        patch_header_u32(&mut bytes, OFF_INDEX_RG_COUNT, u32::MAX);
-        patch_header_u32(&mut bytes, OFF_COLUMN_COUNT, u32::MAX);
+        patch_u32(&mut bytes, OFF_INDEX_RG_COUNT, u32::MAX);
+        patch_u32(&mut bytes, OFF_COLUMN_COUNT, u32::MAX);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
 
         let mut bytes = build_sample();
-        patch_header_u32(&mut bytes, OFF_DATA_RG_COUNT, u32::MAX);
+        patch_u32(&mut bytes, OFF_DATA_RG_COUNT, u32::MAX);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
 
         // Descriptors alone overrunning the index sections is also rejected.
         let mut bytes = build_sample();
-        patch_header_u32(&mut bytes, OFF_COLUMN_COUNT, 1_000);
+        patch_u32(&mut bytes, OFF_COLUMN_COUNT, 1_000);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
@@ -1679,7 +1979,7 @@ mod tests {
     #[test]
     fn test_misaligned_index_sections_offset_is_rejected() {
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 985);
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 985);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Alignment));
         assert!(err.msg.contains("not 8-byte aligned"), "{}", err.msg);
@@ -1691,13 +1991,13 @@ mod tests {
     #[test]
     fn test_index_sections_offset_inside_name_strings_is_rejected() {
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 168);
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 168);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
 
         // Inside the descriptors themselves is rejected by the same bound.
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 128);
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 128);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
@@ -1707,19 +2007,19 @@ mod tests {
     #[test]
     fn test_index_sections_offset_leaving_no_room_is_rejected() {
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 1_048); // at the CRC
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 1_048); // at the CRC
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
 
         // 8 bytes short of the 64 the three sections occupy.
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 992);
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 992);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
 
         // Past the committed size entirely.
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 2_048);
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, 2_048);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
@@ -1730,7 +2030,7 @@ mod tests {
     #[test]
     fn test_index_sections_offset_overflowing_the_size_sum_is_rejected() {
         let mut bytes = build_sample();
-        patch_header_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, u64::MAX - 7);
+        patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, u64::MAX - 7);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
@@ -1738,18 +2038,51 @@ mod tests {
     #[test]
     fn test_crafted_block_offset_is_rejected() {
         let mut bytes = build_sample();
-        // Point row group 0 at the header.
-        bytes[984..988].copy_from_slice(&0u32.to_le_bytes());
-        repair_crc(&mut bytes);
+        // Point row group 0 at the header. The entries still ascend, so the
+        // file opens and the bound is applied when the block is resolved.
+        patch_u32(&mut bytes, 984, 0);
         let r = IndexMetaReader::new(&bytes).unwrap();
         assert!(r.row_group_block(0).is_err());
 
         let mut bytes = build_sample();
-        // Point row group 0 past the end of the block region.
-        bytes[984..988].copy_from_slice(&u32::MAX.to_le_bytes());
-        repair_crc(&mut bytes);
+        // Point the last row group past the end of the block region.
+        patch_u32(&mut bytes, 996, u32::MAX);
         let r = IndexMetaReader::new(&bytes).unwrap();
-        assert!(r.row_group_block(0).is_err());
+        assert!(r.row_group_block(3).is_err());
+    }
+
+    /// A block's extent is `[RG_BLOCK_OFFSET[i], RG_BLOCK_OFFSET[i + 1])`, so
+    /// an entry that does not ascend leaves a block with an empty or inverted
+    /// extent and no meaningful bound for its out-of-line stats. Rejecting the
+    /// file at open time - rather than per block on first access - is the
+    /// judgement call both readers make, because it is what lets every later
+    /// extent computation be trusted.
+    #[test]
+    fn test_non_ascending_block_offset_is_rejected_at_open() {
+        // Entry 1 below entry 0.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, 988, (184 >> BLOCK_ALIGNMENT_SHIFT) - 1);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("RG_BLOCK_OFFSET entries must ascend"),
+            "{}",
+            err.msg
+        );
+
+        // Two blocks sharing an offset are rejected by the same check: the
+        // first of them would have an empty extent.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, 988, 184 >> BLOCK_ALIGNMENT_SHIFT);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+
+        // A huge entry in front of the others is non-ascending too, so it no
+        // longer has to be caught later by the per-block bound.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, 984, u32::MAX);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
     }
 
     #[test]

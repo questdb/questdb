@@ -487,11 +487,18 @@ public class IndexMetaFileReader implements QuietCloseable {
      * writer index, or {@code -1} when no column matches. This is how a
      * query's required cover columns become a parquet column projection.
      * <p>
-     * Mirrors the Rust reader's first-match linear scan, so passing
-     * {@code -1} returns the first synthetic column rather than a miss; use
-     * {@link #getKeyIdColumn()} and {@link #getRowIdColumn()} for those.
+     * A negative ID is not a lookup key and always misses: {@code -1} is the
+     * descriptor sentinel for the synthetic {@code key_id} and {@code row_id}
+     * columns, and matching it here would hand back the first synthetic column
+     * instead. Those two are reached through {@link #getKeyIdColumn()} and
+     * {@link #getRowIdColumn()}, which is the only sanctioned route. This
+     * matches {@link ParquetMetaFileReader#getColumnIndexById(int)}, and the
+     * Rust reader's {@code column_index_by_id} makes the same call.
      */
     public int getColumnIndexById(int id) {
+        if (id < 0) {
+            return -1;
+        }
         for (int i = 0; i < columnCount; i++) {
             if (getColumnId(i) == id) {
                 return i;
@@ -775,15 +782,17 @@ public class IndexMetaFileReader implements QuietCloseable {
     /**
      * Resolves an {@code (offset << 16) | length} out-of-line stat reference
      * to an address, bounding it by the block's out-of-line region: from the
-     * end of the last column chunk to the start of the index sections, which
-     * is where the Rust reader bounds it too. A block's own end is not
-     * recorded, so this is the tightest bound both implementations can agree
-     * on.
+     * end of the last column chunk to the end of <b>this block's own extent</b>,
+     * which is where the Rust reader's {@code out_of_line_stat} bounds it too.
+     * <p>
+     * Bounding it only by the start of the index sections would let a stat in
+     * one row group address bytes belonging to the next - legal-looking, and
+     * silently wrong, since stats drive query pruning.
      */
     private long outOfLineStatAddr(int rowGroup, int column, long encoded) {
         final long regionStart = rowGroupBlockAddr(rowGroup) + ROW_GROUP_BLOCK_HEADER_SIZE
                 + (long) columnCount * COLUMN_CHUNK_SIZE;
-        final long regionSize = addr + rgBlockOffsetOffset - regionStart;
+        final long regionSize = addr + rowGroupBlockEnd(rowGroup) - regionStart;
         final long statOffset = encoded >>> 16;
         final long statLength = encoded & 0xFFFFL;
         if (statOffset > regionSize || statLength > regionSize - statOffset) {
@@ -898,6 +907,25 @@ public class IndexMetaFileReader implements QuietCloseable {
             throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
         }
 
+        // A block's extent comes from the next entry of RG_BLOCK_OFFSET, so
+        // the array must ascend: an entry that does not leaves a block with an
+        // empty or inverted extent and makes every out-of-line stat bound
+        // derived from it meaningless. Rejecting here rather than on first
+        // access is what makes every later extent computation trustworthy, and
+        // the Rust reader rejects the same files at the same point.
+        long previousEntry = -1;
+        for (int i = 0; i < indexRowGroupCount; i++) {
+            final long entry = Integer.toUnsignedLong(
+                    Unsafe.getInt(addr + indexSectionsOffset + (long) i * ROW_GROUP_ENTRY_SIZE));
+            if (entry <= previousEntry) {
+                throw CairoException.critical(0)
+                        .put("_im RG_BLOCK_OFFSET entries must ascend [rowGroup=").put(i)
+                        .put(", entry=").put(entry)
+                        .put(", previous=").put(previousEntry).put(']');
+            }
+            previousEntry = entry;
+        }
+
         this.featureFlags = featureFlags;
         this.payloadKind = Unsafe.getInt(addr + OFF_PAYLOAD_KIND);
         this.columnCount = columnCount;
@@ -929,23 +957,46 @@ public class IndexMetaFileReader implements QuietCloseable {
 
     /**
      * Address of an index row group's block, read from RG_BLOCK_OFFSET and
-     * shifted back by 3. The block must start at or after the descriptors and
-     * end at or before the index sections, which is the same window the Rust
-     * reader hands to its {@code RowGroupBlockReader}.
+     * shifted back by 3. The block must start at or after the descriptors,
+     * end at or before the index sections, and be wide enough for its chunks:
+     * the same window the Rust reader hands to its
+     * {@code RowGroupBlockReader}.
      */
     private long rowGroupBlockAddr(int rowGroup) {
         assert rowGroup >= 0 && rowGroup < indexRowGroupCount;
-        final int stored = Unsafe.getInt(addr + rgBlockOffsetOffset + (long) rowGroup * ROW_GROUP_ENTRY_SIZE);
-        final long offset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
+        final long offset = rowGroupBlockOffset(rowGroup);
+        final long end = rowGroupBlockEnd(rowGroup);
         final long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
-        if (offset < namesStart || offset > rgBlockOffsetOffset - minBlockSize) {
+        if (offset < namesStart || end > rgBlockOffsetOffset || end - offset < minBlockSize) {
             throw CairoException.critical(0)
                     .put("invalid _im row group block offset [rowGroup=").put(rowGroup)
                     .put(", offset=").put(offset)
+                    .put(", end=").put(end)
                     .put(", namesStart=").put(namesStart)
                     .put(", indexSectionsOffset=").put(rgBlockOffsetOffset).put(']');
         }
         return addr + offset;
+    }
+
+    /**
+     * Exclusive end of an index row group's block. Block {@code i} runs to
+     * block {@code i + 1} and the last block runs to INDEX_SECTIONS_OFFSET,
+     * which is the extent the Rust reader's {@code row_group_block_extent}
+     * computes. RG_BLOCK_OFFSET was checked to ascend when the reader was
+     * bound, so this is above the block's own offset for every row group but
+     * the last, whose end {@link #rowGroupBlockAddr(int)} checks.
+     */
+    private long rowGroupBlockEnd(int rowGroup) {
+        return rowGroup + 1 < indexRowGroupCount ? rowGroupBlockOffset(rowGroup + 1) : rgBlockOffsetOffset;
+    }
+
+    /**
+     * Byte offset of an index row group's block from the start of the file:
+     * its RG_BLOCK_OFFSET entry, a u32 holding the offset shifted right by 3.
+     */
+    private long rowGroupBlockOffset(int rowGroup) {
+        final int stored = Unsafe.getInt(addr + rgBlockOffsetOffset + (long) rowGroup * ROW_GROUP_ENTRY_SIZE);
+        return Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
     }
 
     private CairoException truncated(long indexSectionsOffset, int columnCount, int indexRowGroupCount, int dataRowGroupCount) {
