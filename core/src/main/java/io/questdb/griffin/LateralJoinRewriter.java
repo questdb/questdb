@@ -2765,7 +2765,7 @@ class LateralJoinRewriter implements Mutable {
                 break;
             }
             final ExpressionNode where = current.getWhereClause();
-            if (where != null && isNonTotalFilter(where, current)) {
+            if (isNonTotalFilter(where, current)) {
                 final ExpressionNode templated = cloneWithCountPlaceholder(where, current);
                 lifted = lifted == null ? templated : createBinaryOp("and", lifted, templated);
                 current.setWhereClause(null);
