@@ -34,7 +34,7 @@ import org.junit.Test;
 /**
  * Composite single-cell fast-append eligibility (composite-partitioning fast-append spec 1, Task 1
  * -- detection only; see {@code docs/superpowers/specs/2026-07-21-composite-single-cell-fast-append
- * -design.md} and {@code .superpowers/sdd/task-1-brief.md}). {@link
+ * -design.md}). {@link
  * TableWriter#isCompositeSingleCellFastAppendPossible} and the {@code
  * cairo.wal.composite.fastappend.enabled} flag are wired into the WAL-commit path as a COUNTER
  * ONLY: an eligible commit still takes the existing full O3 composite path, unchanged. A later

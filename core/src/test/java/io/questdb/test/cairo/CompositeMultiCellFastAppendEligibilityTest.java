@@ -34,7 +34,8 @@ import org.junit.Test;
 
 /**
  * Composite MULTI-cell fast-append eligibility (composite-partitioning fast-append spec 2, Task 1
- * -- detection only; see {@code .superpowers/sdd/task-1-brief.md}). {@link
+ * -- detection only; see {@code
+ * docs/superpowers/specs/2026-07-22-composite-multi-cell-fast-append-design.md}). {@link
  * TableWriter#isCompositeMultiCellFastAppendPossible} and the {@code
  * cairo.wal.composite.fastappend.max.open.cells} cap are wired into the WAL-commit path as a COUNTER
  * ONLY, exactly like spec 1's single-cell analog ({@link CompositeFastAppendEligibilityTest}): an

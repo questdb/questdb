@@ -5660,7 +5660,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Composite single-cell fast-append eligibility (composite-partitioning fast-append spec 1,
      * Task 1 -- detection only; see {@code docs/superpowers/specs/2026-07-21-composite-single-cell-
-     * fast-append-design.md} and {@code .superpowers/sdd/task-1-brief.md}). The per-cell analog of
+     * fast-append-design.md}). The per-cell analog of
      * {@link #applyFromWalLagToLastPartitionPossible} -- that method is hard-gated {@code false} for
      * every composite table ({@code dimCount > 0}, see its own docs); this is what a later task will
      * substitute for it in the eligible case, once a real composite fast-append exists. TODAY this
@@ -5772,8 +5772,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Composite MULTI-cell fast-append eligibility (composite-partitioning fast-append spec 2, Task 1
      * -- detection only; the multi-cell analog of {@link #isCompositeSingleCellFastAppendPossible},
      * see that method's own docs for the single-cell case, {@code
-     * docs/superpowers/specs/2026-07-21-composite-multi-cell-fast-append-design.md} and {@code
-     * .superpowers/sdd/task-1-brief.md}). TODAY this method's result is only counted ({@link
+     * docs/superpowers/specs/2026-07-21-composite-multi-cell-fast-append-design.md}). TODAY this
+     * method's result is only counted ({@link
      * #compositeMultiCellFastAppendEligibleCount}), never acted on -- every caller still always falls
      * through to the existing, unchanged {@code processO3BlockComposite} path regardless of what this
      * method returns. Never called for a plain table, or for {@code rowHi - rowLo < 2} -- every caller
