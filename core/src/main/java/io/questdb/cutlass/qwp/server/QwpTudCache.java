@@ -582,11 +582,9 @@ public class QwpTudCache implements QuietCloseable {
             } catch (Throwable th) {
                 // Closing a discarded writer rolls back its buffered rows --
                 // real file IO that can fail on ENOSPC/EIO. Swallowing keeps
-                // this loop freeing the remaining entries and lets close()
-                // (the only caller) go on to clear the map and free ddlMem,
-                // path and symbolCachePool; an escaping exception here would
-                // abort that finally in QwpUdpReceiver.close() too, leaking
-                // walAppender and the native recv buffer.
+                // this loop freeing the remaining entries and keeps reset()
+                // throw-free for both callers: close() and
+                // QwpIngressProcessorState.onDisconnected().
                 LOG.error().$("could not close discarded writer [table=").$(tableName)
                         .$(", e=").$safe(th.getMessage()).I$();
             }
@@ -733,9 +731,9 @@ public class QwpTudCache implements QuietCloseable {
     // does NOT reuse the old name is not stale and never reaches here from the
     // lookup path -- its entry stays cached and every commit through it fails
     // loudly with TableReferenceOutOfDateException; on the UDP fire-and-forget
-    // loops that failure latches writerInError, which evicts the entry on the
-    // next pass. A dropped table's rows cannot be re-homed and are discarded;
-    // a renamed table's rows are salvaged below instead.
+    // loops that failure latches writerInError, which evicts the entry in the
+    // same commit pass. A dropped table's rows cannot be re-homed and are
+    // discarded; a renamed table's rows are salvaged below instead.
     private void evictStaleTud(int key, Utf8Sequence tableNameUtf8, WalTableUpdateDetails tud) {
         final boolean hadBufferedRows = !tud.isFirstRow();
         final boolean isRenamed = engine.getTableTokenByDirName(tud.getTableToken().getDirName()) != null;
