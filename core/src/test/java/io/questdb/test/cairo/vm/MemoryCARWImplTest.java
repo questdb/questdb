@@ -659,6 +659,41 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testJumpToZeroKeepsAllocation() {
+        final int pageSize = 256;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, 3, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+            final long address = mem.getPageAddress(0);
+
+            // Rewinding keeps every page the buffer grew to, so a caller that
+            // rewinds and refills each cycle reallocates nothing and writes into
+            // pages that are already mapped. Callers rely on this: see
+            // WindowFunction.onCheckpointRestoreBegin().
+            mem.jumpTo(0);
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) (i + 1));
+            }
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+            for (int i = 0; i < sz; i++) {
+                Assert.assertEquals((byte) (i + 1), mem.getByte(i));
+            }
+
+            // truncate(), by contrast, hands all but the first page back.
+            mem.truncate();
+            Assert.assertEquals(pageSize, mem.size());
+        }
+    }
+
+    @Test
     public void testLong256() {
         try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
@@ -1169,6 +1204,7 @@ public class MemoryCARWImplTest {
             Assert.assertEquals(0, mem.getPageAddress(0));
         }
     }
+
 
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlException;
@@ -41,6 +42,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int exclusionKindPos;
     private int framingMode;
     private boolean ignoreNulls;
+    private boolean liveView;
     private int nullsDescPos;
     private int orderByDirection;
     private int orderByPos;
@@ -54,6 +56,56 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int rowsLoKindPos;
     private int timestampIndex;
     private int timestampType;
+
+    /**
+     * Converts one RANGE frame bound from the time unit the user wrote into the designated
+     * timestamp's native units, refusing a count the conversion cannot carry.
+     * <p>
+     * {@link TimestampDriver#from(long, char)} checks neither its multiply for overflow nor its
+     * {@code int} narrowing for width, so a bound wider than the timestamp's units can hold comes
+     * back as a different width - positive, or negative but far too small, or exactly zero - and
+     * the frame the query evaluates is then not the one anybody wrote. {@link #validate(int,
+     * boolean)} sees only the sign flip, and reports it as an unsupported frame start, naming a
+     * cause the user did not write. The reject belongs here instead, at the bound's own position,
+     * where it can name both the width that does not fit and the widest one that does.
+     * <p>
+     * The check is sign-symmetric, which matters because the two callers use opposite sign
+     * conventions: a plain RANGE frame negates a PRECEDING bound, while {@code SqlOptimiser}
+     * stores a WINDOW JOIN PRECEDING bound positive. The {@code Long.MIN_VALUE} special case
+     * below is reachable only from the negating caller.
+     *
+     * @param timestampType the designated timestamp type the frame is evaluated against
+     * @param bound         the frame bound, negated for PRECEDING by the plain RANGE frame, in
+     *                      {@code unit}s
+     * @param unit          the time unit the bound is written in
+     * @param position      the SQL position of the bound
+     * @param boundName     "start" or "end", for the message
+     * @return the bound in the designated timestamp's native units
+     * @throws SqlException if the bound is too wide for the designated timestamp's units
+     */
+    public static long toTimestampUnits(
+            int timestampType,
+            long bound,
+            char unit,
+            int position,
+            CharSequence boundName
+    ) throws SqlException {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long maxUnitValue = driver.getMaxUnitValue(unit);
+        // Compare on the width, not the signed bound. normalizeWindowFrame() aliases a user-written
+        // Long.MAX_VALUE PRECEDING onto the Long.MIN_VALUE UNBOUNDED sentinel, and -maxUnitValue is
+        // Long.MIN_VALUE + 1 for units whose ceiling is Long.MAX_VALUE, so a signed comparison
+        // rejects a bound of exactly maxUnitValue - one that compiled before this guard existed.
+        final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
+        if (width > maxUnitValue) {
+            throw SqlException.$(position, "RANGE frame ").put(boundName)
+                    .put(" is out of range for the designated timestamp [width=").put(width)
+                    .put(' ').put(WindowExpression.timeUnitName(unit))
+                    .put(", max=").put(maxUnitValue).put(' ').put(WindowExpression.timeUnitName(unit))
+                    .put(']');
+        }
+        return driver.from(bound, unit);
+    }
 
     @Override
     public void clear() {
@@ -74,6 +126,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.timestampIndex = -1;
         this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
+        this.liveView = false;
         this.nullsDescPos = 0;
     }
 
@@ -114,6 +167,18 @@ public class WindowContextImpl implements WindowContext, Mutable {
         return partitionBySink;
     }
 
+    /**
+     * Returns the frame's high bound, folding {@code EXCLUDE CURRENT ROW} into it: a raw
+     * {@code CURRENT ROW} becomes one unit below the current row, in whatever unit the framing
+     * mode counts in. For ROWS that is one row, which drops the current physical row and matches
+     * the reference semantics. For RANGE it is one tick of the designated timestamp, which drops
+     * every row tied at the current timestamp - what the standard calls {@code EXCLUDE GROUP}
+     * rather than {@code EXCLUDE CURRENT ROW}. Both dispositions, and the peer-truncated
+     * {@code CURRENT ROW} high bound they compose with, are pinned by
+     * {@code WindowExcludeCurrentRowTest}; a peer-semantics correction has to restate them and to
+     * widen the live-view repair bound that reads the RANGE shape as stateless - see
+     * {@code LastValueWindowFunctionFactoryHelper}.
+     */
     public long getRowsHi() {
         if (exclusionKind == WindowExpression.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
             return -1;
@@ -165,6 +230,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     @Override
+    public boolean isLiveView() {
+        return liveView;
+    }
+
+    @Override
     public boolean isOrdered() {
         return ordered;
     }
@@ -183,9 +253,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
             int framingMode,
             long rowsLo,
             char rowsLoUint,
+            int rowsLoExprPos,
             int rowsLoKindPos,
             long rowsHi,
             char rowsHiUint,
+            int rowsHiExprPos,
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
@@ -193,7 +265,21 @@ public class WindowContextImpl implements WindowContext, Mutable {
             int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
-    ) {
+    ) throws SqlException {
+        // Both bounds convert before any field is written: the caller clears the context after
+        // the function it configures, not after a configuration that failed, so a rejected
+        // bound must leave the context as it found it rather than half-configured.
+        //
+        // The reject reports at the bound EXPRESSION's position, not the frame kind's: the
+        // width is what does not fit, and the kind position sits on the PRECEDING / FOLLOWING
+        // keyword the parser consumed after it. The kind position stays the one validate()
+        // reports at, since those messages are about the kind.
+        final long convertedRowsLo = rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)
+                ? toTimestampUnits(timestampType, rowsLo, rowsLoUint, rowsLoExprPos, "start")
+                : rowsLo;
+        final long convertedRowsHi = rowsHiUint != 0 && ColumnType.isTimestamp(timestampType)
+                ? toTimestampUnits(timestampType, rowsHi, rowsHiUint, rowsHiExprPos, "end")
+                : rowsHi;
         this.empty = false;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
@@ -202,15 +288,9 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.orderByDirection = orderByDirection;
         this.orderByPos = orderByPos;
         this.framingMode = framingMode;
-        this.rowsLo = rowsLo;
-        if (rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)) {
-            this.rowsLo = ColumnType.getTimestampDriver(timestampType).from(rowsLo, rowsLoUint);
-        }
+        this.rowsLo = convertedRowsLo;
         this.rowsLoKindPos = rowsLoKindPos;
-        this.rowsHi = rowsHi;
-        if (rowsHiUint != 0 && ColumnType.isTimestamp(timestampType)) {
-            this.rowsHi = ColumnType.getTimestampDriver(timestampType).from(rowsHi, rowsHiUint);
-        }
+        this.rowsHi = convertedRowsHi;
         this.rowsHiKindPos = rowsHiKindPos;
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
@@ -219,6 +299,10 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
         this.timestampType = timestampType;
+    }
+
+    public void setLiveView(boolean liveView) {
+        this.liveView = liveView;
     }
 
     @Override

@@ -77,6 +77,21 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         reader = Misc.free(reader);
     }
 
+    /**
+     * The WHOLE resolved interval list, deliberately - not the
+     * {@code [intervalsLo, intervalsHi)} sub-range this cursor actually walks.
+     * {@link #cullIntervals} narrows those bounds against the READER's timestamp range, so
+     * they describe where this table's rows can be, not what the filter admits. A caller
+     * applying the filter to rows of its own (a live view's in-memory tier holds output
+     * rows the LV table has not been flushed yet, i.e. rows ABOVE the reader's maximum)
+     * would drop every one of them by honouring the culled bounds. The cull is an
+     * optimisation over one row source; the list is the filter.
+     */
+    @Override
+    public LongList getIntervals() {
+        return intervals;
+    }
+
     @Override
     public SymbolMapReader getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
