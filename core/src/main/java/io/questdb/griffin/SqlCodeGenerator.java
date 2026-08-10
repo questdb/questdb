@@ -6829,7 +6829,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.getLatestBy().clear();
 
             // if there are > 1 columns in the latest by statement, we cannot use indexes
-            if (latestBy.size() > 1 || !isSymbol(metadata.getColumnType(latestByIndex))) {
+            if (!latestByConsumesKeyColumn(latestBy, metadata)) {
+                // Neither factory below reads any of the extracted-key state - they filter with
+                // `filter` alone. The caller blocks key extraction for exactly these shapes, so
+                // anything lifted out of the filter here is a predicate that would not be applied.
+                // Extraction removes the node from the filter, so there is no benign case: a
+                // non-empty sink means this query is about to return rows that do not satisfy its
+                // own WHERE clause. That is worth failing over rather than serving - this is a
+                // compile-time check, so it costs nothing per row, and an assert would be disabled
+                // exactly where the consequence matters. Check every sink, not just keyColumn:
+                // keyExcludedNodes is consumed only by the non-LATEST-ON index path below.
+                if (intrinsicModel.keyColumn != null
+                        || intrinsicModel.keySubQuery != null
+                        || intrinsicModel.keyValueFuncs.size() > 0
+                        || intrinsicModel.keyExcludedValueFuncs.size() > 0
+                        || intrinsicModel.keyExcludedNodes.size() > 0) {
+                    throw CairoException.critical(0)
+                            .put("LATEST ON planner invariant violated: a WHERE predicate was lifted out of the filter " +
+                                    "for an index-backed cursor this shape does not build, and would not be applied. " +
+                                    "This is a bug in QuestDB, please report it [table=")
+                            .put(tableToken.getTableName())
+                            .put(", keyColumn=")
+                            .put(intrinsicModel.keyColumn != null ? intrinsicModel.keyColumn : "null")
+                            .put(']');
+                }
                 boolean symbolKeysOnly = true;
                 for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
                     symbolKeysOnly &= isSymbol(keyTypes.getColumnType(i));
@@ -10972,12 +10995,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntrinsicModel intrinsicModel;
             if (whereClause != null) {
                 CharSequence preferredKeyColumn = null;
-                if (latestByColumnCount == 1) {
-                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-                    if (isSymbol(queryMeta.getColumnType(latestByIndex))) {
-                        preferredKeyColumn = latestBy.getQuick(0).token;
-                    }
+                if (latestByConsumesKeyColumn(latestBy, queryMeta)) {
+                    preferredKeyColumn = latestBy.getQuick(0).token;
                 }
+
+                // Key extraction is a promise that a downstream cursor will consume
+                // intrinsicModel.keyColumn instead of the filter. Only the shape above can keep
+                // that promise, and only for the key column itself; under any other LATEST ON
+                // shape an extracted predicate is consumed by nobody and vanishes from the query.
+                final boolean latestByBlocksKeyExtraction = latestByColumnCount > 0 && preferredKeyColumn == null;
 
                 intrinsicModel = getWhereClauseParser().extract(
                         model,
@@ -10988,7 +11014,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         queryMeta,
                         executionContext,
-                        latestByColumnCount > 1,
+                        latestByBlocksKeyExtraction,
                         reader,
                         SqlHints.hasNoIndexHint(model)
                 );
@@ -12025,6 +12051,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
+    }
+
+    /**
+     * Whether the LATEST ON shape described by {@code latestBy} generates a cursor that reads
+     * {@link IntrinsicModel#keyColumn} and the key value lists, rather than filtering with the
+     * residual filter alone. Only the single-column SYMBOL-keyed shape does; multi-column shapes
+     * and non-SYMBOL keys fall through to LatestByAllFiltered / LatestByAllSymbolsFiltered, which
+     * never look at the key.
+     * <p>
+     * This is the sole definition of that condition. It gates two things that must agree: whether
+     * {@code preferredKeyColumn} is offered to {@link WhereClauseParser}, and which branch
+     * {@link #generateLatestByTableQuery} takes. When they disagreed, a predicate lifted out of
+     * the filter for an index-backed cursor that was never built simply disappeared from the query.
+     */
+    private static boolean latestByConsumesKeyColumn(ObjList<ExpressionNode> latestBy, RecordMetadata meta) {
+        if (latestBy.size() != 1) {
+            return false;
+        }
+        // the column has been validated by prepareLatestByColumnIndexes() before we get here
+        return isSymbol(meta.getColumnType(SqlUtil.getColumnIndexQuiet(meta, latestBy.getQuick(0).token)));
     }
 
     private void lookupColumnIndexes(
