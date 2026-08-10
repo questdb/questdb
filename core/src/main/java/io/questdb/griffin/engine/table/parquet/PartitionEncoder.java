@@ -171,16 +171,20 @@ public class PartitionEncoder {
     public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
 
     /**
-     * Closes the current row group at a caller-chosen boundary rather than at the
-     * {@code rowGroupSize} the writer was created with.
+     * Captures a row group boundary at a caller-chosen point rather than at the
+     * {@code rowGroupSize} the writer was created with: the rows pending right now become a
+     * row group of their own.
      * <p>
-     * The row group is emitted by the next drain call,
-     * {@code writeStreamingParquetChunk(writerPtr, 0, 0)}, which is the same protocol the
-     * fixed-size path already uses. Callers must drain before writing further rows,
-     * otherwise those rows join the flushed row group.
+     * The captured row count is fixed at the moment of the flush, so rows written afterwards
+     * cannot join the captured row group. Whichever call emits it next - a drain call,
+     * {@code writeStreamingParquetChunk(writerPtr, 0, 0)}, the next chunk write, or
+     * {@link #finishStreamingParquetWrite(long)} - closes exactly the captured count and
+     * leaves the remaining rows pending. Finishing without draining first therefore still
+     * splits the tail into the captured row group and a final one.
      * <p>
-     * A flush with no pending rows is a no-op, so two flushes in a row cannot emit an
-     * empty row group.
+     * A flush with no pending rows captures nothing, so two flushes in a row cannot emit an
+     * empty row group. A flush while a boundary is already captured keeps the earlier
+     * capture, since only one boundary can be pending at a time.
      *
      * @param writerPtr streaming writer handle
      */

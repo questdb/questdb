@@ -1064,9 +1064,11 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
-    // Armed by `flushRowGroup` to close a row group at a caller-chosen boundary
-    // instead of at `row_group_size`. Cleared when that row group is emitted.
-    force_row_group: bool,
+    // Captured by `flushRowGroup` to close a row group at a caller-chosen boundary
+    // instead of at `row_group_size`: holds the row count pending at the moment of the
+    // flush, so rows written afterwards cannot join it. Cleared when the row group is
+    // emitted.
+    forced_row_group_rows: Option<usize>,
     pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
@@ -1192,7 +1194,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             chunked_writer,
             additional_data,
             row_group_size: effective_row_group_size,
-            force_row_group: false,
+            forced_row_group_rows: None,
             pending_partitions: Vec::new(),
             first_partition_start: 0,
             accumulated_rows: 0,
@@ -1254,17 +1256,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
-/// Closes the current row group at a caller-chosen boundary rather than at the
-/// configured `row_group_size`.
+/// Captures a row group boundary at the caller's chosen point rather than at the
+/// configured `row_group_size`: the rows pending right now become a row group of their own.
 ///
-/// The row group is emitted by the next drain call
-/// (`writeStreamingParquetChunk(writerPtr, 0, 0)`), which is the same protocol the
-/// threshold path already uses. Callers must drain before writing further rows,
-/// otherwise those rows join the flushed row group.
+/// The captured row count is fixed at the moment of the flush, so rows written afterwards
+/// cannot join the captured row group. Whichever call emits it next - a drain call
+/// (`writeStreamingParquetChunk(writerPtr, 0, 0)`), the next chunk write, or
+/// `finishStreamingParquetWrite` - closes exactly the captured count and leaves the
+/// remaining rows pending. Finishing without draining first therefore still splits the
+/// tail into the captured row group and a final one.
 ///
-/// A flush with no pending rows is a no-op: the current row group is already closed,
-/// and arming the flush would both force the next chunk into a row group of its own
-/// and risk an empty row group.
+/// A flush with no pending rows captures nothing: the current row group is already closed,
+/// and capturing zero rows would both force the next chunk into a row group of its own and
+/// risk an empty row group. A flush while a boundary is already captured keeps the earlier
+/// capture, since only one boundary can be pending at a time.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_flushRowGroup(
     mut env: JNIEnv,
@@ -1281,30 +1286,39 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
-    if encoder.accumulated_rows > 0 {
-        encoder.force_row_group = true;
+    if encoder.forced_row_group_rows.is_none() && encoder.accumulated_rows > 0 {
+        encoder.forced_row_group_rows = Some(encoder.accumulated_rows);
     }
+}
+
+/// The captured boundary as a row count that is safe to close over: never more rows than
+/// are pending, and never zero, which would mean an empty row group.
+fn capped_forced_row_count(
+    accumulated_rows: usize,
+    forced_row_group_rows: Option<usize>,
+) -> Option<usize> {
+    forced_row_group_rows
+        .map(|forced_rows| forced_rows.min(accumulated_rows))
+        .filter(|&forced_rows| forced_rows > 0)
 }
 
 /// Number of rows the next row group must close over, or `None` when no row group
 /// is due yet.
 ///
-/// A caller-armed flush closes whatever is pending; the fixed `row_group_size`
-/// threshold closes exactly one full row group. An armed flush with nothing pending
-/// yields `None`, so two flushes in a row cannot emit an empty row group: the parquet
-/// spec permits one, but `ParquetMetaFileReader` treats a zero-row row group as
-/// corruption.
+/// A captured boundary closes exactly the rows that were pending when the caller flushed,
+/// so rows written after the flush stay pending; the fixed `row_group_size` threshold
+/// closes exactly one full row group. A capture of zero rows is ignored, so no flush can
+/// emit an empty row group: the parquet spec permits one, but `ParquetMetaFileReader`
+/// treats a zero-row row group as corruption.
 fn due_row_group_row_count(
     accumulated_rows: usize,
     row_group_size: usize,
-    force_row_group: bool,
+    forced_row_group_rows: Option<usize>,
 ) -> Option<usize> {
-    if force_row_group && accumulated_rows > 0 {
-        Some(accumulated_rows)
-    } else if accumulated_rows >= row_group_size {
-        Some(row_group_size)
-    } else {
-        None
+    match capped_forced_row_count(accumulated_rows, forced_row_group_rows) {
+        Some(forced_rows) => Some(forced_rows),
+        None if accumulated_rows >= row_group_size => Some(row_group_size),
+        None => None,
     }
 }
 
@@ -1312,10 +1326,10 @@ fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResu
     match due_row_group_row_count(
         encoder.accumulated_rows,
         encoder.row_group_size,
-        encoder.force_row_group,
+        encoder.forced_row_group_rows,
     ) {
         Some(row_group_rows) => {
-            encoder.force_row_group = false;
+            encoder.forced_row_group_rows = None;
             // SAFETY: Truncating to zero is always valid.
             unsafe {
                 encoder.current_buffer.set_len(0);
@@ -1435,6 +1449,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         // SAFETY: Truncating to zero is always valid.
         unsafe {
             encoder.current_buffer.set_len(0);
+        }
+
+        // A captured boundary that was never drained still has to split the tail: emit the
+        // captured row group first, then whatever remains as the final row group. Without
+        // this the two runs either side of the boundary would silently merge.
+        let forced_row_group_rows = encoder.forced_row_group_rows.take();
+        if let Some(forced_rows) =
+            capped_forced_row_count(encoder.accumulated_rows, forced_row_group_rows)
+        {
+            write_pending_row_group(encoder, forced_rows)?;
         }
 
         if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
@@ -2219,15 +2243,30 @@ mod validation_tests {
 
     #[test]
     fn streaming_double_flush_does_not_emit_an_empty_row_group() {
-        // An armed flush closes whatever is pending, ignoring the fixed threshold.
-        assert_eq!(due_row_group_row_count(3, 1_000_000, true), Some(3));
-        // Flushing again straight away has nothing left to close. Emitting a zero-row
+        // A captured boundary closes what was pending, ignoring the fixed threshold.
+        assert_eq!(due_row_group_row_count(3, 1_000_000, Some(3)), Some(3));
+        // Flushing again straight away has nothing left to capture. Emitting a zero-row
         // row group here would be read back as a corrupt file.
-        assert_eq!(due_row_group_row_count(0, 1_000_000, true), None);
-        assert_eq!(due_row_group_row_count(0, 1_000_000, false), None);
+        assert_eq!(due_row_group_row_count(0, 1_000_000, None), None);
+        // Defensive: a capture of zero rows never yields a row group either.
+        assert_eq!(due_row_group_row_count(0, 1_000_000, Some(0)), None);
+        assert_eq!(due_row_group_row_count(3, 1_000_000, Some(0)), None);
         // The fixed-size path is unchanged.
-        assert_eq!(due_row_group_row_count(8, 4, false), Some(4));
-        assert_eq!(due_row_group_row_count(3, 4, false), None);
+        assert_eq!(due_row_group_row_count(8, 4, None), Some(4));
+        assert_eq!(due_row_group_row_count(3, 4, None), None);
+    }
+
+    #[test]
+    fn streaming_flush_captures_the_row_count_at_flush_time() {
+        // Rows written after the flush do not join the captured row group: the boundary
+        // stays at the 3 rows that were pending, leaving the other 5 for the next group.
+        assert_eq!(due_row_group_row_count(8, 1_000_000, Some(3)), Some(3));
+        // Once the captured group has been emitted the threshold path takes over again.
+        assert_eq!(due_row_group_row_count(5, 1_000_000, None), None);
+        // Defensive: a capture can never close over more rows than are pending.
+        assert_eq!(due_row_group_row_count(2, 1_000_000, Some(3)), Some(2));
+        // A capture also wins over the fixed threshold, splitting below the row group size.
+        assert_eq!(due_row_group_row_count(8, 4, Some(3)), Some(3));
     }
 
     #[test]
