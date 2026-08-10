@@ -18,7 +18,15 @@
 - Tests use `assertMemoryLeak()` unless they are narrow unit tests that allocate no native memory.
 - Underscore thousands separators in numbers with 5 or more digits (`100_000`).
 - Rust: the crate lives in `core/rust/qdbr/`; `qdb-parquet-meta` is a **sibling package, not a workspace member**. Before any Rust task is complete, all four of `cargo fmt`, `cargo check --all-targets`, `cargo clippy --all-targets`, `cargo test --lib` must pass with **zero errors and zero warnings**.
-- **A bare `cargo test --lib` from `core/rust/qdbr` runs only qdbr's own tests — it executes zero tests from `qdb-parquet-meta`.** Any task that adds tests to `qdb-parquet-meta` must additionally run `cargo test --lib -p qdb-parquet-meta` and report that output; the bare run alone is not evidence for that crate.
+- **All four gates run from `core/rust/qdbr` are blind to `qdb-parquet-meta`.** It is a path dependency, not a workspace member: `cargo test --lib` runs zero of its tests, `cargo fmt` does not reformat it, and `cargo clippy --all-targets` does not lint it. A clean run from `qdbr` is therefore *no evidence at all* about that crate. Any task touching `qdb-parquet-meta` must run all four gates a second time **from inside `core/rust/qdb-parquet-meta`** and report that output separately:
+
+```bash
+cd core/rust/qdb-parquet-meta
+cargo fmt
+cargo fmt -- --check      # must exit 0
+cargo clippy --all-targets   # must emit zero warnings
+cargo test --lib
+```
 - The `_im` format is little-endian only, matching `_pm` (`core/rust/qdb-parquet-meta/src/types.rs` has `compile_error!` on big-endian targets).
 - Do **not** run multiple `mvn test` commands in parallel.
 - All Java files carry the standard QuestDB Apache-2.0 header comment; copy it verbatim from a neighbouring file in the same package.
@@ -1294,14 +1302,14 @@ Run once all four tasks are committed:
 
 ```bash
 cd ~/claude/wt/pidx-parquet/core/rust/qdbr
-cargo fmt && cargo check --all-targets && cargo clippy --all-targets
-cargo test --lib
-cargo test --lib -p qdb-parquet-meta
+cargo fmt && cargo check --all-targets && cargo clippy --all-targets && cargo test --lib
+cd ~/claude/wt/pidx-parquet/core/rust/qdb-parquet-meta
+cargo fmt -- --check && cargo clippy --all-targets && cargo test --lib
 cd ~/claude/wt/pidx-parquet
 mvn -q -pl core -Dtest='PropServerConfigurationTest,IndexMetaFileReaderTest,ParquetRowGroupFlushTest' test
 mvn -q -pl core -Dtest='PostingIndex*Test,Covering*Test' test
 ```
 
-Both `cargo test --lib` invocations are required: the bare one covers `qdbr`, the `-p qdb-parquet-meta` one covers the `_im` format. Neither runs the other's tests.
+Both directories must be gated. A run from `qdbr` alone is blind to `qdb-parquet-meta`: it runs none of its tests, reformats none of its files, and lints none of its code.
 
 The second Java command is the regression gate: Phase 1 changes no existing behaviour, so the whole posting and covering suite must stay green. If it does not, the cause is in Phase 1's diff, not a pre-existing flake — confirm by re-running the same command on `origin/master` before concluding otherwise.
