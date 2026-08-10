@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
@@ -36,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
@@ -704,6 +706,51 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_str order by ts", "dst_str2 order by ts", LOG);
         });
+    }
+
+    @Test
+    public void testTransferDecimalIntoNonDecimalTargetRejected() {
+        // RowAsserter fails on any put, so a silent write into a non-decimal column is caught too.
+        // Zero is what clears transferDecimal's precision guard, leaving the storage switch to reject.
+        final Decimal256 decimal256 = new Decimal256();
+        final Decimal128 decimal128 = new Decimal128();
+        final RowAsserter row = new RowAsserter();
+
+        for (int toType : new int[]{ColumnType.INT, ColumnType.LONG, ColumnType.DOUBLE, ColumnType.UUID}) {
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal8(row, 0, decimal256, ColumnType.getDecimalType(1, 0), toType, (byte) 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal16(row, 0, decimal256, ColumnType.getDecimalType(4, 0), toType, (short) 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal32(row, 0, decimal256, ColumnType.getDecimalType(9, 0), toType, 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal64(row, 0, decimal256, ColumnType.getDecimalType(18, 0), toType, 0L));
+            assertTransferDecimalRejected(toType, () -> {
+                decimal128.ofLong(0, 0);
+                RecordToRowCopierUtils.transferDecimal128(row, 0, decimal256, ColumnType.getDecimalType(38, 0), toType, decimal128);
+            });
+            assertTransferDecimalRejected(toType, () -> {
+                decimal256.ofLong(0, 0);
+                RecordToRowCopierUtils.transferDecimal256(row, 0, decimal256, ColumnType.getDecimalType(76, 0), toType);
+            });
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferByteToDecimal(row, 0, (byte) 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferShortToDecimal(row, 0, (short) 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferIntToDecimal(row, 0, 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferLongToDecimal(row, 0, 0L, decimal256, toType));
+        }
+    }
+
+    private static void assertTransferDecimalRejected(int toType, Runnable transfer) {
+        try {
+            transfer.run();
+            Assert.fail("expected the transfer to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot store decimal into column type: " + ColumnType.nameOf(toType));
+        }
     }
 
     private static @NotNull Record getLongRecord(int fromType, long value) {
