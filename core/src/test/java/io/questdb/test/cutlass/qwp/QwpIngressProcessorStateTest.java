@@ -1259,8 +1259,11 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
                 Assert.assertFalse("group close must fail after T discards buffered rows", state.isOk());
                 Assert.assertTrue("deferred-row clamp must remain armed", state.hasUncommittedDeferredRows());
-                Assert.assertTrue("U must still commit while the cache evicts dropped T",
-                        state.getPendingAckSeqTxns().get("protocol_u") >= 0);
+                // protocol_u's single commit is its first sequencer txn: 1.
+                // Pinning the value (not just key presence, which >= 0 would
+                // be) catches a stale or off-by-one seqTxn in the ack map.
+                Assert.assertEquals("U must still commit while the cache evicts dropped T",
+                        1L, state.getPendingAckSeqTxns().get("protocol_u"));
 
                 state.setHighestProcessedSequence(5);
                 Assert.assertEquals("watermark must not advance over discarded T rows",
@@ -3080,9 +3083,12 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 // identity (the writer's rebound token), not the stale
                 // lookup name.
                 Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
-                Assert.assertTrue(
+                // RENAME publishes the table's sequencer txn 1; the salvage
+                // commit is txn 2. Pinning the value catches a stale or
+                // phantom seqTxn that mere key presence (>= 0) would pass.
+                Assert.assertEquals(
                         "salvaged txn must be recorded under the renamed table's identity",
-                        state.getPendingAckSeqTxns().get("sal_consumer_dst") >= 0
+                        2L, state.getPendingAckSeqTxns().get("sal_consumer_dst")
                 );
                 Assert.assertTrue(
                         "durable-ack bookkeeping must also see the salvaged txn",
