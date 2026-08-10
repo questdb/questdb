@@ -231,6 +231,33 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * A column index reaches an address computation, so the chunk accessors
+     * bound it rather than trusting the caller: an out-of-range one would land
+     * hundreds of megabytes past a mapping of IM_FILE_SIZE bytes, and an
+     * {@code assert} does not fire in production. The Rust reader's
+     * {@code column_chunk} returns an error for the same index.
+     */
+    @Test
+    public void testChunkAccessorRejectsOutOfRangeColumn() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            try {
+                reader.getChunkMinStat(0, 10_000_000);
+                Assert.fail("expected CairoException from the column index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im column index out of range");
+            }
+            try {
+                reader.getChunkByteRangeStart(0, -1);
+                Assert.fail("expected CairoException from the column index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im column index out of range");
+            }
+            // The fixture has 3 columns, so the last valid index still reads.
+            Assert.assertEquals(4_096, reader.getChunkByteRangeStart(0, 2));
+        }));
+    }
+
+    /**
      * A required cover column is resolved to a parquet column index through
      * the descriptor ID, which carries the covered column's QuestDB writer
      * index. A writer index no column carries must miss.
@@ -250,6 +277,60 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(0, reader.getKeyIdColumn());
             Assert.assertEquals(1, reader.getRowIdColumn());
         }));
+    }
+
+    /**
+     * KEY_ID_COLUMN is the only sanctioned route to the synthetic
+     * {@code key_id} column, so a caller hands it straight to a chunk
+     * accessor. A crafted one with a repaired CRC used to open cleanly and
+     * then index hundreds of megabytes past the mapping. Mirrors the Rust
+     * {@code test_crafted_key_id_column_is_rejected_at_open}.
+     */
+    @Test
+    public void testCraftedKeyIdColumnIsRejectedAtOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            // KEY_ID_COLUMN is at offset 48 and the sample has 3 columns.
+            assertOpenRejected(48, 10_000_000, "_im KEY_ID_COLUMN out of range");
+            // -1 is the descriptor sentinel for a synthetic column, never an index.
+            assertOpenRejected(48, -1, "_im KEY_ID_COLUMN out of range");
+            assertOpenRejected(48, 3, "_im KEY_ID_COLUMN out of range");
+            // The last valid index is accepted.
+            withPatchedBytes(IndexMetaFileReaderTest::buildSample, 48, 2, Integer.BYTES, (dataPtr, dataLen) -> {
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(dataPtr, dataLen);
+                    Assert.assertEquals(2, reader.getKeyIdColumn());
+                }
+            });
+        });
+    }
+
+    /**
+     * PAYLOAD_KIND decides whether ROW_ID_COLUMN may be absent, so a kind
+     * neither reader knows leaves that rule undecidable. Mirrors the Rust
+     * {@code test_crafted_payload_kind_is_rejected_at_open}.
+     */
+    @Test
+    public void testCraftedPayloadKindIsRejectedAtOpen() throws Exception {
+        // PAYLOAD_KIND is at offset 28.
+        assertMemoryLeak(() -> assertOpenRejected(28, 2, "unknown _im PAYLOAD_KIND"));
+    }
+
+    /**
+     * ROW_ID_COLUMN reaches the same address computation as KEY_ID_COLUMN, and
+     * it is {@code -1} exactly under the row-per-key payload. Mirrors the Rust
+     * {@code test_crafted_row_id_column_is_rejected_at_open}.
+     */
+    @Test
+    public void testCraftedRowIdColumnIsRejectedAtOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            // ROW_ID_COLUMN is at offset 52 and the sample has 3 columns.
+            assertOpenRejected(52, 10_000_000, "_im ROW_ID_COLUMN is invalid");
+            // -1 says "no row id column at all", which only the row-per-key
+            // payload may say, and the sample is row-per-posting.
+            assertOpenRejected(52, -1, "_im ROW_ID_COLUMN is invalid");
+            // The converse: a row-per-key file must not name a row id column.
+            assertOpenRejected(28, IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY, "_im ROW_ID_COLUMN is invalid");
+        });
     }
 
     /**
@@ -1082,7 +1163,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         withPatchedBytes(IndexMetaFileReaderTest::buildSample, patchOffset, value, Integer.BYTES, (dataPtr, dataLen) -> {
             try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
                 reader.ofAddress(dataPtr, dataLen);
-                Assert.fail("expected CairoException from the RG_BLOCK_OFFSET check");
+                Assert.fail("expected CairoException from the header validation");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
             }

@@ -600,6 +600,49 @@ impl<'a> IndexMetaReader<'a> {
             return Err(truncated());
         }
 
+        // The header's column selectors are trusted all the way to an address
+        // computation: `KEY_ID_COLUMN` is the only sanctioned route to the
+        // synthetic `key_id` column, so a caller hands it straight to a column
+        // chunk accessor. Validating them here, at open, is what keeps that
+        // call safe - and the Java reader, where an unchecked selector is a
+        // wild address rather than an error, validates them at the same point.
+        let payload_kind = read_u32(data, OFF_PAYLOAD_KIND);
+        if payload_kind != IM_PAYLOAD_ROW_PER_POSTING && payload_kind != IM_PAYLOAD_ROW_PER_KEY {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "unknown _im payload kind {payload_kind}"
+            ));
+        }
+        let key_id_column = read_u32(data, OFF_KEY_ID_COLUMN) as i32;
+        if key_id_column < 0 || key_id_column as u32 >= column_count {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "_im key id column {} out of range [0, {})",
+                key_id_column,
+                column_count
+            ));
+        }
+        // `ROW_ID_COLUMN` is `-1` exactly under row-per-key: that payload has
+        // no row id column at all, and row-per-posting prunes by time through
+        // the chunk stats of the column this names. Any other negative value
+        // is rejected under both kinds - it is neither the sentinel nor an
+        // index.
+        let row_id_column = read_u32(data, OFF_ROW_ID_COLUMN) as i32;
+        let row_id_column_valid = if payload_kind == IM_PAYLOAD_ROW_PER_KEY {
+            row_id_column == -1
+        } else {
+            row_id_column >= 0 && (row_id_column as u32) < column_count
+        };
+        if !row_id_column_valid {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "_im row id column {} is invalid under payload kind {}, column count {}",
+                row_id_column,
+                payload_kind,
+                column_count
+            ));
+        }
+
         // A block's extent comes from the next entry of RG_BLOCK_OFFSET, so
         // the array must ascend: an entry that does not leaves a block with an
         // empty or inverted extent and makes every out-of-line stat bound
@@ -622,13 +665,13 @@ impl<'a> IndexMetaReader<'a> {
             data,
             im_file_size,
             feature_flags,
-            payload_kind: read_u32(data, OFF_PAYLOAD_KIND),
+            payload_kind,
             column_count,
             index_rg_count,
             data_rg_count,
             key_count: read_u32(data, OFF_KEY_COUNT),
-            key_id_column: read_u32(data, OFF_KEY_ID_COLUMN) as i32,
-            row_id_column: read_u32(data, OFF_ROW_ID_COLUMN) as i32,
+            key_id_column,
+            row_id_column,
             names_start,
             rg_block_offset_off,
             rg_first_key_off,
@@ -2033,6 +2076,69 @@ mod tests {
         patch_u64(&mut bytes, OFF_INDEX_SECTIONS_OFFSET, u64::MAX - 7);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+    }
+
+    /// `KEY_ID_COLUMN` is the only sanctioned route to the synthetic `key_id`
+    /// column, so a caller hands it straight to a column chunk accessor. An
+    /// unvalidated one indexes past the block - an error here, a wild address
+    /// in the Java reader - so both readers reject the file at open instead.
+    #[test]
+    fn test_crafted_key_id_column_is_rejected_at_open() {
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_KEY_ID_COLUMN, 10_000_000);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("key id column"), "{}", err.msg);
+
+        // -1 is the descriptor sentinel for a synthetic column, never an index.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_KEY_ID_COLUMN, u32::MAX);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("key id column"), "{}", err.msg);
+
+        // The fixture has 3 columns, so the last valid index is accepted.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_KEY_ID_COLUMN, 2);
+        assert_eq!(IndexMetaReader::new(&bytes).unwrap().key_id_column(), 2);
+    }
+
+    /// `PAYLOAD_KIND` decides whether `ROW_ID_COLUMN` may be absent, so a kind
+    /// neither reader knows leaves that rule undecidable.
+    #[test]
+    fn test_crafted_payload_kind_is_rejected_at_open() {
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_PAYLOAD_KIND, 2);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("payload kind"), "{}", err.msg);
+    }
+
+    /// `ROW_ID_COLUMN` is `-1` exactly under row-per-key, and in range
+    /// otherwise: it reaches the same address computation as `KEY_ID_COLUMN`,
+    /// and pruning by time reads the chunk it names.
+    #[test]
+    fn test_crafted_row_id_column_is_rejected_at_open() {
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_ROW_ID_COLUMN, 10_000_000);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("row id column"), "{}", err.msg);
+
+        // -1 says "no row id column at all", which only row-per-key may say,
+        // and the fixture is row-per-posting.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_ROW_ID_COLUMN, u32::MAX);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("row id column"), "{}", err.msg);
+
+        // The converse: a row-per-key file must not name a row id column.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_PAYLOAD_KIND, IM_PAYLOAD_ROW_PER_KEY);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("row id column"), "{}", err.msg);
     }
 
     #[test]

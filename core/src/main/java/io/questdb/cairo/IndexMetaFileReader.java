@@ -133,6 +133,10 @@ public class IndexMetaFileReader implements QuietCloseable {
     // The bytes QDBIDX\0\2 at offset 8. Disambiguates _im from _pm, which
     // carries FEATURE_FLAGS at the same offset.
     private static final long IM_MAGIC = 0x0200_5844_4942_4451L;
+    // One index row per key: there is no row_id column and ROW_ID_COLUMN is -1.
+    private static final int IM_PAYLOAD_ROW_PER_KEY = 1;
+    // One index row per posting, carrying a row_id column.
+    private static final int IM_PAYLOAD_ROW_PER_POSTING = 0;
     private static final int OFF_COLUMN_COUNT = 32;
     private static final int OFF_DATA_RG_COUNT = 40;
     private static final int OFF_FEATURE_FLAGS = 16;
@@ -743,7 +747,19 @@ public class IndexMetaFileReader implements QuietCloseable {
      * the block's NUM_ROWS prefix and are 64 bytes each.
      */
     private long columnChunkAddr(int rowGroup, int column) {
-        assert column >= 0 && column < columnCount;
+        // A real check rather than an assert: assertions are off in
+        // production, and an out-of-range column here is an address hundreds
+        // of megabytes past a mapping of IM_FILE_SIZE bytes - a SIGSEGV that
+        // kills the JVM instead of throwing. The analogous index in
+        // ParquetMetaFileReader comes from QuestDB metadata, but a caller
+        // reaches the synthetic columns here through KEY_ID_COLUMN and
+        // ROW_ID_COLUMN, which come off the file. The Rust reader's
+        // column_chunk returns an error for the same index.
+        if (column < 0 || column >= columnCount) {
+            throw CairoException.critical(0)
+                    .put("_im column index out of range [column=").put(column)
+                    .put(", columnCount=").put(columnCount).put(']');
+        }
         return rowGroupBlockAddr(rowGroup) + ROW_GROUP_BLOCK_HEADER_SIZE + (long) column * COLUMN_CHUNK_SIZE;
     }
 
@@ -907,6 +923,37 @@ public class IndexMetaFileReader implements QuietCloseable {
             throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
         }
 
+        // The header's column selectors are trusted all the way to an address
+        // computation: KEY_ID_COLUMN is the only sanctioned route to the
+        // synthetic key_id column, so a caller passes it straight to a column
+        // chunk accessor. Validating them here, at open, is what keeps that
+        // call safe, and the Rust reader validates them at the same point.
+        final int payloadKind = Unsafe.getInt(addr + OFF_PAYLOAD_KIND);
+        if (payloadKind != IM_PAYLOAD_ROW_PER_POSTING && payloadKind != IM_PAYLOAD_ROW_PER_KEY) {
+            throw CairoException.critical(0)
+                    .put("unknown _im PAYLOAD_KIND [payloadKind=").put(payloadKind).put(']');
+        }
+        final int keyIdColumn = Unsafe.getInt(addr + OFF_KEY_ID_COLUMN);
+        if (keyIdColumn < 0 || keyIdColumn >= columnCount) {
+            throw CairoException.critical(0)
+                    .put("_im KEY_ID_COLUMN out of range [keyIdColumn=").put(keyIdColumn)
+                    .put(", columnCount=").put(columnCount).put(']');
+        }
+        // ROW_ID_COLUMN is -1 exactly under row per key: that payload has no
+        // row id column at all, and row per posting prunes by time through the
+        // chunk stats of the column this names. Any other negative value is
+        // rejected under both kinds - it is neither the sentinel nor an index.
+        final int rowIdColumn = Unsafe.getInt(addr + OFF_ROW_ID_COLUMN);
+        final boolean rowIdColumnValid = payloadKind == IM_PAYLOAD_ROW_PER_KEY
+                ? rowIdColumn == -1
+                : rowIdColumn >= 0 && rowIdColumn < columnCount;
+        if (!rowIdColumnValid) {
+            throw CairoException.critical(0)
+                    .put("_im ROW_ID_COLUMN is invalid [rowIdColumn=").put(rowIdColumn)
+                    .put(", payloadKind=").put(payloadKind)
+                    .put(", columnCount=").put(columnCount).put(']');
+        }
+
         // A block's extent comes from the next entry of RG_BLOCK_OFFSET, so
         // the array must ascend: an entry that does not leaves a block with an
         // empty or inverted extent and makes every out-of-line stat bound
@@ -927,13 +974,13 @@ public class IndexMetaFileReader implements QuietCloseable {
         }
 
         this.featureFlags = featureFlags;
-        this.payloadKind = Unsafe.getInt(addr + OFF_PAYLOAD_KIND);
+        this.payloadKind = payloadKind;
         this.columnCount = columnCount;
         this.indexRowGroupCount = indexRowGroupCount;
         this.dataRowGroupCount = dataRowGroupCount;
         this.keyCount = Unsafe.getInt(addr + OFF_KEY_COUNT);
-        this.keyIdColumn = Unsafe.getInt(addr + OFF_KEY_ID_COLUMN);
-        this.rowIdColumn = Unsafe.getInt(addr + OFF_ROW_ID_COLUMN);
+        this.keyIdColumn = keyIdColumn;
+        this.rowIdColumn = rowIdColumn;
         this.namesStart = namesStart;
         this.rgBlockOffsetOffset = indexSectionsOffset;
         this.rgFirstKeyOffset = rgFirstKeyOffset;
