@@ -41,12 +41,12 @@ group entries, they live in the index sections, and the file ends with a CRC.
                  +==============================+             +==========================+
                  | HEADER                       |             |                          |
                  |  im_file_size ---------------+--> EOF      |  RG0  keys 0..11_402     |
-                 |  im_magic  "QDBIDX\0\2"      |             |  RG1  key 11_403 pt 1    |
+                 |  im_magic  "QDBIDX\0\3"      |             |  RG1  key 11_403 pt 1    |
                  |  feature_flags               |      +----->|  RG2  key 11_403 pt 2    |
                  |  column_count                |      |      |  RG3  keys 11_404..      |
                  |  index_rg_count              |      |      +==========================+
                  |  data_rg_count               |      |
-                 |  key_count                   |      |             data.parquet
+                 |  key_space_size              |      |             data.parquet
                  |  key_id_column               |      |      +==========================+
                  |  row_id_column               |      |      |  RG0 [0..500_000)        |
                  |                              |      |      |  RG1 [500_000..1M)       |
@@ -73,33 +73,68 @@ group entries, they live in the index sections, and the file ends with a CRC.
                  | INDEX SECTIONS               |                         |
                  |  rg_block_offset[]           |                         |
                  |  rg_first_key[]  + sentinel  |                         |
+                 |  rg_row_id_min[] / max[]     |                         |
                  |  data_rg_boundary[] ---------+-------------------------+
                  |  CRC32                       |
                  +==============================+
 ```
 
-## File header (64 bytes)
+## Artifact naming
+
+Each committed index version is a **complete, immutable pair of files named by an index txn**:
+
+```
+<col>.pidx.<indexTxn>.parquet
+<col>.pidx.<indexTxn>._im
+```
+
+The txn is in the name because `_im` is *header*-located: `IM_FILE_SIZE`, the counts and
+`INDEX_SECTIONS_OFFSET` all live in the first 128 bytes, so two versions cannot share one file the
+way two `_pm` footers share one file. `_pm` gets a size-keyed MVCC chain only because it is
+*trailer*-located, where a different committed size selects a different footer.
+
+Without a txn in the name, O3 update mode — which reuses the partition directory — could not publish
+a new index without destroying the one a pinned reader is entitled to open. The native form has
+always solved this the same way, with `<col>.pv.{sealTxn}`.
+
+The `_pm` footer feature section therefore carries `(column_id, index_txn, im_file_size)`. Superseded
+versions are reclaimed by the same GC pass that handles orphan partition directories.
+
+## File header (128 bytes)
 
 | offset | size | field | type | description |
 | --- | --- | --- | --- | --- |
 | 0 | 8 | `IM_FILE_SIZE` | u64 | total committed `_im` size; patched last by the writer and acting as the MVCC commit signal. **Not covered by the CRC.** `0` means "not yet committed" |
-| 8 | 8 | `IM_MAGIC` | u64 | `0x0200_5844_4942_4451` — the bytes `QDBIDX\0\x02`. Disambiguates `_im` from `_pm`, which carries `FEATURE_FLAGS` at this offset |
+| 8 | 8 | `IM_MAGIC` | u64 | `0x0300_5844_4942_4451` — the bytes `QDBIDX\0\x03`. Disambiguates `_im` from `_pm`, which carries `FEATURE_FLAGS` at this offset |
 | 16 | 8 | `FEATURE_FLAGS` | u64 | bits 0-31 optional (unknown bits may be ignored), bits 32-63 required (unknown bits must cause rejection) |
-| 24 | 4 | `FORMAT_VERSION` | u32 | `2` |
+| 24 | 4 | `FORMAT_VERSION` | u32 | `3` |
 | 28 | 4 | `PAYLOAD_KIND` | u32 | `0` = row-per-posting, `1` = row-per-key |
 | 32 | 4 | `COLUMN_COUNT` | u32 | columns in the index schema |
-| 36 | 4 | `INDEX_RG_COUNT` | u32 | row groups in `<col>.pidx.parquet` |
+| 36 | 4 | `INDEX_RG_COUNT` | u32 | row groups in `<col>.pidx.<indexTxn>.parquet` |
 | 40 | 4 | `DATA_RG_COUNT` | u32 | row groups in `data.parquet` |
-| 44 | 4 | `KEY_COUNT` | u32 | distinct symbol keys the index covers |
+| 44 | 4 | `KEY_SPACE_SIZE` | u32 | **exclusive upper bound on key ids**, equal to the native reader's `keyCountIncludingNulls`. Not a distinct-key count — see "Key space" below |
 | 48 | 4 | `KEY_ID_COLUMN` | i32 | index of the synthetic `key_id` column in the descriptors |
 | 52 | 4 | `ROW_ID_COLUMN` | i32 | index of the synthetic `row_id` column, or `-1` under `PAYLOAD_KIND = 1` |
 | 56 | 8 | `INDEX_SECTIONS_OFFSET` | u64 | absolute file offset of the first index section (`RG_BLOCK_OFFSET`). 8-byte aligned |
+| 64 | 8 | `PIDX_FOOTER_OFFSET` | u64 | byte offset in `<col>.pidx.<indexTxn>.parquet` where its parquet footer starts |
+| 72 | 4 | `PIDX_FOOTER_LENGTH` | u32 | length of that parquet footer in bytes |
+| 76 | 4 | `FIRST_COVER_COLUMN` | u32 | descriptor index of cover slot 0 — see "Cover slots" below |
+| 80 | 48 | `RESERVED` | | must be 0 |
+
+The index parquet's committed size is derived, exactly as `_pm` derives the data parquet's:
+`pidx_file_size = PIDX_FOOTER_OFFSET + PIDX_FOOTER_LENGTH + 8` (4 bytes of footer length plus the
+`PAR1` magic). Recording it here is what lets cold-storage upload, orphan validation and the
+standard-statistics oracle path work without ever calling `ff.length()`.
+
+`RESERVED` exists so the next field does not cost a format version. v2 filled its header exactly and
+had no slack, which is part of why this is v3.
 
 **Readers never use the filesystem's reported length to bound an `_im` read or mapping.** The on-disk
 length may include bytes from an in-progress, unpublished write and is not a commit boundary; only
 `IM_FILE_SIZE` is. A reader preads `IM_FILE_SIZE` at offset 0, rejects the file if the filesystem
 length is smaller than that (a short read would otherwise fault on a page beyond EOF), and only then
-maps exactly `IM_FILE_SIZE` bytes.
+maps exactly `IM_FILE_SIZE` bytes. Every subsequent bound is derived from `IM_FILE_SIZE`, never from
+the mapping's or buffer's length — including when a caller supplies its own buffer.
 
 ## Column descriptors
 
@@ -115,6 +150,26 @@ maps exactly `IM_FILE_SIZE` bytes.
 | `key_id` | `-1` | `INT` | synthetic; located via the header's `KEY_ID_COLUMN` |
 | `row_id` | `-1` | `LONG` | synthetic; located via the header's `ROW_ID_COLUMN` |
 | covered column | the covered column's **writer index** | its QuestDB column type | this is the mapping a query's `requiredCoverColumns` uses to build a parquet column projection |
+
+### Cover slots
+
+`ID` is *not* the query-path lookup key. A query's `requiredCoverColumns` are **cover slots** —
+ordinals into this index's own `INCLUDE` list, `0 .. coverCount-1`, the `n` in the native
+`<col>.pc{n}` — as `AbstractPostingIndexReader.openRequiredSidecars` and every `includeIdx` on
+`CoveringRowCursor` show. Writer indices and cover slots are different spaces, and confusing them
+silently resolves to the wrong column or to a miss.
+
+The mapping is therefore positional and O(1):
+
+- Descriptor order is fixed: the synthetic columns first, then the covered columns **in cover-slot
+  order**.
+- `FIRST_COVER_COLUMN` in the header is the descriptor index of cover slot 0.
+- `coverSlot -> descriptorIndex = FIRST_COVER_COLUMN + coverSlot`, bounds-checked against
+  `COLUMN_COUNT`.
+
+The writer validates the ordering; readers expose it as a `coverColumnIndex(slot)` accessor. `ID`
+stays the writer index so the file remains meaningful to an external reader and survives
+`DROP COLUMN`.
 
 Lookup by `ID` is defined only for real columns: **a lookup with a negative `ID` is rejected**, not
 matched against the synthetic columns. `key_id` and `row_id` are found through the header's
@@ -143,8 +198,16 @@ strictly ascend is rejected.
 
 **A block's extent is bounded by the next block.** Block `i` runs from `RG_BLOCK_OFFSET[i]` to
 `RG_BLOCK_OFFSET[i + 1]`, and the last block runs to `INDEX_SECTIONS_OFFSET`. An out-of-line stat
-reference is `(offset << 16) | length` relative to the block, and readers **must reject a reference
-that lands outside its own block's extent**. Bounding it only by the end of the row-group region would
+reference is `(offset << 16) | length` **relative to the block's out-of-line region** — that is, to
+`block[8 + COLUMN_COUNT * 64 ..]`, not to the start of the block. This matches `_pm`'s wording
+("a reference into the row group block's out-of-line region"); resolving it from the start of the
+block instead lands `8 + COLUMN_COUNT * 64` bytes early, inside the column-chunk array, and yields a
+`UUID` / `LONG256` / `VARCHAR` stat read out of chunk bytes. Nothing catches that — the address is
+still inside the block — and the result is a wrong pruning decision, so row groups are silently
+dropped rather than a decode failing.
+
+Readers **must reject a reference whose `[offset, offset + length)` falls outside its own block's
+out-of-line region**, which is stricter than merely inside the block's extent. Bounding it only by the end of the row-group region would
 let a stat in one row group address bytes belonging to another — legal-looking, silently wrong, and
 exactly the kind of cross-block read a crafted file would use.
 
@@ -182,7 +245,9 @@ lie after the column descriptors and name strings, and the sections it implies m
 | section | size | description |
 | --- | --- | --- |
 | `RG_BLOCK_OFFSET` | `INDEX_RG_COUNT * 4` | u32 per row group: byte offset of its block from file start, `>> 3`. **Entries strictly ascend** |
-| `RG_FIRST_KEY` | `(INDEX_RG_COUNT + 1) * 4` | u32 per row group: the smallest key id present in it. Non-decreasing. The final entry is a sentinel equal to `KEY_COUNT` |
+| `RG_FIRST_KEY` | `(INDEX_RG_COUNT + 1) * 4` | u32 per row group: the smallest key id present in it. Non-decreasing. The final entry is a sentinel equal to `KEY_SPACE_SIZE` |
+| `RG_ROW_ID_MIN` | `INDEX_RG_COUNT * 8` | i64 per row group: smallest row id present in it |
+| `RG_ROW_ID_MAX` | `INDEX_RG_COUNT * 8` | i64 per row group: largest row id present in it |
 | `DATA_RG_BOUNDARY` | `(DATA_RG_COUNT + 1) * 8` | i64: cumulative row counts of `data.parquet`'s row groups. First entry `0`, non-decreasing |
 | `CHECKSUM` | 4 | CRC32 over bytes `[8, CHECKSUM)` — everything after `IM_FILE_SIZE` |
 
@@ -191,16 +256,24 @@ lie after the column descriptors and name strings, and the sections it implies m
 Two of these sections duplicate information already present in the column chunks:
 
 ```
-RG_FIRST_KEY[i]  ==  chunk(i, KEY_ID_COLUMN).MIN_STAT
-row-id range     ==  chunk(i, ROW_ID_COLUMN).MIN_STAT / .MAX_STAT
+RG_FIRST_KEY[i]   ==  chunk(i, KEY_ID_COLUMN).MIN_STAT
+RG_ROW_ID_MIN[i]  ==  chunk(i, ROW_ID_COLUMN).MIN_STAT     (PAYLOAD_KIND == 0 only)
+RG_ROW_ID_MAX[i]  ==  chunk(i, ROW_ID_COLUMN).MAX_STAT     (PAYLOAD_KIND == 0 only)
 ```
 
 `RG_FIRST_KEY` is kept as a dense array because key lookup binary-searches it on the hot path, and
-striding 64-byte chunks for a 4-byte field is cache-hostile. The row-id range is *not* duplicated —
-readers take it from the `row_id` chunk stats.
+striding 64-byte chunks for a 4-byte field is cache-hostile.
+
+`RG_ROW_ID_MIN` / `RG_ROW_ID_MAX` are **unconditional**, and that is deliberate. Under
+`PAYLOAD_KIND = 1` there is no `row_id` column at all — the row ids are an opaque blob — so a reader
+that took the range from the `row_id` chunk stats would have no time pruning whatsoever for that
+payload. Making the arrays conditional would also mean two code paths in every reader, and would turn
+the payload bake-off into a comparison between an arm with zone maps and an arm without, which is a
+difference having nothing to do with payload encoding.
 
 **The duplication is an invariant, and it is asserted in tests**: `RG_FIRST_KEY[i]` must equal the
-`key_id` chunk's `MIN_STAT` for every row group. This gives the fast path an independent oracle, which
+`key_id` chunk's `MIN_STAT` for every row group, and under `PAYLOAD_KIND = 0` the row-id arrays must
+equal the `row_id` chunk's stats. This gives the fast path an independent oracle, which
 is the same reason the design spec keeps both a directory and standard parquet statistics.
 
 ## Key lookup
@@ -217,9 +290,24 @@ Both searches are bounded at `INDEX_RG_COUNT`; the sentinel is never read by the
 consumer can derive "the keys in row group `i` are `[RG_FIRST_KEY[i], RG_FIRST_KEY[i+1])`" for the last
 row group as well as the others.
 
-`k >= KEY_COUNT` is absent, as is any `k` below `RG_FIRST_KEY[0]`.
+`k >= KEY_SPACE_SIZE` is absent, as is any `k` below `RG_FIRST_KEY[0]`.
 
-Worked example, `RG_FIRST_KEY = [0, 11_403, 11_403, 11_404, KEY_COUNT]`:
+### Key space
+
+`KEY_SPACE_SIZE` is the **exclusive upper bound on key ids**, equal to the native reader's
+`keyCountIncludingNulls`. It is emphatically *not* a count of distinct keys present.
+
+Posting-index keys are a dense key space with sparse occupancy: a partition holding symbols
+`{5, 900, 12_000}` has three distinct keys and a key space of at least 12_001. If `KEY_SPACE_SIZE`
+were written as `3`, keys 900 and 12_000 would fail the `k >= KEY_SPACE_SIZE` test, report absent,
+and the query would return no rows with no error anywhere — which is precisely the failure the
+writer's last-first-key check exists to prevent.
+
+For the same reason, "the keys in row group `i` are `[RG_FIRST_KEY[i], RG_FIRST_KEY[i+1])`" is a
+statement about the *key-id range* a row group may hold, not about which ids are occupied. Occupancy
+is sparse, so a range containing `k` does not mean `k` is present — see "Access patterns".
+
+Worked example, `RG_FIRST_KEY = [0, 11_403, 11_403, 11_404, KEY_SPACE_SIZE]`:
 
 | key | `rg_lo` | `rg_hi` | why |
 | --- | --- | --- | --- |
@@ -227,7 +315,7 @@ Worked example, `RG_FIRST_KEY = [0, 11_403, 11_403, 11_404, KEY_COUNT]`:
 | `5` | 0 | 0 | no exact match; packed inside row group 0 |
 | `11_403` | 1 | 2 | exact match; spans two dedicated row groups |
 | `11_404` | 3 | 3 | exact match at index 3 |
-| `KEY_COUNT` | — | — | absent |
+| `KEY_SPACE_SIZE` | — | — | absent |
 
 Because row groups are key-aligned and the file is key-major, `[rg_lo, rg_hi]` is a **contiguous** run,
 so a key's postings and covered values are one contiguous byte range per column — one ranged GET from
@@ -256,6 +344,17 @@ Because row groups are key-aligned, a covered column's `MIN_STAT` / `MAX_STAT` i
 key's range, not the whole partition's. `WHERE sym = 'A' AND price > 100` can therefore skip blocks.
 This is the payoff of key-aligned row groups; the planner work to push such a filter into the covering
 scan is a later phase.
+
+### Deciding whether a key is present at all
+
+The directory answers "which row groups *could* hold `k`", not "does `k` exist". Because the key
+space is dense and occupancy sparse, a key that falls inside a packed row group's key range returns
+a range whether or not it has any postings, and confirming absence costs one row-group fetch.
+
+An exact-presence structure — an `RG_LAST_KEY` array, or a key-id bloom section — is a deliberate
+follow-up behind an optional feature bit rather than part of v3. The parquet footer's own bloom
+filter is not a substitute: reading it means reading the footer, which is the thing `_im` exists to
+avoid.
 
 ### Skipping an all-null chunk
 
@@ -318,7 +417,7 @@ These are cheap at write time and produce silent wrong answers if violated, so t
 rather than trusting callers:
 
 - `RG_FIRST_KEY` non-decreasing.
-- The last row group's first key `< KEY_COUNT`. Otherwise a key physically present in the index reports
+- The last row group's first key `< KEY_SPACE_SIZE`. Otherwise a key physically present in the index reports
   as absent and a query silently returns no rows.
 - `RG_FIRST_KEY[i] == chunk(i, KEY_ID_COLUMN).MIN_STAT` for every row group.
 - `DATA_RG_BOUNDARY[0] == 0` and the array non-decreasing. Otherwise the row-id binary search maps rows
@@ -327,16 +426,32 @@ rather than trusting callers:
 - `NUM_ROWS > 0` for every block — a zero-row parquet row group is treated as corruption.
 - `COLUMN_COUNT > 0`. (`PAYLOAD_KIND`, `KEY_ID_COLUMN` and `ROW_ID_COLUMN` are validated by the
   **reader** as well — see step 8 — because they reach an address computation.)
+- Under `PAYLOAD_KIND = 0`, every row group's `row_id` chunk has `MIN_STAT` and `MAX_STAT` **present
+  and inline**, and they equal `RG_ROW_ID_MIN[i]` / `RG_ROW_ID_MAX[i]`. The `key_id` stat already
+  gets this treatment; time pruning depends on the row-id one identically.
+- Covered columns occupy descriptor positions `FIRST_COVER_COLUMN ..` in cover-slot order, and
+  `FIRST_COVER_COLUMN + coverCount == COLUMN_COUNT`.
+- `PIDX_FOOTER_OFFSET` and `PIDX_FOOTER_LENGTH` are non-zero and describe the index parquet actually
+  written.
 - The `key_id` chunk's `MIN_STAT` used for the `RG_FIRST_KEY` cross-check must be **inline**. Key ids
   are 4-byte ints so this always holds in practice, but an out-of-line reference happens to be encoded
   as `(offset << 16) | length` and could otherwise collide with a small key value.
 
 ## Versioning
 
-`FORMAT_VERSION` is `2`. Version `1` was an interim layout that carried only byte ranges and zone-map
-arrays, with no column descriptors and no column chunks; it could locate index bytes but not decode
-them, and could not map an index column to a QuestDB column. It was never written to disk outside
-tests and is not readable by this format — readers reject `FORMAT_VERSION != 2`.
+`FORMAT_VERSION` is `3`. Readers reject anything else.
 
-Future additions go behind `FEATURE_FLAGS`: optional in bits 0-31 when an old reader can safely ignore
-the section, required in bits 32-63 when it cannot.
+Two interim layouts were never written to disk outside tests and are not readable:
+
+- **v1** carried byte ranges and zone-map arrays only, with no column descriptors and no column
+  chunks. It could locate index bytes but not decode them, and could not map an index column to a
+  QuestDB column.
+- **v2** added descriptors and chunks, but keyed the column projection on the writer index rather
+  than the cover slot, defined `KEY_COUNT` as a distinct-key count rather than a key-space bound,
+  recorded nothing about the index parquet's own footer, filled its 64-byte header with no slack,
+  and dropped the row-id zone maps that `PAYLOAD_KIND = 1` has no other source for. Each of those
+  produced a silently wrong answer rather than an error, which is why v3 exists.
+
+Future additions go behind `FEATURE_FLAGS`: optional in bits 0-31 when an old reader can safely
+ignore the section, required in bits 32-63 when it cannot. Small additions may also use the header's
+`RESERVED` bytes without a version bump, provided a zero value means "absent".
