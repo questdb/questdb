@@ -2,6 +2,7 @@ name: Gitleaks
 
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - master
