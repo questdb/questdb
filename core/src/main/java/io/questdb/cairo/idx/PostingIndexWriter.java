@@ -4115,66 +4115,6 @@ public class PostingIndexWriter implements IndexWriter {
         sealTarget = sealValueMem;
     }
 
-    private void openSidecarInfoFile(
-            Path path,
-            CharSequence name,
-            long postingColumnNameTxn,
-            boolean rewriteExisting
-    ) {
-        isLastSidecarInfoHeaderWritten = false;
-        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
-        boolean exists = ff.exists(pciFile);
-        long existingSize = exists ? ff.length(pciFile) : 0L;
-        if (exists && existingSize < 0) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not read posting index cover info file length [file=").put(pciFile)
-                    .put(']');
-        }
-
-        // .pci is a tiny, unsuffixed metadata file shared by every seal of a
-        // posting-column version. Readers open it with a length-then-mmap
-        // sequence, so its published physical size must never shrink. Mapping
-        // it with the data-index append page (1 MiB in tests) and then closing
-        // after the small header used to shrink it to Files.PAGE_SIZE (64 KiB
-        // on Windows), racing readers that had observed the transient 1 MiB.
-        // Map only the page-rounded payload and preserve any larger existing
-        // file. Leave the append pointer at that stable size so MemoryCMARW's
-        // truncating close cannot shrink it back to the logical header length.
-        long payloadSize = 2L * Integer.BYTES + (long) coverCount * Integer.BYTES;
-        long stableFileSize = Files.ceilPageSize(Math.max(payloadSize, existingSize));
-        sidecarInfoMem = Vm.getCMARWInstance();
-        sidecarInfoMem.of(
-                ff,
-                pciFile,
-                Files.PAGE_SIZE,
-                stableFileSize,
-                MemoryTag.MMAP_INDEX_WRITER
-        );
-
-        boolean writeHeader = !exists || existingSize < payloadSize;
-        if (!writeHeader && rewriteExisting) {
-            writeHeader = sidecarInfoMem.getInt(0) != PostingIndexUtils.COVER_INFO_MAGIC
-                    || sidecarInfoMem.getInt(Integer.BYTES) != coverCount;
-            for (int c = 0; c < coverCount && !writeHeader; c++) {
-                writeHeader = sidecarInfoMem.getInt(2L * Integer.BYTES + (long) c * Integer.BYTES)
-                        != coveredColumnIndices.getQuick(c);
-            }
-        }
-        if (writeHeader) {
-            isLastSidecarInfoHeaderWritten = true;
-            sidecarInfoMem.jumpTo(0);
-            // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
-            // Per-cover-column type is intentionally NOT stored — readers resolve
-            // types from live RecordMetadata so ALTER TYPE cannot leave stale types.
-            sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
-            sidecarInfoMem.putInt(coverCount);
-            for (int c = 0; c < coverCount; c++) {
-                sidecarInfoMem.putInt(coveredColumnIndices.getQuick(c));
-            }
-        }
-        sidecarInfoMem.jumpTo(stableFileSize);
-    }
-
     private void openSidecarFiles(Path path, CharSequence name, long postingColumnNameTxn, long sealTxn) {
         if (coverCount <= 0) {
             return;
@@ -4262,6 +4202,66 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    private void openSidecarInfoFile(
+            Path path,
+            CharSequence name,
+            long postingColumnNameTxn,
+            boolean rewriteExisting
+    ) {
+        isLastSidecarInfoHeaderWritten = false;
+        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
+        boolean exists = ff.exists(pciFile);
+        long existingSize = exists ? ff.length(pciFile) : 0L;
+        if (exists && existingSize < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not read posting index cover info file length [file=").put(pciFile)
+                    .put(']');
+        }
+
+        // .pci is a tiny, unsuffixed metadata file shared by every seal of a
+        // posting-column version. Readers open it with a length-then-mmap
+        // sequence, so its published physical size must never shrink. Mapping
+        // it with the data-index append page (1 MiB in tests) and then closing
+        // after the small header used to shrink it to Files.PAGE_SIZE (64 KiB
+        // on Windows), racing readers that had observed the transient 1 MiB.
+        // Map only the page-rounded payload and preserve any larger existing
+        // file. Leave the append pointer at that stable size so MemoryCMARW's
+        // truncating close cannot shrink it back to the logical header length.
+        long payloadSize = 2L * Integer.BYTES + (long) coverCount * Integer.BYTES;
+        long stableFileSize = Files.ceilPageSize(Math.max(payloadSize, existingSize));
+        sidecarInfoMem = Vm.getCMARWInstance();
+        sidecarInfoMem.of(
+                ff,
+                pciFile,
+                Files.PAGE_SIZE,
+                stableFileSize,
+                MemoryTag.MMAP_INDEX_WRITER
+        );
+
+        boolean writeHeader = !exists || existingSize < payloadSize;
+        if (!writeHeader && rewriteExisting) {
+            writeHeader = sidecarInfoMem.getInt(0) != PostingIndexUtils.COVER_INFO_MAGIC
+                    || sidecarInfoMem.getInt(Integer.BYTES) != coverCount;
+            for (int c = 0; c < coverCount && !writeHeader; c++) {
+                writeHeader = sidecarInfoMem.getInt(2L * Integer.BYTES + (long) c * Integer.BYTES)
+                        != coveredColumnIndices.getQuick(c);
+            }
+        }
+        if (writeHeader) {
+            isLastSidecarInfoHeaderWritten = true;
+            sidecarInfoMem.jumpTo(0);
+            // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
+            // Per-cover-column type is intentionally NOT stored — readers resolve
+            // types from live RecordMetadata so ALTER TYPE cannot leave stale types.
+            sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
+            sidecarInfoMem.putInt(coverCount);
+            for (int c = 0; c < coverCount; c++) {
+                sidecarInfoMem.putInt(coveredColumnIndices.getQuick(c));
+            }
+        }
+        sidecarInfoMem.jumpTo(stableFileSize);
     }
 
     /**
