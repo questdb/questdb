@@ -5831,29 +5831,31 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Union All
-                                SelectedRecord
-                                    Encode sort light
-                                      keys: [ts1]
-                                        Async Group By workers: 1
-                                          keys: [sym,ts1]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                SelectedRecord
-                                    Encode sort light
-                                      keys: [ts1]
-                                        Async Group By workers: 1
-                                          keys: [sym,ts1]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                            UnionSymbolCast
+                              functions: [sym::symbol,first,avg,last,max]
+                                Union All
+                                    SelectedRecord
+                                        Encode sort light
+                                          keys: [ts1]
+                                            Async Group By workers: 1
+                                              keys: [sym,ts1]
+                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                              values: [first(val),avg(val),last(val),max(val)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                                    SelectedRecord
+                                        Encode sort light
+                                          keys: [ts1]
+                                            Async Group By workers: 1
+                                              keys: [sym,ts1]
+                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                              values: [first(val),avg(val),last(val),max(val)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                             """);
         });
     }
@@ -5871,27 +5873,29 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Union All
-                                Encode sort light
-                                  keys: [tstmp]
-                                    Async Group By workers: 1
-                                      keys: [tstmp,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                                Encode sort light
-                                  keys: [tstmp]
-                                    Async Group By workers: 1
-                                      keys: [tstmp,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            UnionSymbolCast
+                              functions: [tstmp,sym::symbol,first,avg,last,max]
+                                Union All
+                                    Encode sort light
+                                      keys: [tstmp]
+                                        Async Group By workers: 1
+                                          keys: [tstmp,sym]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                    Encode sort light
+                                      keys: [tstmp]
+                                        Async Group By workers: 1
+                                          keys: [tstmp,sym]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
