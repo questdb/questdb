@@ -1335,6 +1335,91 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The boundary count alone used to decide how far the native side read,
+     * and the buffer's real length never crossed JNI: a 16-byte allocation
+     * passed with a count of 50_000_000 made the native side read 400MB and
+     * killed the JVM with a SIGSEGV inside the copy. The length now crosses
+     * with the pointer and must account for the count exactly.
+     */
+    @Test
+    public void testSetDataRowGroupBoundariesRejectsBufferLengthMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final long writerPtr = IndexMetaFileWriter.create(
+                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 0, 1);
+            long resultPtr = 0;
+            try {
+                IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 50);
+                addColumn(writerPtr, "key_id", -1, TYPE_INT);
+                addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+                final long chunksSize = 2L * IndexMetaFileWriter.CHUNK_SIZE;
+                final long chunksPtr = Unsafe.calloc(chunksSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    putKeyIdChunk(chunksPtr, 0, 7, 7, 64);
+                    putRowIdChunk(chunksPtr, 1, 0, 63, 64);
+                    IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, 2);
+                } finally {
+                    Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+                }
+                final long size = 2L * Long.BYTES;
+                final long ptr = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putLong(ptr, 0L);
+                    Unsafe.getUnsafe().putLong(ptr + Long.BYTES, 64L);
+                    // The count that used to read 400MB past a 16-byte buffer.
+                    try {
+                        IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, 50_000_000);
+                        Assert.fail("expected CairoException from the boundary buffer length check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "boundary buffer length");
+                    }
+                    // One boundary more than the buffer holds.
+                    try {
+                        IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, 3);
+                        Assert.fail("expected CairoException from the boundary buffer length check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "boundary buffer length");
+                    }
+                    // A buffer longer than the count claims is a mismatch too:
+                    // it means the two sides disagree about the layout.
+                    try {
+                        IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, 1);
+                        Assert.fail("expected CairoException from the boundary buffer length check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "boundary buffer length");
+                    }
+                    // The negative count guard still comes first.
+                    try {
+                        IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, -1);
+                        Assert.fail("expected CairoException from the negative count check");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "count is negative");
+                    }
+                    // The matching length is accepted, and the boundaries it
+                    // sets still produce a readable file.
+                    IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, 2);
+                } finally {
+                    Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                }
+                resultPtr = IndexMetaFileWriter.finish(writerPtr);
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(
+                            IndexMetaFileWriter.resultDataPtr(resultPtr),
+                            IndexMetaFileWriter.resultDataLen(resultPtr)
+                    );
+                    Assert.assertEquals(1, reader.getDataRowGroupCount());
+                    Assert.assertEquals(0, reader.getDataRowGroupBoundary(0));
+                    Assert.assertEquals(64, reader.getDataRowGroupBoundary(1));
+                }
+            } finally {
+                if (resultPtr != 0) {
+                    IndexMetaFileWriter.destroyResult(resultPtr);
+                }
+                IndexMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    /**
      * Pins the fixture the crafted out-of-line references patch, so a layout
      * change cannot quietly turn them into harmless offsets. These are the
      * offsets the Rust {@code test_two_block_out_of_line_sample_layout} pins.
@@ -1796,7 +1881,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             for (int i = 0; i < boundaries.length; i++) {
                 Unsafe.getUnsafe().putLong(ptr + (long) i * Long.BYTES, boundaries[i]);
             }
-            IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, boundaries.length);
+            IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, boundaries.length);
         } finally {
             Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
         }

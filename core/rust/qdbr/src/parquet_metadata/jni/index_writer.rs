@@ -53,6 +53,10 @@ use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
 use std::slice;
 
+/// Byte width of one `data.parquet` row group boundary, matching Java's
+/// `Long.BYTES`.
+const BOUNDARY_SIZE: usize = std::mem::size_of::<i64>();
+
 /// Holds the finished _im file bytes.
 pub struct IndexMetaBuiltFile {
     data: Vec<u8>,
@@ -351,12 +355,20 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_resultDataPtr(
     result.data.as_ptr()
 }
 
+/// Sets `data.parquet`'s cumulative row group boundaries from `count`
+/// consecutive `i64`s read at `boundaries_ptr`.
+///
+/// `boundaries_len` is the buffer's own byte length, and `count` boundaries
+/// must account for exactly that many bytes. Without it the count alone
+/// decides how far the slice below reads, and a caller that miscounts produces
+/// an out-of-bounds native read that nothing on either side can detect.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroupBoundaries(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *mut IndexMetaWriter,
     boundaries_ptr: *const i64,
+    boundaries_len: jlong,
     count: jint,
 ) {
     let env = &mut env;
@@ -364,6 +376,20 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
     check_not_null!(env, boundaries_ptr, "IndexMetaFileWriter boundaries");
     // A negative jint would become an enormous slice length below.
     check_not_negative!(env, count, "IndexMetaFileWriter boundaries");
+    // count is non-negative by the check above, so this product is exact in
+    // i64 and the comparison bounds the read that follows by the buffer the
+    // caller actually allocated.
+    let expected_len = count as i64 * BOUNDARY_SIZE as i64;
+    if boundaries_len != expected_len {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "boundary buffer length {} does not match {} boundaries of {} bytes",
+            boundaries_len,
+            count,
+            BOUNDARY_SIZE
+        );
+        return err.into_cairo_exception().throw(env);
+    }
     let writer = unsafe { &mut *ptr };
     let boundaries = unsafe { slice::from_raw_parts(boundaries_ptr, count as usize) };
     writer.set_data_row_group_boundaries(boundaries);

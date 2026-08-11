@@ -125,8 +125,14 @@ public class IndexMetaFileWriter {
      * Sets {@code data.parquet}'s cumulative row group boundaries. The array
      * has {@code DATA_RG_COUNT + 1} entries, starts at {@code 0} and is
      * non-decreasing.
+     * <p>
+     * {@code boundariesLen} is the buffer's own byte length and must equal
+     * {@code count * } {@link Long#BYTES}. The count alone decides how far the
+     * native side reads, so without the length a caller that miscounts
+     * produces an out-of-bounds native read that neither side can detect; a
+     * mismatch throws instead.
      */
-    public static native void setDataRowGroupBoundaries(long writerPtr, long boundariesPtr, int count);
+    public static native void setDataRowGroupBoundaries(long writerPtr, long boundariesPtr, long boundariesLen, int count) throws CairoException;
 
     /**
      * Overwrites the payload kind and key count passed to {@link #create}.
