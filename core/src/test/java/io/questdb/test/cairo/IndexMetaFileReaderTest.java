@@ -807,6 +807,42 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The positive control for the block extent bound. The sample's blocks
+     * carry no out-of-line region, so every extent is exactly the
+     * {@code 8 + COLUMN_COUNT * 64} bytes NUM_ROWS and the chunks need: the
+     * bound is {@code <} and not {@code <=} for that reason, and tightening it
+     * would reject the file the writer had just produced while the Rust reader
+     * went on accepting it. Every one of the three rejecting predicates is
+     * pinned by {@link #testCraftedRowGroupBlockOffsetIsRejected()}; this is
+     * the accepting tail of the Rust
+     * {@code test_block_bounds_predicates_are_enforced_at_open}.
+     */
+    @Test
+    public void testMinimumSizedBlockExtentIsAccepted() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            // Every term is read from the file rather than from the constants
+            // above, or the comparison could not fail.
+            final long addr = reader.getAddr();
+            final long sectionsOffset = reader.getIndexSectionsOffset();
+            final int rowGroupCount = reader.getIndexRowGroupCount();
+            final long minBlockSize = 8 + (long) reader.getColumnCount() * 64;
+            final long entry0 = Integer.toUnsignedLong(Unsafe.getUnsafe().getInt(addr + sectionsOffset));
+            final long entry1 = Integer.toUnsignedLong(Unsafe.getUnsafe().getInt(addr + sectionsOffset + 4));
+            Assert.assertEquals(minBlockSize, (entry1 - entry0) << 3);
+            // The last block is bounded by INDEX_SECTIONS_OFFSET rather than by
+            // a successor, so it exercises the bound from the other side, and
+            // it is exactly the minimum size too.
+            final long lastEntry = Integer.toUnsignedLong(
+                    Unsafe.getUnsafe().getInt(addr + sectionsOffset + (long) (rowGroupCount - 1) * 4));
+            Assert.assertEquals(minBlockSize, sectionsOffset - (lastEntry << 3));
+            // And the reader accepts it: a bound written with <= would have
+            // refused this file at open, before any of these reads.
+            Assert.assertEquals(100_000, reader.getRowGroupNumRows(0));
+            Assert.assertEquals(759_999, reader.getRowGroupNumRows(rowGroupCount - 1));
+        }));
+    }
+
+    /**
      * Every section starts 8-byte aligned, and the row group block a
      * misaligned first section would address is read as 8-byte fields. Mirrors
      * the Rust {@code test_misaligned_index_sections_offset_is_rejected}.
@@ -1753,6 +1789,53 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * A file cut short and re-committed at its new length, with the header's
+     * counts and INDEX_SECTIONS_OFFSET untouched -- what a torn write leaves
+     * behind: a header describing a body that is not there. Every one of these
+     * must be rejected, and rejected by a bound rather than by an address
+     * computation. The order in {@code parse()} is what makes that true:
+     * {@code namesStart <= INDEX_SECTIONS_OFFSET <= sectionsEnd <= crcEnd}
+     * runs before the loop that reads each descriptor's name entry, so a file
+     * cut anywhere between the header and the end of the descriptors never
+     * reads descriptor bytes it does not hold. The pre-fix Rust reader bounded
+     * the name entries first and panicked on a slice range for every length
+     * below the end of its descriptors. Mirrors the Rust
+     * {@code test_truncated_and_recommitted_file_is_rejected_not_panicked}.
+     */
+    @Test
+    public void testTruncatedAndRecommittedFileIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // 132 is the smallest length the fixed-size check admits; 224 is
+            // the end of the sample's 3 descriptors, 248 the end of the padded
+            // name blob, 448 the end of the first row group block and 1048 the
+            // start of the index sections. The rest walk the descriptors, the
+            // names, the blocks and the sections, and each one leaves the
+            // header claiming more than the file holds.
+            for (int len : new int[]{
+                    132, 136, 140, 152, 160, 168, 176, 192, 208, 216, 220, 224, 232, 240,
+                    248, 256, 400, 448, 1_000, 1_048, 1_056, 1_172
+            }) {
+                assertTruncationRejected(len, "_im sections do not fit");
+            }
+            // Below the fixed header plus the trailer the reader refuses on the
+            // size check, before it dereferences anything at all.
+            for (int len : new int[]{12, 64, 68, 96, 128, 131}) {
+                assertTruncationRejected(len, "invalid _im buffer size");
+            }
+            // The negative control: the sample at its own committed length is
+            // the one image in this set that binds, so the rejections above are
+            // the truncation talking and not something the fixture does anyway.
+            withTruncatedBytes(IndexMetaFileReaderTest::buildSample, 1_180, (dataPtr, dataLen) -> {
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(dataPtr, dataLen);
+                    Assert.assertEquals(1_180, reader.getFileSize());
+                    Assert.assertEquals(759_999, reader.getRowGroupNumRows(3));
+                }
+            });
+        });
+    }
+
+    /**
      * Pins the fixture the crafted out-of-line references patch, so a layout
      * change cannot quietly turn them into harmless offsets. These are the
      * offsets the Rust {@code test_two_block_out_of_line_sample_layout} pins.
@@ -1886,6 +1969,23 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 IndexMetaFileWriter.destroyWriter(writerPtr);
             }
         });
+    }
+
+    /**
+     * v2's magic differed from v3's only in its top byte, and v2 files are not
+     * readable, so the version byte inside the magic must not be ignored. The
+     * magic is checked before FORMAT_VERSION and is what disambiguates
+     * {@code _im} from {@code _pm} - which carries FEATURE_FLAGS at the same
+     * offset - so a reader comparing only the seven low bytes would take a v2
+     * file for a v3 one all the way to the FORMAT_VERSION field. The fixture
+     * leaves that field at 3 precisely so the magic is the only thing that can
+     * reject it. Mirrors the second half of the Rust
+     * {@code test_wrong_magic_is_rejected}.
+     */
+    @Test
+    public void testWrongMagicVersionByteIsRejected() throws Exception {
+        // IM_MAGIC is at offset 8; this is v2's, the bytes QDBIDX\0\2.
+        assertMemoryLeak(() -> assertOpenRejected(8, 0x0200_5844_4942_4451L, Long.BYTES, "bad _im IM_MAGIC"));
     }
 
     /**
@@ -2426,6 +2526,23 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Cuts the standard sample to {@code len} bytes, re-commits it at that
+     * length with the CRC repaired -- so the reader reaches the check under
+     * test instead of failing the checksum first -- and asserts the reader
+     * refuses to bind to the result, leaving nothing mapped.
+     */
+    private void assertTruncationRejected(int len, String expectedMessage) {
+        withTruncatedBytes(IndexMetaFileReaderTest::buildSample, len, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                Assert.fail("expected CairoException from the truncation to " + len + " bytes");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            }
+        });
+    }
+
     private void withAlignedSample(SampleAssertion assertion) {
         withReader(IndexMetaFileReaderTest::buildAlignedSample, assertion);
     }
@@ -2595,6 +2712,33 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 assertion.run(copyPtr, paddedLen);
             } finally {
                 Unsafe.free(copyPtr, paddedLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * Copies the first {@code len} bytes of a sample and re-commits the copy at
+     * that length: IM_FILE_SIZE becomes {@code len} and the CRC covers the
+     * shorter range. The header's counts and INDEX_SECTIONS_OFFSET are left
+     * alone, which is what a torn write leaves behind. The Java spelling of the
+     * Rust {@code truncate_to}. The copy is freed on every path, including the
+     * exceptional one.
+     */
+    private void withTruncatedBytes(SampleBuilder builder, int len, BytesAssertion assertion) {
+        withBytes(builder, (dataPtr, dataLen) -> {
+            // The CRC area starts at 8 and the trailer is 4 bytes, so anything
+            // shorter than 12 has no range to re-commit over.
+            Assert.assertTrue(len >= 12 && len <= dataLen);
+            final long copyPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memcpy(copyPtr, dataPtr, len);
+                // IM_FILE_SIZE is at 0 and is the committed length, so it
+                // shrinks with the file; the CRC then covers [8, len - 4).
+                Unsafe.getUnsafe().putLong(copyPtr, len);
+                Unsafe.getUnsafe().putInt(copyPtr + len - 4, Zip.crc32(0, copyPtr + 8, len - 12));
+                assertion.run(copyPtr, len);
+            } finally {
+                Unsafe.free(copyPtr, len, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
