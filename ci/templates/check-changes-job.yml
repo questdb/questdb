@@ -6,6 +6,12 @@ jobs:
       - checkout: none
       - bash: |
           set -ux
+          if ! [[ $PRID =~ ^[0-9]+$ ]] && [[ $BUILD_SOURCEBRANCH =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
+            # Merge-queue build: Azure sets no PR variables, but the ephemeral branch
+            # refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha> carries the PR number, so
+            # change detection scopes to the queued PR instead of testing everything.
+            PRID="${BASH_REMATCH[1]}"
+          fi
           echo "PR ID: $PRID"
           if ! [[ $PRID =~ ^[0-9]+$ ]]; then
             # The workflow wasn't triggered by a PR; test everything
@@ -68,4 +74,5 @@ jobs:
         name: check_coverage
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
+          BUILD_SOURCEBRANCH: $(Build.SourceBranch)
         displayName: "Check which files changed, list classes for coverage"
