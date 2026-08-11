@@ -254,7 +254,17 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void fsyncAndClose(long fd) {
-        int res = Files.fsync(fd);
+        // EVERY directory barrier in the engine funnels through here, and a directory fsync is what makes a
+        // freshly written file's DENTRY durable -- without it the data survives a power cut but the name
+        // pointing at it does not, inverting data-before-pointer. So this has to be the barrier that really
+        // flushes the device: Files.fsyncDurable is F_FULLFSYNC on Darwin (where plain fsync is not a
+        // barrier) and is literally fsync everywhere else, so this is a no-op off Darwin.
+        //
+        // Upgrading HERE rather than at the ~20 call sites is deliberate. Routing a new primitive to each
+        // site moved them off the method that every fault-injecting FilesFacade overrides, and three tests
+        // (RecoveryCoordinatorTest, TableWriterTest, and the crash facades) silently stopped intercepting --
+        // the failure mode where the harness goes quiet instead of red.
+        int res = Files.fsyncDurable(fd);
         if (res == 0) {
             close(fd);
             return;
