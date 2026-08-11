@@ -95,7 +95,7 @@ existing `cairo.posting.index.row.id.encoding` enum (names provisional):
 
 `native` preserves today's behaviour exactly: `linkPartitionIndexFiles` hard-links
 `.pk`/`.pv`/`.pci`/`.pc*` into the Parquet partition directory. `parquet` produces
-`<col>.pidx.parquet` + `<col>.pidx._im` instead. The second property selects the
+`<col>.pidx.<indexTxn>.parquet` + `<col>.pidx.<indexTxn>._im` instead. The second property selects the
 payload shape and is meaningful only when the first is `parquet`.
 
 Three consequences follow, and they are load-bearing rather than incidental:
@@ -104,7 +104,9 @@ Three consequences follow, and they are load-bearing rather than incidental:
    actually on disk.** A reader that consulted the configuration would mis-read
    every partition written under the other setting the moment the flag is flipped.
    The on-disk discriminator is the `_pm` footer feature section (equivalently, the
-   presence of `<col>.pidx.parquet`).
+   presence of a `<col>.pidx.<indexTxn>.parquet`). With txn-versioned names the presence
+   probe needs a directory scan, so the `_pm` footer section is the mandatory discriminator,
+   not merely the equivalent one.
 2. **Mixed state within one table is a supported, expected state.** Flipping the
    flag migrates nothing. A partition changes form only when its index is next
    rebuilt — that is, on the next O3 commit that touches it, or an explicit
@@ -114,7 +116,7 @@ Three consequences follow, and they are load-bearing rather than incidental:
 
 The flag also turns the payload bake-off into a genuine A/B: identical data,
 identical queries, different on-disk artifacts and different reader code paths.
-Benchmarks must assert the *artifact* — that `<col>.pidx.parquet` exists in one arm
+Benchmarks must assert the *artifact* — that `<col>.pidx.<indexTxn>.parquet` exists in one arm
 and `<col>.pv.*` in the other — rather than trusting that setting the flag had any
 effect.
 
@@ -127,8 +129,8 @@ partition, per indexed SYMBOL column:
 <table>/<partition>.<nameTxn>/
   data.parquet              unchanged
   _pm                       unchanged, plus one new footer feature section
-  <col>.pidx.parquet        the covering index, as Parquet
-  <col>.pidx._im            byte-range and key-directory sidecar
+  <col>.pidx.<indexTxn>.parquet   the covering index, as Parquet
+  <col>.pidx.<indexTxn>._im       byte-range and key-directory sidecar
 ```
 
 No `.pk`, `.pv`, `.pci` or `.pc*` in a Parquet partition.
@@ -169,24 +171,33 @@ change:
 | O3 update mode | `data.parquet` mutated in place, `_pm` grows a footer, index rebuilt | parquet file size (`_txn` field 3); index token rides in the new `_pm` footer |
 | index-only change (`ADD`/`DROP INDEX`, `INCLUDE` change) | nothing in `data.parquet` | **force a new partition dir**, hard-linking `data.parquet` and `_pm` |
 
-The third regime is load-bearing. If an index-only change merely appended a `_pm`
-footer, the parquet file size would be unchanged, so two footers would derive the
-same MVCC token; a reader pinned to the old snapshot walks to the newest matching
-footer and would silently observe the new index. Forcing a new directory removes
-the ambiguity, and is cheap — `switchNativePartitionWithParquet` already hard-links
-`data.parquet` and `_pm` this way (`TableWriter:3719`).
+The third regime is load-bearing, and getting it right is subtler than it first looks.
+If an index-only change merely appended a `_pm` footer, the parquet file size would be
+unchanged, so two footers would derive the same MVCC token; a reader pinned to the old
+snapshot walks to the newest matching footer and would silently observe the new index.
+
+Forcing a new directory is necessary but **not sufficient on its own**, because
+`switchNativePartitionWithParquet` hard-links `_pm` (`TableWriter:3717`, `ff.hardLink`)
+— the same inode in both directories. Appending a footer would therefore mutate the file
+the *old* directory also names, and bump the `PARQUET_META_FILE_SIZE` that locates the
+latest footer. Since `data.parquet` is byte-identical in this regime, both footers derive
+the same token, and a reader pinned to the old partition resolves the **new** `index_txn`
+— naming a `<col>.pidx.<newTxn>._im` that does not exist in its directory.
+
+**So in regime 3 `_pm` must be copied, not hard-linked.** It is kilobytes; `data.parquet`
+still hard-links. Phase 2's `linkPartitionIndexFiles` gating must reflect that.
 
 The `_pm` addition is a **footer** feature bit. Footer bits 0–31 are optional, so
 existing readers ignore it. The section holds per-indexed-column
-`(column_id, im_file_size)`, and is written in all three regimes — not only the
+`(column_id, index_txn, im_file_size)` — the txn is required to build the filename — and is written in all three regimes — not only the
 update-mode one — so a reader always resolves the index version through the same
 mechanism regardless of how the partition arrived at its current state.
 
 Write order, crash-safe at every step:
 
 ```
-write <col>.pidx.parquet
-  -> write <col>.pidx._im, patch IM_FILE_SIZE last
+write <col>.pidx.<indexTxn>.parquet
+  -> write <col>.pidx.<indexTxn>._im, patch IM_FILE_SIZE last
     -> append _pm footer carrying im_file_size, patch PARQUET_META_FILE_SIZE last
       -> commit _txn
 ```
@@ -202,8 +213,16 @@ accumulates consecutive keys until it reaches the target row count and then clos
 on a key boundary; a key larger than the target occupies consecutive dedicated
 groups. A key is never split across a *shared* group.
 
+**This is a producer contract the reader cannot verify, and Phase 2's key-boundary
+flusher must honour it unaided.** The `_im` key lookup's `rg_lo` computation is correct
+only under it; a violation silently drops a key's postings in the earlier group. The
+`_im` writer now enforces it (`docs/index-metadata.md`, "Validation the writer
+performs"), so Phase 2 will get a rejection rather than a wrong answer — but note the
+fixed `rowGroupSize` threshold in the streaming writer stays live and will cut
+mid-key unless Phase 2 suppresses it.
+
 ```
-<col>.pidx.parquet
+<col>.pidx.<indexTxn>.parquet
  [ RG0  keys 0..11_402        packed, all small ]
  [ RG1  key 11_403            hot key, part 1   ]  \  contiguous ->
  [ RG2  key 11_403            hot key, part 2   ]  /  one ranged GET
@@ -314,7 +333,8 @@ partition's **on-disk** index form, resolved from the `_pm` footer feature secti
 never from configuration. Parquet partitions carrying native sidecars keep the
 existing readers; Parquet partitions carrying `pidx` artifacts get
 `ParquetPostingIndexFwdReader` / `ParquetPostingIndexBwdReader` implementing the
-existing `IndexReader` contract, so nothing above the seam changes.
+existing `IndexReader` contract. **That is necessary but not sufficient — see the
+interface audit below, which was wrong.**
 
 Two contract details fit better than expected:
 
@@ -370,7 +390,7 @@ not to the feature being present. It remains real for those partitions — a reb
 is strictly more expensive than a hard link — and must be covered by a test that
 exercises the fallback branch directly rather than incidentally.
 
-### Interface audit (resolved)
+### Interface audit (CORRECTED — the first audit checked the wrong surface)
 
 `IndexReader` exposes five mmap-oriented methods that a Parquet-backed reader
 cannot answer meaningfully: `getKeyBaseAddress`, `getValueBaseAddress`,
@@ -387,7 +407,27 @@ exactly two production callers, and **no interface split is required**:
   `touchMemory` already guards `baseAddress == 0` (`:148`), so a Parquet reader
   returning `0` degrades the call to a no-op.
 
-The Parquet reader therefore returns `0` from all five. A test must pin that
+The Parquet reader therefore returns `0` from all five.
+
+**That audit was incomplete, and its conclusion was wrong.** It examined `IndexReader`'s
+methods and missed that the covering factory depends on the **concrete class**:
+
+- `CoveringIndexRecordCursorFactory:1354` does an **unguarded** cast,
+  `(AbstractPostingIndexReader) framePostingReader`, on the primary forward single-key
+  covering path. A Phase 2 reader that merely implements `IndexReader` throws
+  `ClassCastException` there — not a fallback, a failure.
+- `:2640` guards with `instanceof`, so failing it is silent: `count(*) WHERE sym = 'x'`
+  quietly loses its metadata-only answer and falls back to an O(rows) traverse.
+
+The primitives involved — `getEntryMaxValue`, `countMatchesClamped`, `selectKthMatch`,
+`populateCacheForKey`, `warmForKeys` — live on `AbstractPostingIndexReader`, not on
+`IndexReader`, and are all gen/chain-shaped, so a Parquet reader cannot inherit them
+meaningfully.
+
+**Decide before Phase 2 starts**, because both options get expensive once the Parquet
+reader exists: either hoist those primitives onto `IndexReader` as defaults returning the
+existing fall-back sentinels and change `:1354` to an `instanceof` guard (~20 lines
+today), or have the Parquet reader extend `AbstractPostingIndexReader` and override. A test must pin that
 `touch_table()` on a Parquet-backed covering index succeeds and reports zero index
 pages, so the degradation stays intentional rather than becoming an accident.
 
