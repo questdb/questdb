@@ -3815,6 +3815,30 @@ public class GroupByTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test
+    public void testWindowSpecNonSwitchCaseRewrite() throws Exception {
+        // a CASE whose WHEN is not `col = const` cannot fold to a switch, so rewriteCase
+        // takes its in-place else-branch; the window-spec rewrite must apply it exactly once
+        assertQuery("""
+                SELECT x, sum(v) OVER (
+                    PARTITION BY CASE WHEN x > 3 THEN 'hi' ELSE 'lo' END
+                ) AS partition_sum
+                FROM t
+                ORDER BY x
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, x AS v FROM long_sequence(6))")
+                .expectSize()
+                .returns("""
+                        x\tpartition_sum
+                        1\t6.0
+                        2\t6.0
+                        3\t6.0
+                        4\t15.0
+                        5\t15.0
+                        6\t15.0
+                        """);
+    }
+
     private void assertError(String query, String errorMessage) throws Exception {
         // errorMessage is the full position-prefixed message, e.g. "[48] aggregate functions ...".
         // SqlException.getMessage() == "[" + position + "] " + flyweightMessage, so split it into the

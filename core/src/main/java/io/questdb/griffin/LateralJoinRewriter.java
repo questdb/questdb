@@ -354,6 +354,27 @@ class LateralJoinRewriter implements Mutable {
         return set;
     }
 
+    static void excludeGeneratedColumnsFromWildcard(IQueryModel model) {
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn column = columns.getQuick(i);
+            if (column.isGenerated()) {
+                column.setIncludeIntoWildcard(false);
+            }
+        }
+
+        ObjList<CharSequence> aliases = model.getAliasToColumnMap().keys();
+        for (int i = 0, n = aliases.size(); i < n; i++) {
+            CharSequence alias = aliases.getQuick(i);
+            if (alias != null) {
+                QueryColumn column = model.getAliasToColumnMap().get(alias);
+                if (column != null && column.isGenerated()) {
+                    column.setIncludeIntoWildcard(false);
+                }
+            }
+        }
+    }
+
     // operand swap: `k < count` becomes `count > k`
     private static int flipComparison(int op) {
         return switch (op) {
@@ -5006,27 +5027,6 @@ class LateralJoinRewriter implements Mutable {
         wrapped.paramCount = 1;
         wrapped.rhs = limit;
         return wrapped;
-    }
-
-    static void excludeGeneratedColumnsFromWildcard(IQueryModel model) {
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QueryColumn column = columns.getQuick(i);
-            if (column.isGenerated()) {
-                column.setIncludeIntoWildcard(false);
-            }
-        }
-
-        ObjList<CharSequence> aliases = model.getAliasToColumnMap().keys();
-        for (int i = 0, n = aliases.size(); i < n; i++) {
-            CharSequence alias = aliases.getQuick(i);
-            if (alias != null) {
-                QueryColumn column = model.getAliasToColumnMap().get(alias);
-                if (column != null && column.isGenerated()) {
-                    column.setIncludeIntoWildcard(false);
-                }
-            }
-        }
     }
 
 }

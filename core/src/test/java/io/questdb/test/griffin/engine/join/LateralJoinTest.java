@@ -2409,6 +2409,44 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCoalesceSumBodyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // only zero-on-empty aggregates are compensated; a null-absorbing wrapper over
+            // sum() is not, so the unmatched row keeps NULL rather than coalesce(NULL, 0) = 0
+            assertQuery("""
+                    SELECT o.id, sub.s
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT coalesce(sum(qty), 0) AS s FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t30
+                            2\t30
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountArithmetic() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -4675,6 +4713,46 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tc\tc_plus_one
                             1\t1\t2
                             2\t0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralUnionCountBodyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // a correlated empty UNION-ALL branch defeats the zero-rejection proof, so the
+            // count body is not admitted for compensation and the unmatched row keeps NULL
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c FROM trades WHERE order_id = o.id
+                        UNION ALL
+                        SELECT 9 AS c FROM trades WHERE order_id = o.id AND 1 = 0
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\tnull
                             """);
         });
     }
@@ -8535,7 +8613,7 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testRepeatedLiteralProjectionSourceLookup() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT
                     x AS c01, x AS c02, x AS c03, x AS c04,
                     x AS c05, x AS c06, x AS c07, x AS c08,
@@ -8555,7 +8633,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                 .returns("""
                         c01\tc02\tc03\tc04\tc05\tc06\tc07\tc08\tc09\tc10\tc11\tc12\tc13\tc14\tc15\tc16
                         42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42
-                        """));
+                        """);
     }
 
     @Test
@@ -9223,7 +9301,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     SELECT i.id, sub.horizon_sec, sub.avg_mid
                     FROM instruments i
                     JOIN LATERAL (
-                        SELECT h.offset / 1000000 AS horizon_sec,
+                        SELECT h.offset / 1_000_000 AS horizon_sec,
                                avg((q.bid + q.ask) / 2) AS avg_mid
                         FROM trades t
                         HORIZON JOIN quotes q ON (symbol)
@@ -15118,19 +15196,18 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testT87bCommaLateral() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT ss1.x, ss2.y, ss3.z FROM
                   (SELECT 1 AS x) ss1
                   LEFT JOIN (SELECT 2 AS y) ss2 ON (true),
                   LATERAL (SELECT ss2.y AS z FROM long_sequence(1) LIMIT 1) ss3
                 """)
-                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
                         x\ty\tz
                         1\t2\t2
-                        """));
+                        """);
     }
 
     // T88: Unqualified correlated ref — exercises rewriteOuterRefs no-dot fallback
