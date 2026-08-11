@@ -1,4 +1,8 @@
-trigger: none
+# Also run in the GitHub merge queue: CI trigger on the ephemeral merge-queue branches.
+trigger:
+  branches:
+    include:
+      - gh-readonly-queue/*
 
 pr:
   branches:
@@ -43,7 +47,7 @@ stages:
 
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -60,13 +64,23 @@ stages:
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
-              # For PR builds, Azure uses an ephemeral merge commit, not the actual PR head.
-              # Fetch the real PR head commit from GitHub API.
-              if [ -n "$OSS_PR_NUMBER" ]; then
+              if [[ "$OSS_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+                # PR build: Azure builds an ephemeral merge commit, not the PR head.
+                # Fetch the real PR head commit from the GitHub API.
                 OSS_COMMIT=$(curl -s -H "Authorization: token $GH_TOKEN" \
                   "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
                   | jq -r '.head.sha')
                 echo "Fetched PR head commit from GitHub API: $OSS_COMMIT"
+              else
+                # Merge-queue build: branch is refs/heads/gh-readonly-queue/master/pr-<n>-<sha>.
+                # Test the merge commit itself (PR merged with latest master); recover the PR
+                # number from the branch name and the PR source branch from the GitHub API.
+                OSS_PR_NUMBER=$(echo "$BUILD_SOURCEBRANCH" | sed -E 's#.*/pr-([0-9]+)-.*#\1#')
+                OSS_COMMIT="$BUILD_SOURCEVERSION"
+                OSS_BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
+                  | jq -r '.head.ref')
+                echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
               fi
 
               # Check if matching branch exists in enterprise repo (private, requires auth)
@@ -122,10 +136,12 @@ stages:
               GH_TOKEN: $(GH_TOKEN)
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
               OSS_BRANCH: $(System.PullRequest.SourceBranch)
+              BUILD_SOURCEBRANCH: $(Build.SourceBranch)
+              BUILD_SOURCEVERSION: $(Build.SourceVersion)
 
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -135,7 +151,7 @@ stages:
 
   - stage: SelfHostedRunCairoA
     displayName: "SelfHosted Cairo tests (A)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -145,7 +161,7 @@ stages:
 
   - stage: SelfHostedRunCairoB
     displayName: "SelfHosted Cairo tests (B)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -155,7 +171,7 @@ stages:
 
   - stage: SelfHostedRunOtherA
     displayName: "SelfHosted Other tests (A)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -165,7 +181,7 @@ stages:
 
   - stage: SelfHostedRunOtherB
     displayName: "SelfHosted Other tests (B)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
