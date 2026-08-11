@@ -4041,6 +4041,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedStringAgg() throws Exception {
+        // Determinism check: even though frames are processed by worker threads in an
+        // arbitrary order, string_agg() must concatenate values in scan (row id) order.
+        testParallelSymbolKeyGroupBy(
+                "SELECT string_agg(key, '-') FROM tab WHERE quantity <= 5",
+                "string_agg\n" +
+                        "k1-k2-k3-k4-k0\n",
+                null
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyedStringAgg() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, string_agg(key, '-') FROM tab WHERE quantity <= 10 GROUP BY key ORDER BY key",
+                "key\tstring_agg\n" +
+                        "k0\tk0-k0\n" +
+                        "k1\tk1-k1\n" +
+                        "k2\tk2-k2\n" +
+                        "k3\tk3-k3\n" +
+                        "k4\tk4-k4\n",
+                null
+        );
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
