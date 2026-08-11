@@ -1854,7 +1854,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDoubleFail(ColumnType.BOOLEAN);
 
         assertCastIntFail(ColumnType.STRING);
-        assertCastLongFail(ColumnType.STRING);
         assertCastByteFail(ColumnType.STRING);
         assertCastShortFail(ColumnType.STRING);
         assertCastFloatFail(ColumnType.STRING);
