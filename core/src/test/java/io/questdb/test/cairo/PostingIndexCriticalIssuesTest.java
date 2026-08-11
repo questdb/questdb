@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -84,6 +85,7 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -109,6 +111,320 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // e.g. leaving a superseded .pv unreclaimed, or making a saturation assertion
         // see no room. Draining here makes each test independent of the prior one.
         drainPostingSealPurgeQueue();
+    }
+
+    @Test
+    public void testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal() throws Exception {
+        // ALTER TABLE ADD COLUMN ... INDEX TYPE POSTING runs
+        // TableWriter.openNewColumnFiles, which arms setCurrentTableTxn and then
+        // calls configureFollowerAndWriter -- whose of() runs close(), resetting
+        // pendingTxnAtSeal to -1 -- and never arms setNextTxnAtSeal. addColumn
+        // commits through bumpMetadataAndColumnStructureVersion, NOT through
+        // commit00, so syncColumns never runs and the writer leaves the ALTER
+        // still unarmed.
+        //
+        // The next data commit then publishes on that writer BEFORE anything
+        // arms it: commit00 runs updateIndexes() first and syncColumns()
+        // (the only arm on that path) second. updateIndexes ->
+        // SymbolColumnIndexer.index feeds the new rows through
+        // PostingIndexWriter.add, and once the indexer's spill arena crosses
+        // cairo.posting.index.indexer.spill.bytes.max the add() loop flushes
+        // mid-stream (compactIfOverBudget -> flushAllPending -> publishToChain).
+        // The column's chain is brand new and empty, so that flush takes the
+        // newEntry branch with overrideGenIndex == 0 -- no predecessor slot to
+        // clamp against -- and publishToChain's pendingTxnAtSeal<0 fallback tags
+        // both the entry and gen-dir slot 0 with TXN_AT_SEAL=0. A 0 tag is
+        // visible to every pinned reader and undroppable by the writer-open
+        // recovery walk (`0 > committedTxn` never fires).
+        //
+        // openNewColumnFiles publishes nothing itself and the ADD COLUMN's own
+        // commit assigns getTxn()+1, so that is the txn the mid-commit flush
+        // belongs to.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_add_col_spill_txn (
+                        ts TIMESTAMP,
+                        x INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_add_col_spill_txn
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), x::INT
+                    FROM long_sequence(100)
+                    """);
+            execute("ALTER TABLE t_add_col_spill_txn ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
+            // A hot key with thousands of rowids blows well past the 256-byte
+            // spill budget, so the add() loop flushes before syncColumns runs.
+            // The rows stay inside the SAME day so that no partition switch
+            // runs openPartition, which would arm the writer and hide the gap.
+            execute("""
+                    INSERT INTO t_add_col_spill_txn
+                    SELECT timestamp_sequence('2024-01-01T01:00:00', 1_000_000L), x::INT, 'A'
+                    FROM long_sequence(5_000)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_add_col_spill_txn");
+            final long partitionTs;
+            final long partitionNameTxn;
+            final long columnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                final int lastIndex = reader.getTxFile().getPartitionCount() - 1;
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(lastIndex);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(lastIndex);
+                columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
+                        partitionTs, reader.getMetadata().getColumnIndex("sym"));
+            }
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final int plen = path.size();
+                final LongList tags = new LongList();
+                readPostingChainTags(path.trimTo(plen), "sym", columnNameTxn, tags);
+                Assert.assertTrue("the commit must have published at least one chain entry", tags.size() > 0);
+                for (int i = 0, n = tags.size(); i < n; i++) {
+                    Assert.assertNotEquals(
+                            "a chain entry carries TXN_AT_SEAL=0, i.e. publishToChain's pendingTxnAtSeal<0"
+                                    + " fallback: TableWriter.openNewColumnFiles left the writer unarmed and"
+                                    + " commit00 runs updateIndexes() before syncColumns() arms it"
+                                    + " [tags=" + tags + ']',
+                            0L,
+                            tags.getQuick(i)
+                    );
+                }
+            }
+
+            // The index must still answer predicates over every indexed row.
+            assertQuery("SELECT count() FROM t_add_col_spill_txn WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            5000
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterRenameColumnRebindCarriesArmedTxnAtSeal() throws Exception {
+        // TableWriter.renameColumn rebinds the column's indexer to the new
+        // (name, columnNameTxn) so later seals write .pv files under the new
+        // name. That rebind calls configureFollowerAndWriter, whose of() runs
+        // close() and resets pendingTxnAtSeal to -1, and arms only
+        // setCurrentTableTxn. The rename commits through
+        // bumpMetadataAndColumnStructureVersion, not commit00, so syncColumns
+        // never runs and the writer leaves the ALTER unarmed.
+        //
+        // The next data commit publishes on it before anything arms it, through
+        // the same commit00 ordering (updateIndexes() first, syncColumns()
+        // second) and the same mid-stream spill flush as
+        // testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal. Here the
+        // ADD COLUMN just above leaves the chain empty, so the flush appends a
+        // NEW entry at gen index 0 and publishToChain's pendingTxnAtSeal<0
+        // fallback tags it 0 -- the value the gen-dir corruption detector cannot
+        // tell from an unpublished slot, and the writer-open recovery walk can
+        // never drop.
+        //
+        // The rename is a commit-in-progress path: the arm carries
+        // txWriter.getTxn() + 1, the txn bumpMetadataAndColumnStructureVersion
+        // is about to assign.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_col_txn (
+                        ts TIMESTAMP,
+                        x INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_col_txn
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), x::INT
+                    FROM long_sequence(100)
+                    """);
+            // Leaves a POSTING index whose chain is still empty -- no row of
+            // this partition carries the new column yet.
+            execute("ALTER TABLE t_rename_col_txn ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
+            execute("ALTER TABLE t_rename_col_txn RENAME COLUMN sym TO sym2");
+            // Same day, so no partition switch runs openPartition (which arms).
+            execute("""
+                    INSERT INTO t_rename_col_txn
+                    SELECT timestamp_sequence('2024-01-01T01:00:00', 1_000_000L), x::INT, 'A'
+                    FROM long_sequence(5_000)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_rename_col_txn");
+            final long partitionTs;
+            final long partitionNameTxn;
+            final long columnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
+                        partitionTs, reader.getMetadata().getColumnIndex("sym2"));
+            }
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final int plen = path.size();
+                final LongList tags = new LongList();
+                readPostingChainTags(path.trimTo(plen), "sym2", columnNameTxn, tags);
+                Assert.assertTrue("the commit must have published at least one chain entry", tags.size() > 0);
+                for (int i = 0, n = tags.size(); i < n; i++) {
+                    Assert.assertNotEquals(
+                            "a chain entry carries TXN_AT_SEAL=0, i.e. publishToChain's pendingTxnAtSeal<0"
+                                    + " fallback: TableWriter.renameColumn's indexer rebind left the writer"
+                                    + " unarmed and commit00 runs updateIndexes() before syncColumns() arms it"
+                                    + " [tags=" + tags + ']',
+                            0L,
+                            tags.getQuick(i)
+                    );
+                }
+            }
+
+            assertQuery("SELECT count() FROM t_rename_col_txn WHERE sym2 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            5000
+                            """);
+        });
+    }
+
+    @Test
+    public void testSquashRestoreIndexersCarriesArmedTxnAtSeal() throws Exception {
+        // TableWriter.restorePostingIndexersToLastPartition re-points every
+        // POSTING indexer at the active partition after the seal machinery has
+        // walked other partitions. It calls configureFollowerAndWriter -- whose
+        // of() runs close(), resetting pendingTxnAtSeal to -1 -- and arms
+        // nothing at all. Its squash caller runs from housekeep(), i.e. AFTER
+        // the current commit's syncColumns, so the writer stays unarmed until
+        // the NEXT commit -- whose commit00 runs updateIndexes() before
+        // syncColumns() arms anything. The add() loop's mid-stream spill flush
+        // then publishes on an unarmed writer, and on a column whose chain is
+        // still empty it appends a NEW entry at gen index 0 with no predecessor
+        // slot to clamp against, so publishToChain's pendingTxnAtSeal<0 fallback
+        // tags it 0.
+        //
+        // Both callers publish pre-commit at getTxn()+1 and both commit right
+        // after, so the arm carries getTxn()+1 as well.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_restore_txn (
+                        ts TIMESTAMP,
+                        x INT,
+                        sym0 SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_squash_restore_txn
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           x::INT,
+                           'k' || (x % 4)
+                    FROM long_sequence(400)
+                    """);
+            // Extend day 1 to 20:00, then split it with an O3 row at 19:00.
+            execute("INSERT INTO t_squash_restore_txn VALUES ('2024-01-01T20:00:00.000000Z', 1, 'tail')");
+            execute("INSERT INTO t_squash_restore_txn VALUES ('2024-01-01T19:00:00.000000Z', 2, 'o3')");
+            // Day 2 becomes the active partition; the squash below targets day 1.
+            execute("""
+                    INSERT INTO t_squash_restore_txn
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP),
+                           x::INT,
+                           'k' || (x % 4)
+                    FROM long_sequence(50)
+                    """);
+            // Leaves a POSTING index on the ACTIVE partition whose chain is
+            // still empty, and (since openNewColumnFiles now arms) whose writer
+            // carries a real txn until the squash re-of()s it.
+            execute("ALTER TABLE t_squash_restore_txn ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
+            assertQuery("SELECT count() FROM table_partitions('t_squash_restore_txn')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            3
+                            """);
+
+            final TableToken token = engine.verifyTableName("t_squash_restore_txn");
+            // One writer instance for both steps: the squash's restore must
+            // still be in effect when the following commit indexes the new rows.
+            try (TableWriter w = TestUtils.getWriter(engine, token)) {
+                w.squashPartitions();
+                final long base = MicrosFormatUtils.parseTimestamp("2024-01-02T01:00:00.000000Z");
+                for (int i = 0; i < 5_000; i++) {
+                    TableWriter.Row r = w.newRow(base + i * 1_000_000L);
+                    r.putInt(1, i);
+                    r.putSym(2, "k0");
+                    r.putSym(3, "A");
+                    r.append();
+                }
+                w.commit();
+            }
+            engine.releaseAllWriters();
+
+            final long partitionTs;
+            final long partitionNameTxn;
+            final long columnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                final int lastIndex = reader.getTxFile().getPartitionCount() - 1;
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(lastIndex);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(lastIndex);
+                columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
+                        partitionTs, reader.getMetadata().getColumnIndex("sym"));
+            }
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final int plen = path.size();
+                final LongList tags = new LongList();
+                readPostingChainTags(path.trimTo(plen), "sym", columnNameTxn, tags);
+                Assert.assertTrue("the commit must have published at least one chain entry", tags.size() > 0);
+                for (int i = 0, n = tags.size(); i < n; i++) {
+                    Assert.assertNotEquals(
+                            "a chain entry carries TXN_AT_SEAL=0, i.e. publishToChain's pendingTxnAtSeal<0"
+                                    + " fallback: restorePostingIndexersToLastPartition left the writer unarmed"
+                                    + " and commit00 runs updateIndexes() before syncColumns() arms it"
+                                    + " [tags=" + tags + ']',
+                            0L,
+                            tags.getQuick(i)
+                    );
+                }
+            }
+
+            assertQuery("SELECT count() FROM t_squash_restore_txn WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            5000
+                            """);
+            // The squashed day-1 partition must still answer indexed predicates.
+            assertQuery("SELECT count() FROM t_squash_restore_txn WHERE sym0 = 'o3'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
     }
 
     @Test
@@ -1694,19 +2010,31 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseExtendFailureDoesNotTruncateKeyFile() throws Exception {
-        // C2: close() reads the published regionLimit out of the chain header and grows the
-        // mapping to it (keyMem.setSize) before releasing keyMem with the truncating
-        // Misc.free(keyMem). Both of those new statements can throw -- setSize -> jumpTo ->
-        // checkAndExtend -> extend0 -> TableUtils.allocateDiskSpace, which raises OUTSIDE
-        // extend0's own self-closing try, so keyMem stays OPEN. The truncating free in the
-        // finally then sizes the .pk from getAppendOffset(), which no publish ever advances
-        // (PostingIndexChainWriter writes the key file exclusively through absolute
-        // putLong(offset, v)); it is still the open-time value. So a failed extend used to
-        // ftruncate the .pk back to the length it had when this instance opened, discarding
-        // every byte another instance published since -- and to propagate the exception out
-        // of close(), which TableWriter.freeIndexers() / releaseIndexerWriters() and
-        // O3CopyJob's finally { Misc.free(indexWriter); } are not written to survive.
+    public void testCloseHeaderPeekFailureDoesNotTruncateKeyFile() throws Exception {
+        // C2: close() reads the published regionLimit out of the chain header
+        // (chain.peekRegionLimit) before it releases keyMem. peekRegionLimit rejects an
+        // unreadable or inconsistent header, and it throws BEFORE close() sizes the
+        // mapping, so keyMem is still OPEN and its getAppendOffset() is still the
+        // open-time value -- no publish ever advances that offset, because
+        // PostingIndexChainWriter writes the key file exclusively through absolute
+        // putLong(offset, v). The truncating Misc.free(keyMem) sizes the .pk from exactly
+        // that offset, so a failed header peek used to ftruncate the .pk back to the
+        // length it had when this instance opened, discarding every byte another instance
+        // published since -- and to propagate the exception out of close(), which
+        // TableWriter.freeIndexers() / releaseIndexerWriters() and O3CopyJob's
+        // finally { Misc.free(indexWriter); } are not written to survive. close() must
+        // swallow the failure and release the mapping untruncated.
+        //
+        // This test used to inject the fault into the sizing step instead, by failing the
+        // allocate under setSize -> jumpTo -> checkAndExtend -> extend0 ->
+        // allocateDiskSpace. close() no longer sizes the mapping when the published
+        // regionLimit outruns it (it releases untruncated there, see
+        // testCloseOnDivergentPathWithExtenderClosedFirstDoesNotAllocateDiskSpace), so
+        // that injection can no longer reach the catch. peekRegionLimit is the other
+        // statement in the same try, and a torn or partial header write reaches it on a
+        // live path. The scenario around the fault is unchanged: `extender` publishes a
+        // region past what `stale` mapped, so a truncating release on the failure path
+        // still cuts the .pk below the published regionLimit.
         //
         // Not on Windows, for the same reason as testCloseDoesNotTruncateRegionPublishedByAnotherWriter:
         // the .pk is trimmed to a page multiple, so the loss is only observable when the
@@ -1715,38 +2043,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         Assume.assumeFalse(Os.isWindows());
 
         final AtomicBoolean armed = new AtomicBoolean(false);
-        final AtomicInteger allocFailures = new AtomicInteger(0);
-        final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pkFds =
-                new java.util.concurrent.ConcurrentHashMap<>();
+        final AtomicInteger pkTruncates = new AtomicInteger(0);
+        final ConcurrentHashMap<Long, Boolean> pkFds = new ConcurrentHashMap<>();
         ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                // The .pk grow inside close() (setSize -> extend0 -> allocateDiskSpace) is the
-                // only allocate on a .pk fd while armed; fail it so allocateDiskSpace throws
-                // with keyMem still open.
-                if (armed.get() && pkFds.containsKey(fd)) {
-                    allocFailures.incrementAndGet();
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
             @Override
             public boolean close(long fd) {
                 pkFds.remove(fd);
                 return super.close(fd);
-            }
-
-            @Override
-            public long length(long fd) {
-                // The extender has already grown the real .pk past the size close() asks for,
-                // so allocateDiskSpace's `ff.length(fd) < size` guard would short-circuit and
-                // never call allocate(). Report a stale header-only length for the tracked .pk
-                // fds while armed so the guard is satisfied and allocate() actually runs.
-                if (armed.get() && pkFds.containsKey(fd)) {
-                    return PostingIndexUtils.KEY_FILE_RESERVED;
-                }
-                return super.length(fd);
             }
 
             @Override
@@ -1758,6 +2061,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 return fd;
             }
 
+            @Override
+            public boolean truncate(long fd, long size) {
+                // stale.close() is the only thing running while armed, so a truncate on a
+                // tracked .pk fd in that window can only come from its release.
+                if (armed.get() && pkFds.containsKey(fd)) {
+                    pkTruncates.incrementAndGet();
+                }
+                return super.truncate(fd, size);
+            }
+
             private boolean isPkFile(LPSZ name) {
                 return name != null && Utf8s.containsAscii(name, ".pk");
             }
@@ -1766,7 +2079,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final FilesFacade rawFf = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
-                final String name = "close_extend_no_truncate";
+                final String name = "close_peek_no_truncate";
                 final int numKeys = 64;
 
                 // Seed a SMALL chain so the stale instance opens on a short file: its
@@ -1791,62 +2104,124 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 try (PostingIndexWriter extender = new PostingIndexWriter(configuration)) {
                     // `stale` is deliberately NOT a try-with-resources resource: the test closes
                     // it exactly once, mid-body, while `extender` still holds a larger mapping of
-                    // the same .pk. That ordering IS the scenario under test -- the failed extend
+                    // the same .pk. That ordering IS the scenario under test -- the failed peek
                     // must not trim the .pk under a live larger mapping -- and the resource list
-                    // would either close it a second time or close it after `extender`.
+                    // would either close it a second time or close it after `extender`. The
+                    // isStaleClosed flag keeps a throw from the body out of assertMemoryLeak's
+                    // native-memory report, which would otherwise replace the real failure.
                     final PostingIndexWriter stale = new PostingIndexWriter(configuration);
-                    stale.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
-
-                    // A second instance grows the live chain region several pages past what
-                    // `stale` mapped, so stale's close() must extend its mapping to reach the
-                    // published regionLimit -- the extend this facade fails.
-                    extender.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
-                    extender.setNextTxnAtSeal(2L);
-                    long row = numKeys;
-                    for (int cycle = 0; cycle < 200; cycle++) {
-                        for (int k = 0; k < numKeys; k++) {
-                            extender.add(k, row++);
-                        }
-                        extender.setMaxValue(row - 1);
-                        extender.commit();
-                        extender.seal();
-                    }
-                    publishedGenCount = extender.getGenCount();
-                    publishedKeyCount = extender.getKeyCount();
-                    publishedMaxValue = extender.getMaxValue();
-
-                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
-                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
-                            rawFf.getPageSize(),
-                            rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
-                            MemoryTag.MMAP_DEFAULT, 0)) {
-                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                        chain.openExisting(pk);
-                        publishedRegionLimit = chain.getRegionLimit();
-                    }
-
-                    // close() must absorb the failed extend: it must neither propagate (its
-                    // callers free sibling indexers in unguarded loops) nor trim the .pk.
-                    armed.set(true);
+                    boolean isStaleClosed = false;
                     try {
-                        stale.close();
+                        stale.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+
+                        // A second instance grows the live chain region several pages past what
+                        // `stale` mapped, so a truncating release from stale's open-time append
+                        // offset would cut the .pk below the region `extender` published.
+                        extender.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+                        extender.setNextTxnAtSeal(2L);
+                        long row = numKeys;
+                        for (int cycle = 0; cycle < 200; cycle++) {
+                            for (int k = 0; k < numKeys; k++) {
+                                extender.add(k, row++);
+                            }
+                            extender.setMaxValue(row - 1);
+                            extender.commit();
+                            extender.seal();
+                        }
+                        publishedGenCount = extender.getGenCount();
+                        publishedKeyCount = extender.getKeyCount();
+                        publishedMaxValue = extender.getMaxValue();
+
+                        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                                PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                                rawFf.getPageSize(),
+                                rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                                MemoryTag.MMAP_DEFAULT, 0)) {
+                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                            chain.openExisting(pk);
+                            publishedRegionLimit = chain.getRegionLimit();
+                        }
+
+                        // Arm the fault: flip both seqlock pages to an odd sequence start, the
+                        // state a writer holds mid-update. readUnderSeqlock finds neither page
+                        // stable, gives up after its 16 attempts and peekRegionLimit throws.
+                        // `stale` maps the same file, so it reads these bytes.
+                        final long pageASequence;
+                        final long pageBSequence;
+                        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                                PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                                rawFf.getPageSize(),
+                                rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                                MemoryTag.MMAP_DEFAULT, 0)) {
+                            pageASequence = pk.getLong(
+                                    PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
+                            pageBSequence = pk.getLong(
+                                    PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
+                            pk.putLong(
+                                    PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START,
+                                    pageASequence | 1L);
+                            pk.putLong(
+                                    PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START,
+                                    pageBSequence | 1L);
+                        }
+                        try {
+                            // Setup guard: prove the armed header really does fail the peek that
+                            // close() is about to run. Without it close() returns through its
+                            // normal path and every assertion below holds whether or not close()
+                            // guards the peek at all.
+                            try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                                    PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                                    rawFf.getPageSize(),
+                                    rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                                    MemoryTag.MMAP_DEFAULT, 0)) {
+                                new PostingIndexChainWriter().peekRegionLimit(pk);
+                                Assert.fail("test setup gap: the armed header still reads back, so close()'s"
+                                        + " peekRegionLimit will not throw and the catch this test guards never runs");
+                            } catch (CairoException expected) {
+                                TestUtils.assertContains(expected.getFlyweightMessage(), "posting index header unreadable");
+                            }
+
+                            // close() must absorb the failed peek: it must neither propagate (its
+                            // callers free sibling indexers in unguarded loops) nor trim the .pk.
+                            armed.set(true);
+                            try {
+                                stale.close();
+                            } finally {
+                                armed.set(false);
+                            }
+                            isStaleClosed = true;
+                        } finally {
+                            // Disarm before anything else reads the header: `extender` peeks it on
+                            // its own close, and the recovery check below reopens the index.
+                            try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                                    PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                                    rawFf.getPageSize(),
+                                    rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                                    MemoryTag.MMAP_DEFAULT, 0)) {
+                                pk.putLong(
+                                        PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START,
+                                        pageASequence);
+                                pk.putLong(
+                                        PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START,
+                                        pageBSequence);
+                            }
+                        }
                     } finally {
-                        armed.set(false);
+                        if (!isStaleClosed) {
+                            stale.close();
+                        }
                     }
 
-                    // Without a failed allocate there is no failed extend, and close() returns
-                    // through its normal path -- every assertion below then holds whether or not
-                    // close() guards the extend at all. Seed size, append page size, the extender
-                    // cycle count and of()'s mapping length all feed the `pageAddress + size > lim`
-                    // test in checkAndExtend that makes setSize(liveSize) reach allocateDiskSpace.
-                    Assert.assertTrue(
-                            "test setup gap: the armed allocate() never fired, so close() never"
-                                    + " attempted the extend this test guards; pkFds tracked=" + pkFds.size(),
-                            allocFailures.get() > 0
+                    Assert.assertEquals(
+                            "a failed header peek in close() must release the .pk mapping untruncated:"
+                                    + " keyMem's append offset is still the open-time value, so any truncating"
+                                    + " release trims the file back to it",
+                            0,
+                            pkTruncates.get()
                     );
 
                     Assert.assertTrue(
-                            "a failed extend in close() must not trim the .pk below the published regionLimit",
+                            "a failed header peek in close() must not trim the .pk below the published regionLimit",
                             rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE))
                                     >= publishedRegionLimit
                     );
@@ -1859,6 +2234,221 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     Assert.assertEquals("recovered key count", publishedKeyCount, recovered.getKeyCount());
                     Assert.assertEquals("recovered max value", publishedMaxValue, recovered.getMaxValue());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCloseOnDivergentPathWithExtenderClosedFirstDoesNotAllocateDiskSpace() throws Exception {
+        // The divergent path is the one where another instance published a regionLimit past
+        // this instance's mapping. THE CLOSE ORDERING IS PART OF THE CONTRACT THIS TEST
+        // PINS: the extender closes FIRST, then the stale instance. That is the ordering
+        // production reaches on the O3 copy path, where the basket indexer that does the
+        // writing comes from o3Basket.nextIndexer() and O3CopyJob frees it in a
+        // finally { Misc.free(indexWriter); }, while the TableWriter's own indexer for the
+        // same column lives on until freeIndexers().
+        //
+        // The extender's own close trims the .pk to Files.ceilPageSize(regionLimit) -- the
+        // OS page size (Files.PAGE_SIZE, which varies by platform), not the key append
+        // page; the test measures the resulting length rather than assuming it. Sizing
+        // the stale mapping to the published regionLimit from there
+        // (keyMem.setSize -> jumpTo -> checkAndExtend -> extend0)
+        // rounds the request up to the key append page size, 512 KB in production, and
+        // TableUtils.allocateDiskSpace then finds ff.length(fd) short of it and fallocates
+        // the difference -- which the truncating release right after gives straight back.
+        // close() must release the mapping untruncated instead and issue no allocate at all.
+        //
+        // This test runs with the PRODUCTION 512 KB append page size on purpose: the harness
+        // default (Overrides sets 16 KB) would under-observe the rounding by 32x.
+        // Not on Windows, for the same reason as testCloseDoesNotTruncateRegionPublishedByAnotherWriter.
+        Assume.assumeFalse(Os.isWindows());
+
+        final long appendPageSize = 512 * 1024;
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicInteger pkAllocates = new AtomicInteger(0);
+        final ConcurrentHashMap<Long, Boolean> pkFds = new ConcurrentHashMap<>();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (armed.get() && pkFds.containsKey(fd)) {
+                    pkAllocates.incrementAndGet();
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                pkFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pk")) {
+                    pkFds.put(fd, Boolean.TRUE);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final FilesFacade rawFf = TestFilesFacadeImpl.INSTANCE;
+            final CairoConfigurationWrapper prodPageSizeConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public long getDataIndexKeyAppendPageSize() {
+                    return appendPageSize;
+                }
+            };
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "divergent_close_alloc";
+                final int numKeys = 64;
+
+                // Seed a SMALL chain so `stale` below opens on a short file and its mapping
+                // provably ends before the region `extender` goes on to publish.
+                try (PostingIndexWriter seed = new PostingIndexWriter(
+                        prodPageSizeConfiguration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    long row = 0;
+                    for (int k = 0; k < numKeys; k++) {
+                        seed.add(k, row++);
+                    }
+                    seed.setMaxValue(row - 1);
+                    seed.commit();
+                    seed.seal();
+                }
+
+                final long publishedRegionLimit;
+                final long staleMappedSize;
+                final long lengthBeforeClose;
+                final long lengthAfterClose;
+
+                // `stale` is deliberately NOT a try-with-resources resource: the test closes it
+                // exactly once, mid-body, AFTER `extender` has closed. That ordering IS the
+                // scenario under test. The isStaleClosed flag keeps a throw from the body out of
+                // assertMemoryLeak's native-memory report, which would otherwise replace the
+                // real failure.
+                final PostingIndexWriter stale = new PostingIndexWriter(prodPageSizeConfiguration);
+                boolean isStaleClosed = false;
+                try {
+                    // Anti-vacuity precondition for the fd binding below: with the map
+                    // already empty, the single fd tracked after stale.of() can only be
+                    // stale's. Without this, a foreign tracked .pk fd would let
+                    // staleKeyFd bind to the wrong fd and the 0 asserted at the end
+                    // would go back to proving nothing.
+                    Assert.assertTrue(
+                            "test setup gap: no .pk fd may be tracked before stale.of(), otherwise the"
+                                    + " single fd found right after it need not be stale's",
+                            pkFds.isEmpty()
+                    );
+                    stale.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+                    // of() maps the file's reported length, so this is `stale`'s mapping size.
+                    staleMappedSize = rawFf.length(
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+
+                    // Anti-vacuity: pkAllocates only ever counts an allocate on an fd the
+                    // openRW override tracked, so the 0 asserted at the end means "close()
+                    // issued no allocate" ONLY while close()'s own .pk fd is in pkFds. The
+                    // seed writer has closed (its fd left the map) and the extender has not
+                    // opened yet, so the single tracked fd is the one `stale` just opened.
+                    Assert.assertEquals(
+                            "test setup gap: exactly one .pk fd -- stale's -- must be tracked right"
+                                    + " after stale.of(), otherwise the fd tracking no longer follows"
+                                    + " the mapping close() operates on",
+                            1,
+                            pkFds.size()
+                    );
+                    final long staleKeyFd = pkFds.keySet().iterator().next();
+
+                    try (PostingIndexWriter extender = new PostingIndexWriter(prodPageSizeConfiguration)) {
+                        extender.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+                        extender.setNextTxnAtSeal(2L);
+                        long row = numKeys;
+                        for (int cycle = 0; cycle < 200; cycle++) {
+                            for (int k = 0; k < numKeys; k++) {
+                                extender.add(k, row++);
+                            }
+                            extender.setMaxValue(row - 1);
+                            extender.commit();
+                            extender.seal();
+                        }
+                    }
+                    // `extender` is CLOSED here: its own release trimmed the .pk down to the OS
+                    // page above the region it published, well below the append-page-rounded
+                    // extent it held while it was writing.
+
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                            rawFf.getPageSize(),
+                            rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                            MemoryTag.MMAP_DEFAULT, 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(pk);
+                        publishedRegionLimit = chain.getRegionLimit();
+                    }
+
+                    lengthBeforeClose = rawFf.length(
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+
+                    Assert.assertTrue(
+                            "test setup gap: stale's .pk fd (" + staleKeyFd + ") is no longer tracked, so"
+                                    + " pkAllocates could not observe an allocate on it however close()"
+                                    + " behaves -- the 0 asserted below would pass vacuously",
+                            pkFds.containsKey(staleKeyFd)
+                    );
+
+                    armed.set(true);
+                    try {
+                        stale.close();
+                    } finally {
+                        armed.set(false);
+                    }
+                    isStaleClosed = true;
+                    lengthAfterClose = rawFf.length(
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                } finally {
+                    if (!isStaleClosed) {
+                        stale.close();
+                    }
+                }
+
+                // Setup guard, stated as data rather than as a syscall count so a future close()
+                // that skips the sizing altogether still exercises the same scenario: the region
+                // `extender` published must genuinely lie past what `stale` mapped.
+                Assert.assertTrue(
+                        "test setup gap: the published regionLimit (" + publishedRegionLimit
+                                + ") must exceed the mapping stale opened (" + staleMappedSize
+                                + ") for close() to take the divergent path",
+                        publishedRegionLimit > staleMappedSize
+                );
+
+                // Setup guard on the ordering: once the extender has closed, the .pk must sit
+                // below the append-page-rounded size the sizing step would ask for. Otherwise
+                // allocateDiskSpace's `ff.length(fd) < size` check short-circuits and no
+                // allocate can happen whatever close() does.
+                Assert.assertTrue(
+                        "test setup gap: after the extender closed the .pk (" + lengthBeforeClose
+                                + " bytes) must be shorter than the append-page-rounded size close()"
+                                + " would size the mapping to (" + appendPageSize + ')',
+                        lengthBeforeClose < appendPageSize
+                );
+
+                Assert.assertEquals(
+                        "with the extender already closed, close() on the divergent path must release"
+                                + " the stale mapping without growing it: the extender's release trimmed"
+                                + " the .pk to " + lengthBeforeClose + " bytes, so sizing the mapping to the"
+                                + " published regionLimit (" + publishedRegionLimit + ") rounds up to a whole"
+                                + " " + appendPageSize + "-byte append page and fallocates the difference,"
+                                + " which the release right after ftruncates away again",
+                        0,
+                        pkAllocates.get()
+                );
+
+                Assert.assertTrue(
+                        "close() must not trim the .pk below the published regionLimit [before="
+                                + lengthBeforeClose + ", after=" + lengthAfterClose
+                                + ", publishedRegionLimit=" + publishedRegionLimit + ']',
+                        lengthAfterClose >= publishedRegionLimit
+                );
             }
         });
     }
@@ -3550,6 +4140,111 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenPartitionRollbackPublishesCommittedTxnAtSeal() throws Exception {
+        // TableWriter.openPartition calls configureFollowerAndWriter -- whose
+        // of() runs close(), which resets pendingTxnAtSeal to -1 -- and then
+        // rollbackConditionally(rowCount). When the reopened partition's
+        // posting index still holds rowids at or above that row count (a crash
+        // in the seal-before-commit window, or an aborted O3), the rollback
+        // re-encodes and republishes. With no setNextTxnAtSeal in between, that
+        // republish takes publishToChain's pendingTxnAtSeal<0 fallback and
+        // lands tagged TXN_AT_SEAL=0: a tag the writer-open recovery walk can
+        // never drop (`0 > committedTxn` is unreachable) and one the gen-dir
+        // corruption detector cannot tell apart from an unpublished slot.
+        // openPartition is a current-state path -- it republishes the committed
+        // state and no commit follows within the operation -- so the correct
+        // tag is txWriter.getTxn(), the same value openPartition already hands
+        // setCurrentTableTxn to arm the recovery walk.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_open_partition_txn (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_open_partition_txn
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_open_partition_txn");
+            final long partitionTs;
+            final long partitionNameTxn;
+            final long committedTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                committedTxn = reader.getTxFile().getTxn();
+            }
+            Assert.assertTrue("the fixture needs a non-zero committed txn to tell a real tag from the fallback",
+                    committedTxn > 0);
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final int plen = path.size();
+                // Plant rowids past the committed transient row count (100) --
+                // exactly what a crash between the posting seal and
+                // txWriter.commit leaves behind, and the precondition
+                // rollbackConditionally exists for.
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path, "sym", COLUMN_NAME_TXN_NONE, partitionTs, partitionNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, 100 + i);
+                    }
+                    planted.setMaxValue(104);
+                    planted.commit();
+                }
+
+                // Reopening the table writer runs openPartition ->
+                // rollbackConditionally(100), which evicts the planted rowids
+                // and republishes the surviving state.
+                try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                    Assert.assertEquals(100, writer.size());
+                }
+                engine.releaseAllWriters();
+
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf, keyFile, rawFf.getPageSize(),
+                        rawFf.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    Assert.assertTrue("chain must have a head", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    Assert.assertEquals(
+                            "openPartition's rollback republish must carry the committed table txn, not the"
+                                    + " pendingTxnAtSeal<0 fallback's 0",
+                            committedTxn,
+                            head.txnAtSeal
+                    );
+                    long slot0 = PostingIndexChainEntry.resolveGenDirOffset(
+                            head.offset, 0, head.coveringFormat, head.coverCount);
+                    Assert.assertEquals(
+                            "the republished gen-dir slot must carry the committed table txn too",
+                            committedTxn,
+                            pk.getLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
+                    );
+                }
+            }
+
+            // The republished entry must stay visible to a reader pinned at the
+            // committed txn: a tag above it would hide the committed rows.
+            assertQuery("SELECT count() FROM t_open_partition_txn WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            25
+                            """);
+        });
+    }
+
+    @Test
     public void testParquetIndexWriteUsesCommitDense() throws Exception {
         // O3PartitionJob.updateParquetIndexes goes through commitDense for a
         // NON-covering POSTING index. That path runs when O3 mutates an
@@ -4455,6 +5150,91 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Review C1: a .pk whose gen-dir is already non-monotonic is corruption AT
+     * REST -- an upgraded deployment carries it in from the tail-truncating
+     * close() this PR fixes. The next publish that extends that head must still
+     * succeed. publishToChain sits on the WAL commit path (commit() ->
+     * ApplyWal2TableJob), which catches Throwable and SUSPENDS the table, so a
+     * writer-side post-condition that scans slots this publish never wrote turns
+     * pre-existing damage into an ingestion stop. The damage is the reader's to
+     * report, as the typed CairoException naming REINDEX asserted at the end.
+     */
+    @Test
+    public void testPublishExtendsHeadOverPreExistingNonMonotonicGenDir() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "publish_extend_over_damaged_gen_dir";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade rawFf = configuration.getFilesFacade();
+
+                // One entry, two gens at the same sealTxn, tagged 1 then 2.
+                publishTwoGensAtSameSealTxn(path, plen, name, 1L, 2L);
+                assertGenDirTxnAtSeals(path, plen, rawFf, name, 1L, 2L);
+
+                // Plant the pre-existing damage: gen 1's TXN_AT_SEAL reads back as
+                // 0 -- what a slot whose bytes were truncated away looks like --
+                // which is BELOW gen 0's tag.
+                final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                final long pkLen = rawFf.length(keyFile);
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf, keyFile, rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    long slot1 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1, head.coveringFormat, head.coverCount);
+                    pk.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 0L);
+                }
+
+                // The next commit extends the SAME head entry with gen 2. It must
+                // publish rather than throw: ingestion continues over old damage.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    // currentTableTxn sits above every tag, so the reopen's recovery
+                    // walk keeps the damaged slot exactly where it is.
+                    writer.setCurrentTableTxn(3L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    writer.setNextTxnAtSeal(3L);
+                    writer.add(2, 4);
+                    writer.add(2, 5);
+                    writer.setMaxValue(5);
+                    writer.commit();
+                }
+
+                // The publish wrote its own slot and left the at-rest damage alone.
+                // keyFileName hands back the caller's Path, which the writer above
+                // has since re-trimmed, so resolve the .pk name again.
+                final LPSZ extendedKeyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf, extendedKeyFile, rawFf.getPageSize(),
+                        rawFf.length(extendedKeyFile), MemoryTag.MMAP_DEFAULT, 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    Assert.assertEquals("the extend must have landed a third gen in the SAME entry", 3, head.genCount);
+                    long[] expected = {1L, 0L, 3L};
+                    for (int i = 0; i < expected.length; i++) {
+                        long slot = PostingIndexChainEntry.resolveGenDirOffset(head.offset, i, head.coveringFormat, head.coverCount);
+                        Assert.assertEquals("gen " + i + " TXN_AT_SEAL",
+                                expected[i], pk.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL));
+                    }
+                }
+
+                // The at-rest damage stays the reader's problem, and the reader
+                // names the recovery route.
+                try {
+                    new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0
+                    ).close();
+                    Assert.fail("a regressing gen-dir TXN_AT_SEAL must fail the read");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "gen-dir TXN_AT_SEAL not monotonic");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "REINDEX TABLE <table> COLUMN " + name + " LOCK EXCLUSIVE");
+                }
+            }
+        });
+    }
+
+    /**
      * A gen-dir whose TXN_AT_SEAL sequence regresses is corruption at rest: the
      * regressing slot was never validly published, so the gens after it describe
      * .pv regions that may never have been written. The reader must fail the open
@@ -4516,7 +5296,12 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     long slot0 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0, head.coveringFormat, head.coverCount);
                     long slot1 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1, head.coveringFormat, head.coverCount);
                     slot0TxnAtSeal = pk.getLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-                    Assert.assertTrue("slot[0] must carry a real txn", slot0TxnAtSeal > 0);
+                    // Not incidental setup: a NON-ZERO predecessor is the detector's
+                    // precondition. Behind a 0-tagged slot[0] the same zeroing reads
+                    // back as 0 < 0 and passes undetected -- see
+                    // testReaderServesZeroedGenAfterZeroTaggedGenAsEmpty.
+                    Assert.assertTrue("slot[0] must carry a real txn for the detector to have a drop to see",
+                            slot0TxnAtSeal > 0);
                     pk.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 0L);
                 }
 
@@ -4555,6 +5340,140 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
                     Assert.assertTrue(foundKeys.get(0));
                     Assert.assertTrue(foundKeys.get(1));
+                }
+            }
+        });
+    }
+
+    /**
+     * Pins a KNOWN GAP, not desired behaviour. {@code PostingGenLookup.snapshotMetadata}
+     * catches a gen-dir slot that drops below a NON-ZERO predecessor. It cannot catch a
+     * zeroed slot that follows a slot legitimately tagged {@code TXN_AT_SEAL = 0}:
+     * {@code 0 < 0} is false, so the detector reports the whole gen-dir as published,
+     * the reader opens without a signal and serves the zeroed generation as empty --
+     * fewer rows than the base column holds, no error. {@code publishToChain} tags a
+     * slot 0 whenever the publishing caller left {@code pendingTxnAtSeal} unset. The
+     * fixture below arms nothing before gen 0's publish, so gen 0 lands tagged 0, and
+     * then arms gen 1 with {@code setNextTxnAtSeal(2L)} so gen 1 lands tagged 2.
+     * Five production callers used to leave it unset, and all now arm before the
+     * call that can publish:
+     * {@code ContiguousFileIndexedFrameColumn.append} / {@code appendNulls} called
+     * {@code rollbackConditionally} BEFORE their conditional
+     * {@code setNextTxnAtSeal} on a freshly {@code of()}-ed writer, which a partition
+     * squash drives through {@code FrameAlgebra.append} (see
+     * {@link #testSquashAppendRollbackPublishesUpcomingTxnAtSeal});
+     * {@code TableWriter.openPartition} called
+     * {@code rollbackConditionally} right after {@code configureFollowerAndWriter},
+     * whose {@code of()} reset the field to -1 (see
+     * {@link #testOpenPartitionRollbackPublishesCommittedTxnAtSeal}); and
+     * {@code TableWriter.openNewColumnFiles}, {@code renameColumn}'s indexer rebind
+     * and {@code restorePostingIndexersToLastPartition} each re-{@code of()}-ed a
+     * live writer and armed nothing, leaving the next commit's
+     * {@code updateIndexes()} -- which {@code commit00} runs BEFORE
+     * {@code syncColumns()} -- to publish unset (see
+     * {@link #testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal},
+     * {@link #testAlterRenameColumnRebindCarriesArmedTxnAtSeal} and
+     * {@link #testSquashRestoreIndexersCarriesArmedTxnAtSeal}).
+     * What was searched is every site under {@code core/src/main} that RESETS the
+     * field -- every entry point into a path-based {@code PostingIndexWriter.of()},
+     * since {@code of()} starts with {@code close()} -- and each now arms before
+     * the first call on that writer that can publish; the enumeration is spelled
+     * out at the fallback in {@code publishToChain}. Arming callers
+     * narrows the fallback's reach without changing what any tag MEANS, so it does
+     * not close the detector gap this test pins: a current-state caller arms the
+     * committed {@code _txn}, which is itself 0 until the table's first commit, and
+     * every 0-tagged slot already on disk keeps its meaning. The fixture plants the damaged shape
+     * directly rather than driving it, so what this pins is the detector's behaviour
+     * on a shape the writer can emit, not a reproduction of a specific incident. A
+     * zeroed slot 0 is equally invisible, since the walk starts
+     * {@code prevTxnAtSeal} at {@code Long.MIN_VALUE}.
+     * <p>
+     * {@link #testReaderRejectsNonMonotonicGenDirTxnAtSeal} plants the SAME zeroing
+     * behind a non-zero predecessor and the reader rejects it. The only difference
+     * here is gen 0's tag, which is what makes the drop undetectable.
+     * <p>
+     * Closing this gap means stopping the writer from tagging validly published slots
+     * with 0, so that 0 unambiguously means "unpublished". That changes what 0 MEANS
+     * today -- "visible to every pinned reader", and undroppable by the writer-open
+     * recovery walk -- so it is a deliberate visibility-semantics decision, not a
+     * one-liner: every slot already on disk carrying a legitimate 0 would be
+     * reinterpreted as unpublished on upgrade. When someone takes it, the gen 0
+     * precondition below fails loudly and this test is obsolete. Note that the
+     * fixture below drives {@link PostingIndexWriter} directly and deliberately arms
+     * nothing, so no amount of caller-side arming can make that precondition fail.
+     */
+    @Test
+    public void testReaderServesZeroedGenAfterZeroTaggedGenAsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_zero_tagged_gen_dir_blind_spot";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    // Deliberately no setNextTxnAtSeal: publishToChain takes the
+                    // pendingTxnAtSeal<0 fallback and tags gen 0 with TXN_AT_SEAL=0.
+                    // That gen is validly published -- every reader must serve it.
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+
+                    // currentTableTxn sits above both tags so the reopen's recovery
+                    // walk keeps every gen.
+                    writer.setCurrentTableTxn(3L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit();
+                }
+
+                // Control: undamaged, the reader serves BOTH gens. Whatever the
+                // mutation below costs, it costs it by itself.
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+
+                final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                final long pkLen = rawFf.length(keyFile);
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf, keyFile, rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    Assert.assertEquals("the planted entry must carry two gens", 2, head.genCount);
+                    long slot0 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0, head.coveringFormat, head.coverCount);
+                    Assert.assertEquals(
+                            "the pendingTxnAtSeal<0 fallback must tag a VALIDLY PUBLISHED gen 0 with 0 --"
+                                    + " that ambiguity is the whole blind spot; if the writer no longer emits 0,"
+                                    + " the gap is closed and this test is obsolete",
+                            0L, pk.getLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL));
+
+                    // Zero gen 1's whole gen-dir slot -- what a .pk truncated below its
+                    // published regionLimit reads back as. TXN_AT_SEAL goes to 0 with it.
+                    long slot1 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1, head.coveringFormat, head.coverCount);
+                    for (int i = 0; i < PostingIndexUtils.GEN_DIR_ENTRY_SIZE; i++) {
+                        pk.putByte(slot1 + i, (byte) 0);
+                    }
+                }
+
+                // The gap, executed: the detector walks 0 then 0, finds no drop, and the
+                // reader opens clean. Gen 1's key is simply gone from the result.
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals("the zeroed gen is served as empty rather than rejected",
+                            1, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue("gen 0 stays readable", foundKeys.get(0));
+                    Assert.assertFalse("gen 1's key vanishes with no error -- the known gap", foundKeys.get(1));
                 }
             }
         });
@@ -8071,6 +8990,145 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * A partition squash appends the source partition into the target through
+     * {@code FrameAlgebra.append} -> {@code ContiguousFileIndexedFrameColumn.append},
+     * which starts with {@code indexWriter.rollbackConditionally(appendOffsetRowCount)}
+     * on a writer its own {@code ofRW} has just {@code of()}-ed (of() runs close(),
+     * which resets {@code pendingTxnAtSeal} to -1). When the target's posting index
+     * still holds rowids at or above its committed row count -- what an O3 split that
+     * shrank the parent leaves behind, and exactly the precondition
+     * {@code rollbackConditionally} exists for -- that call re-encodes and republishes.
+     * With {@code setNextTxnAtSeal(upcomingTableTxn)} armed only AFTER it, the
+     * republished entry took {@code publishToChain}'s {@code pendingTxnAtSeal < 0}
+     * fallback and landed tagged {@code TXN_AT_SEAL = 0}: a tag the writer-open
+     * recovery walk can never drop ({@code 0 > committedTxn} is unreachable) and one
+     * the gen-dir corruption detector cannot tell apart from an unpublished slot.
+     * {@code FrameAlgebra.append} already has the right value in hand before it calls
+     * into the column ({@code setUpcomingTableTxn}), so the fix is purely ordering:
+     * arm before the call that can publish.
+     */
+    @Test
+    public void testSquashAppendRollbackPublishesUpcomingTxnAtSeal() throws Exception {
+        // Let the O3 insert split the last partition and keep the split until
+        // the explicit squashPartitions() call below (same recipe as
+        // testSquashCoveringPostingWithMidStreamSpillFlush).
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_append_txn (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_squash_append_txn
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'k' || (x % 4)
+                    FROM long_sequence(400)
+                    """);
+            // Extend the day to 20:00 so the O3 row below has a late prefix to
+            // split off, then split the partition with an O3 row at 19:00.
+            execute("INSERT INTO t_squash_append_txn VALUES ('2024-01-01T20:00:00.000000Z', 'tail')");
+            execute("INSERT INTO t_squash_append_txn VALUES ('2024-01-01T19:00:00.000000Z', 'o3')");
+            assertQuery("SELECT count() FROM table_partitions('t_squash_append_txn')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            2
+                            """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_squash_append_txn");
+            final long targetTs;
+            final long targetNameTxn;
+            final long targetRowCount;
+            final long txnBeforeSquash;
+            try (TableReader reader = engine.getReader(token)) {
+                targetTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                targetNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                targetRowCount = reader.getTxFile().getPartitionSize(0);
+                txnBeforeSquash = reader.getTxFile().getTxn();
+            }
+
+            final long headOffsetBeforeSquash;
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, targetTs, targetNameTxn);
+                final int plen = path.size();
+                // Strand rowids past the squash target's committed row count --
+                // what an O3 split that shrank the parent without resealing its
+                // index leaves behind. This bare writer arms nothing, so its own
+                // entry is legitimately tagged 0; the walk below therefore only
+                // inspects entries published after this point.
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, targetTs, targetNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, targetRowCount + i);
+                    }
+                    planted.setMaxValue(targetRowCount + 4);
+                    planted.commit();
+                }
+                headOffsetBeforeSquash = readPostingChainHeadOffset(path.trimTo(plen), "sym");
+
+                // The squash appends the split sub-partition into the target
+                // through FrameAlgebra.append, whose rollbackConditionally
+                // evicts the stranded rowids and republishes.
+                try (TableWriter w = TestUtils.getWriter(engine, token)) {
+                    w.squashPartitions();
+                }
+                engine.releaseAllWriters();
+
+                final LongList newTags = new LongList();
+                readPostingChainTagsAbove(path.trimTo(plen), "sym", headOffsetBeforeSquash, newTags);
+                Assert.assertTrue(
+                        "the squash must have published at least one new chain entry",
+                        newTags.size() > 0
+                );
+                for (int i = 0, n = newTags.size(); i < n; i++) {
+                    Assert.assertNotEquals(
+                            "a chain entry published by the squash carries TXN_AT_SEAL=0, i.e. publishToChain's"
+                                    + " pendingTxnAtSeal<0 fallback: ContiguousFileIndexedFrameColumn armed"
+                                    + " setNextTxnAtSeal only AFTER rollbackConditionally [tags=" + newTags + ']',
+                            0L,
+                            newTags.getQuick(i)
+                    );
+                }
+                Assert.assertTrue(
+                        "the squash's republish must carry the upcoming table txn FrameAlgebra was given"
+                                + " [tags=" + newTags + ", txnBeforeSquash=" + txnBeforeSquash + ']',
+                        newTags.indexOf(txnBeforeSquash + 1) >= 0
+                );
+            }
+
+            // The squashed partition must still answer indexed predicates over
+            // every row: 400 generated rows spread evenly over k0..k3, plus the
+            // 'tail' row at 20:00 and the O3 'o3' row at 19:00 that the squash
+            // merged back in.
+            assertQuery("SELECT count() FROM t_squash_append_txn WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            100
+                            """);
+            assertQuery("SELECT count() FROM t_squash_append_txn WHERE sym = 'o3'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
+    }
+
+    /**
      * Reproduces the SIGSEGV in PostingIndexWriter.decodeDenseGenStride when
      * squashing partitions over a COVERING posting index whose reseal index()
      * loop trips the spill budget (compactIfOverBudget -> mid-stream
@@ -11554,6 +12612,95 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             long size = ff.length(keyFile);
             Assert.assertTrue(".pk must exist, path=" + keyFile, size > 0);
             return size;
+        }
+    }
+
+    /**
+     * Returns the chain head entry offset of the posting {@code .pk} for {@code name},
+     * read from a raw private mapping. Callers use it as a watermark: every entry
+     * published later sits above it in the chain. {@code path} is left trimmed to
+     * {@code plen}.
+     */
+    private long readPostingChainHeadOffset(Path path, CharSequence name) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int plen = path.size();
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE);
+        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(),
+                ff.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            chain.openExisting(pk);
+            Assert.assertTrue("chain must have a head", chain.hasHead());
+            path.trimTo(plen);
+            return chain.getHeadEntryOffset();
+        }
+    }
+
+    /**
+     * Collects the {@code TXN_AT_SEAL} of every entry in the posting {@code .pk} chain for
+     * {@code (name, columnNameTxn)}, walking back from the head through
+     * {@code prevEntryOffset} to the end of the chain. {@code path} is left trimmed to its
+     * size on entry.
+     */
+    private void readPostingChainTags(Path path, CharSequence name, long columnNameTxn, LongList out) {
+        out.clear();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int plen = path.size();
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
+        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(),
+                ff.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            chain.openExisting(pk);
+            Assert.assertTrue("chain must have a head", chain.hasHead());
+            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+            long offset = chain.getHeadEntryOffset();
+            // Bound the walk by entryCount, the same defence recoveryDropAbandoned
+            // uses against a corrupted prev pointer.
+            for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
+                Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
+                PostingIndexChainEntry.read(pk, offset, entry);
+                out.add(entry.txnAtSeal);
+                offset = entry.prevEntryOffset;
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Collects the {@code TXN_AT_SEAL} of every chain entry published after the entry
+     * at {@code sinceEntryOffset}, walking back from the head through
+     * {@code prevEntryOffset} and stopping at that watermark. {@code path} is left
+     * trimmed to its size on entry.
+     */
+    private void readPostingChainTagsAbove(Path path, CharSequence name, long sinceEntryOffset, LongList out) {
+        out.clear();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int plen = path.size();
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE);
+        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(),
+                ff.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            chain.openExisting(pk);
+            Assert.assertTrue("chain must have a head", chain.hasHead());
+            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+            long offset = chain.getHeadEntryOffset();
+            // Bound the walk by entryCount, the same defence recoveryDropAbandoned
+            // uses against a corrupted prev pointer.
+            for (long visited = 0, n = chain.getEntryCount();
+                 offset != PostingIndexUtils.V2_NO_HEAD && offset != sinceEntryOffset;
+                 visited++) {
+                Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
+                PostingIndexChainEntry.read(pk, offset, entry);
+                out.add(entry.txnAtSeal);
+                offset = entry.prevEntryOffset;
+            }
+            Assert.assertEquals(
+                    "the watermark entry must still be reachable from the head",
+                    sinceEntryOffset,
+                    offset
+            );
+        } finally {
+            path.trimTo(plen);
         }
     }
 

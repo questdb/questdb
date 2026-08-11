@@ -297,12 +297,86 @@ public class PostingGenLookup implements Closeable {
      * marker: {@link PostingIndexWriter#publishToChain} writes it LAST, after a
      * {@code storeFence} that orders it behind the slot's payload fields, and
      * only then does {@code extendHead} bump the entry's {@code GEN_COUNT}.
-     * Because the writer only ever tags slots with a non-decreasing table txn,
-     * the validly-published gens are exactly the longest non-decreasing prefix
-     * of the gen-dir. Anything after the first drop never completed its publish
-     * (a stale tail slot left behind by an entry whose GEN_COUNT shrank, or a
-     * slot observed mid-write), so this method STOPS at that point and reports
-     * the truncated count rather than surfacing an unpublished gen.
+     * Because the writer only ever tags slots with a non-decreasing table txn, a
+     * slot tagged BELOW its predecessor never completed its publish (a stale tail
+     * slot left behind by an entry whose GEN_COUNT shrank, or a slot observed
+     * mid-write), or lost its bytes to a .pk truncated below its published
+     * {@code regionLimit}, so this method STOPS at that point and reports the
+     * truncated count rather than surfacing an unpublished gen.
+     * <p>
+     * The converse does NOT hold: a non-decreasing prefix is not proof of a valid
+     * publish. An unpublished slot reads back as TXN_AT_SEAL=0, and 0 is also a
+     * tag {@link PostingIndexWriter#publishToChain} legitimately writes -- it is
+     * the {@code pendingTxnAtSeal < 0} fallback, taken whenever the publishing
+     * caller has not armed {@code setNextTxnAtSeal} since the writer's last
+     * {@code of(...)} (which resets the field to -1 through {@code close()}).
+     * Five production routes used to reach that fallback and no longer do (this
+     * is not an exhaustive list of routes that ever could -- see the search
+     * scope below, which names two that remain):
+     * {@code ContiguousFileIndexedFrameColumn.append} / {@code appendNulls} called
+     * {@code rollbackConditionally} BEFORE their conditional
+     * {@code setNextTxnAtSeal}, so the eviction a partition squash drives through
+     * {@code FrameAlgebra.append} republished tagged 0 with no crash in its
+     * precondition; and {@code TableWriter.openPartition} called
+     * {@code configureFollowerAndWriter} and then
+     * {@code rollbackConditionally(rowCount)} with no setter call in between, so a
+     * partition whose index still held rowids at or above the reopened row count
+     * republished its re-encoded entry tagged 0. Both now arm before they publish
+     * -- {@code upcomingTableTxn} and {@code txWriter.getTxn()} respectively.
+     * The other three are {@code TableWriter.openNewColumnFiles},
+     * {@code renameColumn}'s indexer rebind and
+     * {@code restorePostingIndexersToLastPartition}: none publishes itself and
+     * none commits through {@code commit00}, so the writer reached the next data
+     * commit still unset, and {@code commit00} runs {@code updateIndexes()}
+     * before {@code syncColumns()} arms anything. All three now arm
+     * {@code getTxn()+1}.
+     * <p>
+     * What was searched, so the claim can be re-checked: every site under
+     * {@code core/src/main} that RESETS the field, i.e. every entry point into a
+     * path-based {@code PostingIndexWriter.of()} (of() starts with close(), which
+     * sets it to -1) -- {@code configureFollowerAndWriter} (8 {@code TableWriter}
+     * sites), {@code configureWriter} ({@code TableWriter} x2,
+     * {@code IndexBuilder}, {@code TableSnapshotRestore}),
+     * {@code ContiguousFileIndexedFrameColumn.ofRW},
+     * {@code TableSnapshotRestore}'s direct {@code of()},
+     * {@code O3PartitionJob}'s, and {@code O3CopyJob}'s
+     * {@code openFromO3Context}. Three of those do NOT arm before the first call
+     * that can publish on the writer, and remain open:
+     * {@code TableWriter.changeSymbolCapacity} (harmless -- its
+     * {@code skipForPosting} guard reaches that branch only for a legacy BITMAP
+     * index, whose {@code BitmapIndexWriter} inherits a no-op setter), and the
+     * parquet index rebuilds in {@code O3PartitionJob} and
+     * {@code TableSnapshotRestore}, which run the whole {@code indexWriter.add()}
+     * loop before their {@code setNextTxnAtSeal}. {@code add()} is publish-capable
+     * once the loop crosses the indexer spill budget
+     * ({@code spillKey -> compactIfOverBudget -> flushAllPending ->
+     * publishToChain}), so those two can still tag an entry 0. Behaviour there is
+     * unchanged from before this work; the arming above narrows the fallback's
+     * reach rather than eliminating it.
+     * {@code PostingIndexWriter.closeNoTruncate()} presets 0 explicitly, but
+     * nothing under core/src/main calls that class's override
+     * ({@code SymbolMapWriter} and {@code SymbolMapUtil} hold a
+     * {@code BitmapIndexWriter}), and the convenience constructor that presets 0
+     * is {@code @TestOnly}.
+     * <p>
+     * None of that closes the gap below, because it does not change what 0 MEANS:
+     * a current-state caller arms the committed {@code _txn}, which is itself 0
+     * until the table's first commit, and {@code .pk} files written before those
+     * callers were armed still carry 0-tagged slots. So the detector
+     * catches a drop below a NON-ZERO predecessor only:
+     * <ul>
+     *     <li>a zeroed slot 0 passes, because {@code prevTxnAtSeal} starts at
+     *     {@code Long.MIN_VALUE};</li>
+     *     <li>a zeroed slot behind a 0-tagged predecessor passes, because
+     *     {@code 0 < 0} is false.</li>
+     * </ul>
+     * Both shapes snapshot as published gens carrying SIZE=0 / KEY_COUNT=0, and
+     * the reader then serves that generation as empty with no signal. Closing
+     * that gap means stopping the writer from tagging validly published slots
+     * with 0, so 0 unambiguously means "unpublished" -- a change to what 0 MEANS
+     * (today: visible to every pinned reader, and undroppable by the writer-open
+     * recovery walk), not a change here. {@code PostingIndexCriticalIssuesTest
+     * #testReaderServesZeroedGenAfterZeroTaggedGenAsEmpty} pins the gap.
      * <p>
      * Note this deliberately does NOT assert: this method runs inside the
      * window the caller is allowed to read torn (it re-validates the chain
