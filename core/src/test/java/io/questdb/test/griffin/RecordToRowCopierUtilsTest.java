@@ -41,6 +41,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -703,6 +704,78 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into dst_str2 select ts, s::varchar from src_str");
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_str order by ts", "dst_str2 order by ts", LOG);
+        });
+    }
+
+    @Test
+    public void testMalformedVarcharConversionsAreNull() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR)");
+            execute("CREATE TABLE dst_direct_str (s STRING)");
+            execute("CREATE TABLE dst_str (s STRING)");
+            execute("CREATE TABLE dst_sym (sym SYMBOL)");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst_direct_str SELECT v FROM src");
+            execute("INSERT INTO dst_str SELECT replace(v, 'z', 'z') FROM src");
+            execute("INSERT INTO dst_sym SELECT v FROM src");
+
+            assertQuery("""
+                    SELECT direct.s IS NULL AS direct_str_null,
+                           decoded.s IS NULL AS decoded_str_null,
+                           sym IS NULL AS sym_null
+                    FROM dst_direct_str direct
+                    CROSS JOIN dst_str decoded
+                    CROSS JOIN dst_sym
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            direct_str_null\tdecoded_str_null\tsym_null
+                            true\ttrue\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testO3InsertSelectVarcharToString() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dst VALUES ('tail', '1970-01-01T03:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow(3_600_000_000L);
+                row.putVarchar(0, new Utf8String("über"));
+                row.append();
+
+                row = writer.newRow(7_200_000_000L);
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst SELECT v, ts FROM src");
+
+            assertQuery("SELECT ts, s, s IS NULL AS is_null FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tis_null
+                            1970-01-01T01:00:00.000000Z\tüber\tfalse
+                            1970-01-01T02:00:00.000000Z\t\ttrue
+                            1970-01-01T03:00:00.000000Z\ttail\tfalse
+                            """);
         });
     }
 

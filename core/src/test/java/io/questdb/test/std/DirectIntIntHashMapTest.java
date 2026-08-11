@@ -27,6 +27,8 @@ package io.questdb.test.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -158,5 +160,122 @@ public class DirectIntIntHashMapTest {
             Assert.assertEquals(0, map.capacity());
             map.close();
         });
+    }
+
+    @Test
+    public void testLazyOpenReopenAndMemoryTracker() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    TestMemoryTracker firstTracker = new TestMemoryTracker();
+                    TestMemoryTracker secondTracker = new TestMemoryTracker()
+            ) {
+                final DirectIntIntHashMap map = new DirectIntIntHashMap(
+                        4,
+                        0.5,
+                        Integer.MIN_VALUE,
+                        Integer.MIN_VALUE,
+                        MemoryTag.NATIVE_DEFAULT,
+                        false
+                );
+                try {
+                    Assert.assertFalse(map.isOpen());
+                    Assert.assertEquals(8, map.capacity());
+                    Assert.assertEquals(0, map.size());
+                    Assert.assertEquals(0, firstTracker.getUsed());
+
+                    map.setMemoryTracker(firstTracker);
+                    map.reopen();
+
+                    Assert.assertTrue(map.isOpen());
+                    Assert.assertEquals(8, map.capacity());
+                    Assert.assertEquals(64, firstTracker.getUsed());
+
+                    for (int i = 0; i < 4; i++) {
+                        map.put(i, i + 1);
+                    }
+                    Assert.assertEquals(16, map.capacity());
+                    Assert.assertEquals(128, firstTracker.getUsed());
+
+                    // Reopening a live map is a no-op: it neither clears the values nor charges
+                    // the tracker for a second directory.
+                    map.reopen();
+                    Assert.assertEquals(4, map.size());
+                    Assert.assertEquals(3, map.get(2));
+                    Assert.assertEquals(128, firstTracker.getUsed());
+
+                    map.close();
+                    Assert.assertFalse(map.isOpen());
+                    Assert.assertEquals(0, map.capacity());
+                    Assert.assertEquals(0, map.size());
+                    Assert.assertEquals(0, firstTracker.getUsed());
+
+                    // Exercise the standalone Reopenable contract, which NativeKeyMap deliberately
+                    // does not reach after close, and prove the new tracker owns the allocation.
+                    map.setMemoryTracker(secondTracker);
+                    map.reopen();
+                    Assert.assertTrue(map.isOpen());
+                    Assert.assertEquals(8, map.capacity());
+                    Assert.assertEquals(0, map.size());
+                    Assert.assertTrue(map.excludes(2));
+                    Assert.assertEquals(0, firstTracker.getUsed());
+                    Assert.assertEquals(64, secondTracker.getUsed());
+
+                    map.put(42, 84);
+                    Assert.assertEquals(84, map.get(42));
+                } finally {
+                    map.close();
+                    map.setMemoryTracker(null);
+                }
+                Assert.assertEquals(0, firstTracker.getUsed());
+                Assert.assertEquals(0, secondTracker.getUsed());
+            }
+        });
+    }
+
+    private static final class TestMemoryTracker extends MemoryTracker {
+        private long nativeAddress;
+
+        private TestMemoryTracker() {
+            nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
+            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
+        }
+
+        @Override
+        public void close() {
+            if (nativeAddress != 0) {
+                freeNativeAllocators();
+                nativeAddress = Unsafe.free(
+                        nativeAddress,
+                        Unsafe.MEMORY_TRACKER_BLOCK_SIZE,
+                        MemoryTag.NATIVE_MEMORY_TRACKER
+                );
+            }
+        }
+
+        @Override
+        public long getLimit() {
+            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
+        }
+
+        @Override
+        public long getQueryId() {
+            return 1;
+        }
+
+        @Override
+        public long getUsed() {
+            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
+        }
+
+        @Override
+        public MemoryTrackerWorkload getWorkload() {
+            return MemoryTrackerWorkload.QUERY;
+        }
+
+        @Override
+        public long nativeAddress() {
+            return nativeAddress;
+        }
     }
 }

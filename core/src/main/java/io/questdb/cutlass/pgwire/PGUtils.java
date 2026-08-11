@@ -54,6 +54,10 @@ public final class PGUtils {
     private static final int MAX_GEOINT_TEXT_LEN = 32;
     private static final int MAX_GEOLONG_TEXT_LEN = 64;
     private static final int MAX_GEOSHORT_TEXT_LEN = 16;
+    // Interval.toSink() renders "('<timestamp>', '<timestamp>')": 2 * MAX_TIMESTAMP_TEXT_LEN (31)
+    // for the two ISO timestamps, plus punctuation. Spelled as a literal because
+    // MAX_TIMESTAMP_TEXT_LEN is declared below and a simple name cannot be forward-referenced.
+    private static final int MAX_INTERVAL_TEXT_LEN = 78;
     private static final int MAX_INT_TEXT_LEN = String.valueOf(Integer.MIN_VALUE).length();
     private static final int MAX_IPv4_TEXT_LEN = 15; // "255.255.255.255"
     private static final int MAX_LONG256_TEXT_LEN = 66; // "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -61,22 +65,23 @@ public final class PGUtils {
     private static final int MAX_SHORT_TEXT_LEN = String.valueOf(Short.MIN_VALUE).length();
     private static final int MAX_TIMESTAMP_TEXT_LEN = 31; // "294247-01-10 04:00:54.775807123"
     private static final int MAX_UUID_TEXT_LEN = 36;
+    private static final int NULL_LITERAL_TEXT_LEN = 4; // "NULL", as ArrayTypeDriver.arrayToPgWire() writes it
     private static final int PG_NUMERIC_FIXED_BIN_SIZE = Integer.BYTES + 4 * Short.BYTES;
 
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
+    public static long calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
         int nullCount = array.getCardinality() - notNullCount;
         return calculateArrayHeaderSize(array) + calculateArrayResumeColBinSize(notNullCount, nullCount);
     }
 
     // does NOT include array header size!
-    public static int calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
-        return notNullCount *
+    public static long calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
+        return (long) notNullCount *
                 (Integer.BYTES // element size
                         + Long.BYTES) + // element value
-                nullCount *
+                (long) nullCount *
                         Integer.BYTES; // element size, zero for NULL value
     }
 
@@ -85,7 +90,7 @@ public final class PGUtils {
      *
      * @throws PGMessageProcessingException if the binary value exceeds maxBlobSize
      */
-    public static int calculateColumnBinSize(
+    public static long calculateColumnBinSize(
             PGPipelineEntry pipelineEntry,
             SqlExecutionContext sqlExecutionContext,
             Record record,
@@ -189,6 +194,8 @@ public final class PGUtils {
                 int vcResumePoint = Math.max(0, resumePoint);
                 int vcRemaining = vcValue.size() - vcResumePoint;
                 return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
+            case ColumnType.ARRAY_STRING:
+                // ARRAY_STRING goes out through outColString() under either format code
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
                 return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
@@ -202,7 +209,7 @@ public final class PGUtils {
                 } else {
                     long blobSize = sequence.length();
                     if (blobSize < maxBlobSize) {
-                        return Integer.BYTES + (int) blobSize;
+                        return Integer.BYTES + blobSize;
                     } else {
                         throw PGMessageProcessingException.instance(pipelineEntry)
                                 .put("blob is too large [blobSize=").put(blobSize)
@@ -216,39 +223,59 @@ public final class PGUtils {
                 if (array.isNull()) {
                     return Integer.BYTES; // size field (will be -1 for NULL)
                 }
-                assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
-                        ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
-                        : "implemented only for DOUBLE and LONG";
+                final short elemType = ColumnType.decodeArrayElementType(columnType);
+                if (elemType != ColumnType.DOUBLE) {
+                    // outColBinArr() only encodes DOUBLE elements, and the fixed-size arithmetic
+                    // below assumes them too. Report "cannot size" so
+                    // calculateRecordTailSize() rewinds the row instead of patching a wrong length,
+                    // and let outColBinArr() reject the request with a message the client can act on.
+                    return -1;
+                }
 
                 int actualResumePoint = Math.max(0, resumePoint);
                 int remainingElements = array.getCardinality() - actualResumePoint; // includes nulls
                 int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
 
                 // -1 = array header was not written yet -> we have to include it in our calculation
-                int size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
+                long size = resumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
 
                 // add remaining elements
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
                 return size;
+            case ColumnType.INTERVAL:
+                // This method has to be EXACT, not an upper bound: calculateRecordTailSize() patches
+                // its result into a DataRow length prefix. An interval's size depends on the rendered
+                // timestamps, so it cannot be sized without doing the work. Report "cannot size" and
+                // give up mid-record resume for this row; the whole-row rewind still delivers it.
+                return -1;
             default:
-                assert false : "unsupported type: " + typeTag;
+                // never assert here: this runs inside outRecord()'s NoSpaceLeftInResponseBufferException
+                // handler, where a thrown AssertionError would replace the in-flight exception and
+                // derail the rewind. outRecord()'s default arm reports the unsupported type instead.
                 return -1;
         }
     }
 
     public static int countNotNull(ArrayView array, int resumePoint) {
+        if (array.isEmpty()) {
+            return 0;
+        }
+
+        final int cardinality = array.getCardinality();
+        final int skip = Math.max(0, resumePoint);
+        if (skip >= cardinality) {
+            return 0;
+        }
+
         if (array.isVanilla()) {
-            return switch (array.getElemType()) {
-                case ColumnType.DOUBLE -> array.flatView().countDouble(
-                        array.getFlatViewOffset() + resumePoint,
-                        array.getFlatViewLength() - resumePoint);
-                case ColumnType.LONG -> array.flatView().countLong(
-                        array.getFlatViewOffset() + resumePoint,
-                        array.getFlatViewLength() - resumePoint);
-                default -> throw new AssertionError("Unsupported array element type: " + array.getElemType());
-            };
+            if (array.getElemType() != ColumnType.DOUBLE) {
+                throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            }
+            return array.flatView().countDouble(
+                    array.getFlatViewOffset() + skip,
+                    array.getFlatViewLength() - skip);
         } else {
-            return countNotNullRecursive(array, 0, 0, resumePoint);
+            return countNotNullRecursive(array, 0, 0, skip, cardinality);
         }
     }
 
@@ -262,6 +289,7 @@ public final class PGUtils {
             int columnIndex,
             int columnType
     ) {
+        // matches calculateColumnBinSize(), which also derives the tag from the full column type
         final int typeTag = ColumnType.tagOf(columnType);
         return switch (typeTag) {
             case ColumnType.NULL -> Integer.BYTES;
@@ -307,11 +335,86 @@ public final class PGUtils {
                 BinarySequence sequence = record.getBin(columnIndex);
                 yield sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
             }
-            default -> {
-                assert false : "unsupported type: " + typeTag;
-                yield -1;
+            // ARRAY sits last, as it does in calculateColumnBinSize()
+            case ColumnType.ARRAY -> {
+                final ArrayView array = record.getArray(columnIndex, columnType);
+                if (array.isNull()) {
+                    yield Integer.BYTES;
+                }
+                yield Integer.BYTES + arrayTxtSize(array);
             }
+            case ColumnType.INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
+            // NOTE: no ARRAY_STRING arm - txtAndBinSizesCanBeDifferent() reports it as same-sized
+            // in both formats, so it is sized by calculateColumnBinSize() and never reaches here.
+            default ->
+                // an unknown type must not raise here: this runs inside outRecord()'s
+                // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
+                // replaces the in-flight exception and derails the rewind. outRecord()'s own
+                // default arm is what reports an unsupported type to the client.
+                    -1;
         };
+    }
+
+    /**
+     * Upper bound on the bytes {@code outColTxtArr()} writes for a non-null array, excluding the
+     * length prefix. ArrayTypeDriver.arrayToText() emits one brace PAIR per node of the shape
+     * tree, not one per element, so the brace count is driven by dimensionality: for shape
+     * (d0..dk-1) it is {@code 1 + d0 + d0*d1 + ... + d0*..*dk-2}. Charging a fixed allowance per
+     * element under-counts as soon as a trailing dimension is 1 (shape (2,1,1) needs 5 pairs for
+     * 2 elements), so this walks the shape instead - at most {@link ColumnType#ARRAY_NDIMS_LIMIT}
+     * steps, on the send-buffer-overflow path only. Commas telescope to exactly cardinality - 1.
+     */
+    private static long arrayTxtSize(ArrayView array) {
+        if (array.isEmpty()) {
+            // arrayToText() short-circuits an empty array to "{}" whatever its shape, so the node
+            // walk below must not run: a shape like (100_000_000, 100_000_000, 0) would count ten
+            // quadrillion phantom brace pairs
+            return 2;
+        }
+        long nodes = 0;
+        long levelNodes = 1;
+        for (int d = 0, n = array.getDimCount(); d < n; d++) {
+            nodes += levelNodes;
+            levelNodes *= array.getDimLen(d);
+        }
+        final int cardinality = array.getCardinality();
+        final long elements;
+        if (array.getElemType() == ColumnType.VARCHAR) {
+            // a varchar element has no width bound, so measure the elements we are going to write.
+            if (array.isVanilla()) {
+                long size = 0;
+                for (int i = 0; i < cardinality; i++) {
+                    final Utf8Sequence value = array.getVarchar(i);
+                    size += value == null ? NULL_LITERAL_TEXT_LEN : value.size();
+                }
+                elements = size;
+            } else {
+                elements = varcharArrayTxtSize(array, 0, 0);
+            }
+        } else {
+            // DOUBLE is the supported numeric element type; the "NULL" literal is shorter
+            elements = (long) cardinality * MAX_DOUBLE_TEXT_LEN;
+        }
+        return 2 * nodes + (cardinality - 1L) + elements;
+    }
+
+    private static long varcharArrayTxtSize(ArrayView array, int dim, int flatIndex) {
+        long size = 0;
+        final int count = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        if (dim < array.getDimCount() - 1) {
+            for (int i = 0; i < count; i++) {
+                size += varcharArrayTxtSize(array, dim + 1, flatIndex);
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                final Utf8Sequence value = array.getVarchar(flatIndex);
+                size += value == null ? NULL_LITERAL_TEXT_LEN : value.size();
+                flatIndex += stride;
+            }
+        }
+        return size;
     }
 
     /**
@@ -638,31 +741,41 @@ public final class PGUtils {
         return PG_NUMERIC_FIXED_BIN_SIZE + digitCount * Short.BYTES;
     }
 
-    private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
+    private static int countNotNullRecursive(
+            ArrayView array,
+            int dim,
+            int flatIndex,
+            int skip,
+            int subtreeCardinality
+    ) {
         int count = 0;
         final int dimLen = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
-            short elemType = array.getElemType();
-            for (int i = 0; i < dimLen; i++) {
-                if (flatIndex >= resumePoint)
-                    switch (elemType) {
-                        case ColumnType.DOUBLE:
-                            if (Numbers.isFinite(array.getDouble(flatIndex))) {
-                                count++;
-                            }
-                            break;
-                        case ColumnType.LONG:
-                            if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
-                                count++;
-                            }
-                    }
+            if (array.getElemType() != ColumnType.DOUBLE) {
+                throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            }
+            flatIndex += skip * stride;
+            for (int i = skip; i < dimLen; i++) {
+                if (Numbers.isFinite(array.getDouble(flatIndex))) {
+                    count++;
+                }
                 flatIndex += stride;
             }
         } else {
-            for (int i = 0; i < dimLen; i++) {
-                count += countNotNullRecursive(array, dim + 1, flatIndex, resumePoint);
+            final int childCardinality = subtreeCardinality / dimLen;
+            final int firstChild = skip / childCardinality;
+            final int childSkip = skip % childCardinality;
+            flatIndex += firstChild * stride;
+            for (int i = firstChild; i < dimLen; i++) {
+                count += countNotNullRecursive(
+                        array,
+                        dim + 1,
+                        flatIndex,
+                        i == firstChild ? childSkip : 0,
+                        childCardinality
+                );
                 flatIndex += stride;
             }
         }
