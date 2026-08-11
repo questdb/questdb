@@ -34,6 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zip;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -64,6 +65,48 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     // synthetic columns first: descriptor order is key_id, row_id, then the
     // covered columns in cover-slot order.
     private static final int FIRST_COVER_COLUMN = 2;
+    // The values every byte of the file is set to in turn by the hostile
+    // sweep: cleared, made non-zero, and set to all ones.
+    private static final int[] HOSTILE_BYTE_VALUES = {0x00, 0x01, 0xFF};
+    // Floors on the work the hostile sweep must actually do, so it can never
+    // go vacuous: a mutation that made every case fail the header validation
+    // would drive the full case count and never reach an accessor at all, and
+    // an oracle that never runs proves nothing. Floors rather than exact
+    // counts, because tightening a reader check legitimately moves both.
+    private static final int HOSTILE_BOUND_CASE_MIN = 3_000;
+    // The number of cases the hostile sweep drives, pinned so a refactor that
+    // silently stops enumerating one of the families fails rather than passing
+    // with less coverage than the day it was written.
+    private static final int HOSTILE_CASE_COUNT = 5_293;
+    private static final int HOSTILE_CHECKED_ADDRESS_MIN = 12_000;
+    // Tally slots the sweep accumulates into: cases driven, cases the reader
+    // bound to, and addresses the oracle bounded.
+    private static final int HOSTILE_TALLY_ADDRESSES = 2;
+    private static final int HOSTILE_TALLY_BOUND = 1;
+    private static final int HOSTILE_TALLY_CASES = 0;
+    // The boundary values every header field is set to in turn: zero, one, the
+    // two u32 halves, the two i32 extremes, 2^63 and u64::MAX. -1L is u64::MAX
+    // and Long.MIN_VALUE is 2^63; narrowed to a u32 field they are 0xFFFF_FFFF
+    // and 0.
+    private static final long[] HOSTILE_FIELD_VALUES = {
+            0L, 1L, -1L, Long.MIN_VALUE, Long.MAX_VALUE,
+            0x8000_0000L, 0xFFFF_FFFFL, Integer.MIN_VALUE, Integer.MAX_VALUE
+    };
+    // The u32 header fields, in offset order: FORMAT_VERSION, PAYLOAD_KIND,
+    // COLUMN_COUNT, INDEX_RG_COUNT, DATA_RG_COUNT, KEY_SPACE_SIZE,
+    // KEY_ID_COLUMN, ROW_ID_COLUMN, PIDX_FOOTER_LENGTH, FIRST_COVER_COLUMN.
+    private static final int[] HOSTILE_HEADER_INT_FIELDS = {24, 28, 32, 36, 40, 44, 48, 52, 72, 76};
+    // The u64 header fields, in offset order: IM_FILE_SIZE, IM_MAGIC,
+    // FEATURE_FLAGS, INDEX_SECTIONS_OFFSET, PIDX_FOOTER_OFFSET, and the first
+    // 8 bytes of RESERVED, which a reader must ignore.
+    private static final int[] HOSTILE_HEADER_LONG_FIELDS = {0, 8, 16, 56, 64, 80};
+    // Lengths crafted into an (offset << 16) | length out-of-line stat
+    // reference: the two-block fixture's region is 32 bytes holding a 16-byte
+    // min and a 16-byte max.
+    private static final int[] HOSTILE_STAT_LENGTHS = {0, 1, 16, 17, 32, 0xFFFF};
+    // Offsets crafted into the same reference, straddling the start, the two
+    // stat boundaries and the end of that 32-byte region.
+    private static final int[] HOSTILE_STAT_OFFSETS = {0, 1, 15, 16, 17, 31, 32, 33, 0xFFFF};
     // Parquet physical types as the raw descriptor byte, from the Rust
     // physical_type_to_u8.
     private static final int PHYSICAL_FIXED_LEN_BYTE_ARRAY = 7;
@@ -707,6 +750,56 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             // The sentinel entry is the last valid index and still reads.
             Assert.assertEquals(11_405, reader.getRowGroupFirstKey(4));
         }));
+    }
+
+    /**
+     * The permanent hostile-input sweep over the version 3 surface. Every case
+     * starts from an {@code _im} file the real Rust writer produced, mutates
+     * it, repairs the CRC so the reader reaches the check under test instead of
+     * failing the checksum first, binds a reader to the result and drives every
+     * accessor.
+     * <p>
+     * Two things are asserted of every case. First, the reader either answers
+     * or raises {@link CairoException}: any other throwable fails the sweep,
+     * including an {@code AssertionError} from a bound that is only checked
+     * under {@code -ea} and so would not exist in production. Second - and this
+     * is what a sweep asserting only "no crash" would miss - every accessor
+     * that returns an address returns one lying wholly inside the committed
+     * file, so a reader handing back a pointer into unrelated memory fails here
+     * rather than passing quietly.
+     * <p>
+     * The cases are enumerated rather than sampled, so a failure reproduces
+     * exactly and its message names the byte and the value that produced it:
+     * every byte position of the file at three values, every header field at
+     * the boundary values, every RG_BLOCK_OFFSET entry, crafted out-of-line
+     * stat references over both blocks of the two-block fixture, and every
+     * truncation length from 0 to the file length.
+     */
+    @Test
+    public void testHostileInputSweep() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] tally = new int[3];
+            withSampleBytes((dataPtr, dataLen) -> {
+                sweepSingleBytes(tally, dataPtr, dataLen);
+                sweepHeaderFields(tally, dataPtr, dataLen);
+                sweepRowGroupBlockOffsets(tally, dataPtr, dataLen);
+                sweepTruncations(tally, dataPtr, dataLen);
+            });
+            withBytes(
+                    IndexMetaFileReaderTest::buildTwoBlockOutOfLineStatSample,
+                    (dataPtr, dataLen) -> sweepOutOfLineStatReferences(tally, dataPtr, dataLen)
+            );
+            Assert.assertEquals(HOSTILE_CASE_COUNT, tally[HOSTILE_TALLY_CASES]);
+            Assert.assertTrue(
+                    "the sweep bound only " + tally[HOSTILE_TALLY_BOUND] + " of its "
+                            + tally[HOSTILE_TALLY_CASES] + " cases, so the accessors were barely reached",
+                    tally[HOSTILE_TALLY_BOUND] >= HOSTILE_BOUND_CASE_MIN
+            );
+            Assert.assertTrue(
+                    "the address oracle bounded only " + tally[HOSTILE_TALLY_ADDRESSES] + " addresses",
+                    tally[HOSTILE_TALLY_ADDRESSES] >= HOSTILE_CHECKED_ADDRESS_MIN
+            );
+        });
     }
 
     /**
@@ -2380,6 +2473,151 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         return (minSize & 0x0F) | ((maxSize & 0x0F) << 4);
     }
 
+    /**
+     * Drives every accessor of a reader the hostile sweep managed to bind, and
+     * applies the address oracle to the ones that answer with an address. The
+     * index probes are the boundaries of each index space rather than a full
+     * enumeration: one out of range index rejects on the first accessor that
+     * takes it, so the battery below runs only for the combinations the file
+     * claims are addressable.
+     */
+    private static void exerciseAccessors(int[] tally, String caseName, IndexMetaFileReader reader, long base, long size) {
+        final long fileSize = reader.getFileSize();
+        if (fileSize < IndexMetaFileReader.IM_HEADER_SIZE + IndexMetaFileReader.IM_TRAILER_SIZE || fileSize > size) {
+            Assert.fail("_im hostile case [" + caseName + "] bound to a committed size outside the buffer [fileSize="
+                    + fileSize + ", size=" + size + ']');
+        }
+        // Every address the reader answers with must land in the committed
+        // file, not merely in the buffer: the bytes past IM_FILE_SIZE are not
+        // part of the file the reader was bound to.
+        final long hi = base + fileSize;
+        Assert.assertEquals(base, reader.getAddr());
+        Assert.assertTrue(reader.isOpen());
+        reader.getFeatureFlags();
+        reader.getIndexSectionsOffset();
+        reader.getPayloadKind();
+        reader.getPidxFooterLength();
+        reader.getPidxFooterOffset();
+        probeValue(caseName, "getPidxFileSize", reader::getPidxFileSize);
+
+        final int columnCount = reader.getColumnCount();
+        final int dataRowGroupCount = reader.getDataRowGroupCount();
+        final int indexRowGroupCount = reader.getIndexRowGroupCount();
+        final int keySpaceSize = reader.getKeySpaceSize();
+        final int firstCoverColumn = reader.getFirstCoverColumn();
+        final int[] columns = {
+                -1, 0, columnCount - 1, columnCount, columnCount + 1,
+                reader.getKeyIdColumn(), reader.getRowIdColumn(), Integer.MIN_VALUE, Integer.MAX_VALUE
+        };
+        final int[] rowGroups = {
+                -1, 0, indexRowGroupCount - 1, indexRowGroupCount, Integer.MIN_VALUE, Integer.MAX_VALUE
+        };
+        for (int column : columns) {
+            probeValue(caseName, "getColumnFixedByteLen", () -> reader.getColumnFixedByteLen(column));
+            probeValue(caseName, "getColumnFlags", () -> reader.getColumnFlags(column));
+            probeValue(caseName, "getColumnId", () -> reader.getColumnId(column));
+            probeValue(caseName, "getColumnMaxDefLevel", () -> reader.getColumnMaxDefLevel(column));
+            probeValue(caseName, "getColumnMaxRepLevel", () -> reader.getColumnMaxRepLevel(column));
+            probeValue(caseName, "getColumnPhysicalType", () -> reader.getColumnPhysicalType(column));
+            probeValue(caseName, "getColumnType", () -> reader.getColumnType(column));
+            probeName(tally, caseName, reader, base, hi, column);
+            probeColumnIndexById(caseName, reader, columnCount, column);
+        }
+        // The cover slot indirection: slot 0, the two FIRST_COVER_COLUMN
+        // boundaries, the slot that lands exactly on COLUMN_COUNT, and beyond.
+        final int[] coverSlots = {
+                -1, 0, 1, firstCoverColumn, columnCount - firstCoverColumn - 1, columnCount - firstCoverColumn,
+                columnCount, columnCount + 1, Integer.MIN_VALUE, Integer.MAX_VALUE
+        };
+        for (int slot : coverSlots) {
+            probeCoverColumnIndex(caseName, reader, columnCount, slot);
+        }
+        for (int rowGroup : rowGroups) {
+            probeValue(caseName, "getRowGroupFirstKey", () -> reader.getRowGroupFirstKey(rowGroup));
+            probeValue(caseName, "getRowGroupNumRows", () -> reader.getRowGroupNumRows(rowGroup));
+            probeValue(caseName, "getRowGroupRowIdMax", () -> reader.getRowGroupRowIdMax(rowGroup));
+            probeValue(caseName, "getRowGroupRowIdMin", () -> reader.getRowGroupRowIdMin(rowGroup));
+            for (int column : columns) {
+                exerciseChunk(tally, caseName, reader, base, hi, rowGroup, column);
+            }
+        }
+        final int[] boundaries = {-1, 0, dataRowGroupCount, dataRowGroupCount + 1, Integer.MIN_VALUE, Integer.MAX_VALUE};
+        for (int boundary : boundaries) {
+            probeValue(caseName, "getDataRowGroupBoundary", () -> reader.getDataRowGroupBoundary(boundary));
+        }
+        final int[] keys = {
+                -1, 0, 1, keySpaceSize - 1, keySpaceSize, keySpaceSize + 1, Integer.MIN_VALUE, Integer.MAX_VALUE
+        };
+        for (int key : keys) {
+            probeValue(caseName, "getRowGroupHiForKey", () -> reader.getRowGroupHiForKey(key));
+            probeValue(caseName, "getRowGroupLoForKey", () -> reader.getRowGroupLoForKey(key));
+            probeRowGroupRange(caseName, reader, indexRowGroupCount, key);
+        }
+    }
+
+    /**
+     * Drives every column chunk accessor for one row group and column, taking
+     * the stat flags off the file as a caller would: only the accessors the
+     * flags declare valid are called, so an assert that guards an inline stat
+     * read is not tripped by the sweep itself.
+     */
+    private static void exerciseChunk(
+            int[] tally,
+            String caseName,
+            IndexMetaFileReader reader,
+            long base,
+            long hi,
+            int rowGroup,
+            int column
+    ) {
+        final int statFlags;
+        try {
+            statFlags = reader.getChunkStatFlags(rowGroup, column);
+        } catch (CairoException e) {
+            // The chunk is not addressable at all, and every accessor below
+            // would reject on the same bound. Anything other than a
+            // CairoException propagates to the sweep and fails the case.
+            return;
+        }
+        probeValue(caseName, "getChunkByteRangeStart", () -> reader.getChunkByteRangeStart(rowGroup, column));
+        probeValue(caseName, "getChunkCodec", () -> reader.getChunkCodec(rowGroup, column));
+        probeValue(caseName, "getChunkDistinctCount", () -> reader.getChunkDistinctCount(rowGroup, column));
+        probeValue(caseName, "getChunkEncodings", () -> reader.getChunkEncodings(rowGroup, column));
+        probeValue(caseName, "getChunkMaxStatLength", () -> reader.getChunkMaxStatLength(rowGroup, column));
+        probeValue(caseName, "getChunkMaxStatSize", () -> reader.getChunkMaxStatSize(rowGroup, column));
+        probeValue(caseName, "getChunkMinStatLength", () -> reader.getChunkMinStatLength(rowGroup, column));
+        probeValue(caseName, "getChunkMinStatSize", () -> reader.getChunkMinStatSize(rowGroup, column));
+        probeValue(caseName, "getChunkNullCount", () -> reader.getChunkNullCount(rowGroup, column));
+        probeValue(caseName, "getChunkNumValues", () -> reader.getChunkNumValues(rowGroup, column));
+        probeValue(caseName, "getChunkTotalCompressed", () -> reader.getChunkTotalCompressed(rowGroup, column));
+        probeValue(caseName, "hasChunkMaxStat", () -> reader.hasChunkMaxStat(rowGroup, column) ? 1 : 0);
+        probeValue(caseName, "hasChunkMinStat", () -> reader.hasChunkMinStat(rowGroup, column) ? 1 : 0);
+        probeValue(caseName, "isChunkMaxStatInline", () -> reader.isChunkMaxStatInline(rowGroup, column) ? 1 : 0);
+        probeValue(caseName, "isChunkMinStatInline", () -> reader.isChunkMinStatInline(rowGroup, column) ? 1 : 0);
+        if ((statFlags & STAT_MIN_PRESENT) != 0) {
+            if ((statFlags & STAT_MIN_INLINED) != 0) {
+                probeValue(caseName, "getChunkMinStat", () -> reader.getChunkMinStat(rowGroup, column));
+            } else {
+                // The declared length comes off the same crafted reference, so
+                // the oracle bounds the whole stat and not just its first byte.
+                final int length = reader.getChunkMinStatLength(rowGroup, column);
+                probeAddress(
+                        tally, caseName, "getChunkMinStatAddr", base, hi, length,
+                        () -> reader.getChunkMinStatAddr(rowGroup, column));
+            }
+        }
+        if ((statFlags & STAT_MAX_PRESENT) != 0) {
+            if ((statFlags & STAT_MAX_INLINED) != 0) {
+                probeValue(caseName, "getChunkMaxStat", () -> reader.getChunkMaxStat(rowGroup, column));
+            } else {
+                final int length = reader.getChunkMaxStatLength(rowGroup, column);
+                probeAddress(
+                        tally, caseName, "getChunkMaxStatAddr", base, hi, length,
+                        () -> reader.getChunkMaxStatAddr(rowGroup, column));
+            }
+        }
+    }
+
     private static void flipByte(FilesFacade ff, LPSZ path, long offset) {
         final long fd = ff.openRW(path, 0);
         Assert.assertTrue(fd >= 0);
@@ -2394,6 +2632,127 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             }
         } finally {
             ff.close(fd);
+        }
+    }
+
+    /**
+     * The address oracle: an accessor that answers with an address must answer
+     * with one lying wholly inside the committed file, together with the length
+     * the file declares for it. A sweep that asserted only "nothing threw"
+     * would pass a reader that handed back a pointer into unrelated memory,
+     * which is the failure mode that matters here.
+     */
+    private static void probeAddress(
+            int[] tally,
+            String caseName,
+            String accessor,
+            long base,
+            long hi,
+            long length,
+            HostileProbe probe
+    ) {
+        final long addr;
+        try {
+            addr = probe.run();
+        } catch (CairoException e) {
+            return;
+        }
+        if (addr < base || addr > hi || length < 0 || length > hi - addr) {
+            Assert.fail("_im hostile case [" + caseName + "] answered an address outside the mapping from "
+                    + accessor + " [addr=" + addr + ", length=" + length + ", base=" + base + ", hi=" + hi + ']');
+        }
+        tally[HOSTILE_TALLY_ADDRESSES]++;
+    }
+
+    /**
+     * A writer index either misses or resolves to a descriptor of this file.
+     */
+    private static void probeColumnIndexById(String caseName, IndexMetaFileReader reader, int columnCount, int id) {
+        final int index;
+        try {
+            index = reader.getColumnIndexById(id);
+        } catch (CairoException e) {
+            return;
+        }
+        if (index != -1 && (index < 0 || index >= columnCount)) {
+            Assert.fail("_im hostile case [" + caseName + "] resolved a writer index outside the descriptors [id="
+                    + id + ", index=" + index + ", columnCount=" + columnCount + ']');
+        }
+    }
+
+    /**
+     * A cover slot either is refused or resolves to a descriptor of this file:
+     * the caller passes what comes back straight to a column chunk accessor.
+     */
+    private static void probeCoverColumnIndex(String caseName, IndexMetaFileReader reader, int columnCount, int slot) {
+        final int index;
+        try {
+            index = reader.getCoverColumnIndex(slot);
+        } catch (CairoException e) {
+            return;
+        }
+        if (index < 0 || index >= columnCount) {
+            Assert.fail("_im hostile case [" + caseName + "] resolved a cover slot outside the descriptors [slot="
+                    + slot + ", index=" + index + ", columnCount=" + columnCount + ']');
+        }
+    }
+
+    /**
+     * The name flyweight is a pair of addresses over the mapped file, so both
+     * ends of it get the address oracle.
+     */
+    private static void probeName(int[] tally, String caseName, IndexMetaFileReader reader, long base, long hi, int column) {
+        final DirectUtf8String name;
+        try {
+            name = reader.getColumnName(column);
+        } catch (CairoException e) {
+            return;
+        }
+        final long lo = name.ptr();
+        final long end = lo + name.size();
+        if (lo < base || end < lo || end > hi) {
+            Assert.fail("_im hostile case [" + caseName + "] answered a column name outside the mapping [column="
+                    + column + ", lo=" + lo + ", end=" + end + ", base=" + base + ", hi=" + hi + ']');
+        }
+        tally[HOSTILE_TALLY_ADDRESSES]++;
+    }
+
+    /**
+     * A row group range that is not the absent sentinel is fed straight back
+     * into the row group accessors by a caller, so it must name row groups this
+     * file has.
+     */
+    private static void probeRowGroupRange(String caseName, IndexMetaFileReader reader, int indexRowGroupCount, int key) {
+        final long range;
+        try {
+            range = reader.getRowGroupRangeForKey(key);
+        } catch (CairoException e) {
+            return;
+        }
+        if (range == IndexMetaFileReader.KEY_ABSENT) {
+            return;
+        }
+        final int lo = Numbers.decodeLowInt(range);
+        final int hi = Numbers.decodeHighInt(range);
+        if (lo < 0 || hi < lo || hi >= indexRowGroupCount) {
+            Assert.fail("_im hostile case [" + caseName + "] answered a row group range outside the file [key="
+                    + key + ", lo=" + lo + ", hi=" + hi + ", indexRowGroupCount=" + indexRowGroupCount + ']');
+        }
+    }
+
+    /**
+     * Runs one accessor and tolerates the only exception the reader is allowed
+     * to raise. Anything else - an AssertionError from a bound that only exists
+     * under {@code -ea}, an unchecked exception, a JVM error - fails the sweep
+     * and names the case and the accessor that produced it.
+     */
+    private static void probeValue(String caseName, String accessor, HostileProbe probe) {
+        try {
+            probe.run();
+        } catch (CairoException e) {
+            // The documented rejection path.
+        } catch (Throwable th) {
+            throw new AssertionError("_im hostile case [" + caseName + "] raised " + th + " from " + accessor, th);
         }
     }
 
@@ -2481,6 +2840,23 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Re-commits a crafted buffer so the reader reaches the check under test
+     * instead of failing the checksum first: the CRC covers
+     * {@code [8, IM_FILE_SIZE - 4)} and any mutation invalidates it. A crafted
+     * IM_FILE_SIZE that still addresses the buffer is honoured rather than
+     * repaired, so the reader validates the mutated size; one that does not is
+     * left to the size bound, with the checksum written where the untouched
+     * file keeps it.
+     */
+    private static void repairCrc(long ptr, long bufLen) {
+        final long committed = Unsafe.getUnsafe().getLong(ptr);
+        final boolean addressable = committed >= IndexMetaFileReader.IM_HEADER_SIZE + IndexMetaFileReader.IM_TRAILER_SIZE
+                && committed <= bufLen;
+        final long crcEnd = (addressable ? committed : bufLen) - IndexMetaFileReader.IM_TRAILER_SIZE;
+        Unsafe.getUnsafe().putInt(ptr + crcEnd, Zip.crc32(0, ptr + 8, (int) (crcEnd - 8)));
+    }
+
     private static void setDataRowGroupBoundaries(long writerPtr, long... boundaries) {
         final long size = (long) boundaries.length * Long.BYTES;
         final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -2491,6 +2867,196 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             IndexMetaFileWriter.setDataRowGroupBoundaries(writerPtr, ptr, size, boundaries.length);
         } finally {
             Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Runs one hostile case: binds a reader to the crafted buffer and, if it
+     * binds, drives every accessor. A file the reader refuses is a pass - a
+     * crafted file is allowed to be rejected - and the reader is closed on
+     * every path, so a leak on the rejection path shows up as a failed memory
+     * leak check rather than as nothing at all.
+     */
+    private static void sweepCase(int[] tally, String caseName, long ptr, long size) {
+        tally[HOSTILE_TALLY_CASES]++;
+        try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+            try {
+                reader.ofAddress(ptr, size);
+            } catch (CairoException e) {
+                return;
+            } catch (Throwable th) {
+                throw new AssertionError("_im hostile case [" + caseName + "] raised " + th + " from ofAddress", th);
+            }
+            tally[HOSTILE_TALLY_BOUND]++;
+            try {
+                exerciseAccessors(tally, caseName, reader, ptr, size);
+            } catch (AssertionError e) {
+                throw e;
+            } catch (Throwable th) {
+                // The individual probes tolerate CairoException, so one
+                // reaching here escaped an accessor that was not probed.
+                throw new AssertionError("_im hostile case [" + caseName + "] raised " + th, th);
+            }
+        }
+    }
+
+    /**
+     * Every header field, including the ones the widened version 3 header
+     * added - PIDX_FOOTER_OFFSET, PIDX_FOOTER_LENGTH, FIRST_COVER_COLUMN and
+     * the first reserved word - set in turn to the boundary values and to the
+     * offsets of this file that a crafted field is most likely to name.
+     */
+    private static void sweepHeaderFields(int[] tally, long dataPtr, long dataLen) {
+        final long sectionsOffset = Unsafe.getUnsafe().getLong(dataPtr + 56);
+        final long[] values = {
+                HOSTILE_FIELD_VALUES[0], HOSTILE_FIELD_VALUES[1], HOSTILE_FIELD_VALUES[2], HOSTILE_FIELD_VALUES[3],
+                HOSTILE_FIELD_VALUES[4], HOSTILE_FIELD_VALUES[5], HOSTILE_FIELD_VALUES[6], HOSTILE_FIELD_VALUES[7],
+                HOSTILE_FIELD_VALUES[8],
+                // Misaligned, the header itself, either side of the real
+                // sections offset, and either side of the committed size.
+                7L, IndexMetaFileReader.IM_HEADER_SIZE, sectionsOffset - 8, sectionsOffset, sectionsOffset + 8,
+                dataLen - 4, dataLen, dataLen + 8
+        };
+        final long copyPtr = Unsafe.malloc(dataLen, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int field : HOSTILE_HEADER_LONG_FIELDS) {
+                for (long value : values) {
+                    Vect.memcpy(copyPtr, dataPtr, dataLen);
+                    Unsafe.getUnsafe().putLong(copyPtr + field, value);
+                    repairCrc(copyPtr, dataLen);
+                    sweepCase(tally, "header u64 offset=" + field + " value=" + value, copyPtr, dataLen);
+                }
+            }
+            for (int field : HOSTILE_HEADER_INT_FIELDS) {
+                for (long value : values) {
+                    Vect.memcpy(copyPtr, dataPtr, dataLen);
+                    Unsafe.getUnsafe().putInt(copyPtr + field, (int) value);
+                    repairCrc(copyPtr, dataLen);
+                    sweepCase(tally, "header u32 offset=" + field + " value=" + (int) value, copyPtr, dataLen);
+                }
+            }
+        } finally {
+            Unsafe.free(copyPtr, dataLen, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Crafted {@code (offset << 16) | length} out-of-line stat references over
+     * both stats of both blocks of the two-block fixture, so a bound taken from
+     * the wrong end lets one block address the next. The raw values include
+     * {@code -1}, which is every bit set in both halves.
+     */
+    private static void sweepOutOfLineStatReferences(int[] tally, long dataPtr, long dataLen) {
+        final int[] positions = {
+                TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MIN_STAT, TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT,
+                TWO_BLOCK_1_OFF + TWO_BLOCK_UID_MIN_STAT, TWO_BLOCK_1_OFF + TWO_BLOCK_UID_MAX_STAT
+        };
+        final long[] raw = {-1L, 0L, Long.MIN_VALUE, Long.MAX_VALUE};
+        final long copyPtr = Unsafe.malloc(dataLen, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int position : positions) {
+                for (int offset : HOSTILE_STAT_OFFSETS) {
+                    for (int length : HOSTILE_STAT_LENGTHS) {
+                        final long encoded = encodeOutOfLineStat(offset, length);
+                        Vect.memcpy(copyPtr, dataPtr, dataLen);
+                        Unsafe.getUnsafe().putLong(copyPtr + position, encoded);
+                        repairCrc(copyPtr, dataLen);
+                        sweepCase(
+                                tally,
+                                "stat ref offset=" + position + " statOffset=" + offset + " statLength=" + length,
+                                copyPtr,
+                                dataLen
+                        );
+                    }
+                }
+                for (long encoded : raw) {
+                    Vect.memcpy(copyPtr, dataPtr, dataLen);
+                    Unsafe.getUnsafe().putLong(copyPtr + position, encoded);
+                    repairCrc(copyPtr, dataLen);
+                    sweepCase(tally, "stat ref offset=" + position + " encoded=" + encoded, copyPtr, dataLen);
+                }
+            }
+        } finally {
+            Unsafe.free(copyPtr, dataLen, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Every RG_BLOCK_OFFSET entry in turn, at the boundary values and at the
+     * unit offsets a crafted entry would use to move a block onto the header,
+     * onto the name strings or onto the index sections.
+     */
+    private static void sweepRowGroupBlockOffsets(int[] tally, long dataPtr, long dataLen) {
+        final int columnCount = Unsafe.getUnsafe().getInt(dataPtr + 32);
+        final int rowGroupCount = Unsafe.getUnsafe().getInt(dataPtr + 36);
+        final long sectionsOffset = Unsafe.getUnsafe().getLong(dataPtr + 56);
+        final long namesStart = IndexMetaFileReader.IM_HEADER_SIZE + (long) columnCount * 32;
+        // Entries are byte offsets shifted right by 3.
+        final long[] values = {
+                HOSTILE_FIELD_VALUES[0], HOSTILE_FIELD_VALUES[1], HOSTILE_FIELD_VALUES[2], HOSTILE_FIELD_VALUES[3],
+                HOSTILE_FIELD_VALUES[4], HOSTILE_FIELD_VALUES[5], HOSTILE_FIELD_VALUES[6], HOSTILE_FIELD_VALUES[7],
+                HOSTILE_FIELD_VALUES[8],
+                2L, 3L, (namesStart >> 3) - 1, namesStart >> 3, (sectionsOffset >> 3) - 1, sectionsOffset >> 3,
+                (sectionsOffset >> 3) + 1, 0x1FFF_FFFFL
+        };
+        final long copyPtr = Unsafe.malloc(dataLen, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < rowGroupCount; i++) {
+                final long entryOffset = sectionsOffset + (long) i * Integer.BYTES;
+                for (long value : values) {
+                    Vect.memcpy(copyPtr, dataPtr, dataLen);
+                    Unsafe.getUnsafe().putInt(copyPtr + entryOffset, (int) value);
+                    repairCrc(copyPtr, dataLen);
+                    sweepCase(tally, "block offset entry=" + i + " value=" + (int) value, copyPtr, dataLen);
+                }
+            }
+        } finally {
+            Unsafe.free(copyPtr, dataLen, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Every byte position of the file in turn, cleared, made non-zero and set
+     * to all ones. This is the family that reaches the bytes no named field
+     * covers: the descriptor name pointers, the column chunks, the row-id zone
+     * maps and the padding between sections.
+     */
+    private static void sweepSingleBytes(int[] tally, long dataPtr, long dataLen) {
+        final long copyPtr = Unsafe.malloc(dataLen, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (long offset = 0; offset < dataLen; offset++) {
+                for (int value : HOSTILE_BYTE_VALUES) {
+                    Vect.memcpy(copyPtr, dataPtr, dataLen);
+                    Unsafe.putByte(copyPtr + offset, (byte) value);
+                    repairCrc(copyPtr, dataLen);
+                    sweepCase(tally, "byte offset=" + offset + " value=" + value, copyPtr, dataLen);
+                }
+            }
+        } finally {
+            Unsafe.free(copyPtr, dataLen, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Every truncation length from 0 to the file length, each re-committed at
+     * that length with the CRC repaired - the counts and INDEX_SECTIONS_OFFSET
+     * left describing the whole file, which is what a torn write leaves behind.
+     * Lengths below 12 have no CRC range to re-commit over and are handed to
+     * the reader as they are, which is the size bound's job.
+     */
+    private static void sweepTruncations(int[] tally, long dataPtr, long dataLen) {
+        final long copyPtr = Unsafe.malloc(dataLen, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (long len = 0; len <= dataLen; len++) {
+                Vect.memcpy(copyPtr, dataPtr, dataLen);
+                if (len >= 12) {
+                    Unsafe.getUnsafe().putLong(copyPtr, len);
+                    repairCrc(copyPtr, len);
+                }
+                sweepCase(tally, "truncation len=" + len, copyPtr, len);
+            }
+        } finally {
+            Unsafe.free(copyPtr, dataLen, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -2821,6 +3387,15 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface BytesAssertion {
         void run(long dataPtr, long dataLen);
+    }
+
+    /**
+     * One accessor call of the hostile sweep. Accessors answering an int, a
+     * boolean or nothing widen into the long the probe ignores.
+     */
+    @FunctionalInterface
+    private interface HostileProbe {
+        long run();
     }
 
     @FunctionalInterface
