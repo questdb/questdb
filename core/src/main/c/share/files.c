@@ -275,13 +275,38 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return fsync((int) fd);
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
-#if defined(__linux__) || defined(__FreeBSD__)
-    return fdatasync((int) fd);
+/* The device-durability barrier: once this returns 0 the file's data has reached STABLE storage and
+ * survives a power cut. Every caller asks for exactly that, so the platform primitive here must be the one
+ * that actually flushes the drive, not merely the page cache.
+ *
+ * On Darwin that distinction is the whole point. fsync(2) pushes dirty pages to the drive but explicitly
+ * does NOT flush the drive's own write cache -- Apple's man page directs you to F_FULLFSYNC when you need
+ * the data physically written. Using fsync here left every adaptive durability claim (the WAL commit ack,
+ * the durable epoch, the QWP local-tier durable ack) holding only against process death, never against the
+ * power loss the mode is sold on.
+ *
+ * F_FULLFSYNC is unsupported on some filesystems (network mounts, some FUSE), which report ENOTSUP/EINVAL;
+ * there fsync IS the strongest barrier the filesystem offers, so fall back rather than fail the commit.
+ * Any other errno is a real I/O failure and propagates to the caller's poison/distress handling. */
+static jint durable_fsync_fd(int fd) {
+#if defined(__APPLE__)
+    if (fcntl(fd, F_FULLFSYNC) == 0) {
+        return 0;
+    }
+    if (errno == ENOTSUP || errno == EINVAL || errno == ENOTTY) {
+        return fsync(fd);
+    }
+    return -1;
+#elif defined(__linux__) || defined(__FreeBSD__)
+    /* fdatasync already issues the device cache flush; it only skips non-essential metadata updates. */
+    return fdatasync(fd);
 #else
-    /* macOS: fsync is already the weak primitive (no metadata flush needed) */
-    return fsync((int) fd);
+    return fsync(fd);
 #endif
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+    return durable_fsync_fd((int) fd);
 }
 
 #if defined(__linux__)
@@ -324,9 +349,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, j
      * cache flush. One call replaces N per-file fdatasync device flushes for the batched SYNC commit. */
     return syncfs((int) fd);
 #else
-    /* Non-Linux: no whole-filesystem sync primitive bound to an fd. Fall back to fsync(fd) so the
-     * caller still gets at least that file durable (the batched path is Linux-only anyway). */
-    return fsync((int) fd);
+    /* Non-Linux: no whole-filesystem sync primitive bound to an fd. Fall back to the single-file DURABLE
+     * barrier so the caller still gets at least that file onto stable storage -- fsync would not, on Darwin
+     * (see durable_fsync_fd). The batched path is Linux-only anyway; callers detect this via
+     * isSyncfsFileSystemWide() and flush the write set per file instead. */
+    return durable_fsync_fd((int) fd);
 #endif
 }
 

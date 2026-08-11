@@ -185,6 +185,16 @@ public final class Files {
         return size - size % PAGE_SIZE;
     }
 
+    /**
+     * Device-durability barrier: once this returns 0, the file's data is on STABLE storage and survives a
+     * power cut. This — not {@link #fsync(long)} — is the primitive every durability claim must be built on.
+     * <p>
+     * Per platform: {@code fdatasync(2)} on Linux/FreeBSD, {@code fcntl(F_FULLFSYNC)} on macOS, and
+     * {@code FlushFileBuffers} on Windows. The macOS case is the one that bites: {@code fsync(2)} there
+     * pushes pages to the drive but does NOT flush the drive's write cache, so it is durable against process
+     * death only. On a filesystem that rejects {@code F_FULLFSYNC} (network mounts, some FUSE) this degrades
+     * to {@code fsync}, which is then the strongest barrier that filesystem offers.
+     */
     public static int fdatasync(long fd) {
         return fdatasync0(toOsFd(fd));
     }
