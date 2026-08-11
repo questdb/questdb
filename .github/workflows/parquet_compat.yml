@@ -3,12 +3,11 @@ name: Parquet Export Compatibility
 on:
   pull_request:
     types: [ synchronize, opened, reopened ]
-  merge_group:
   workflow_dispatch:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }} # Run in the merge queue; on PRs only when not from a fork
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
