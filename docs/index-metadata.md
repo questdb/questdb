@@ -454,9 +454,21 @@ These are cheap at write time and produce silent wrong answers if violated, so t
 rather than trusting callers:
 
 - `RG_FIRST_KEY` non-decreasing.
-- **No key spans two row groups unless both are dedicated to it.** Formally: for every `i`, the
-  `key_id` chunk's `MAX_STAT[i] < RG_FIRST_KEY[i + 1]`, taking the sentinel for the last row group.
-  The `key_id` `MAX_STAT` must be present and inline, exactly as `MIN_STAT` is.
+- **No key spans two row groups unless both are dedicated to it.** The `key_id` `MAX_STAT` must be
+  present and inline, exactly as `MIN_STAT` is, and for every row group `i`:
+
+  - if `RG_FIRST_KEY[i] == RG_FIRST_KEY[i + 1]` and `i` is not the last row group, then
+    `MAX_STAT[i] == RG_FIRST_KEY[i]` — a repeated entry claims the group is *dedicated* to that key,
+    so it must hold no other key;
+  - otherwise `MAX_STAT[i] < RG_FIRST_KEY[i + 1]`, taking the sentinel (`KEY_SPACE_SIZE`) as
+    `RG_FIRST_KEY[i + 1]` for the last row group.
+
+  The dedicated-run exemption is deliberately withheld from the last row group, where the "next
+  entry" is the sentinel rather than a real first key.
+
+  Note the two branches are both required. The strict form alone would reject
+  `RG_FIRST_KEY = [.., k, k, ..]` — a hot key occupying consecutive dedicated groups, which is the
+  worked example above and the layout the whole key-alignment policy exists to produce.
 
   This is the single most important writer check, because the reader's `rg_lo` computation depends on
   it and nothing at read time can detect its absence. If key `k` were the last key of a packed group
