@@ -575,7 +575,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 // silent, so a generator that starts producing these constantly is visible.
                 System.out.printf("[seed] REJECTED %dL, %dL: %s%n", seed[0], seed[1], notTestable.getMessage());
                 Assert.assertNotNull("a PINNED seed produced a workload that cannot be crash-tested; fix the "
-                        + "seed or the fuzz probabilities rather than redrawing: " + notTestable.getMessage(),
+                                + "seed or the fuzz probabilities rather than redrawing: " + notTestable.getMessage(),
                         redraw);
                 r = null;
                 continue;

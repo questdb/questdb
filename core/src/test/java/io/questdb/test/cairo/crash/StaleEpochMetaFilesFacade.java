@@ -57,7 +57,9 @@ public class StaleEpochMetaFilesFacade extends TestFilesFacadeImpl {
     // a later reuse of the same descriptor number cannot inherit a substitution.
     private final java.util.HashMap<Long, String> epochMetaFds = new java.util.HashMap<>();
     private String substitutePath;
-    /** Paths whose content was replaced. Tests assert this is non-empty, so a silently-dead facade fails. */
+    /**
+     * Paths whose content was replaced. Tests assert this is non-empty, so a silently-dead facade fails.
+     */
     public final java.util.List<String> substituted = new java.util.ArrayList<>();
 
     /**

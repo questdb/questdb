@@ -1112,6 +1112,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     static class FdatasyncOrderFacade extends TestFilesFacadeImpl {
         private final Map<Long, String> fdToPath = new HashMap<>();
         private final List<String> fdatasyncOrder = new ArrayList<>();
+
         public List<String> getFdatasyncOrder() {
             return fdatasyncOrder;
         }

@@ -224,13 +224,13 @@ public class WalWriterStructuralPublishOrderTest extends AbstractCairoTest {
                 // setVarColumnDataFileNull legitimately writes and flushes nothing. The aux file is the
                 // one carrying bytes, so it is the one that must carry the barrier.
                 Assert.assertTrue("the backfill never created the new column's aux file - this test is "
-                        + "not exercising the path it claims to. Ops:\n" + String.join("\n", ff.ops),
+                                + "not exercising the path it claims to. Ops:\n" + String.join("\n", ff.ops),
                         ff.indexOfFirst("openRW", "wal", "bf_col.i") >= 0);
                 Assert.assertTrue("ADAPTIVE structural null-backfill left the new column with NO explicit "
-                        + "device barrier: an msync alone leans on the kernel treating MS_SYNC as a "
-                        + "range-fsync, and under a group-commit window defers nothing. Every other "
-                        + "ADAPTIVE path pairs the ordering msync with an fdatasync. Ops:\n"
-                        + String.join("\n", ff.ops),
+                                + "device barrier: an msync alone leans on the kernel treating MS_SYNC as a "
+                                + "range-fsync, and under a group-commit window defers nothing. Every other "
+                                + "ADAPTIVE path pairs the ordering msync with an fdatasync. Ops:\n"
+                                + String.join("\n", ff.ops),
                         ff.indexOfFirst("fdatasync", "wal", "bf_col.i") >= 0);
             } finally {
                 engine.releaseAllWalWriters();
