@@ -412,6 +412,34 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoleSwitchReadLockReentersWhileWriterQueued() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPrimaryEngine()) {
+                final Lock readLock = primaryEngine.getRoleSwitchReadLock();
+                final Lock writeLock = primaryEngine.getRoleSwitchWriteLock();
+                final CountDownLatch writerDone = new CountDownLatch(1);
+                final Thread writer = new Thread(() -> {
+                    writeLock.lock();
+                    writeLock.unlock();
+                    writerDone.countDown();
+                }, "role-switch-writer");
+                readLock.lock();
+                try {
+                    writer.start();
+                    TestUtils.assertEventually(() -> Assert.assertEquals(Thread.State.WAITING, writer.getState()));
+                    Assert.assertTrue(readLock.tryLock());
+                    readLock.unlock();
+                } finally {
+                    readLock.unlock();
+                }
+                Assert.assertTrue(writerDone.await(5, TimeUnit.SECONDS));
+                writer.join();
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+            }
+        });
+    }
+
+    @Test
     public void testRoleSwitchReadLockCleanupAfterTaskLeak() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {

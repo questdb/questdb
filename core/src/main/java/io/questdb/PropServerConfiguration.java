@@ -2564,6 +2564,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private static void configureFiberPool(
+            Log log,
             PropFiberWorkerPoolConfiguration configuration,
             int maxLiveCount,
             int mountBudget,
@@ -2577,6 +2578,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                         mountBudget,
                         configuration.getFiberMaxLiveCount()
                 );
+                log.info().$(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath())
+                        .$(" exceeds the derived ").$(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath())
+                        .$(", clamping [pool=").$(configuration.getPoolName())
+                        .$(", retained=").$(retainedCount)
+                        .$(", maxLive=").$(configuration.getFiberMaxLiveCount()).I$();
                 return;
             }
             throw new ServerConfigurationException(
@@ -2668,29 +2674,32 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
         }
         final int mountBudget = getInt(properties, env, PropertyKey.WORKER_FIBER_MOUNT_BUDGET, 64);
-        if (mountBudget < 1) {
+        if (mountBudget < 1 || mountBudget > 1 << 30) {
             throw new ServerConfigurationException(
-                    PropertyKey.WORKER_FIBER_MOUNT_BUDGET.getPropertyPath() + " must be positive"
+                    PropertyKey.WORKER_FIBER_MOUNT_BUDGET.getPropertyPath()
+                            + " must be between 1 and " + (1 << 30)
             );
         }
 
         configureFiberPool(
+                log,
                 (PropFiberWorkerPoolConfiguration) httpMinServerConfiguration,
                 maxLiveCount,
                 mountBudget,
                 retainedCount
         );
         configureFiberPool(
+                log,
                 (PropFiberWorkerPoolConfiguration) httpServerConfiguration,
                 maxLiveCount,
                 mountBudget,
                 retainedCount
         );
-        configureFiberPool(matViewRefreshPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(pgConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(sharedWorkerPoolQueryConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(sharedWorkerPoolWriteConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(log, matViewRefreshPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(log, pgConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(log, sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(log, sharedWorkerPoolQueryConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(log, sharedWorkerPoolWriteConfiguration, maxLiveCount, mountBudget, retainedCount);
     }
 
     private int configureSharedThreadPool(

@@ -26,6 +26,7 @@ package io.questdb.test.mp;
 
 import io.questdb.mp.continuation.DelayHeap;
 import io.questdb.std.ObjList;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -262,15 +263,13 @@ public class DelayHeapTest {
     }
 
     @Test(timeout = 5_000)
-    public void testTakeBlocksUntilOffer() throws InterruptedException {
+    public void testTakeBlocksUntilOffer() throws Exception {
         DelayHeap<TestEntry> heap = new DelayHeap<>();
         AtomicReference<TestEntry> result = new AtomicReference<>();
-        CountDownLatch consumerStarted = new CountDownLatch(1);
         CountDownLatch consumerDone = new CountDownLatch(1);
 
         Thread consumer = new Thread(() -> {
             try {
-                consumerStarted.countDown();
                 result.set(heap.take());
             } catch (InterruptedException ignored) {
             } finally {
@@ -280,9 +279,7 @@ public class DelayHeapTest {
         consumer.setDaemon(true);
         consumer.start();
 
-        Assert.assertTrue(consumerStarted.await(2, TimeUnit.SECONDS));
-        // Give the consumer a moment to enter wait().
-        Thread.sleep(50);
+        TestUtils.assertEventually(() -> Assert.assertEquals(Thread.State.WAITING, consumer.getState()), 4);
         Assert.assertEquals(0, heap.size());
 
         TestEntry e = TestEntry.future("hello", -TimeUnit.MILLISECONDS.toNanos(1));
@@ -294,7 +291,7 @@ public class DelayHeapTest {
     }
 
     @Test(timeout = 5_000)
-    public void testTakeEarlierOfferWakesConsumer() throws InterruptedException {
+    public void testTakeEarlierOfferWakesConsumer() throws Exception {
         // Consumer is waiting on a far-future head; producer inserts a sooner entry
         // that should pop first. notify() must wake the waiter so it re-checks the
         // head deadline.
@@ -303,11 +300,9 @@ public class DelayHeapTest {
 
         AtomicReference<TestEntry> result = new AtomicReference<>();
         AtomicReference<Throwable> err = new AtomicReference<>();
-        CountDownLatch consumerStarted = new CountDownLatch(1);
         CountDownLatch consumerDone = new CountDownLatch(1);
         Thread consumer = new Thread(() -> {
             try {
-                consumerStarted.countDown();
                 result.set(heap.take());
             } catch (Throwable t) {
                 err.set(t);
@@ -318,8 +313,7 @@ public class DelayHeapTest {
         consumer.setDaemon(true);
         consumer.start();
 
-        Assert.assertTrue(consumerStarted.await(2, TimeUnit.SECONDS));
-        Thread.sleep(50);
+        TestUtils.assertEventually(() -> Assert.assertEquals(Thread.State.TIMED_WAITING, consumer.getState()), 4);
         // Now insert a sooner entry; consumer must wake and return it within the
         // sooner deadline, well before the 10s "far" deadline.
         TestEntry soon = TestEntry.future("soon", TimeUnit.MILLISECONDS.toNanos(50));

@@ -208,14 +208,11 @@ public class TimerShardsTest {
     public void testShardDistribution() {
         int shardCount = 4;
         TimerShards shards = new TimerShards(shardCount, "test-timer", LOG);
-        // Don't start threads - just register far-future entries and check size grows.
-        // We can't probe per-shard size directly without exposing it, so we verify the
-        // total reflects every register call (no silent drop on a healthy register).
+        // Register far-future entries and check size grows. We can't probe per-shard
+        // size directly without exposing it, so we verify the total reflects every
+        // register call (no silent drop on a healthy register).
         int n = 1_000;
         long deadline = System.currentTimeMillis() + 60_000;
-        for (int i = 0; i < n; i++) {
-            // Force running to true via start() since register guards on running.
-        }
         shards.start();
         try {
             for (int i = 0; i < n; i++) {
@@ -318,7 +315,9 @@ public class TimerShardsTest {
         TimerShards shards = new TimerShards(2, "test-timer", LOG);
         shards.start();
         shards.shutdown();
+        Assert.assertEquals(0, shards.size());
         shards.shutdown();
+        Assert.assertEquals(0, shards.size());
         shards.halt();
     }
 

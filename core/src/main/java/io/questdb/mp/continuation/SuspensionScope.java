@@ -97,7 +97,10 @@ public final class SuspensionScope {
     }
 
     public static CancellationBinding getCancellationBindingScratch() {
-        final CarrierScope scope = SCOPE.get();
+        return getCancellationBindingScratch(SCOPE.get());
+    }
+
+    public static CancellationBinding getCancellationBindingScratch(CarrierScope scope) {
         return scope.fiber != null
                 ? scope.fiber.getCancellationBindingScratch()
                 : scope.cancellationBindingScratch;
@@ -107,8 +110,16 @@ public final class SuspensionScope {
         return SCOPE.get().cancellationSignal;
     }
 
+    public static @Nullable FiberCancellationSignal getCancellationSignal(CarrierScope scope) {
+        return scope.cancellationSignal;
+    }
+
     public static long getCancellationSignalGeneration() {
         return SCOPE.get().cancellationSignalGeneration;
+    }
+
+    public static long getCancellationSignalGeneration(CarrierScope scope) {
+        return scope.cancellationSignalGeneration;
     }
 
     public static @Nullable Mode getMode() {
@@ -123,12 +134,24 @@ public final class SuspensionScope {
         return SCOPE.get().supplementalCancellationSignal;
     }
 
+    public static @Nullable FiberCancellationSignal getSupplementalCancellationSignal(CarrierScope scope) {
+        return scope.supplementalCancellationSignal;
+    }
+
     public static long getSupplementalCancellationSignalGeneration() {
         return SCOPE.get().supplementalCancellationSignalGeneration;
     }
 
+    public static long getSupplementalCancellationSignalGeneration(CarrierScope scope) {
+        return scope.supplementalCancellationSignalGeneration;
+    }
+
     public static @Nullable TimerShards getTimerShards() {
         return SCOPE.get().timerShards;
+    }
+
+    public static @Nullable TimerShards getTimerShards(CarrierScope scope) {
+        return scope.timerShards;
     }
 
     public static boolean hasRoleSwitchReadLock(CarrierScope scope) {

@@ -237,6 +237,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
                         } else {
                             c.stop();
                         }
+                        startedComponentNames.remove(c.name());
                     } catch (Throwable t) {
                         isEveryComponentStopped = false;
                         retainHardDependencies(c, retainedComponentNames);

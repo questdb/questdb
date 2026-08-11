@@ -2704,6 +2704,7 @@ public class PropServerConfigurationTest {
         assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MAX_RETAINED, "-1");
         assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MAX_RETAINED, "1_073_741_825");
         assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MOUNT_BUDGET, "0");
+        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MOUNT_BUDGET, "1_073_741_825");
 
         final Properties properties = new Properties();
         properties.setProperty(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath(), "4");
@@ -2773,6 +2774,17 @@ public class PropServerConfigurationTest {
                 PropertyKey.PG_FIBER_ENABLED,
                 PropServerConfiguration::getPGWireConfiguration
         );
+    }
+
+    @Test
+    public void testWorkerPoolFiberDerivedLiveClampsExplicitRetained() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "1_000_000");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolNetworkConfiguration());
+        assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolQueryConfiguration());
+        assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolWriteConfiguration());
     }
 
     @Test
@@ -2960,6 +2972,10 @@ public class PropServerConfigurationTest {
         } catch (ServerConfigurationException expected) {
             TestUtils.assertContains(expected.getMessage(), key.getPropertyPath());
         }
+    }
+
+    private void assertFiberRetainedClampedToLive(WorkerPoolConfiguration configuration) {
+        Assert.assertEquals(configuration.getFiberMaxLiveCount(), configuration.getFiberRetainedCount());
     }
 
     private void assertTimestampTimezone(

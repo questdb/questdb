@@ -1003,6 +1003,42 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
+    public void testFailedComponentStopsOnceAcrossCloseRetries() {
+        final AtomicInteger failedStopCount = new AtomicInteger();
+        final AtomicInteger flakyStopAttempts = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        final ProbeComponent failed = new ProbeComponent("a") {
+            @Override
+            public void stop() {
+                failedStopCount.incrementAndGet();
+                super.stop();
+            }
+        };
+        orch.register(failed);
+        orch.register(new ProbeComponent("b") {
+            @Override
+            public void stop() {
+                if (flakyStopAttempts.incrementAndGet() == 1) {
+                    throw new IllegalStateException("first stop attempt fails");
+                }
+                super.stop();
+            }
+        });
+        orch.run();
+        failed.advanceTo(State.FAILED);
+
+        orch.close();
+        Assert.assertEquals(1, failedStopCount.get());
+        Assert.assertEquals(1, flakyStopAttempts.get());
+        Assert.assertFalse(orch.isStopComplete());
+
+        orch.close();
+        Assert.assertEquals(1, failedStopCount.get());
+        Assert.assertEquals(2, flakyStopAttempts.get());
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
     public void testSnapshotEventuallyConsistent() {
         LifecycleOrchestrator orch = newOrchestrator();
         ProbeComponent a = new ProbeComponent("a");

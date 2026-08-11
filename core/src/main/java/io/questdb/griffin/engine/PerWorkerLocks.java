@@ -255,14 +255,15 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             throw CairoException.nonCritical().put("reducer slot wait requires a mounted fiber");
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        final TimerShards timerShards = SuspensionScope.getTimerShards();
-        FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
-        long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
-        FiberCancellationSignal supplementalCancellationSignal = SuspensionScope.getSupplementalCancellationSignal();
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final TimerShards timerShards = SuspensionScope.getTimerShards(scope);
+        FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal(scope);
+        long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration(scope);
+        FiberCancellationSignal supplementalCancellationSignal = SuspensionScope.getSupplementalCancellationSignal(scope);
         final long supplementalCancellationSignalGeneration =
-                SuspensionScope.getSupplementalCancellationSignalGeneration();
+                SuspensionScope.getSupplementalCancellationSignalGeneration(scope);
         if (cancellationSignal == null && circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker) {
-            final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+            final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch(scope);
             sqlCircuitBreaker.copyCancelledFlagTo(cancellationBinding);
             final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
             if (cancelledFlag instanceof FiberCancellationSignal signal) {
