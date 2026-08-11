@@ -64,37 +64,53 @@ stages:
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
+              # Read one field of an OSS pull request. Prints an empty string when the PR does
+              # not exist or the API call fails, so a transient GitHub error can never reach the
+              # payload as the literal string "null".
+              gh_pr_field() {
+                curl -sS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+                  -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb/pulls/$1" \
+                  | jq -r "$2 // empty"
+              }
+
               if [[ "$OSS_PR_NUMBER" =~ ^[0-9]+$ ]]; then
                 # PR build: Azure builds an ephemeral merge commit, not the PR head.
                 # Fetch the real PR head commit from the GitHub API.
-                OSS_COMMIT=$(curl -s -H "Authorization: token $GH_TOKEN" \
-                  "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
-                  | jq -r '.head.sha')
-                echo "Fetched PR head commit from GitHub API: $OSS_COMMIT"
-              else
-                # Merge-queue build: branch is refs/heads/gh-readonly-queue/master/pr-<n>-<sha>.
+                OSS_COMMIT=$(gh_pr_field "$OSS_PR_NUMBER" '.head.sha')
+                echo "PR build for PR #$OSS_PR_NUMBER; head commit $OSS_COMMIT"
+              elif [[ "$BUILD_SOURCEBRANCH" =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
+                # Merge-queue build: branch is refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>.
                 # Test the merge commit itself (PR merged with latest master); recover the PR
                 # number from the branch name and the PR source branch from the GitHub API.
-                OSS_PR_NUMBER=$(echo "$BUILD_SOURCEBRANCH" | sed -E 's#.*/pr-([0-9]+)-.*#\1#')
+                OSS_PR_NUMBER="${BASH_REMATCH[1]}"
                 OSS_COMMIT="$BUILD_SOURCEVERSION"
-                OSS_BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" \
-                  "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
-                  | jq -r '.head.ref')
+                OSS_BRANCH=$(gh_pr_field "$OSS_PR_NUMBER" '.head.ref')
                 echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
-              fi
-
-              # Check if matching branch exists in enterprise repo (private, requires auth)
-              BRANCH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
-                -H "Authorization: token $GH_TOKEN" \
-                "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH")
-
-              if [ "$BRANCH_CHECK" = "200" ]; then
-                ENT_BRANCH="$OSS_BRANCH"
-                echo "Found matching enterprise branch: $ENT_BRANCH"
               else
-                ENT_BRANCH="main"
-                echo "No matching branch '$OSS_BRANCH' in enterprise, using: $ENT_BRANCH"
+                # Manual or scheduled run: there is no PR to test enterprise against.
+                echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping enterprise CI"
+                exit 0
               fi
+
+              if [ -z "$OSS_COMMIT" ]; then
+                echo "##vso[task.logissue type=error]Could not resolve the OSS commit for PR #$OSS_PR_NUMBER"
+                exit 1
+              fi
+
+              # Check if matching branch exists in enterprise repo (private, requires auth).
+              # An unreachable API falls back to main rather than failing the build.
+              ENT_BRANCH="main"
+              if [ -n "$OSS_BRANCH" ]; then
+                BRANCH_CHECK=$(curl -sS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+                  -o /dev/null -w "%{http_code}" \
+                  -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH" || echo "000")
+                if [ "$BRANCH_CHECK" = "200" ]; then
+                  ENT_BRANCH="$OSS_BRANCH"
+                fi
+              fi
+              echo "Enterprise branch: $ENT_BRANCH (OSS branch '$OSS_BRANCH')"
 
               PAYLOAD=$(cat <<EOF
               {
