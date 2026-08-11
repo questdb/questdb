@@ -445,6 +445,68 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * A query's {@code requiredCoverColumns} are cover slots - ordinals into
+     * this index's own INCLUDE list - and not writer indices, so the accessor
+     * that maps a slot to a descriptor is the one the query path actually
+     * uses. The two spaces are easy to confuse and confusing them resolves to
+     * a different covered column with no error, so both the mapping and the
+     * out-of-range rejection are pinned. Mirrors the Rust
+     * {@code test_cover_slot_round_trip} and
+     * {@code test_cover_slots_are_positional_not_writer_indices}.
+     */
+    @Test
+    public void testCoverColumnIndexRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            withReader(IndexMetaFileReaderTest::buildFixedLenByteArraySample, reader -> {
+                Assert.assertEquals(FIRST_COVER_COLUMN, reader.getFirstCoverColumn());
+                Assert.assertEquals(4, reader.getColumnCount());
+
+                // Cover slot 0 is the first covered column, whatever its
+                // writer index happens to be.
+                Assert.assertEquals(2, reader.getCoverColumnIndex(0));
+                TestUtils.assertEquals("uid", reader.getColumnName(reader.getCoverColumnIndex(0)));
+                Assert.assertEquals(4, reader.getColumnId(reader.getCoverColumnIndex(0)));
+                Assert.assertEquals(TYPE_UUID, reader.getColumnType(reader.getCoverColumnIndex(0)));
+
+                Assert.assertEquals(3, reader.getCoverColumnIndex(1));
+                TestUtils.assertEquals("l256", reader.getColumnName(reader.getCoverColumnIndex(1)));
+                Assert.assertEquals(9, reader.getColumnId(reader.getCoverColumnIndex(1)));
+                Assert.assertEquals(TYPE_LONG256, reader.getColumnType(reader.getCoverColumnIndex(1)));
+
+                // The two spaces disagree on this fixture, which is what makes
+                // it able to catch the confusion: uid's writer index is 4 and
+                // its cover slot is 0.
+                Assert.assertEquals(2, reader.getColumnIndexById(4));
+                Assert.assertEquals(3, reader.getColumnIndexById(9));
+
+                // There are two cover slots, so slot 2 is past the end: it must
+                // be refused rather than resolve to something.
+                assertCoverSlotRejected(reader, 2);
+                // A writer index passed where a slot belongs is the mistake the
+                // bound has to catch.
+                assertCoverSlotRejected(reader, 4);
+                assertCoverSlotRejected(reader, 9);
+                // Neither a negative slot nor one near the top of the u32 range
+                // may wrap back into range.
+                assertCoverSlotRejected(reader, -1);
+                assertCoverSlotRejected(reader, Integer.MIN_VALUE);
+                assertCoverSlotRejected(reader, Integer.MAX_VALUE);
+            });
+
+            // FIRST_COVER_COLUMN is read from the header rather than assumed:
+            // a row-per-key index has no row_id column, so cover slot 0 is
+            // descriptor 1 here and descriptor 2 above.
+            withRowPerKeyReader(IndexMetaFileReaderTest::buildRowPerKeySample, reader -> {
+                Assert.assertEquals(1, reader.getFirstCoverColumn());
+                Assert.assertEquals(1, reader.getCoverColumnIndex(0));
+                TestUtils.assertEquals("price", reader.getColumnName(reader.getCoverColumnIndex(0)));
+                Assert.assertEquals(7, reader.getColumnId(reader.getCoverColumnIndex(0)));
+                assertCoverSlotRejected(reader, 1);
+            });
+        });
+    }
+
+    /**
      * A header claiming {@code u32::MAX} row groups or columns makes every
      * section size product enormous; unchecked, the sums wrap and the section
      * offsets land inside the header. Mirrors the Rust
@@ -1741,6 +1803,92 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The writer's validations run inside Rust, and until now none of them was
+     * pinned from Java: a validation that stopped firing, or an error that
+     * stopped crossing the JNI boundary as a CairoException, would leave every
+     * Java fixture green. Two are exercised here, both of which produce a
+     * silently wrong answer if they stop rejecting - out-of-order first keys
+     * break the directory's binary search, and a missing pidx footer makes the
+     * index parquet's derived committed size wrong.
+     * <p>
+     * The failing {@code finish} throws instead of returning a result, so the
+     * caller is left holding a null result pointer. That is the path a leak
+     * hides on: the writer must still be destroyable, and releasing the result
+     * that was never produced must be a no-op rather than a crash.
+     */
+    @Test
+    public void testWriterValidationFailureCrossesJni() throws Exception {
+        assertMemoryLeak(() -> {
+            long writerPtr = IndexMetaFileWriter.create(
+                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 0, 1, FIRST_COVER_COLUMN);
+            long resultPtr = 0;
+            try {
+                IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 100);
+                IndexMetaFileWriter.setPidxFooter(writerPtr, 1_024, 128);
+                addColumn(writerPtr, "key_id", -1, TYPE_INT);
+                addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+                // Row group 1 starts below row group 0, so RG_FIRST_KEY would
+                // not be non-decreasing and the lookup's binary search would
+                // answer nonsense.
+                addKeyAndRowIdRowGroup(writerPtr, 10, 5, 0, 99);
+                addKeyAndRowIdRowGroup(writerPtr, 4, 5, 0, 99);
+                setDataRowGroupBoundaries(writerPtr, 0L, 10L);
+                try {
+                    resultPtr = IndexMetaFileWriter.finish(writerPtr);
+                    Assert.fail("expected CairoException from the first key ordering check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "non-decreasing at index 1");
+                }
+                // Nothing was produced, so nothing was handed over to release.
+                Assert.assertEquals(0, resultPtr);
+                IndexMetaFileWriter.destroyResult(resultPtr);
+            } finally {
+                if (resultPtr != 0) {
+                    IndexMetaFileWriter.destroyResult(resultPtr);
+                }
+                IndexMetaFileWriter.destroyWriter(writerPtr);
+            }
+
+            // A writer that never recorded the index parquet's footer is
+            // refused for a different reason, so the surfacing is the
+            // validation talking and not one message for every failure.
+            writerPtr = IndexMetaFileWriter.create(
+                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 0, 1, FIRST_COVER_COLUMN);
+            try {
+                IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 100);
+                addColumn(writerPtr, "key_id", -1, TYPE_INT);
+                addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+                addKeyAndRowIdRowGroup(writerPtr, 4, 5, 0, 99);
+                setDataRowGroupBoundaries(writerPtr, 0L, 10L);
+                try {
+                    IndexMetaFileWriter.finish(writerPtr);
+                    Assert.fail("expected CairoException from the pidx footer check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "pidx footer offset 0 and length 0");
+                }
+                // The same writer finishes once the footer is recorded, so the
+                // rejection is the missing value and not a poisoned writer.
+                IndexMetaFileWriter.setPidxFooter(writerPtr, 1_024, 128);
+                resultPtr = IndexMetaFileWriter.finish(writerPtr);
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(
+                            IndexMetaFileWriter.resultDataPtr(resultPtr),
+                            IndexMetaFileWriter.resultDataLen(resultPtr)
+                    );
+                    Assert.assertEquals(1_024, reader.getPidxFooterOffset());
+                    Assert.assertEquals(128, reader.getPidxFooterLength());
+                    Assert.assertEquals(1, reader.getIndexRowGroupCount());
+                }
+            } finally {
+                if (resultPtr != 0) {
+                    IndexMetaFileWriter.destroyResult(resultPtr);
+                }
+                IndexMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    /**
      * An index with no row groups at all: every key is absent and only the
      * RG_FIRST_KEY sentinel is present.
      */
@@ -1796,6 +1944,20 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     writerPtr, firstKey, rowIdMin, rowIdMax, rows, chunksPtr, chunksSize, 2);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * A cover slot outside {@code [0, coverCount)} must be refused rather than
+     * resolve to a descriptor: the caller would otherwise read another
+     * column's chunk as the one it asked for.
+     */
+    private static void assertCoverSlotRejected(IndexMetaFileReader reader, int slot) {
+        try {
+            reader.getCoverColumnIndex(slot);
+            Assert.fail("expected CairoException from the cover slot bound");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "_im cover slot out of range");
         }
     }
 
