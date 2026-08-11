@@ -4112,8 +4112,10 @@ public class PostingIndexWriter implements IndexWriter {
         LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
         boolean exists = ff.exists(pciFile);
         long existingSize = exists ? ff.length(pciFile) : 0L;
-        if (existingSize < 0) {
-            existingSize = 0L;
+        if (exists && existingSize < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not read posting index cover info file length [file=").put(pciFile)
+                    .put(']');
         }
 
         // .pci is a tiny, unsuffixed metadata file shared by every seal of a
