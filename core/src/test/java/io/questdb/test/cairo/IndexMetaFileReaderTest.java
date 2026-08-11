@@ -110,6 +110,8 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     // MAX_STAT of the uid chunk, relative to the block start: past NUM_ROWS
     // and the two preceding chunks, then 56 into the chunk.
     private static final int TWO_BLOCK_UID_MAX_STAT = 8 + 2 * 64 + 56;
+    // MIN_STAT of the same chunk, 8 bytes ahead of its MAX_STAT.
+    private static final int TWO_BLOCK_UID_MIN_STAT = 8 + 2 * 64 + 48;
     // QuestDB column type tags, spelled out so the fixtures do not depend on
     // ColumnType's ordering, exactly as the Rust fixtures do.
     private static final int TYPE_DOUBLE = 10;
@@ -1956,9 +1958,12 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "non-decreasing at index 1");
                 }
-                // Nothing was produced, so nothing was handed over to release.
-                Assert.assertEquals(0, resultPtr);
-                IndexMetaFileWriter.destroyResult(resultPtr);
+                // Nothing was produced, so resultPtr is still the 0 it was
+                // initialised with -- asserting that here could not fail, since
+                // the only assignment to it is the call that threw. Releasing
+                // the result that was never produced is the part that can:
+                // destroyResult(0) must be a no-op rather than a crash.
+                IndexMetaFileWriter.destroyResult(0);
             } finally {
                 if (resultPtr != 0) {
                     IndexMetaFileWriter.destroyResult(resultPtr);
@@ -2553,8 +2558,22 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                         } catch (CairoException e) {
                             TestUtils.assertContains(e.getFlyweightMessage(), "_im out of line stat out of bounds");
                         }
-                        // The block's own min stat is untouched and still resolves.
-                        Assert.assertNotEquals(0L, reader.getChunkMinStatAddr(rowGroup, 2));
+                        // The block's own min stat is untouched and still
+                        // resolves, and to the address the reference names:
+                        // this block's out-of-line region start plus the
+                        // encoded offset. An address is never 0, so asserting
+                        // the value is what makes the resolution testable -
+                        // taking the region from the start of the block instead
+                        // lands 8 + COLUMN_COUNT * 64 bytes early, inside the
+                        // column chunks, and still looks like a valid address.
+                        final long addr = reader.getAddr();
+                        final long blockAddr = addr + ((long) Unsafe.getUnsafe().getInt(
+                                addr + TWO_BLOCK_SECTIONS_OFF + (long) rowGroup * Integer.BYTES) << 3);
+                        final long regionStart = blockAddr + 8 + (long) reader.getColumnCount() * 64;
+                        final long minRef = Unsafe.getUnsafe().getLong(blockAddr + TWO_BLOCK_UID_MIN_STAT);
+                        Assert.assertEquals(
+                                regionStart + (minRef >>> 16),
+                                reader.getChunkMinStatAddr(rowGroup, 2));
                     }
                 }
         );
