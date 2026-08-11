@@ -752,9 +752,11 @@ public class IndexMetaFileReader implements QuietCloseable {
         final long footerLength = Integer.toUnsignedLong(pidxFooterLength);
         // PIDX_FOOTER_OFFSET is a u64: at or above 2^63 it reads back negative
         // here, and no parquet file reaches that offset. The Rust reader's
-        // checked_add rejects the same field a step later, when the sum leaves
-        // the u64 range; either way an unusable value is an error rather than a
-        // plausible, wrong size.
+        // pidx_file_size rejects the same range - it bounds its u64 sum by
+        // i64::MAX for this reason - so a file either yields the same size in
+        // both readers or is an error in both. An unusable value has to be an
+        // error rather than a plausible, wrong size: cold-storage upload and
+        // orphan validation both consume it as a long.
         if (pidxFooterOffset < 0
                 || pidxFooterOffset > Long.MAX_VALUE - footerLength - PIDX_FOOTER_TRAILER_SIZE) {
             throw CairoException.critical(0)

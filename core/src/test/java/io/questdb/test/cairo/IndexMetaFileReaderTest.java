@@ -1886,6 +1886,40 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * PIDX_FOOTER_OFFSET is a u64 the reader takes as given, so the bound falls
+     * on the size derived from it rather than on the header field. At or above
+     * 2^63 the offset reads back negative here and the derived size has no long
+     * to live in, while the Rust reader can still form the u64 sum: the two
+     * readers would answer differently for the same file. Both refuse it
+     * instead, because cold-storage upload and orphan validation each need a
+     * usable number and a plausible, wrong size is worse than an error. Mirrors
+     * the Rust {@code test_unrepresentable_pidx_file_size_is_rejected}.
+     */
+    @Test
+    public void testUnrepresentablePidxFileSizeIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Exactly 2^63, which is where the two readers used to part company.
+            assertPidxFileSizeRejected(Long.MIN_VALUE);
+            // One below 2^63 leaves the offset representable but not the sum.
+            assertPidxFileSizeRejected(Long.MAX_VALUE);
+            // And the top of the u64 range, where the sum wraps rather than
+            // merely leaving the signed range.
+            assertPidxFileSizeRejected(-1L);
+            // The positive control: the largest offset whose derived size still
+            // fits a long is accepted and yields exactly Long.MAX_VALUE. A bound
+            // one step tighter would reject a file the other reader accepts.
+            final long offset = Long.MAX_VALUE - SAMPLE_PIDX_FOOTER_LEN - 8;
+            withPatchedBytes(IndexMetaFileReaderTest::buildSample, 64, offset, Long.BYTES, (dataPtr, dataLen) -> {
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(dataPtr, dataLen);
+                    Assert.assertEquals(offset, reader.getPidxFooterOffset());
+                    Assert.assertEquals(Long.MAX_VALUE, reader.getPidxFileSize());
+                }
+            });
+        });
+    }
+
+    /**
      * The writer's validations run inside Rust, and until now none of them was
      * pinned from Java: a validation that stopped firing, or an error that
      * stopped crossing the JNI boundary as a CairoException, would leave every
@@ -2524,6 +2558,28 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    /**
+     * Patches PIDX_FOOTER_OFFSET of the standard sample and asserts that the
+     * file still opens -- the reader takes the footer fields as given, so the
+     * rejection below is the derived size talking and not a broken header --
+     * while the size derived from that offset is refused.
+     */
+    private void assertPidxFileSizeRejected(long footerOffset) {
+        // PIDX_FOOTER_OFFSET is at 64.
+        withPatchedBytes(IndexMetaFileReaderTest::buildSample, 64, footerOffset, Long.BYTES, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                Assert.assertEquals(footerOffset, reader.getPidxFooterOffset());
+                try {
+                    reader.getPidxFileSize();
+                    Assert.fail("expected CairoException from the pidx file size bound");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "_im PIDX footer range overflows");
+                }
+            }
+        });
     }
 
     /**

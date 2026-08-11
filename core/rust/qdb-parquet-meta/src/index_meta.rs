@@ -66,6 +66,10 @@ pub const IM_TRAILER_SIZE: usize = 4;
 /// First byte covered by the CRC; `IM_FILE_SIZE` at offset 0 is excluded
 /// because the writer patches it last as the commit signal.
 pub const IM_CRC_AREA_OFF: usize = 8;
+/// Bytes the index parquet carries after its footer: the 4-byte footer length
+/// and the `PAR1` magic. `pidx_file_size` adds them exactly as `_pm` does for
+/// `data.parquet`.
+const PIDX_FOOTER_TRAILER_SIZE: u64 = 8;
 
 /// Row-per-posting payload: one index row per posting, with a `row_id` column.
 pub const IM_PAYLOAD_ROW_PER_POSTING: u32 = 0;
@@ -1045,14 +1049,23 @@ impl<'a> IndexMetaReader<'a> {
     /// `_pm` derives the data parquet's: the footer offset and length plus the
     /// 4-byte footer length and the `PAR1` magic. Recording it is what lets
     /// cold-storage upload and orphan validation work without an `ff.length()`.
+    ///
+    /// A size above `i64::MAX` is rejected rather than returned. It is
+    /// representable here and nowhere else: the Java reader reads
+    /// `PIDX_FOOTER_OFFSET` back into a signed long, and both consumers -
+    /// cold-storage upload and orphan validation - need a number they can use.
+    /// A plausible, unusable size is worse than an error, and the two readers
+    /// must reject the same files, so `IndexMetaFileReader.getPidxFileSize`
+    /// draws the bound in the same place.
     pub fn pidx_file_size(&self) -> ParquetMetaResult<u64> {
         self.pidx_footer_offset
             .checked_add(self.pidx_footer_length as u64)
-            .and_then(|v| v.checked_add(8))
+            .and_then(|v| v.checked_add(PIDX_FOOTER_TRAILER_SIZE))
+            .filter(|v| *v <= i64::MAX as u64)
             .ok_or_else(|| {
                 parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
-                    "pidx footer offset {} plus length {} overflows",
+                    "pidx footer offset {} plus length {} is not a usable file size",
                     self.pidx_footer_offset,
                     self.pidx_footer_length
                 )
@@ -3179,6 +3192,60 @@ mod tests {
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("row id column"), "{}", err.msg);
+    }
+
+    /// `PIDX_FOOTER_OFFSET` is a u64 the reader takes as given, so the bound
+    /// falls on the size derived from it. A sum above `i64::MAX` has no Java
+    /// long to live in, and both consumers - cold-storage upload and orphan
+    /// validation - need a usable number, so both readers refuse it rather than
+    /// hand back a plausible, wrong size. Mirrored by the Java
+    /// `testUnrepresentablePidxFileSizeIsRejected`.
+    #[test]
+    fn test_unrepresentable_pidx_file_size_is_rejected() {
+        // Exactly 2^63: the u64 sum is formable here and reads back negative in
+        // Java, which is the divergence this bound closes.
+        let mut bytes = build_sample();
+        patch_u64(&mut bytes, OFF_PIDX_FOOTER_OFFSET, 1u64 << 63);
+        let reader = IndexMetaReader::new(&bytes).unwrap();
+        // The file itself still opens: the reader takes the footer fields as
+        // given, so the rejection is this accessor's and not the header's.
+        assert_eq!(reader.pidx_footer_offset(), 1u64 << 63);
+        let err = reader.pidx_file_size().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("is not a usable file size"), "{}", err.msg);
+
+        // One below 2^63 leaves the offset representable but not the sum.
+        let mut bytes = build_sample();
+        patch_u64(&mut bytes, OFF_PIDX_FOOTER_OFFSET, i64::MAX as u64);
+        let err = IndexMetaReader::new(&bytes)
+            .unwrap()
+            .pidx_file_size()
+            .unwrap_err();
+        assert!(err.msg.contains("is not a usable file size"), "{}", err.msg);
+
+        // And the top of the u64 range, where the sum wraps rather than merely
+        // leaving the i64 range.
+        let mut bytes = build_sample();
+        patch_u64(&mut bytes, OFF_PIDX_FOOTER_OFFSET, u64::MAX);
+        let err = IndexMetaReader::new(&bytes)
+            .unwrap()
+            .pidx_file_size()
+            .unwrap_err();
+        assert!(err.msg.contains("is not a usable file size"), "{}", err.msg);
+
+        // The positive control: the largest offset whose derived size still
+        // fits a Java long is accepted, and yields exactly i64::MAX. A bound
+        // one step tighter would reject this file in one reader only.
+        let mut bytes = build_sample();
+        let offset = i64::MAX as u64 - SAMPLE_PIDX_FOOTER_LEN as u64 - 8;
+        patch_u64(&mut bytes, OFF_PIDX_FOOTER_OFFSET, offset);
+        assert_eq!(
+            IndexMetaReader::new(&bytes)
+                .unwrap()
+                .pidx_file_size()
+                .unwrap(),
+            i64::MAX as u64
+        );
     }
 
     /// A block's extent is `[RG_BLOCK_OFFSET[i], RG_BLOCK_OFFSET[i + 1])`, so
