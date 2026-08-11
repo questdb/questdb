@@ -330,6 +330,39 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The descriptor accessors bound their column index for the same reason
+     * the chunk accessors do: with assertions off an out-of-range index is an
+     * address hundreds of megabytes past a mapping of IM_FILE_SIZE bytes. The
+     * Rust reader's {@code column_descriptor} returns an error for the same
+     * index.
+     */
+    @Test
+    public void testColumnDescriptorAccessorRejectsOutOfRangeColumn() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            try {
+                reader.getColumnId(10_000_000);
+                Assert.fail("expected CairoException from the column index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im column index out of range");
+            }
+            try {
+                reader.getColumnName(-1);
+                Assert.fail("expected CairoException from the column index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im column index out of range");
+            }
+            try {
+                reader.getColumnType(3);
+                Assert.fail("expected CairoException from the column index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im column index out of range");
+            }
+            // The fixture has 3 columns, so the last valid index still reads.
+            Assert.assertEquals(7, reader.getColumnId(2));
+        }));
+    }
+
+    /**
      * A required cover column is resolved to a parquet column index through
      * the descriptor ID, which carries the covered column's QuestDB writer
      * index. A writer index no column carries must miss.
@@ -403,6 +436,74 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             // The converse: a row-per-key file must not name a row id column.
             assertOpenRejected(28, IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY, "_im ROW_ID_COLUMN is invalid");
         });
+    }
+
+    /**
+     * DATA_RG_BOUNDARY has {@code DATA_RG_COUNT + 1} entries, so the sentinel
+     * index is valid and one past it is not. The bound is a real check rather
+     * than an assert because assertions are off in production and the index
+     * reaches an address computation; the Rust reader's
+     * {@code data_row_group_boundary} returns an error for the same index.
+     */
+    @Test
+    public void testDataBoundaryAccessorRejectsOutOfRangeIndex() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            Assert.assertEquals(2, reader.getDataRowGroupCount());
+            try {
+                reader.getDataRowGroupBoundary(3);
+                Assert.fail("expected CairoException from the data boundary index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im data boundary index out of range");
+            }
+            try {
+                reader.getDataRowGroupBoundary(-1);
+                Assert.fail("expected CairoException from the data boundary index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im data boundary index out of range");
+            }
+            try {
+                reader.getDataRowGroupBoundary(10_000_000);
+                Assert.fail("expected CairoException from the data boundary index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im data boundary index out of range");
+            }
+            // The sentinel entry is the last valid index and still reads.
+            Assert.assertEquals(1_000_000, reader.getDataRowGroupBoundary(2));
+        }));
+    }
+
+    /**
+     * RG_FIRST_KEY has {@code INDEX_RG_COUNT + 1} entries, so the sentinel
+     * index is valid and one past it is not. The bound is a real check rather
+     * than an assert because assertions are off in production and the index
+     * reaches an address computation; the Rust reader's
+     * {@code row_group_first_key} returns an error for the same index.
+     */
+    @Test
+    public void testFirstKeyAccessorRejectsOutOfRangeIndex() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            Assert.assertEquals(4, reader.getIndexRowGroupCount());
+            try {
+                reader.getRowGroupFirstKey(5);
+                Assert.fail("expected CairoException from the first key index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im first key index out of range");
+            }
+            try {
+                reader.getRowGroupFirstKey(-1);
+                Assert.fail("expected CairoException from the first key index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im first key index out of range");
+            }
+            try {
+                reader.getRowGroupFirstKey(10_000_000);
+                Assert.fail("expected CairoException from the first key index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im first key index out of range");
+            }
+            // The sentinel entry is the last valid index and still reads.
+            Assert.assertEquals(11_405, reader.getRowGroupFirstKey(4));
+        }));
     }
 
     /**
@@ -881,6 +982,43 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(0, reader.getDataRowGroupBoundary(0));
             Assert.assertEquals(500_000, reader.getDataRowGroupBoundary(1));
             Assert.assertEquals(1_000_000, reader.getDataRowGroupBoundary(2));
+        }));
+    }
+
+    /**
+     * Every block accessor resolves its row group through RG_BLOCK_OFFSET, so
+     * an out-of-range row group reads an entry from outside that array and the
+     * bounds then applied to the "offset" it yields prove nothing. The bound is
+     * a real check rather than an assert because assertions are off in
+     * production; the Rust reader's {@code row_group_block_extent} returns an
+     * error for the same index.
+     */
+    @Test
+    public void testRowGroupAccessorRejectsOutOfRangeRowGroup() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            Assert.assertEquals(4, reader.getIndexRowGroupCount());
+            try {
+                reader.getRowGroupNumRows(4);
+                Assert.fail("expected CairoException from the row group index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im row group index out of range");
+            }
+            try {
+                reader.getRowGroupNumRows(-1);
+                Assert.fail("expected CairoException from the row group index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im row group index out of range");
+            }
+            // The chunk accessors resolve their block the same way, so they
+            // reject the same row group.
+            try {
+                reader.getChunkNumValues(10_000_000, 0);
+                Assert.fail("expected CairoException from the row group index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im row group index out of range");
+            }
+            // The last valid row group still reads.
+            Assert.assertEquals(759_999, reader.getRowGroupNumRows(3));
         }));
     }
 

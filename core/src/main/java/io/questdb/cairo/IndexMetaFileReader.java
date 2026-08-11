@@ -544,9 +544,19 @@ public class IndexMetaFileReader implements QuietCloseable {
      * first is {@code 0} and the array is non-decreasing, so a binary search
      * over it maps a row id to the data row groups a non-covering query must
      * read.
+     *
+     * @throws CairoException if {@code i} is outside
+     *                        {@code [0, getDataRowGroupCount()]}
      */
     public long getDataRowGroupBoundary(int i) {
-        assert i >= 0 && i <= dataRowGroupCount;
+        // A real check rather than an assert: assertions are off in
+        // production and the index reaches an address computation. The Rust
+        // reader's data_row_group_boundary returns an error for the same index.
+        if (i < 0 || i > dataRowGroupCount) {
+            throw CairoException.critical(0)
+                    .put("_im data boundary index out of range [index=").put(i)
+                    .put(", dataRowGroupCount=").put(dataRowGroupCount).put(']');
+        }
         return Unsafe.getLong(addr + dataBoundaryOffset + (long) i * Long.BYTES);
     }
 
@@ -599,9 +609,19 @@ public class IndexMetaFileReader implements QuietCloseable {
      * The smallest key id present in index row group {@code i}. Index
      * {@code getIndexRowGroupCount()} is the sentinel and equals
      * {@link #getKeyCount()}.
+     *
+     * @throws CairoException if {@code i} is outside
+     *                        {@code [0, getIndexRowGroupCount()]}
      */
     public int getRowGroupFirstKey(int i) {
-        assert i >= 0 && i <= indexRowGroupCount;
+        // A real check rather than an assert: assertions are off in
+        // production and the index reaches an address computation. The Rust
+        // reader's row_group_first_key returns an error for the same index.
+        if (i < 0 || i > indexRowGroupCount) {
+            throw CairoException.critical(0)
+                    .put("_im first key index out of range [index=").put(i)
+                    .put(", indexRowGroupCount=").put(indexRowGroupCount).put(']');
+        }
         return firstKeyAt(i);
     }
 
@@ -645,7 +665,9 @@ public class IndexMetaFileReader implements QuietCloseable {
      * NUM_ROWS of the index row group's block, located through
      * RG_BLOCK_OFFSET.
      *
-     * @throws CairoException if the block offset points outside the block region
+     * @throws CairoException if {@code rowGroup} is outside
+     *                        {@code [0, getIndexRowGroupCount())}, or the block
+     *                        offset points outside the block region
      */
     public long getRowGroupNumRows(int rowGroup) {
         return Unsafe.getLong(rowGroupBlockAddr(rowGroup));
@@ -780,7 +802,15 @@ public class IndexMetaFileReader implements QuietCloseable {
      * header and are 32 bytes each.
      */
     private long columnDescriptorAddr(int column) {
-        assert column >= 0 && column < columnCount;
+        // A real check rather than an assert, for the reason spelled out on
+        // columnChunkAddr: assertions are off in production and the index
+        // reaches an address computation. The Rust reader's column_descriptor
+        // returns an error for the same index.
+        if (column < 0 || column >= columnCount) {
+            throw CairoException.critical(0)
+                    .put("_im column index out of range [column=").put(column)
+                    .put(", columnCount=").put(columnCount).put(']');
+        }
         return addr + IM_HEADER_SIZE + (long) column * COLUMN_DESCRIPTOR_SIZE;
     }
 
@@ -1022,7 +1052,16 @@ public class IndexMetaFileReader implements QuietCloseable {
      * {@code RowGroupBlockReader}.
      */
     private long rowGroupBlockAddr(int rowGroup) {
-        assert rowGroup >= 0 && rowGroup < indexRowGroupCount;
+        // A real check rather than an assert: with assertions off the entry
+        // read below comes from outside RG_BLOCK_OFFSET, so the "offset" is
+        // whatever bytes happen to follow, and the bounds applied to it prove
+        // nothing. The Rust reader's row_group_block_extent returns an error
+        // for the same index.
+        if (rowGroup < 0 || rowGroup >= indexRowGroupCount) {
+            throw CairoException.critical(0)
+                    .put("_im row group index out of range [rowGroup=").put(rowGroup)
+                    .put(", indexRowGroupCount=").put(indexRowGroupCount).put(']');
+        }
         final long offset = rowGroupBlockOffset(rowGroup);
         final long end = rowGroupBlockEnd(rowGroup);
         final long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
