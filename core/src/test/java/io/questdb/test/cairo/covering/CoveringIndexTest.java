@@ -14899,7 +14899,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPciFileSizeStableAcrossSealAndClose() throws Exception {
+    public void testPciFileSizeStableAndIdenticalHeaderNotRewrittenAcrossSealAndClose() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final String name = "pci_size_stability";
@@ -14922,6 +14922,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         writer.add(0, 0);
                         writer.setMaxValue(0);
                         writer.commit();
+                        assertTrue("new .pci header must be written", writer.isLastSidecarInfoHeaderWrittenForTesting());
 
                         LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
                                 path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
@@ -14960,6 +14961,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         writer.add(0, 1);
                         writer.setMaxValue(1);
                         writer.seal();
+                        assertFalse("identical .pci header must not be rewritten", writer.isLastSidecarInfoHeaderWrittenForTesting());
                         assertEquals(oversizedSize, ff.length(PostingIndexUtils.coverInfoFileName(
                                 path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
                         )));

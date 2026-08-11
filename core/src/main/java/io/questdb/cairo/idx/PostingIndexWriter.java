@@ -276,6 +276,7 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isLastSealIncremental;
     private boolean isLastSealSnapshotDeferred;
     private boolean isLastSealStreaming;
+    private boolean isLastSidecarInfoHeaderWritten;
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
@@ -483,6 +484,7 @@ public class PostingIndexWriter implements IndexWriter {
                 isLastSealIncremental = false;
                 isLastSealSnapshotDeferred = false;
                 isLastRollbackStreaming = false;
+                isLastSidecarInfoHeaderWritten = false;
                 activeKeyCount = 0;
                 coverCount = 0;
                 // Drop the cover-extent cache so a pooled reopen for a different
@@ -1149,6 +1151,16 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public boolean isLastSealStreamingForTesting() {
         return isLastSealStreaming;
+    }
+
+    /**
+     * Whether the most recent .pci open wrote its header. Tests use this to
+     * distinguish the seal-time identical-header fast path from a redundant
+     * rewrite, which is not observable from the unchanged file contents.
+     */
+    @TestOnly
+    public boolean isLastSidecarInfoHeaderWrittenForTesting() {
+        return isLastSidecarInfoHeaderWritten;
     }
 
     @Override
@@ -4109,6 +4121,7 @@ public class PostingIndexWriter implements IndexWriter {
             long postingColumnNameTxn,
             boolean rewriteExisting
     ) {
+        isLastSidecarInfoHeaderWritten = false;
         LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
         boolean exists = ff.exists(pciFile);
         long existingSize = exists ? ff.length(pciFile) : 0L;
@@ -4148,6 +4161,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         if (writeHeader) {
+            isLastSidecarInfoHeaderWritten = true;
             sidecarInfoMem.jumpTo(0);
             // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
             // Per-cover-column type is intentionally NOT stored — readers resolve
