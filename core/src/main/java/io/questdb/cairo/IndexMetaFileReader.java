@@ -51,7 +51,7 @@ import io.questdb.std.str.LPSZ;
  * HEADER (64 bytes fixed):
  *   [0]  IM_FILE_SIZE          u64  (total committed file size; patched last as the commit signal,
  *                                    and the only field outside the CRC)
- *   [8]  IM_MAGIC              u64  (0x0200584449425144, the bytes QDBIDX\0\2)
+ *   [8]  IM_MAGIC              u64  (0x0200584449424451, the bytes QDBIDX\0\2)
  *   [16] FEATURE_FLAGS         u64  (bits 32-63 are required: unknown bits must cause rejection)
  *   [24] FORMAT_VERSION        u32  (2)
  *   [28] PAYLOAD_KIND          u32  (0 = row per posting, 1 = row per key)
@@ -630,6 +630,13 @@ public class IndexMetaFileReader implements QuietCloseable {
         return rgBlockOffsetOffset;
     }
 
+    /**
+     * Number of keys the index covers. KEY_COUNT is a u32 on disk and is
+     * returned here as a raw {@code int}: a value above {@code 2^31} reads back
+     * negative, where the Rust reader returns a {@code u32}. Compare it with
+     * {@link Integer#compareUnsigned(int, int)}, as the key lookup does.
+     * Unreachable with real symbol keys.
+     */
     public int getKeyCount() {
         return keyCount;
     }
@@ -652,6 +659,12 @@ public class IndexMetaFileReader implements QuietCloseable {
      * The smallest key id present in index row group {@code i}. Index
      * {@code getIndexRowGroupCount()} is the sentinel and equals
      * {@link #getKeyCount()}.
+     * <p>
+     * RG_FIRST_KEY holds u32 entries and one is returned here as a raw
+     * {@code int}: a key above {@code 2^31} reads back negative, where the Rust
+     * reader returns a {@code u32}. Compare it with
+     * {@link Integer#compareUnsigned(int, int)}, as the key lookup does.
+     * Unreachable with real symbol keys.
      *
      * @throws CairoException if {@code i} is outside
      *                        {@code [0, getIndexRowGroupCount()]}

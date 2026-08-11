@@ -1347,8 +1347,16 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(TWO_BLOCK_SECTIONS_OFF, reader.getIndexSectionsOffset());
             Assert.assertEquals(TWO_BLOCK_0_OFF >> 3, Unsafe.getUnsafe().getInt(addr + TWO_BLOCK_SECTIONS_OFF));
             Assert.assertEquals(TWO_BLOCK_1_OFF >> 3, Unsafe.getUnsafe().getInt(addr + TWO_BLOCK_SECTIONS_OFF + 4));
-            // Block 1 is the last one, so its extent ends at the index sections.
-            Assert.assertEquals(TWO_BLOCK_SECTIONS_OFF - TWO_BLOCK_1_OFF, TWO_BLOCK_1_OFF - TWO_BLOCK_0_OFF);
+            // Block 1 is the last one, so its extent ends at the index
+            // sections. Both blocks carry the same three chunks and the same
+            // 32 out-of-line bytes, so the two extents must match - and every
+            // term here is read from the file, not from the constants above,
+            // or the comparison could not fail.
+            final long block0Off = (long) Unsafe.getUnsafe().getInt(addr + TWO_BLOCK_SECTIONS_OFF) << 3;
+            final long block1Off = (long) Unsafe.getUnsafe().getInt(addr + TWO_BLOCK_SECTIONS_OFF + 4) << 3;
+            final long sectionsOff = reader.getIndexSectionsOffset();
+            Assert.assertEquals(block1Off - block0Off, sectionsOff - block1Off);
+            Assert.assertEquals(8 + 3 * 64 + TWO_BLOCK_OOL_SIZE, sectionsOff - block1Off);
             Assert.assertEquals(64, reader.getRowGroupNumRows(0));
             Assert.assertEquals(64, reader.getRowGroupNumRows(1));
         }));

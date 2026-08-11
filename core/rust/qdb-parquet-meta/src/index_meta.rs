@@ -1642,7 +1642,17 @@ mod tests {
             (TWO_BLOCK_1_OFF >> BLOCK_ALIGNMENT_SHIFT) as u32
         );
         // Block 1 is the last one, so its extent ends at the index sections.
-        assert_eq!(TWO_BLOCK_1_OFF + TWO_BLOCK_SIZE, TWO_BLOCK_SECTIONS_OFF);
+        // Both blocks carry the same three chunks and the same 32 out-of-line
+        // bytes, so the two extents must match - and every term here is read
+        // from the file, not from the constants above, or the comparison could
+        // not fail. The Java twin anchors it the same way.
+        let block_0_off =
+            (read_u32(&bytes, TWO_BLOCK_SECTIONS_OFF) as usize) << BLOCK_ALIGNMENT_SHIFT;
+        let block_1_off =
+            (read_u32(&bytes, TWO_BLOCK_SECTIONS_OFF + 4) as usize) << BLOCK_ALIGNMENT_SHIFT;
+        let sections_off = read_u64(&bytes, OFF_INDEX_SECTIONS_OFFSET) as usize;
+        assert_eq!(block_1_off - block_0_off, sections_off - block_1_off);
+        assert_eq!(sections_off - block_1_off, TWO_BLOCK_SIZE);
     }
 
     /// The legitimate case the bound must not break: each block's max stat
