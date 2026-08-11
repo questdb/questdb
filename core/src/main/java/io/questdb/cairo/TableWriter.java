@@ -15940,6 +15940,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void fsyncAttachedPartitionFiles() {
         for (int partitionIndex = 0, partitionCount = txWriter.getPartitionCount(); partitionIndex < partitionCount; partitionIndex++) {
+            // A read-only partition is a soft link to storage this writer never writes (ATTACH PARTITION of a
+            // symlinked dir; see the "soft links are read-only, no copy involved" note in attachPartition).
+            // It therefore holds no dirty pages this epoch could need to flush, and the openRW below would
+            // fail on it outright. That failure is NOT contained: it unwinds into
+            // handleBestEffortDurableEpochFailure, which only logs, so setLastEpochTs is never reached --
+            // no epoch would ever publish, durableEpochSeqTxn would stay 0, and WalPurgeJob would pin the
+            // purge floor at 0 and grow the WAL without bound while this scan is retried every batch.
+            if (txWriter.isPartitionReadOnly(partitionIndex)) {
+                continue;
+            }
             final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
             final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForNativePartition(
@@ -15957,6 +15967,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put("could not enumerate partition for adaptive epoch [path=").put(path).put(']');
             }
             if (findPtr == 0) {
+                // Trim before throwing, exactly as the branch above does. The caller
+                // (handleBestEffortDurableEpochFailure) swallows this, so a `path` left at the partition dir
+                // would silently corrupt the next unqualified path.concat() on this writer.
+                path.trimTo(pathSize);
                 throw CairoException.critical(ff.errno())
                         .put("attached partition is absent during adaptive epoch [path=").put(path).put(']');
             }

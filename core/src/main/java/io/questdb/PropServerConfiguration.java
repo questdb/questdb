@@ -179,9 +179,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     // Effective (property AND not-fast_commit) batched-SYNC enable, computed lazily ONCE and cached:
     // -1 = not yet computed, 0 = disabled, 1 = enabled. fast_commit status is static per mount, so
-    // detection runs at most once. Guarded by adaptiveEpochColumnSyncLock.
+    // detection runs at most once. Written under adaptiveEpochColumnSyncLock.
+    // volatile: the fast path reads this OUTSIDE the lock (classic double-checked locking). Without it the
+    // JMM does not require a thread that never enters the synchronized block to observe the cached write,
+    // so "at most once" would not hold and FastCommitCheck.classifyDbRoot -- a /proc/mounts plus
+    // /proc/fs/ext4/*/options open+read -- could re-run indefinitely. int access is already atomic, so
+    // this is a visibility fix only; there was never a torn value.
     private final Object adaptiveEpochColumnSyncLock = new Object();
-    private int adaptiveEpochColumnSyncEffective = -1;
+    private volatile int adaptiveEpochColumnSyncEffective = -1;
     private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;

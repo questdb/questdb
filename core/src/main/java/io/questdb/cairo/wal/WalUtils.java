@@ -315,6 +315,10 @@ public class WalUtils {
     private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
         final int len = dir.size();
         final long pFind = ff.findFirst(dir.$());
+        if (pFind < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not enumerate rebase staging directory for durability [path=").put(dir).put(']');
+        }
         if (pFind > 0) {
             try {
                 do {
@@ -341,35 +345,48 @@ public class WalUtils {
         fsyncDirDurable(ff, dir);
     }
 
-    // fsync a single staging DIRECTORY so its dentries are journaled. Best-effort and Windows-guarded, mirroring
-    // RecoveryCoordinator.fsyncDir / TableWriter's dir-sync guards (directory fsync is a POSIX-only operation).
+    // fsync a single staging DIRECTORY so its dentries are journaled. Windows-guarded (directory fsync is a
+    // POSIX-only operation).
+    // Fail-stop, matching TableUtils.fsyncDirDurable: this barrier is what stands between a power loss and a
+    // rename publishing a table whose dentries point at non-durable inodes, so an unopenable directory must
+    // propagate rather than return success. A silently skipped barrier is indistinguishable from one that
+    // never existed -- and openRO here can fail for transient reasons (EMFILE under load), not just for
+    // reasons that would doom the rebase anyway.
     private static void fsyncDirDurable(FilesFacade ff, Path dir) {
         if (Os.isWindows()) {
             return;
         }
         final long dirFd = ff.openRO(dir.$());
-        if (dirFd > -1) {
-            ff.fsyncAndClose(dirFd);
+        if (dirFd < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open rebase staging directory for fsync [path=").put(dir).put(']');
         }
+        ff.fsyncAndClose(dirFd);
     }
 
     // Map the file's full extent, MS_SYNC msync it (flushes the mmap-written content and advances its durable
     // extent) then fdatasync for the on-device size. A no-op for a 0-length file.
+    // Fail-stop for the same reason as fsyncDirDurable: an unopenable or unmappable staging file leaves
+    // content that the publishing rename would expose as durable when it is not.
     private static void fsyncMappedFile(FilesFacade ff, Path filePath, int fileOpts) {
         final long fd = ff.openRW(filePath.$(), fileOpts);
         if (fd < 0) {
-            return;
+            throw CairoException.critical(ff.errno())
+                    .put("could not open rebase staging file for durability [path=").put(filePath).put(']');
         }
         try {
             final long size = ff.length(fd);
             if (size > 0) {
                 final long addr = ff.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_TABLE_WRITER);
-                if (addr != -1 && addr != 0) {
-                    try {
-                        ff.msync(addr, size, false);
-                    } finally {
-                        ff.munmap(addr, size, MemoryTag.MMAP_TABLE_WRITER);
-                    }
+                if (addr == -1 || addr == 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not map rebase staging file for durability [path=").put(filePath)
+                            .put(", size=").put(size).put(']');
+                }
+                try {
+                    ff.msync(addr, size, false);
+                } finally {
+                    ff.munmap(addr, size, MemoryTag.MMAP_TABLE_WRITER);
                 }
                 ff.fdatasync(fd);
             }

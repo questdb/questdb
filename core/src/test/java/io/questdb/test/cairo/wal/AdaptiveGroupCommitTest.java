@@ -34,7 +34,9 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -349,6 +351,61 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                 Assert.assertTrue("a backwards clock step must force the pending durability barrier",
                         tracker.getLocalDurableSeqTxn() >= pendingSeqTxn);
             }
+        });
+    }
+
+    /**
+     * A read-only (soft-linked) attached partition must not stall the epoch on a platform whose syncfs is
+     * not filesystem-wide, where {@code fsyncAttachedPartitionFiles} is the epoch's column-flush path.
+     * <p>
+     * Such a partition is backed by storage this writer never writes, so it holds nothing an epoch could
+     * need to flush, and {@code openRW} on its files fails. That failure is not contained: it unwinds into
+     * {@code handleBestEffortDurableEpochFailure}, which only logs, so the epoch never reaches
+     * {@code setLastEpochTs} — {@code durableEpochSeqTxn} stays 0, {@link WalPurgeJob} pins the purge floor
+     * at 0, and the WAL grows without bound while the whole scan is retried every apply batch. Asserting the
+     * PUBLISHED epoch, rather than merely "it did not throw", is what separates the fix from the swallow
+     * that hid the failure.
+     */
+    @Test
+    public void testEpochSkipsReadOnlyPartitionsOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final ReadOnlyPartitionSyncfsFacade ff = new ReadOnlyPartitionSyncfsFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            // Two partitions, so one can be flagged read-only while the other still carries the epoch.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                commitRow(walWriter, Micros.DAY_MICROS, 2L);
+            }
+            drainWalQueue();
+
+            final long appliedSeqTxn = tracker.getWriterTxn();
+            try (TableWriter tableWriter = getWriter(tt)) {
+                Assert.assertEquals(2, tableWriter.getTxWriter().getPartitionCount());
+                // Flag the FIRST partition read-only exactly as attachPartition does for a soft link, and
+                // make its files unopenable for write exactly as the read-only mount behind one would.
+                tableWriter.getTxWriter().setPartitionReadOnlyByTimestamp(0L, true);
+                ff.denyWritesUnder("1970-01-01");
+
+                tableWriter.advanceDurableEpoch(1L);
+            }
+
+            Assert.assertEquals(
+                    "the epoch must publish despite the read-only partition",
+                    appliedSeqTxn,
+                    tracker.getDurableEpochSeqTxn()
+            );
+            Assert.assertEquals(
+                    "no file under a read-only partition may be opened for write by the epoch",
+                    0,
+                    ff.deniedOpenAttempts()
+            );
         });
     }
 
@@ -829,6 +886,38 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         @Override
         public boolean isSyncfsFileSystemWide() {
             return false;
+        }
+    }
+
+    /**
+     * Non-wide syncfs plus a partition directory whose files refuse to open for write, standing in for the
+     * read-only mount behind a soft-linked attached partition.
+     */
+    static class ReadOnlyPartitionSyncfsFacade extends WalFdatasyncFacade {
+        private final AtomicInteger deniedOpenAttempts = new AtomicInteger();
+        private volatile String deniedDir;
+
+        public int deniedOpenAttempts() {
+            return deniedOpenAttempts.get();
+        }
+
+        public void denyWritesUnder(String partitionDirName) {
+            deniedDir = partitionDirName;
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final String denied = deniedDir;
+            if (denied != null && Utf8s.containsAscii(name, denied)) {
+                deniedOpenAttempts.incrementAndGet();
+                return -1;
+            }
+            return super.openRW(name, opts);
         }
     }
 
