@@ -292,6 +292,13 @@ row group as well as the others.
 
 `k >= KEY_SPACE_SIZE` is absent, as is any `k` below `RG_FIRST_KEY[0]`.
 
+**The search depends on a producer invariant it cannot verify.** Row group `i` must hold only keys in
+`[RG_FIRST_KEY[i], RG_FIRST_KEY[i + 1])` — that is, a key is never split across a *shared* group; a key
+larger than the target occupies consecutive groups all of which are dedicated to it. The exact-match
+branch of `rg_lo` is correct only under that invariant. The writer enforces it (see "Validation the
+writer performs"); a reader takes it as given, because detecting a violation would require reading the
+postings the lookup exists to avoid reading.
+
 ### Key space
 
 `KEY_SPACE_SIZE` is the **exclusive upper bound on key ids**, equal to the native reader's
@@ -426,7 +433,8 @@ Two further bounds both readers enforce, stated here so a third does not omit th
 These are writer-enforced invariants that readers deliberately trust, and a reader that additionally
 enforces them would reject files the others accept:
 
-- `RG_FIRST_KEY` non-decreasing, and its cross-check against the `key_id` chunk's `MIN_STAT`.
+- `RG_FIRST_KEY` non-decreasing, and its cross-checks against the `key_id` chunk's `MIN_STAT` and
+  `MAX_STAT` — including the no-key-spans-a-shared-group invariant the lookup depends on.
 - `DATA_RG_BOUNDARY[0] == 0` and its monotonicity.
 - `RG_ROW_ID_MIN` / `RG_ROW_ID_MAX` against the `row_id` chunk stats.
 - The header's `RESERVED` bytes. They are `must be 0` for a *writer*; a reader ignores them, so that
@@ -446,6 +454,19 @@ These are cheap at write time and produce silent wrong answers if violated, so t
 rather than trusting callers:
 
 - `RG_FIRST_KEY` non-decreasing.
+- **No key spans two row groups unless both are dedicated to it.** Formally: for every `i`, the
+  `key_id` chunk's `MAX_STAT[i] < RG_FIRST_KEY[i + 1]`, taking the sentinel for the last row group.
+  The `key_id` `MAX_STAT` must be present and inline, exactly as `MIN_STAT` is.
+
+  This is the single most important writer check, because the reader's `rg_lo` computation depends on
+  it and nothing at read time can detect its absence. If key `k` were the last key of a packed group
+  `i` and also the first key of group `i + 1`, then `RG_FIRST_KEY[i] < k == RG_FIRST_KEY[i + 1]`, the
+  lookup's exact-match branch would give `rg_lo = i + 1`, and **`k`'s postings in group `i` would be
+  silently dropped** — a query returning a strict subset of its rows with no error anywhere.
+
+  This check strictly subsumes "the last row group's first key `< KEY_SPACE_SIZE`" below, since the
+  sentinel equals `KEY_SPACE_SIZE`.
+
 - The last row group's first key `< KEY_SPACE_SIZE`. Otherwise a key physically present in the index reports
   as absent and a query silently returns no rows.
 - `RG_FIRST_KEY[i] == chunk(i, KEY_ID_COLUMN).MIN_STAT` for every row group.
