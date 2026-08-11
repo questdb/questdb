@@ -1002,6 +1002,22 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /**
+     * Reports whether the WAL-level symbol dictionary of {@code columnName} still sits in
+     * {@code walName}'s directory. Every already-written segment of that WAL resolves its clean
+     * symbol band through {@code <wal>/<column>.o} and its siblings, so this is the artifact a
+     * symbol capacity rebuild or a DROP COLUMN strands. Unlike the {@code assert*Existence}
+     * helpers this returns the answer rather than asserting it, because callers both search for
+     * the WAL that holds the dictionary and assert its disappearance.
+     */
+    protected static boolean walSymbolOffsetFileExists(@NotNull TableToken tableToken, String walName, String columnName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+            TableUtils.offsetFileName(path, columnName, TableUtils.COLUMN_NAME_TXN_NONE);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
+        }
+    }
+
     protected final void allowFunctionMemoization() {
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
     }
