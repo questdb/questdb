@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
@@ -122,6 +123,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tcnt
                             1\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.a, l.cnt
+                    FROM o
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t
+                            WHERE t.x = o.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l
+                    ORDER BY o.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
                             """);
         });
     }
@@ -1385,6 +1407,67 @@ public class LateralJoinTest extends AbstractCairoTest {
                     + "WHERE l.c = 0 ORDER BY t1.k")
                     .noLeakCheck()
                     .assertBinds(outerWhereCases);
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountBindVariableLimitNegativeRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT, v INT)");
+            execute("INSERT INTO t3 VALUES (1, 10), (1, 20), (2, 30)");
+
+            final ObjList<BindVarTuple> countCases = new ObjList<>();
+            countCases.add(BindVarTuple.ok(
+                    "positive limit keeps the aggregate row",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+            countCases.add(BindVarTuple.fails(
+                    "negative limit is rejected at run time",
+                    "negative LIMIT is not supported in a correlated lateral sub-query",
+                    bindVariableService -> bindVariableService.setLong("lim", -1)
+            ));
+            countCases.add(BindVarTuple.ok(
+                    "the factory survives the rejection",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+            countCases.add(BindVarTuple.ok(
+                    "null limit keeps dropping the aggregate row",
+                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
+                    bindVariableService -> bindVariableService.setLong("lim", Numbers.LONG_NULL)
+            ));
+
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .assertBinds(countCases);
+
+            final ObjList<BindVarTuple> rowCases = new ObjList<>();
+            rowCases.add(BindVarTuple.ok(
+                    "positive limit keeps the first row per key",
+                    "k\tv\n1\t10\n2\t30\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+            rowCases.add(BindVarTuple.fails(
+                    "negative limit is rejected at run time",
+                    "negative LIMIT is not supported in a correlated lateral sub-query",
+                    bindVariableService -> bindVariableService.setLong("lim", -1)
+            ));
+            rowCases.add(BindVarTuple.ok(
+                    "the factory survives the rejection",
+                    "k\tv\n1\t10\n1\t20\n2\t30\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL "
+                    + "(SELECT v FROM t3 WHERE t3.k = t1.k ORDER BY v LIMIT :lim) l ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .assertBinds(rowCases);
         });
     }
 
@@ -2669,6 +2752,104 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCountArithmeticGroupByOrderByQualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT sub.arithmetic, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.arithmetic
+                    ORDER BY sub.arithmetic
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            arithmetic\tn
+                            2\t1
+                            3\t1
+                            4\t1
+                            """);
+
+            assertQuery("""
+                    SELECT sub.arithmetic AS va, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.arithmetic
+                    ORDER BY sub.arithmetic DESC
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            va\tn
+                            4\t1
+                            3\t1
+                            2\t1
+                            """);
+
+            assertQuery("""
+                    SELECT sub.cnt, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.cnt
+                    ORDER BY sub.cnt
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tn
+                            0\t1
+                            1\t1
+                            2\t1
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY sub.arithmetic, o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            2\t3
+                            1\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountArithmeticImplicitKeyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3413,7 +3594,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             bindVariableService.setLong("lim", 1);
             assertQuery(sql).noLeakCheck().assertsPlanContaining(
                     "Filter filter: (v>=0 and v>=0)",
-                    "memoize(case([:lim::long>=1"
+                    "memoize(case([__lateral_limit(:lim"
             );
             try (RecordCursorFactory factory = select(sql)) {
                 TestTimestampCounterFactory.COUNTER.set(0);

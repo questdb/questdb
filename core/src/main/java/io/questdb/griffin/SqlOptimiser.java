@@ -5540,6 +5540,7 @@ public class SqlOptimiser implements Mutable {
                         sourceColumn.getAlias(),
                         lateralCountCarrierRefCounts.get(sourceColumn.getAlias())
                 );
+                carrierModel.replaceColumnNameMap(sourceColumn.getAlias(), ast.token, sourceColumn.getAlias());
             }
             hasMaterializedCount |= template != null;
         }

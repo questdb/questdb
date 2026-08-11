@@ -339,25 +339,6 @@ class LateralJoinRewriter implements Mutable {
         return constLimitValue(node);
     }
 
-    private static boolean containsZeroOnEmptyAggregate(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (isZeroOnEmptyAggregate(node)) {
-            return true;
-        }
-        int n = node.args.size();
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                if (containsZeroOnEmptyAggregate(node.args.getQuick(i))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        return containsZeroOnEmptyAggregate(node.lhs) || containsZeroOnEmptyAggregate(node.rhs);
-    }
-
     private static LowerCaseCharSequenceIntHashMap ensureCorrelatedColumnSet(
             ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns,
             int index
@@ -392,6 +373,25 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean hasZeroOnEmptyAggregate(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (isZeroOnEmptyAggregate(node)) {
+            return true;
+        }
+        int n = node.args.size();
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                if (hasZeroOnEmptyAggregate(node.args.getQuick(i))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return hasZeroOnEmptyAggregate(node.lhs) || hasZeroOnEmptyAggregate(node.rhs);
     }
 
     private static boolean isCountAggregate(ExpressionNode node) {
@@ -579,11 +579,11 @@ class LateralJoinRewriter implements Mutable {
         ExpressionNode layerGuard;
         if (limitHi != null && limitLo != null) {
             layerGuard = createBinaryOp("and",
-                    createBinaryOp(">", rowOneConstant(), ExpressionNode.deepClone(expressionNodePool, limitLo)),
-                    createBinaryOp("<=", rowOneConstant(), ExpressionNode.deepClone(expressionNodePool, limitHi)));
+                    createBinaryOp(">", rowOneConstant(), wrapRuntimeLimit(ExpressionNode.deepClone(expressionNodePool, limitLo))),
+                    createBinaryOp("<=", rowOneConstant(), wrapRuntimeLimit(ExpressionNode.deepClone(expressionNodePool, limitHi))));
         } else {
             layerGuard = createBinaryOp("<=", rowOneConstant(),
-                    ExpressionNode.deepClone(expressionNodePool, limitHi != null ? limitHi : limitLo));
+                    wrapRuntimeLimit(ExpressionNode.deepClone(expressionNodePool, limitHi != null ? limitHi : limitLo)));
         }
         scalarCountGuard = scalarCountGuard == null
                 ? layerGuard
@@ -1497,6 +1497,8 @@ class LateralJoinRewriter implements Mutable {
         if (limitLo != null && hasCorrelatedExprAtDepth(limitLo, depth)) {
             limitLo = rewriteOuterRefs(limitLo, outerToInnerAlias, depth);
         }
+        limitLo = wrapRuntimeLimit(limitLo);
+        limitHi = wrapRuntimeLimit(limitHi);
 
         orderBySave.clear();
         orderByDirSave.clear();
@@ -4349,7 +4351,7 @@ class LateralJoinRewriter implements Mutable {
                         return SCALAR_BODY_NONE;
                     }
                     hasBaseCountAggregate |= isCountAggregate(ast);
-                    hasZeroOnEmpty |= containsZeroOnEmptyAggregate(ast);
+                    hasZeroOnEmpty |= hasZeroOnEmptyAggregate(ast);
                 }
                 if (hasZeroOnEmpty) {
                     if (hasColumnLimit && !hasBaseCountAggregate) {
@@ -4992,6 +4994,18 @@ class LateralJoinRewriter implements Mutable {
         truthLo = aLo;
         truthHi = Math.max(aHi, bHi);
         return true;
+    }
+
+    private ExpressionNode wrapRuntimeLimit(ExpressionNode limit) {
+        if (limit == null || constLimitValue(limit) != LIMIT_NOT_CONSTANT) {
+            return limit;
+        }
+        ExpressionNode wrapped = expressionNodePool.next().of(
+                ExpressionNode.FUNCTION, "__lateral_limit", 0, limit.position
+        );
+        wrapped.paramCount = 1;
+        wrapped.rhs = limit;
+        return wrapped;
     }
 
     static void excludeGeneratedColumnsFromWildcard(IQueryModel model) {

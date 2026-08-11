@@ -875,64 +875,6 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowSpecExpressionRewrites() throws Exception {
-        assertQuery("""
-                SELECT x, grp, sum(v) OVER w AS running, count(*) OVER w AS n
-                FROM t
-                WINDOW w AS (
-                    PARTITION BY grp::string, concat(
-                        CASE
-                            WHEN grp = 0 THEN 'a'
-                            WHEN grp = 1 THEN 'b'
-                            ELSE 'c'
-                        END,
-                        'partition'
-                    )
-                    ORDER BY x
-                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
-                )
-                ORDER BY x
-                """)
-                .ddl("CREATE TABLE t AS (SELECT x, x % 2 AS grp, x AS v FROM long_sequence(6))")
-                .expectSize()
-                .returns("""
-                        x\tgrp\trunning\tn
-                        1\t1\t1.0\t1
-                        2\t0\t2.0\t1
-                        3\t1\t4.0\t2
-                        4\t0\t6.0\t2
-                        5\t1\t9.0\t3
-                        6\t0\t12.0\t3
-                        """);
-        assertQuery("""
-                SELECT x, abs(sum(v) OVER (
-                    PARTITION BY grp::string, concat(
-                        CASE
-                            WHEN grp = 0 THEN 'a'
-                            WHEN grp = 1 THEN 'b'
-                            ELSE 'c'
-                        END,
-                        'partition'
-                    )
-                    ORDER BY x
-                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
-                )) AS running
-                FROM t
-                ORDER BY x
-                """)
-                .expectSize()
-                .returns("""
-                        x\trunning
-                        1\t1.0
-                        2\t2.0
-                        3\t4.0
-                        4\t6.0
-                        5\t9.0
-                        6\t12.0
-                        """);
-    }
-
-    @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
         assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2")
                 .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ")
@@ -3813,6 +3755,64 @@ public class GroupByTest extends AbstractCairoTest {
                                             Frame forward scan on: avg
                             """);
         });
+    }
+
+    @Test
+    public void testWindowSpecExpressionRewrites() throws Exception {
+        assertQuery("""
+                SELECT x, grp, sum(v) OVER w AS running, count(*) OVER w AS n
+                FROM t
+                WINDOW w AS (
+                    PARTITION BY grp::string, concat(
+                        CASE
+                            WHEN grp = 0 THEN 'a'
+                            WHEN grp = 1 THEN 'b'
+                            ELSE 'c'
+                        END,
+                        'partition'
+                    )
+                    ORDER BY x
+                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
+                )
+                ORDER BY x
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, x % 2 AS grp, x AS v FROM long_sequence(6))")
+                .expectSize()
+                .returns("""
+                        x\tgrp\trunning\tn
+                        1\t1\t1.0\t1
+                        2\t0\t2.0\t1
+                        3\t1\t4.0\t2
+                        4\t0\t6.0\t2
+                        5\t1\t9.0\t3
+                        6\t0\t12.0\t3
+                        """);
+        assertQuery("""
+                SELECT x, abs(sum(v) OVER (
+                    PARTITION BY grp::string, concat(
+                        CASE
+                            WHEN grp = 0 THEN 'a'
+                            WHEN grp = 1 THEN 'b'
+                            ELSE 'c'
+                        END,
+                        'partition'
+                    )
+                    ORDER BY x
+                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
+                )) AS running
+                FROM t
+                ORDER BY x
+                """)
+                .expectSize()
+                .returns("""
+                        x\trunning
+                        1\t1.0
+                        2\t2.0
+                        3\t4.0
+                        4\t6.0
+                        5\t9.0
+                        6\t12.0
+                        """);
     }
 
     private void assertError(String query, String errorMessage) throws Exception {
