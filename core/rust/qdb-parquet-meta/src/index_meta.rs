@@ -378,6 +378,32 @@ impl IndexMetaWriter {
             column_count
         );
 
+        // Both synthetic selectors must name a descriptor ahead of the covered
+        // ones. Bounded only by `COLUMN_COUNT` they could name a *covered*
+        // column, contradicting "synthetic columns first" and leaving one
+        // descriptor reachable both as `key_id` / `row_id` and as a cover slot:
+        // a query resolving that slot would read the key id chunk as its
+        // covered column, with no error anywhere. Readers keep the weaker
+        // bound - all a reader needs is an addressable index - so the writer is
+        // the only place this is caught. It runs after the positional check
+        // above, which diagnoses a descriptor order that is wrong outright.
+        if key_id_column >= first_cover_column {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "key id column {} must be below first cover column {}",
+                self.key_id_column,
+                self.first_cover_column
+            ));
+        }
+        if self.row_id_column >= 0 && self.row_id_column as usize >= first_cover_column {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row id column {} must be below first cover column {}",
+                self.row_id_column,
+                self.first_cover_column
+            ));
+        }
+
         // The index parquet's committed size is `offset + length + 8`, and
         // cold-storage upload, orphan validation and the standard-statistics
         // oracle all derive it from here rather than from `ff.length()`. A zero
@@ -2889,6 +2915,72 @@ mod tests {
         let r = IndexMetaReader::new(&bytes).unwrap();
         assert_eq!(r.payload_kind(), IM_PAYLOAD_ROW_PER_KEY);
         assert_eq!(r.row_id_column(), -1);
+    }
+
+    /// Descriptor order is the synthetic columns first, so a `KEY_ID_COLUMN` at
+    /// or above `FIRST_COVER_COLUMN` names a *covered* column as the synthetic
+    /// `key_id`, and one descriptor is then reachable both through the header
+    /// and as cover slot 0. Readers keep the weaker `< COLUMN_COUNT` bound -
+    /// all a reader needs is an addressable index - so the writer is the only
+    /// place this is caught.
+    ///
+    /// The fixture is valid in every other respect, including the RG_FIRST_KEY
+    /// cross-check against the chunk the selector names, so with the check
+    /// removed `finish` succeeds rather than failing for another reason.
+    #[test]
+    fn test_key_id_column_must_be_below_first_cover_column() {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 2, 1, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.add_column("price", descriptor(7, TYPE_DOUBLE));
+        let mut block = RowGroupBlockBuilder::new(3);
+        block.set_num_rows(5);
+        block.set_column_chunk(0, key_id_chunk(4, 4, 5)).unwrap();
+        block.set_column_chunk(1, row_id_chunk(0, 99, 5)).unwrap();
+        // The covered column's chunk carries the row group's first key as an
+        // inline min stat, so the cross-check against the chunk this selector
+        // names passes and the bound under test is all that is left.
+        block.set_column_chunk(2, key_id_chunk(4, 4, 5)).unwrap();
+        w.add_row_group(4, 0, 99, block);
+        w.set_data_row_group_boundaries(&[0, 200]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg
+                .contains("key id column 2 must be below first cover column 2"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// The same defect through the other selector: `ROW_ID_COLUMN` naming a
+    /// covered column makes the time-pruning zone maps and cover slot 0 the
+    /// same descriptor. The covered chunk carries the row group's row-id range
+    /// inline, so the writer's row-id cross-check passes and only the bound
+    /// under test rejects this file.
+    #[test]
+    fn test_row_id_column_must_be_below_first_cover_column() {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 0, 2, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.add_column("price", descriptor(7, TYPE_DOUBLE));
+        let mut block = RowGroupBlockBuilder::new(3);
+        block.set_num_rows(5);
+        block.set_column_chunk(0, key_id_chunk(4, 4, 5)).unwrap();
+        block.set_column_chunk(1, row_id_chunk(0, 99, 5)).unwrap();
+        block.set_column_chunk(2, row_id_chunk(0, 99, 5)).unwrap();
+        w.add_row_group(4, 0, 99, block);
+        w.set_data_row_group_boundaries(&[0, 200]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg
+                .contains("row id column 2 must be below first cover column 2"),
+            "{}",
+            err.msg
+        );
     }
 
     // ── Reader rejection ───────────────────────────────────────────────
