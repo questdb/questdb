@@ -392,6 +392,65 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * A header claiming {@code u32::MAX} row groups or columns makes every
+     * section size product enormous; unchecked, the sums wrap and the section
+     * offsets land inside the header. Mirrors the Rust
+     * {@code test_crafted_counts_are_rejected_by_checked_arithmetic}. The two
+     * readers reject the same files here by different routes: Java refuses a
+     * count above Integer.MAX_VALUE outright, where Rust carries it and fails
+     * the section fit a few lines later.
+     */
+    @Test
+    public void testCraftedCountsAreRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // COLUMN_COUNT at 32, INDEX_RG_COUNT at 36, DATA_RG_COUNT at 40.
+            assertOpenRejected(32, -1, "invalid _im COLUMN_COUNT");
+            assertOpenRejected(36, -1, "invalid _im INDEX_RG_COUNT");
+            assertOpenRejected(40, -1, "invalid _im DATA_RG_COUNT");
+            // Descriptors alone overrunning the index sections is rejected by
+            // the section fit instead.
+            assertOpenRejected(32, 1_000, "_im sections do not fit");
+        });
+    }
+
+    /**
+     * A name entry is bounded at open, before any accessor can turn it into an
+     * address: below the descriptors it would alias them, and a u64 offset near
+     * the top of the range would sign-extend into a wild address. Mirrors the
+     * Rust {@code test_crafted_name_offset_is_rejected}.
+     */
+    @Test
+    public void testCraftedNameOffsetIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Column 0's NAME_OFFSET is the first 8 bytes of the first
+            // descriptor, at 64. u64::MAX would overflow a naive
+            // offset + length sum.
+            assertOpenRejected(64, -1L, Long.BYTES, "invalid _im column name pointer");
+            // A name starting inside the descriptors is rejected the same way.
+            assertOpenRejected(64, 64L, Long.BYTES, "invalid _im column name pointer");
+        });
+    }
+
+    /**
+     * RG_BLOCK_OFFSET entries that still ascend pass the open-time check, so
+     * the per-block bound is what has to catch an entry addressing the header
+     * or running past the block region. Mirrors the Rust
+     * {@code test_crafted_block_offset_is_rejected}.
+     */
+    @Test
+    public void testCraftedRowGroupBlockOffsetIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // RG_BLOCK_OFFSET is at 984 and holds 184 >> 3, 384 >> 3,
+            // 584 >> 3, 784 >> 3. Point row group 0 at the header: the entries
+            // still ascend, so the file opens and the bound applies when the
+            // block is resolved.
+            assertRowGroupBlockRejected(984, 0, 0);
+            // Point the last row group past the end of the block region.
+            assertRowGroupBlockRejected(996, -1, 3);
+        });
+    }
+
+    /**
      * KEY_ID_COLUMN is the only sanctioned route to the synthetic
      * {@code key_id} column, so a caller hands it straight to a chunk
      * accessor. A crafted one with a repaired CRC used to open cleanly and
@@ -514,6 +573,56 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The names run 160..177 in the sample, so 168 is 8-aligned and past the
+     * descriptors but still inside the name blob: the sections would overlap
+     * the strings the descriptors point at. Mirrors the Rust
+     * {@code test_index_sections_offset_inside_name_strings_is_rejected}. The
+     * two readers reject the same two files; the Java message differs for the
+     * name case because the name bound is the check that fires first.
+     */
+    @Test
+    public void testIndexSectionsOffsetInsideDescriptorsOrNamesIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // INDEX_SECTIONS_OFFSET is at 56.
+            assertOpenRejected(56, 168L, Long.BYTES, "invalid _im column name pointer");
+            // Inside the descriptors themselves is rejected by the bound that
+            // puts the sections at or after them.
+            assertOpenRejected(56, 128L, Long.BYTES, "_im sections do not fit");
+        });
+    }
+
+    /**
+     * The sample's sections need 64 bytes; pointing at the CRC, or anywhere
+     * with less than that ahead of it, leaves them nowhere to fit. Mirrors the
+     * Rust {@code test_index_sections_offset_leaving_no_room_is_rejected}.
+     */
+    @Test
+    public void testIndexSectionsOffsetLeavingNoRoomIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // At the CRC.
+            assertOpenRejected(56, 1_048L, Long.BYTES, "_im sections do not fit");
+            // 8 bytes short of the 64 the three sections occupy.
+            assertOpenRejected(56, 992L, Long.BYTES, "_im sections do not fit");
+            // Past the committed size entirely.
+            assertOpenRejected(56, 2_048L, Long.BYTES, "_im sections do not fit");
+        });
+    }
+
+    /**
+     * An 8-aligned offset one section-size below {@code u64::MAX}: added to the
+     * section sizes unchecked it wraps to a small value that passes every
+     * bound, so the reader would resolve the sections inside the header. It
+     * reads back negative in Java, which the same guard rejects. Mirrors the
+     * Rust {@code test_index_sections_offset_overflowing_the_size_sum_is_rejected}.
+     */
+    @Test
+    public void testIndexSectionsOffsetOverflowingTheSizeSumIsRejected() throws Exception {
+        // u64::MAX - 7, which is 8-aligned and so passes the alignment check
+        // in both readers.
+        assertMemoryLeak(() -> assertOpenRejected(56, -8L, Long.BYTES, "_im sections do not fit"));
+    }
+
+    /**
      * A key below the first row group's first key is absent even though it is
      * below KEY_COUNT: no row group can hold it.
      */
@@ -560,6 +669,18 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(-1, reader.getRowGroupLoForKey(-1));
             Assert.assertEquals(-1, reader.getRowGroupHiForKey(-1));
         }));
+    }
+
+    /**
+     * Every section starts 8-byte aligned, and the row group block a
+     * misaligned first section would address is read as 8-byte fields. Mirrors
+     * the Rust {@code test_misaligned_index_sections_offset_is_rejected}.
+     */
+    @Test
+    public void testMisalignedIndexSectionsOffsetIsRejected() throws Exception {
+        // INDEX_SECTIONS_OFFSET is at 56 and is 984 in the sample.
+        assertMemoryLeak(() -> assertOpenRejected(
+                56, 985L, Long.BYTES, "_im INDEX_SECTIONS_OFFSET is not 8 byte aligned"));
     }
 
     /**
@@ -610,6 +731,59 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 Assert.assertFalse(reader.isOpen());
                 Assert.assertEquals(0, reader.getAddr());
                 Assert.assertEquals(0, reader.getFileSize());
+            }
+        }));
+    }
+
+    /**
+     * {@code ofAddress} binds to a caller-owned buffer, so the caller's length
+     * is the only thing standing between a short buffer and reads past its
+     * end. Mirrors the Rust {@code IndexMetaReader::new} rejecting a slice
+     * shorter than the header plus the trailer, and its
+     * {@code IM_FILE_SIZE is outside the buffer} bound.
+     */
+    @Test
+    public void testOfAddressRejectsShortBuffer() throws Exception {
+        assertMemoryLeak(() -> withSampleBytes((dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                // One byte short of the fixed header plus the CRC trailer.
+                try {
+                    reader.ofAddress(
+                            dataPtr,
+                            IndexMetaFileReader.IM_HEADER_SIZE + IndexMetaFileReader.IM_TRAILER_SIZE - 1);
+                    Assert.fail("expected CairoException from the buffer size check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid _im buffer size");
+                }
+                Assert.assertFalse(reader.isOpen());
+                try {
+                    reader.ofAddress(dataPtr, 0);
+                    Assert.fail("expected CairoException from the buffer size check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid _im buffer size");
+                }
+                // Long enough for the header, but shorter than the committed
+                // IM_FILE_SIZE the header claims.
+                try {
+                    reader.ofAddress(
+                            dataPtr,
+                            IndexMetaFileReader.IM_HEADER_SIZE + IndexMetaFileReader.IM_TRAILER_SIZE);
+                    Assert.fail("expected CairoException from the IM_FILE_SIZE check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid _im IM_FILE_SIZE");
+                }
+                // A null address is not a buffer at all.
+                try {
+                    reader.ofAddress(0, dataLen);
+                    Assert.fail("expected CairoException from the address check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid _im mapping address");
+                }
+                Assert.assertFalse(reader.isOpen());
+                // The same buffer at its real length still binds.
+                reader.ofAddress(dataPtr, dataLen);
+                Assert.assertTrue(reader.isOpen());
+                Assert.assertEquals(1_052, reader.getFileSize());
             }
         }));
     }
@@ -1126,6 +1300,41 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Every other fixture is row-per-posting, so PAYLOAD_ROW_PER_KEY never
+     * crossed JNI and neither {@code getPayloadKind() == 1} nor the
+     * {@code getRowIdColumn() == -1} that goes with it was pinned on the Java
+     * side. A row-per-key index has one row per key and no {@code row_id}
+     * column at all, which is exactly the pair of header values the reader
+     * validates against each other at open.
+     */
+    @Test
+    public void testRowPerKeyPayloadRoundTrip() throws Exception {
+        assertMemoryLeak(() -> withRowPerKeyReader(IndexMetaFileReaderTest::buildRowPerKeySample, reader -> {
+            final long addr = reader.getAddr();
+            Assert.assertEquals(IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY, reader.getPayloadKind());
+            Assert.assertEquals(1, reader.getPayloadKind());
+            Assert.assertEquals(-1, reader.getRowIdColumn());
+            Assert.assertEquals(0, reader.getKeyIdColumn());
+            // Straight off the header bytes the Rust writer laid down:
+            // PAYLOAD_KIND at 28, KEY_ID_COLUMN at 48, ROW_ID_COLUMN at 52.
+            Assert.assertEquals(1, Unsafe.getUnsafe().getInt(addr + 28));
+            Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + 48));
+            Assert.assertEquals(-1, Unsafe.getUnsafe().getInt(addr + 52));
+            // There is no row_id column: the schema is key_id plus the covered
+            // column only.
+            Assert.assertEquals(2, reader.getColumnCount());
+            TestUtils.assertEquals("key_id", reader.getColumnName(0));
+            TestUtils.assertEquals("price", reader.getColumnName(1));
+            Assert.assertEquals(1, reader.getColumnIndexById(7));
+            // Key lookup is unaffected by the payload kind.
+            Assert.assertEquals(50, reader.getKeyCount());
+            assertRangeForKey(reader, 7, 0, 0);
+            assertRangeForKey(reader, 20, 1, 1);
+            assertKeyAbsent(reader, 50);
+        }));
+    }
+
+    /**
      * Pins the fixture the crafted out-of-line references patch, so a layout
      * change cannot quietly turn them into harmless offsets. These are the
      * offsets the Rust {@code test_two_block_out_of_line_sample_layout} pins.
@@ -1143,6 +1352,28 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(64, reader.getRowGroupNumRows(0));
             Assert.assertEquals(64, reader.getRowGroupNumRows(1));
         }));
+    }
+
+    /**
+     * FEATURE_FLAGS bits 32-63 are required: a reader that does not know one
+     * must refuse the file rather than read it with a feature it cannot honour
+     * silently disabled. Bits 0-31 are optional and must be ignored. Mirrors
+     * the Rust {@code test_unknown_required_feature_bit_is_rejected}.
+     */
+    @Test
+    public void testUnknownRequiredFeatureBitIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // FEATURE_FLAGS is at 16.
+            assertOpenRejected(16, 1L << 32, Long.BYTES, "unsupported required _im FEATURE_FLAGS");
+            assertOpenRejected(16, 1L << 63, Long.BYTES, "unsupported required _im FEATURE_FLAGS");
+            // An unknown optional bit is carried through, not rejected.
+            withPatchedBytes(IndexMetaFileReaderTest::buildSample, 16, 1L << 7, Long.BYTES, (dataPtr, dataLen) -> {
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(dataPtr, dataLen);
+                    Assert.assertEquals(1L << 7, reader.getFeatureFlags());
+                }
+            });
+        });
     }
 
     /**
@@ -1315,6 +1546,30 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         putOutOfLineStat(writerPtr, 2, true, (byte) 0x11, 16);
         putOutOfLineStat(writerPtr, 2, false, (byte) 0xEE, 16);
         setDataRowGroupBoundaries(writerPtr, 0L, 64L);
+    }
+
+    /**
+     * A row-per-key index: one index row per key, so there is no {@code row_id}
+     * column and ROW_ID_COLUMN is the {@code -1} sentinel. The writer is
+     * created with that pair by {@link #withRowPerKeyReader}.
+     */
+    private static void buildRowPerKeySample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY, 50);
+        addColumn(writerPtr, "key_id", -1, TYPE_INT);
+        addColumn(writerPtr, "price", 7, TYPE_DOUBLE);
+        final int[] firstKeys = {7, 20};
+        for (int firstKey : firstKeys) {
+            final long chunksSize = 2L * IndexMetaFileWriter.CHUNK_SIZE;
+            final long chunksPtr = Unsafe.calloc(chunksSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                putKeyIdChunk(chunksPtr, 0, firstKey, firstKey, 64);
+                putChunk(chunksPtr, 1, CODEC_SNAPPY, ENC_PLAIN, 0, 0, 64, 4_096, 512, 0, 0, 0, 0);
+                IndexMetaFileWriter.addRowGroup(writerPtr, firstKey, 64, chunksPtr, chunksSize, 2);
+            } finally {
+                Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+        setDataRowGroupBoundaries(writerPtr, 0L, 128L);
     }
 
     /**
@@ -1564,7 +1819,15 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
      * bind to the result, leaving nothing mapped.
      */
     private void assertOpenRejected(long patchOffset, int value, String expectedMessage) {
-        withPatchedBytes(IndexMetaFileReaderTest::buildSample, patchOffset, value, Integer.BYTES, (dataPtr, dataLen) -> {
+        assertOpenRejected(patchOffset, value, Integer.BYTES, expectedMessage);
+    }
+
+    /**
+     * The 8-byte-field form: INDEX_SECTIONS_OFFSET, FEATURE_FLAGS and a
+     * descriptor's NAME_OFFSET are all u64.
+     */
+    private void assertOpenRejected(long patchOffset, long value, int width, String expectedMessage) {
+        withPatchedBytes(IndexMetaFileReaderTest::buildSample, patchOffset, value, width, (dataPtr, dataLen) -> {
             try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
                 reader.ofAddress(dataPtr, dataLen);
                 Assert.fail("expected CairoException from the header validation");
@@ -1602,6 +1865,25 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Patches one RG_BLOCK_OFFSET entry of the sample with a value that still
+     * ascends, so the file opens, and asserts that resolving that row group's
+     * block is refused by the per-block bound.
+     */
+    private void assertRowGroupBlockRejected(long patchOffset, int entry, int rowGroup) {
+        withPatchedBytes(IndexMetaFileReaderTest::buildSample, patchOffset, entry, Integer.BYTES, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                try {
+                    reader.getRowGroupNumRows(rowGroup);
+                    Assert.fail("expected CairoException from the row group block bound");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid _im row group block offset");
+                }
+            }
+        });
+    }
+
     private void withAlignedSample(SampleAssertion assertion) {
         withReader(IndexMetaFileReaderTest::buildAlignedSample, assertion);
     }
@@ -1612,10 +1894,24 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
      * every path, including the exceptional one.
      */
     private void withBytes(SampleBuilder builder, BytesAssertion assertion) {
+        withBytes(builder, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 1, assertion);
+    }
+
+    /**
+     * The form that names the synthetic column indices, for a fixture whose
+     * payload kind is not row-per-posting: {@code rowIdColumn} has no setter on
+     * the Rust writer, so it can only be given at construction.
+     */
+    private void withBytes(
+            SampleBuilder builder,
+            int payloadKind,
+            int keyIdColumn,
+            int rowIdColumn,
+            BytesAssertion assertion
+    ) {
         // The Rust writer takes the payload kind, key count and the synthetic
         // column indices up front; setPayload can correct the first two later.
-        final long writerPtr = IndexMetaFileWriter.create(
-                IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 0, 1);
+        final long writerPtr = IndexMetaFileWriter.create(payloadKind, 0, keyIdColumn, rowIdColumn);
         long resultPtr = 0;
         try {
             builder.build(writerPtr);
@@ -1696,6 +1992,19 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
 
     private void withReader(SampleBuilder builder, SampleAssertion assertion) {
         withBytes(builder, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                assertion.run(reader);
+            }
+        });
+    }
+
+    /**
+     * Builds a row-per-key fixture, which has no {@code row_id} column and so
+     * carries the {@code -1} ROW_ID_COLUMN sentinel, and reads it back.
+     */
+    private void withRowPerKeyReader(SampleBuilder builder, SampleAssertion assertion) {
+        withBytes(builder, IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY, 0, -1, (dataPtr, dataLen) -> {
             try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
                 reader.ofAddress(dataPtr, dataLen);
                 assertion.run(reader);
