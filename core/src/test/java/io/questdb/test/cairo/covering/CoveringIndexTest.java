@@ -60,6 +60,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.DirectBitSet;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -14807,6 +14808,48 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 } finally {
                     Unsafe.free(colAddrDouble, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(colAddrInt, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPciFileSizeStableAcrossSealAndClose() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "pci_size_stability";
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    final long sizeWhileOpen;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+
+                        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        );
+                        sizeWhileOpen = ff.length(pciFile);
+                        assertEquals(Files.ceilPageSize(3L * Integer.BYTES), sizeWhileOpen);
+                    }
+
+                    LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    assertEquals(sizeWhileOpen, ff.length(pciFile));
+                } finally {
+                    Unsafe.free(colAddr, Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
