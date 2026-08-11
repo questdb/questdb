@@ -35,7 +35,7 @@ import io.questdb.std.str.LPSZ;
 
 /**
  * Memory-mapped reader for the {@code _im} covering-index metadata file,
- * format version 2, the sidecar to {@code <col>.pidx.parquet}. It mirrors the
+ * format version 3, the sidecar to {@code <col>.pidx.parquet}. It mirrors the
  * Rust {@code IndexMetaReader} in {@code qdb-parquet-meta}: the two
  * implementations validate the same fields in the same order and resolve the
  * same section offsets, and must stay in lock step.
@@ -48,22 +48,26 @@ import io.questdb.std.str.LPSZ;
  * <p>
  * Binary format (little-endian):
  * <pre>
- * HEADER (64 bytes fixed):
+ * HEADER (128 bytes fixed):
  *   [0]  IM_FILE_SIZE          u64  (total committed file size; patched last as the commit signal,
  *                                    and the only field outside the CRC)
- *   [8]  IM_MAGIC              u64  (0x0200584449424451, the bytes QDBIDX\0\2)
+ *   [8]  IM_MAGIC              u64  (0x0300584449424451, the bytes QDBIDX\0\3)
  *   [16] FEATURE_FLAGS         u64  (bits 32-63 are required: unknown bits must cause rejection)
- *   [24] FORMAT_VERSION        u32  (2)
+ *   [24] FORMAT_VERSION        u32  (3)
  *   [28] PAYLOAD_KIND          u32  (0 = row per posting, 1 = row per key)
  *   [32] COLUMN_COUNT          u32
  *   [36] INDEX_RG_COUNT        u32
  *   [40] DATA_RG_COUNT         u32
- *   [44] KEY_COUNT             u32
+ *   [44] KEY_SPACE_SIZE        u32  (exclusive upper bound on key ids, not a distinct-key count)
  *   [48] KEY_ID_COLUMN         i32
  *   [52] ROW_ID_COLUMN         i32  (-1 under PAYLOAD_KIND 1)
  *   [56] INDEX_SECTIONS_OFFSET u64  (absolute offset of RG_BLOCK_OFFSET, 8-byte aligned)
+ *   [64] PIDX_FOOTER_OFFSET    u64  (where the index parquet's own footer starts)
+ *   [72] PIDX_FOOTER_LENGTH    u32  (length of that footer)
+ *   [76] FIRST_COVER_COLUMN    u32  (descriptor index of cover slot 0)
+ *   [80] RESERVED              48B  (zero means "absent", so a later writer may spend it)
  *
- *   [64..] column descriptors (32B each), then the UTF-8 name blob padded to 8 bytes
+ *   [128..] column descriptors (32B each), then the UTF-8 name blob padded to 8 bytes
  *
  * ROW GROUP BLOCK (8-byte aligned, one per index row group, located via RG_BLOCK_OFFSET):
  *   [0]  NUM_ROWS  u64
@@ -72,10 +76,22 @@ import io.questdb.std.str.LPSZ;
  * INDEX SECTIONS (at INDEX_SECTIONS_OFFSET, each 8-byte aligned and padded up):
  *   RG_BLOCK_OFFSET   u32 x INDEX_RG_COUNT        block byte offset from file start, &gt;&gt; 3
  *   RG_FIRST_KEY      u32 x (INDEX_RG_COUNT + 1)  smallest key id per row group, plus a
- *                                                 KEY_COUNT sentinel
+ *                                                 KEY_SPACE_SIZE sentinel
+ *   RG_ROW_ID_MIN     i64 x INDEX_RG_COUNT        smallest row id per row group
+ *   RG_ROW_ID_MAX     i64 x INDEX_RG_COUNT        largest row id per row group
  *   DATA_RG_BOUNDARY  i64 x (DATA_RG_COUNT + 1)   cumulative data.parquet row counts
  *   CRC32             u32  over [8, IM_FILE_SIZE - 4)
  * </pre>
+ * <p>
+ * The row-id zone maps are unconditional: under {@code PAYLOAD_KIND 1} there
+ * is no {@code row_id} column at all, so a reader taking the range from that
+ * column's chunk statistics would have no time pruning for that payload.
+ * <p>
+ * A query's required cover columns are cover slots - ordinals into this
+ * index's own {@code INCLUDE} list - not writer indices, and
+ * {@link #getCoverColumnIndex(int)} is the only correct way to resolve one.
+ * {@link #getColumnIndexById(int)} resolves a writer index instead; the two
+ * spaces are different and confusing them silently reads the wrong column.
  * <p>
  * {@code INDEX_SECTIONS_OFFSET} is read from the header, never derived: a
  * row group block's size depends on the length of its out-of-line stat
@@ -98,7 +114,7 @@ import io.questdb.std.str.LPSZ;
  */
 public class IndexMetaFileReader implements QuietCloseable {
 
-    public static final int IM_HEADER_SIZE = 64;
+    public static final int IM_HEADER_SIZE = 128;
     public static final int IM_TRAILER_SIZE = 4;
     /**
      * {@link #getRowGroupRangeForKey(int)} for a key outside the covered key
@@ -140,10 +156,11 @@ public class IndexMetaFileReader implements QuietCloseable {
     // First byte covered by the CRC; IM_FILE_SIZE at offset 0 is excluded
     // because the writer patches it last as the commit signal.
     private static final int IM_CRC_AREA_OFF = 8;
-    private static final int IM_FORMAT_VERSION = 2;
-    // The bytes QDBIDX\0\2 at offset 8. Disambiguates _im from _pm, which
-    // carries FEATURE_FLAGS at the same offset.
-    private static final long IM_MAGIC = 0x0200_5844_4942_4451L;
+    private static final int IM_FORMAT_VERSION = 3;
+    // The bytes QDBIDX\0\3 at offset 8. Disambiguates _im from _pm, which
+    // carries FEATURE_FLAGS at the same offset, and its version byte is what
+    // keeps a v2 file from being read as a v3 one.
+    private static final long IM_MAGIC = 0x0300_5844_4942_4451L;
     // One index row per key: there is no row_id column and ROW_ID_COLUMN is -1.
     private static final int IM_PAYLOAD_ROW_PER_KEY = 1;
     // One index row per posting, carrying a row_id column.
@@ -151,15 +168,21 @@ public class IndexMetaFileReader implements QuietCloseable {
     private static final int OFF_COLUMN_COUNT = 32;
     private static final int OFF_DATA_RG_COUNT = 40;
     private static final int OFF_FEATURE_FLAGS = 16;
+    private static final int OFF_FIRST_COVER_COLUMN = 76;
     private static final int OFF_FORMAT_VERSION = 24;
     private static final int OFF_IM_FILE_SIZE = 0;
     private static final int OFF_IM_MAGIC = 8;
     private static final int OFF_INDEX_RG_COUNT = 36;
     private static final int OFF_INDEX_SECTIONS_OFFSET = 56;
-    private static final int OFF_KEY_COUNT = 44;
     private static final int OFF_KEY_ID_COLUMN = 48;
+    private static final int OFF_KEY_SPACE_SIZE = 44;
     private static final int OFF_PAYLOAD_KIND = 28;
+    private static final int OFF_PIDX_FOOTER_LENGTH = 72;
+    private static final int OFF_PIDX_FOOTER_OFFSET = 64;
     private static final int OFF_ROW_ID_COLUMN = 52;
+    // The 4-byte footer length plus the PAR1 magic that follow a parquet
+    // footer, exactly as _pm derives data.parquet's committed size.
+    private static final int PIDX_FOOTER_TRAILER_SIZE = 8;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     // Each row group block starts with an 8-byte NUM_ROWS u64 prefix.
@@ -180,19 +203,24 @@ public class IndexMetaFileReader implements QuietCloseable {
     private int dataRowGroupCount;
     private long featureFlags;
     private FilesFacade ff;
+    private int firstCoverColumn;
     private int indexRowGroupCount;
-    private int keyCount;
     private int keyIdColumn;
+    private int keySpaceSize;
     // Size of the mapping this reader owns, 0 when the buffer belongs to the caller.
     private long mappedSize;
     // End of the column descriptors, and so the lowest offset a name string or
     // a row group block may start at.
     private long namesStart;
     private int payloadKind;
+    private int pidxFooterLength;
+    private long pidxFooterOffset;
     // The header's INDEX_SECTIONS_OFFSET, validated at bind time. It doubles as
     // the exclusive upper bound of the row group block region.
     private long rgBlockOffsetOffset;
     private long rgFirstKeyOffset;
+    private long rgRowIdMaxOffset;
+    private long rgRowIdMinOffset;
     private int rowIdColumn;
     // Committed IM_FILE_SIZE the reader is bound to, never the filesystem length.
     private long size;
@@ -295,13 +323,18 @@ public class IndexMetaFileReader implements QuietCloseable {
         namesStart = 0;
         rgBlockOffsetOffset = 0;
         rgFirstKeyOffset = 0;
+        rgRowIdMinOffset = 0;
+        rgRowIdMaxOffset = 0;
         dataBoundaryOffset = 0;
         columnCount = 0;
         indexRowGroupCount = 0;
         dataRowGroupCount = 0;
-        keyCount = 0;
+        keySpaceSize = 0;
         keyIdColumn = 0;
         rowIdColumn = 0;
+        firstCoverColumn = 0;
+        pidxFooterOffset = 0;
+        pidxFooterLength = 0;
         payloadKind = 0;
     }
 
@@ -582,6 +615,37 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * Descriptor index of cover slot {@code slot}.
+     * <p>
+     * A query's required cover columns are <b>cover slots</b> - ordinals into
+     * this index's own {@code INCLUDE} list, the {@code n} in the native
+     * {@code <col>.pc{n}} - not writer indices, and the two spaces are easy to
+     * confuse: a writer index passed here resolves to some other covered
+     * column or misses entirely, with no error either way. Descriptor order is
+     * the synthetic columns first, then the covered columns in cover-slot
+     * order, so the mapping is positional and bounded by
+     * {@link #getColumnCount()}.
+     * <p>
+     * The addition is unsigned on both terms, so neither a negative slot nor a
+     * {@code FIRST_COVER_COLUMN} near the top of the u32 range wraps into
+     * range. This is the Java spelling of the Rust reader's
+     * {@code cover_column_index}, which rejects the same slots.
+     *
+     * @throws CairoException if the slot is outside
+     *                        {@code [0, COLUMN_COUNT - FIRST_COVER_COLUMN)}
+     */
+    public int getCoverColumnIndex(int slot) {
+        final long index = Integer.toUnsignedLong(firstCoverColumn) + Integer.toUnsignedLong(slot);
+        if (index >= columnCount) {
+            throw CairoException.critical(0)
+                    .put("_im cover slot out of range [slot=").put(slot)
+                    .put(", firstCoverColumn=").put(Integer.toUnsignedLong(firstCoverColumn))
+                    .put(", columnCount=").put(columnCount).put(']');
+        }
+        return (int) index;
+    }
+
+    /**
      * Cumulative row count at {@code data.parquet} row group boundary
      * {@code i}. There are {@code getDataRowGroupCount() + 1} entries, the
      * first is {@code 0} and the array is non-decreasing, so a binary search
@@ -618,6 +682,18 @@ public class IndexMetaFileReader implements QuietCloseable {
         return size;
     }
 
+    /**
+     * Descriptor index of cover slot {@code 0}, from which
+     * {@link #getCoverColumnIndex(int)} resolves every slot. FIRST_COVER_COLUMN
+     * is a u32 on disk and is returned here as a raw {@code int}; the reader
+     * does not validate it at open, exactly as the Rust reader does not - the
+     * writer enforces the ordering, and every read of it is bounds-checked
+     * against COLUMN_COUNT at the point of use.
+     */
+    public int getFirstCoverColumn() {
+        return firstCoverColumn;
+    }
+
     public int getIndexRowGroupCount() {
         return indexRowGroupCount;
     }
@@ -631,21 +707,28 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
-     * Number of keys the index covers. KEY_COUNT is a u32 on disk and is
-     * returned here as a raw {@code int}: a value above {@code 2^31} reads back
-     * negative, where the Rust reader returns a {@code u32}. Compare it with
-     * {@link Integer#compareUnsigned(int, int)}, as the key lookup does.
-     * Unreachable with real symbol keys.
-     */
-    public int getKeyCount() {
-        return keyCount;
-    }
-
-    /**
      * Index of the synthetic {@code key_id} column in the descriptors.
      */
     public int getKeyIdColumn() {
         return keyIdColumn;
+    }
+
+    /**
+     * The <b>exclusive upper bound on key ids</b> - the native reader's
+     * {@code keyCountIncludingNulls} - and emphatically not a count of the
+     * distinct keys present. Occupancy is sparse: a partition holding keys
+     * {@code {5, 900, 12_000}} has a key space of at least {@code 12_001}, and
+     * a distinct-key count of {@code 3} would make every key at or above it
+     * report as absent with no error anywhere.
+     * <p>
+     * KEY_SPACE_SIZE is a u32 on disk and is returned here as a raw
+     * {@code int}: a value above {@code 2^31} reads back negative, where the
+     * Rust reader returns a {@code u32}. Compare it with
+     * {@link Integer#compareUnsigned(int, int)}, as the key lookup does.
+     * Unreachable with real symbol keys.
+     */
+    public int getKeySpaceSize() {
+        return keySpaceSize;
     }
 
     /**
@@ -656,9 +739,52 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * Committed size of {@code <col>.pidx.<indexTxn>.parquet}, derived exactly
+     * as {@code _pm} derives the data parquet's: the footer offset and length
+     * plus the 4-byte footer length and the {@code PAR1} magic. Recording it in
+     * {@code _im} is what lets cold-storage upload, orphan validation and the
+     * standard-statistics oracle path work without an {@code ff.length()} call.
+     *
+     * @throws CairoException if the recorded footer range does not describe an
+     *                        addressable file
+     */
+    public long getPidxFileSize() {
+        final long footerLength = Integer.toUnsignedLong(pidxFooterLength);
+        // PIDX_FOOTER_OFFSET is a u64: at or above 2^63 it reads back negative
+        // here, and no parquet file reaches that offset. The Rust reader's
+        // checked_add rejects the same field a step later, when the sum leaves
+        // the u64 range; either way an unusable value is an error rather than a
+        // plausible, wrong size.
+        if (pidxFooterOffset < 0
+                || pidxFooterOffset > Long.MAX_VALUE - footerLength - PIDX_FOOTER_TRAILER_SIZE) {
+            throw CairoException.critical(0)
+                    .put("_im PIDX footer range overflows [pidxFooterOffset=").put(pidxFooterOffset)
+                    .put(", pidxFooterLength=").put(footerLength).put(']');
+        }
+        return pidxFooterOffset + footerLength + PIDX_FOOTER_TRAILER_SIZE;
+    }
+
+    /**
+     * Length of {@code <col>.pidx.<indexTxn>.parquet}'s own parquet footer.
+     * PIDX_FOOTER_LENGTH is a u32 on disk and is returned here as a raw
+     * {@code int}; {@link #getPidxFileSize()} widens it without sign extension.
+     */
+    public int getPidxFooterLength() {
+        return pidxFooterLength;
+    }
+
+    /**
+     * Byte offset in {@code <col>.pidx.<indexTxn>.parquet} where its own
+     * parquet footer starts.
+     */
+    public long getPidxFooterOffset() {
+        return pidxFooterOffset;
+    }
+
+    /**
      * The smallest key id present in index row group {@code i}. Index
      * {@code getIndexRowGroupCount()} is the sentinel and equals
-     * {@link #getKeyCount()}.
+     * {@link #getKeySpaceSize()}.
      * <p>
      * RG_FIRST_KEY holds u32 entries and one is returned here as a raw
      * {@code int}: a key above {@code 2^31} reads back negative, where the Rust
@@ -697,8 +823,8 @@ public class IndexMetaFileReader implements QuietCloseable {
     /**
      * Index of the first index row group that can hold {@code key}, or
      * {@code -1} when {@code key} is outside the covered key space: at or past
-     * {@code KEY_COUNT}, below the first row group's first key, or when the
-     * file holds no index row groups at all.
+     * {@code KEY_SPACE_SIZE}, below the first row group's first key, or when
+     * the file holds no index row groups at all.
      */
     public int getRowGroupLoForKey(int key) {
         return Numbers.decodeLowInt(getRowGroupRangeForKey(key));
@@ -731,9 +857,11 @@ public class IndexMetaFileReader implements QuietCloseable {
      * again. Mirrors the Rust {@code row_group_range_for_key}.
      */
     public long getRowGroupRangeForKey(int key) {
-        // The comparison is unsigned: KEY_COUNT is a u32, so a key read back
-        // negative in Java is above it rather than below zero.
-        if (Integer.compareUnsigned(key, keyCount) >= 0 || indexRowGroupCount == 0) {
+        // The comparison is unsigned: KEY_SPACE_SIZE is a u32, so a key read
+        // back negative in Java is above it rather than below zero. It bounds
+        // key *ids*, not the count of distinct keys present, so a sparse key
+        // set reaches the search for every one of its keys.
+        if (Integer.compareUnsigned(key, keySpaceSize) >= 0 || indexRowGroupCount == 0) {
             return KEY_ABSENT;
         }
         // Lower bound: the first row group whose first key is at or above
@@ -777,6 +905,35 @@ public class IndexMetaFileReader implements QuietCloseable {
         // rgLo is a valid row group, so at least one first key is at or below
         // key and the subtraction stays in range.
         return Numbers.encodeLowHighInts(rgLo, upperLo - 1);
+    }
+
+    /**
+     * The largest row id present in index row group {@code i}. Recorded
+     * unconditionally, for the same reason as
+     * {@link #getRowGroupRowIdMin(int)}.
+     *
+     * @throws CairoException if {@code i} is outside
+     *                        {@code [0, getIndexRowGroupCount())}
+     */
+    public long getRowGroupRowIdMax(int i) {
+        return rowIdZoneMap(rgRowIdMaxOffset, i, "max");
+    }
+
+    /**
+     * The smallest row id present in index row group {@code i}.
+     * <p>
+     * Recorded unconditionally, including under payload kind {@code 1}, where
+     * the row ids are an opaque blob and there is no {@code row_id} column to
+     * take the range from: a reader that fell back to the chunk statistics
+     * would have no time pruning at all for that payload. Under payload kind
+     * {@code 0} the writer cross-checks it against those statistics, so the
+     * fast path has an independent oracle.
+     *
+     * @throws CairoException if {@code i} is outside
+     *                        {@code [0, getIndexRowGroupCount())}
+     */
+    public long getRowGroupRowIdMin(int i) {
+        return rowIdZoneMap(rgRowIdMinOffset, i, "min");
     }
 
     /**
@@ -953,7 +1110,7 @@ public class IndexMetaFileReader implements QuietCloseable {
 
     /**
      * Validates the header and the CRC32, then validates the header's
-     * {@code INDEX_SECTIONS_OFFSET} and resolves the three index sections
+     * {@code INDEX_SECTIONS_OFFSET} and resolves the five index sections
      * forward from it. The arithmetic mirrors {@code IndexMetaReader::new} in
      * {@code qdb-parquet-meta} step for step; {@link #alignUp(long)} is the
      * Java spelling of its {@code aligned_footprint}. Any drift here shifts
@@ -1008,8 +1165,8 @@ public class IndexMetaFileReader implements QuietCloseable {
                     .put("_im INDEX_SECTIONS_OFFSET is not 8 byte aligned [offset=")
                     .put(indexSectionsOffset).put(']');
         }
-        // A u64 at or above 2^63 reads back negative here. The three sections
-        // are at least 16 bytes, so an offset at or past the CRC leaves them
+        // A u64 at or above 2^63 reads back negative here. The five sections
+        // are at least 32 bytes, so an offset at or past the CRC leaves them
         // nowhere to fit; rejecting both up front also keeps every sum below
         // from overflowing.
         if (indexSectionsOffset < 0 || indexSectionsOffset > crcEnd) {
@@ -1021,6 +1178,36 @@ public class IndexMetaFileReader implements QuietCloseable {
         if (namesStart > indexSectionsOffset) {
             throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
         }
+
+        // The five sections, sized from the header counts, each padded up so
+        // the next starts 8-byte aligned, must fit ahead of the CRC.
+        //
+        // This bound runs BEFORE the descriptor loop below, and the order is
+        // load-bearing rather than incidental:
+        // namesStart <= indexSectionsOffset <= sectionsEnd <= crcEnd is what
+        // puts the descriptors inside the mapping. Bounding the name entries
+        // first reads descriptor bytes that a file truncated anywhere between
+        // the header and the end of the descriptors does not have. Clamping
+        // COLUMN_COUNT would not fix it: the descriptors can also be cut short
+        // with the count untouched, which is exactly what a torn write leaves
+        // behind. The Rust reader orders these two the same way, so both
+        // accept and reject the same files.
+        final long rgFirstKeyOffset = indexSectionsOffset + alignUp((long) indexRowGroupCount * Integer.BYTES);
+        final long rgRowIdMinOffset = rgFirstKeyOffset + alignUp((indexRowGroupCount + 1L) * Integer.BYTES);
+        // The row-id zone maps are unconditional - row per key has no row_id
+        // column to derive them from - and are i64 arrays, so each footprint is
+        // already a multiple of 8.
+        final long rowIdBytes = alignUp((long) indexRowGroupCount * Long.BYTES);
+        final long rgRowIdMaxOffset = rgRowIdMinOffset + rowIdBytes;
+        final long dataBoundaryOffset = rgRowIdMaxOffset + rowIdBytes;
+        final long sectionsEnd = dataBoundaryOffset + (dataRowGroupCount + 1L) * Long.BYTES;
+        // Slack between the end of DATA_RG_BOUNDARY and the CRC is permitted,
+        // so this is a bound and not equality: a writer may pad, and a reader
+        // that demanded exactness would reject files the other reader accepts.
+        if (sectionsEnd > crcEnd) {
+            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
+        }
+
         // Descriptors are in bounds now, so their name entries can be read to
         // bound the end of the name blob. Doing it here rather than on first
         // access is what makes both implementations reject the same files.
@@ -1041,15 +1228,6 @@ public class IndexMetaFileReader implements QuietCloseable {
                         .put(", namesStart=").put(namesStart)
                         .put(", indexSectionsOffset=").put(indexSectionsOffset).put(']');
             }
-        }
-
-        // The three sections, sized from the header counts, each padded up so
-        // the next starts 8-byte aligned, must fit ahead of the CRC.
-        final long rgFirstKeyOffset = indexSectionsOffset + alignUp((long) indexRowGroupCount * Integer.BYTES);
-        final long dataBoundaryOffset = rgFirstKeyOffset + alignUp((indexRowGroupCount + 1L) * Integer.BYTES);
-        final long sectionsEnd = dataBoundaryOffset + (dataRowGroupCount + 1L) * Long.BYTES;
-        if (sectionsEnd > crcEnd) {
-            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
         }
 
         // The header's column selectors are trusted all the way to an address
@@ -1089,17 +1267,62 @@ public class IndexMetaFileReader implements QuietCloseable {
         // derived from it meaningless. Rejecting here rather than on first
         // access is what makes every later extent computation trustworthy, and
         // the Rust reader rejects the same files at the same point.
-        long previousEntry = -1;
+        //
+        // The other three per-block predicates run here too, in the same pass.
+        // Deferring them to first access lets a crafted file open and answer
+        // key lookups, KEY_SPACE_SIZE, boundaries and descriptors for an index
+        // whose blocks are all unreachable: the caller gets a row group range
+        // it can never resolve, and only discovers it several calls later.
+        final long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
         for (int i = 0; i < indexRowGroupCount; i++) {
+            // An entry is a u32 count of 8-byte units, so the shift is exact in
+            // a long and the extent arithmetic below cannot wrap.
             final long entry = Integer.toUnsignedLong(
                     Unsafe.getInt(addr + indexSectionsOffset + (long) i * ROW_GROUP_ENTRY_SIZE));
-            if (entry <= previousEntry) {
-                throw CairoException.critical(0)
-                        .put("_im RG_BLOCK_OFFSET entries must ascend [rowGroup=").put(i)
-                        .put(", entry=").put(entry)
-                        .put(", previous=").put(previousEntry).put(']');
+            final long start = entry << BLOCK_ALIGNMENT_SHIFT;
+            final long end;
+            if (i + 1 < indexRowGroupCount) {
+                // The ascent is checked one entry ahead rather than one behind,
+                // because the next entry is also this block's end: comparing
+                // backwards would report an inverted extent as a bounds failure
+                // a row group earlier, and the ascent message names the real
+                // defect.
+                final long next = Integer.toUnsignedLong(
+                        Unsafe.getInt(addr + indexSectionsOffset + (long) (i + 1) * ROW_GROUP_ENTRY_SIZE));
+                if (next <= entry) {
+                    throw CairoException.critical(0)
+                            .put("_im RG_BLOCK_OFFSET entries must ascend [rowGroup=").put(i + 1)
+                            .put(", entry=").put(next)
+                            .put(", previous=").put(entry).put(']');
+                }
+                end = next << BLOCK_ALIGNMENT_SHIFT;
+            } else {
+                end = indexSectionsOffset;
             }
-            previousEntry = entry;
+            // A block starting before the descriptors end overlaps the header
+            // or the descriptors; one ending past INDEX_SECTIONS_OFFSET reads
+            // the key directory as column chunks. Both are addresses, not
+            // decode failures, so they are rejected rather than resolved.
+            // start > end is reachable only for the last block, whose end is
+            // INDEX_SECTIONS_OFFSET rather than the next entry; without it the
+            // subtraction below would wrap and pass the size check.
+            if (start < namesStart || end > indexSectionsOffset || start > end) {
+                throw CairoException.critical(0)
+                        .put("_im row group block extent is outside the block region [rowGroup=").put(i)
+                        .put(", start=").put(start)
+                        .put(", end=").put(end)
+                        .put(", namesStart=").put(namesStart)
+                        .put(", indexSectionsOffset=").put(indexSectionsOffset).put(']');
+            }
+            // The extent must hold NUM_ROWS and one chunk per column.
+            if (end - start < minBlockSize) {
+                throw CairoException.critical(0)
+                        .put("_im row group block extent is below the bytes its column chunks need [rowGroup=").put(i)
+                        .put(", start=").put(start)
+                        .put(", end=").put(end)
+                        .put(", minBlockSize=").put(minBlockSize)
+                        .put(", columnCount=").put(columnCount).put(']');
+            }
         }
 
         this.featureFlags = featureFlags;
@@ -1107,12 +1330,17 @@ public class IndexMetaFileReader implements QuietCloseable {
         this.columnCount = columnCount;
         this.indexRowGroupCount = indexRowGroupCount;
         this.dataRowGroupCount = dataRowGroupCount;
-        this.keyCount = Unsafe.getInt(addr + OFF_KEY_COUNT);
+        this.keySpaceSize = Unsafe.getInt(addr + OFF_KEY_SPACE_SIZE);
         this.keyIdColumn = keyIdColumn;
         this.rowIdColumn = rowIdColumn;
+        this.firstCoverColumn = Unsafe.getInt(addr + OFF_FIRST_COVER_COLUMN);
+        this.pidxFooterOffset = Unsafe.getLong(addr + OFF_PIDX_FOOTER_OFFSET);
+        this.pidxFooterLength = Unsafe.getInt(addr + OFF_PIDX_FOOTER_LENGTH);
         this.namesStart = namesStart;
         this.rgBlockOffsetOffset = indexSectionsOffset;
         this.rgFirstKeyOffset = rgFirstKeyOffset;
+        this.rgRowIdMinOffset = rgRowIdMinOffset;
+        this.rgRowIdMaxOffset = rgRowIdMaxOffset;
         this.dataBoundaryOffset = dataBoundaryOffset;
     }
 
@@ -1137,6 +1365,11 @@ public class IndexMetaFileReader implements QuietCloseable {
      * end at or before the index sections, and be wide enough for its chunks:
      * the same window the Rust reader hands to its
      * {@code RowGroupBlockReader}.
+     * <p>
+     * {@link #parse()} enforces all three predicates over every entry at open,
+     * so this repeats them for the one block it is about to address rather than
+     * discovering them - the Rust reader's {@code row_group_block_extent}
+     * repeats its own bound for the same reason.
      */
     private long rowGroupBlockAddr(int rowGroup) {
         // A real check rather than an assert: with assertions off the entry
@@ -1182,6 +1415,24 @@ public class IndexMetaFileReader implements QuietCloseable {
     private long rowGroupBlockOffset(int rowGroup) {
         final int stored = Unsafe.getInt(addr + rgBlockOffsetOffset + (long) rowGroup * ROW_GROUP_ENTRY_SIZE);
         return Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
+    }
+
+    /**
+     * Reads one entry of RG_ROW_ID_MIN or RG_ROW_ID_MAX. Both arrays have
+     * exactly {@code INDEX_RG_COUNT} entries - there is no sentinel, unlike
+     * RG_FIRST_KEY - and the bound is a real check rather than an assert
+     * because assertions are off in production and the index reaches an
+     * address computation. The Rust reader's {@code row_id_zone_map} returns an
+     * error for the same index.
+     */
+    private long rowIdZoneMap(long sectionOffset, int i, CharSequence which) {
+        if (i < 0 || i >= indexRowGroupCount) {
+            throw CairoException.critical(0)
+                    .put("_im row id ").put(which)
+                    .put(" index out of range [index=").put(i)
+                    .put(", indexRowGroupCount=").put(indexRowGroupCount).put(']');
+        }
+        return Unsafe.getLong(addr + sectionOffset + (long) i * Long.BYTES);
     }
 
     private CairoException truncated(long indexSectionsOffset, int columnCount, int indexRowGroupCount, int dataRowGroupCount) {
