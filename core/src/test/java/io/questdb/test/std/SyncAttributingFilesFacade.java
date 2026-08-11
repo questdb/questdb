@@ -96,6 +96,16 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public void barrierFsync(long fd) {
+        fdatasync(fd);
+    }
+
+    @Override
+    public void fsyncDurable(long fd) {
+        fsync(fd);
+    }
+
+    @Override
     public void fdatasync(long fd) {
         recordFsync(fd);
         super.fdatasync(fd);

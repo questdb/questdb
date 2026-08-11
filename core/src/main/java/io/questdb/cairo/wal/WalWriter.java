@@ -993,7 +993,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (deferDeviceFlush()) {
                 // Under W>0 sync() is MS_ASYNC. Private event/index/checksum dependencies still have to be
                 // device-durable before any writer can flush the shared sequencer.
-                events.fdatasync();
+                events.barrierFsync();
             }
         }
     }
@@ -1019,7 +1019,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 events.sync(commitMode);
                 if (deferDeviceFlush()) {
                     // sync(ADAPTIVE) is MS_ASYNC when W>0; explicitly finish the private barrier now.
-                    events.fdatasync();
+                    events.barrierFsync();
                 }
             }
             final long seqTxn = getSequencerTxn();
@@ -2369,7 +2369,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // on the STRUCTURAL path, which sequences via events-only barriers and never runs
             // syncIfRequired0's per-column loop, so it must carry its own.
             if (commitMode == CommitMode.ADAPTIVE) {
-                ff.fdatasync(auxMem.getFd());
+                ff.barrierFsync(auxMem.getFd());
             }
         }
     }
@@ -2397,7 +2397,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // on the STRUCTURAL path, which sequences via events-only barriers and never runs
             // syncIfRequired0's per-column loop, so it must carry its own.
             if (commitMode == CommitMode.ADAPTIVE) {
-                ff.fdatasync(dataMem.getFd());
+                ff.barrierFsync(dataMem.getFd());
             }
         }
     }
@@ -2522,7 +2522,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);
                     if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
-                        ff.fdatasync(column.getFd());
+                        // ORDERING only: these must precede the sequencer record on the medium, and the
+                        // commit point's full device flush is what makes them durable. See
+                        // Files.barrierFsync.
+                        ff.barrierFsync(column.getFd());
                     }
                 }
             }
@@ -2530,7 +2533,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 events.sync(commitMode);
             }
             if (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush) {
-                events.fdatasync();
+                events.barrierFsync();
             }
         }
     }

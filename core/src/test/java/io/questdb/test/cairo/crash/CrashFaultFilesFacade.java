@@ -383,6 +383,23 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public void barrierFsync(long fd) {
+        // Model it as fdatasync. Exact off Darwin, where barrierFsync IS fdatasync. On Darwin
+        // (F_BARRIERFSYNC) the real primitive only ORDERS -- the data may still be in the drive cache --
+        // so this model is OPTIMISTIC there and would not catch a loss that real macOS hardware allows.
+        // Acceptable because the power-loss harness (dm-flakey) is Linux-only anyway; noted so nobody reads
+        // a green macOS run as proof of the barrier's safety.
+        fdatasync(fd);
+    }
+
+    @Override
+    public void fsyncDurable(long fd) {
+        // Off Darwin this IS fsync; on Darwin F_FULLFSYNC is strictly stronger, so modelling it as fsync
+        // never under-reports durability.
+        fsync(fd);
+    }
+
+    @Override
     public void fdatasync(long fd) {
         assertNotForceClosed(fd, "fdatasync");
         super.fdatasync(fd);

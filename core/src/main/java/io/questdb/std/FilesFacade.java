@@ -71,6 +71,15 @@ public interface FilesFacade {
 
     void fdatasync(long fd);
 
+    /**
+     * ORDERING barrier only — see {@link Files#barrierFsync(long)}. Never acknowledge a commit as durable
+     * on the strength of this alone; pair it with {@link #fdatasync(long)} at the commit point. Defaults to
+     * {@link #fdatasync(long)} so existing implementations keep their (stronger) behaviour.
+     */
+    default void barrierFsync(long fd) {
+        fdatasync(fd);
+    }
+
     void fsync(long fd);
 
     /**

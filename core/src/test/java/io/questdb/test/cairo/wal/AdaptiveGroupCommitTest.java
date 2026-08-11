@@ -1033,6 +1033,23 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         private final List<String> fdatasyncPaths = new ArrayList<>();
         private final Map<Long, String> fdToPath = new HashMap<>();
 
+        /**
+         * The writer-private WAL barriers issue barrierFsync, not fdatasync, since ordering ahead of the
+         * sequencer is all they require. These tests count those barriers, so fold the two together rather
+         * than let the counters silently read zero. Off Darwin barrierFsync IS fdatasync and would reach the
+         * override below anyway; delegating here keeps the count identical on Darwin, where it would
+         * otherwise bypass this facade entirely.
+         */
+        @Override
+        public void barrierFsync(long fd) {
+            fdatasync(fd);
+        }
+
+        @Override
+        public void fsyncDurable(long fd) {
+            fsync(fd);
+        }
+
         public int eventFdatasyncs() {
             int c = 0;
             for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {

@@ -275,21 +275,20 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return fsync((int) fd);
 }
 
-/* The device-durability barrier: once this returns 0 the file's data has reached STABLE storage and
- * survives a power cut. Every caller asks for exactly that, so the platform primitive here must be the one
- * that actually flushes the drive, not merely the page cache.
+/* DARWIN ONLY. Everything below this comment that mentions F_FULLFSYNC / F_BARRIERFSYNC is compiled only
+ * on Apple platforms; every other platform keeps the exact primitive it always used.
  *
- * On Darwin that distinction is the whole point. fsync(2) pushes dirty pages to the drive but explicitly
- * does NOT flush the drive's own write cache -- Apple's man page directs you to F_FULLFSYNC when you need
- * the data physically written. Using fsync here left every adaptive durability claim (the WAL commit ack,
- * the durable epoch, the QWP local-tier durable ack) holding only against process death, never against the
- * power loss the mode is sold on.
+ * Why Darwin needs anything special: fsync(2) there pushes dirty pages to the drive but explicitly does NOT
+ * flush the drive's own write cache -- Apple's man page directs you to F_FULLFSYNC when the data must be
+ * physically written. macOS also has no fdatasync at all, so the previous fallback to fsync left every
+ * adaptive durability claim (the WAL commit ack, the durable epoch, the QWP local-tier durable ack) holding
+ * against process death only, never against the power loss the mode is sold on.
  *
  * F_FULLFSYNC is unsupported on some filesystems (network mounts, some FUSE), which report ENOTSUP/EINVAL;
  * there fsync IS the strongest barrier the filesystem offers, so fall back rather than fail the commit.
  * Any other errno is a real I/O failure and propagates to the caller's poison/distress handling. */
-static jint durable_fsync_fd(int fd) {
 #if defined(__APPLE__)
+static jint darwin_full_fsync(int fd) {
     if (fcntl(fd, F_FULLFSYNC) == 0) {
         return 0;
     }
@@ -297,16 +296,54 @@ static jint durable_fsync_fd(int fd) {
         return fsync(fd);
     }
     return -1;
+}
+#endif
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+#if defined(__APPLE__)
+    /* No fdatasync on macOS. F_FULLFSYNC is the only real barrier available, so it is STRONGER than this
+     * function's contract rather than weaker. */
+    return darwin_full_fsync((int) fd);
 #elif defined(__linux__) || defined(__FreeBSD__)
-    /* fdatasync already issues the device cache flush; it only skips non-essential metadata updates. */
-    return fdatasync(fd);
+    return fdatasync((int) fd);
 #else
-    return fsync(fd);
+    return fsync((int) fd);
 #endif
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
-    return durable_fsync_fd((int) fd);
+/* ORDERING barrier, not a durability barrier: writes issued before this reach the medium before writes
+ * issued after it, but this call may return with the data still in the drive's volatile cache.
+ *
+ * This is what the intra-commit WAL barriers actually need. The commit path writes column data, then
+ * _event, then the sequencer record, and the invariant it must hold is that a sequencer record is never on
+ * media ahead of the data it references -- an ORDERING property. Durability is established afterwards, by
+ * the F_FULLFSYNC at the commit point (the sequencer flush that advances localDurableSeqTxn), and because
+ * F_FULLFSYNC flushes the DEVICE cache rather than one file, everything ordered before it lands with it.
+ * So the acked prefix is power-loss durable while the per-file barriers cost a fraction of a full flush.
+ *
+ * NOTE the ordering guarantee is per DEVICE. It composes only because the WAL segments, _event and the
+ * sequencer all live under the same dbRoot filesystem; a deployment splitting them across volumes would
+ * need the commit point to full-flush each.
+ *
+ * Darwin: F_BARRIERFSYNC. Elsewhere there is no cheaper-than-durable barrier primitive, so this maps to
+ * the durable one and the split simply has no effect. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_barrierFsync0(JNIEnv *e, jclass cl, jint fd) {
+#if defined(__APPLE__)
+    if (fcntl(fd, F_BARRIERFSYNC) == 0) {
+        return 0;
+    }
+    if (errno == ENOTSUP || errno == EINVAL || errno == ENOTTY) {
+        return fsync((int) fd);
+    }
+    return -1;
+#elif defined(__linux__) || defined(__FreeBSD__)
+    /* No cheaper-than-durable barrier exists here, and none is needed: fdatasync already orders AND
+     * persists. Identical to what these call sites issued before the split, so non-Darwin behaviour is
+     * unchanged. */
+    return fdatasync((int) fd);
+#else
+    return fsync((int) fd);
+#endif
 }
 
 /* fsync's contract -- data AND all metadata -- with the device cache actually flushed.
@@ -317,8 +354,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
  * where F_FULLFSYNC is a superset of fsync and so preserves the contract. */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsyncDurable0(JNIEnv *e, jclass cl, jint fd) {
 #if defined(__APPLE__)
-    return durable_fsync_fd((int) fd);
+    return darwin_full_fsync((int) fd);
 #else
+    /* fsync already flushes the device cache here, so this IS fsync -- byte-identical to the plain fsync
+     * these call sites used before. */
     return fsync((int) fd);
 #endif
 }
@@ -363,11 +402,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, j
      * cache flush. One call replaces N per-file fdatasync device flushes for the batched SYNC commit. */
     return syncfs((int) fd);
 #else
-    /* Non-Linux: no whole-filesystem sync primitive bound to an fd. Fall back to the single-file DURABLE
-     * barrier so the caller still gets at least that file onto stable storage -- fsync would not, on Darwin
-     * (see durable_fsync_fd). The batched path is Linux-only anyway; callers detect this via
-     * isSyncfsFileSystemWide() and flush the write set per file instead. */
-    return durable_fsync_fd((int) fd);
+    /* Non-Linux: no whole-filesystem sync primitive bound to an fd. Fall back to a single-file flush; the
+     * batched path is Linux-only anyway (callers detect it via isSyncfsFileSystemWide() and flush the write
+     * set per file instead). Darwin needs F_FULLFSYNC for that to mean anything; every other platform keeps
+     * the original fsync. */
+#if defined(__APPLE__)
+    return darwin_full_fsync((int) fd);
+#else
+    return fsync((int) fd);
+#endif
 #endif
 }
 

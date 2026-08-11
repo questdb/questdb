@@ -218,7 +218,32 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void barrierFsync(long fd) {
+        if (!Os.isOSX()) {
+            // Off Darwin this IS fdatasync (see Files.barrierFsync), so route through the OVERRIDABLE
+            // method rather than the static. Fault-injecting facades -- CrashFaultFilesFacade above all,
+            // which models device-cache and journal state per syscall -- override fdatasync; calling the
+            // static directly would silently remove every WAL commit barrier from the crash harness's view
+            // on exactly the platform CI runs on, and the crash tests would pass vacuously.
+            fdatasync(fd);
+            return;
+        }
+        int res = Files.barrierFsync(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "barrierFsync").put("could not barrierFsync [fd=").put(fd).put(']');
+    }
+
+    @Override
     public void fsyncDurable(long fd) {
+        if (!Os.isOSX()) {
+            // Off Darwin this IS fsync; delegate to the overridable method for the same reason as
+            // barrierFsync above.
+            fsync(fd);
+            return;
+        }
         int res = Files.fsyncDurable(fd);
         if (res == 0) {
             return;

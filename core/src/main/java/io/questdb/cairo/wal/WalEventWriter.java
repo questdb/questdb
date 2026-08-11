@@ -559,29 +559,36 @@ class WalEventWriter implements Closeable {
             eventMem.sync(async);
             eventChecksumMem.sync(async);
             eventIndexMem.sync(async);
-            // ADAPTIVE: make the events file durable. msync flushes data to the page cache;
-            // fdatasync ensures both the data and the inode size reach the device before the
-            // sequencer record is written. Events must be durable before the sequencer pointer
-            // is committed (events before seq, matching data→events→seq order).
+            // ADAPTIVE: order the events file ahead of the sequencer. msync flushes data to the page cache;
+            // the barrier ensures both the data and the inode size reach the medium before the sequencer
+            // record does (events before seq, matching data→events→seq order). Ordering, not durability, is
+            // the requirement here -- the sequencer flush at the commit point is the full device flush, and
+            // it lands everything ordered before it.
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
-                fdatasync();
+                barrierFsync();
             }
         }
     }
 
     /**
-     * Device-flush the WAL-e event, checksum, and index files. For adaptive W>0, WalWriter calls this
-     * before sequencing, after private column data, preserving data→events→seq ordering.
+     * ORDERING barrier over the WAL-e event, checksum and index files. For adaptive W&gt;0, WalWriter calls
+     * this before sequencing, after private column data, preserving data→events→seq ordering.
+     * <p>
+     * Ordering is all this site needs, and it is deliberately NOT a durability barrier: what must hold is
+     * that a sequencer record never reaches the medium ahead of the _event entry it names. Durability
+     * arrives with the commit point — the sequencer flush that advances localDurableSeqTxn — which is a
+     * full device-cache flush and therefore lands everything ordered before it. See
+     * {@link io.questdb.std.Files#barrierFsync(long)}.
      */
-    void fdatasync() {
+    void barrierFsync() {
         if (eventMem.isOpen()) {
-            ff.fdatasync(eventMem.getFd());
+            ff.barrierFsync(eventMem.getFd());
         }
         if (eventChecksumMem.isOpen()) {
-            ff.fdatasync(eventChecksumMem.getFd());
+            ff.barrierFsync(eventChecksumMem.getFd());
         }
         if (eventIndexMem.isOpen()) {
-            ff.fdatasync(eventIndexMem.getFd());
+            ff.barrierFsync(eventIndexMem.getFd());
         }
     }
 

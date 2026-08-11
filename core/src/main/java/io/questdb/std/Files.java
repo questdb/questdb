@@ -207,6 +207,23 @@ public final class Files {
      * when fsync semantics are required AND the data must survive power loss; on macOS plain
      * {@code fsync(2)} does not flush the drive's write cache, which is the gap this closes.
      */
+    /**
+     * ORDERING barrier, not a durability barrier. Writes issued before this reach the medium before writes
+     * issued after it, but the data may still sit in the drive's volatile cache when this returns — so a
+     * commit must NEVER be acknowledged as durable on the strength of this call alone.
+     * <p>
+     * Use it for the intra-commit barriers whose requirement is ordering (WAL column data and {@code _event}
+     * before the sequencer record), and establish durability afterwards with {@link #fdatasync(long)} at the
+     * commit point. Because that flushes the DEVICE cache rather than a single file, everything ordered
+     * before it becomes durable with it.
+     * <p>
+     * {@code F_BARRIERFSYNC} on macOS. On Linux/FreeBSD/Windows there is no cheaper-than-durable barrier, so
+     * this maps to the durable primitive and the split costs nothing.
+     */
+    public static int barrierFsync(long fd) {
+        return barrierFsync0(toOsFd(fd));
+    }
+
     public static int fsyncDurable(long fd) {
         return fsyncDurable0(toOsFd(fd));
     }
@@ -704,6 +721,8 @@ public final class Files {
     private static native int fdatasync0(int fd);
 
     private static native int fsyncDurable0(int fd);
+
+    private static native int barrierFsync0(int fd);
 
     private static native int fsync(int fd);
 

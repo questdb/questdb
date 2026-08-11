@@ -370,6 +370,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return -1;
 }
 
+/* Windows has no ordering-only barrier; FlushFileBuffers is the durable one, so the split is a no-op. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_barrierFsync0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
 /* FlushFileBuffers already flushes the device write cache, so fsync's contract is met as-is here. */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsyncDurable0(JNIEnv *e, jclass cl, jint fd) {
     if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
