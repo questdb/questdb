@@ -107,6 +107,7 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -3614,6 +3615,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
+                // Both dirty sets now describe a table state this writer has just discarded, so they can no
+                // longer be trusted to bound the next epoch: fall back to the full walk once.
+                epochWriteSetIncomplete = true;
                 closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
@@ -15802,6 +15806,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         tracker.setLastEpochTs(nowMs);
         // Restart the backlog count now the epoch is published (success path only).
         tracker.resetRowsSinceEpoch();
+        // Same success-path-only rule for the epoch write set: everything it named is now durable, so the
+        // next epoch owes only what is written from here on. Clearing earlier would drop partitions a FAILED
+        // epoch never flushed, and nothing would revisit them. Clearing the incomplete flag here is what
+        // narrows every subsequent epoch of this writer's life to the write set.
+        txWriter.clearDirtyPartitions();
+        columnVersionWriter.clearDirtyPartitions();
+        epochWriteSetIncomplete = false;
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();
@@ -15913,6 +15924,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishPendingPostingSealPurges(txWriter.getTxn());
     }
 
+    /**
+     * True while this writer cannot vouch for the completeness of the epoch write set (see
+     * {@link #fsyncAttachedPartitionFiles()}). Starts true for every writer life so the first epoch after
+     * open covers partitions a previous writer instance left un-epoched, and is re-armed whenever this
+     * writer's view is REBUILT from disk rather than mutated, because the dirty sets then describe a table
+     * state this writer no longer holds.
+     */
+    private boolean epochWriteSetIncomplete = true;
+
     private void handleBestEffortDurableEpochFailure(Throwable failure, CharSequence operation) {
         if (CairoException.isDataSyncFailure(failure)) {
             distressed = true;
@@ -15938,7 +15958,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Flush the partitions this writer has written since the last durable epoch. The Linux path issues one
+     * filesystem-wide {@code syncfs} instead; this is the macOS/Windows fallback, where {@code syncfs(fd)} is
+     * a single-file flush.
+     * <p>
+     * Scope is the WRITE SET, not the table. An epoch must make durable what its {@code _txn}/{@code _cv}
+     * reference that is not durable already — and everything older than the previous epoch was made durable
+     * BY that epoch. Walking every attached partition instead made the per-epoch cost O(files × partitions),
+     * i.e. proportional to table history, at a 60s default cadence: a table with a long history paid to
+     * re-fsync clean partitions forever. The write set comes from {@link TxWriter#getDirtyPartitions()}
+     * (row counts, partition versions, format/flag flips) unioned with
+     * {@link ColumnVersionWriter#getDirtyPartitions()} (column files rewritten in place, e.g. by UPDATE),
+     * which between them are marked by every mutator that can change a partition's bytes.
+     * <p>
+     * {@code epochWriteSetIncomplete} is the fail-safe: it starts true for each writer life, so the FIRST
+     * epoch after open still walks everything and covers partitions written by a previous writer instance
+     * that no epoch has flushed yet. It is re-armed wherever this writer's view of the table is rebuilt
+     * rather than mutated (rollback / {@code _txn} reload), because the sets are then not attributable.
+     */
     private void fsyncAttachedPartitionFiles() {
+        final LongHashSet txnDirty = txWriter.getDirtyPartitions();
+        final LongHashSet cvDirty = columnVersionWriter.getDirtyPartitions();
+        final boolean scanAll = epochWriteSetIncomplete;
         for (int partitionIndex = 0, partitionCount = txWriter.getPartitionCount(); partitionIndex < partitionCount; partitionIndex++) {
             // A read-only partition is a soft link to storage this writer never writes (ATTACH PARTITION of a
             // symlinked dir; see the "soft links are read-only, no copy involved" note in attachPartition).
@@ -15949,6 +15991,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // purge floor at 0 and grow the WAL without bound while this scan is retried every batch.
             if (txWriter.isPartitionReadOnly(partitionIndex)) {
                 continue;
+            }
+            if (!scanAll) {
+                final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                if (txnDirty.excludes(ts) && cvDirty.excludes(ts)) {
+                    continue;
+                }
             }
             final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
             final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);

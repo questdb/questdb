@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -35,6 +36,13 @@ import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
+    // Partitions whose COLUMN FILES changed without necessarily touching the attached-partition table --
+    // an UPDATE rewriting a column under a new column name txn is the motivating case. The adaptive durable
+    // epoch unions this with TxWriter's set to flush only what changed (see
+    // TableWriter.fsyncAttachedPartitionFiles). May contain the COL_TOP_DEFAULT_PARTITION /
+    // SYMBOL_TABLE_VERSION_PARTITION sentinels; the consumer intersects with the real partition table, so
+    // they are inert.
+    private final LongHashSet dirtyPartitions = new LongHashSet();
     private final MemoryCMARW mem;
     private final boolean partitioned;
     private boolean hasChanges;
@@ -276,6 +284,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * @param columnTop   column top
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
+        dirtyPartitions.add(timestamp);
         final int sz = cachedColumnVersionList.size();
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         boolean insert = true;
@@ -317,9 +326,24 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         hasChanges = true;
     }
 
+    /**
+     * Partitions whose column files changed since {@link #clearDirtyPartitions()}.
+     */
+    public LongHashSet getDirtyPartitions() {
+        return dirtyPartitions;
+    }
+
+    /**
+     * Drop the accumulated write set. Called by the adaptive epoch ONLY after its flush succeeded.
+     */
+    public void clearDirtyPartitions() {
+        dirtyPartitions.clear();
+    }
+
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
+            dirtyPartitions.add(partitionTimestamp);
             cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);
             hasChanges = true;
         } else {

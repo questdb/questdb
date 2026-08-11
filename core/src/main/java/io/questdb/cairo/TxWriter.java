@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -42,6 +43,18 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final CairoConfiguration configuration;
+    // Partition timestamps whose on-disk representation this writer has changed since the set was last
+    // drained. The adaptive durable epoch drains it to flush ONLY what changed, instead of walking every
+    // attached partition (see TableWriter.fsyncAttachedPartitionFiles) -- the epoch's cost must scale with
+    // the un-epoched write set, not with the table's history.
+    //
+    // COMPLETENESS is the whole contract: a partition whose bytes changed but which is missing here would
+    // be left non-durable behind an epoch that references its rows -> silent row loss on power cut. Every
+    // mutator of the attached-partition table therefore marks, including the ones that change only a flag
+    // or the name txn (a new partition VERSION is a new directory, whose files are new bytes). Column-file
+    // changes that leave this table untouched -- an UPDATE rewriting a column under a new column name txn
+    // -- are caught by the sibling set in ColumnVersionWriter, which TableWriter unions with this one.
+    private final LongHashSet dirtyPartitions = new LongHashSet();
     private long baseVersion;
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
@@ -470,6 +483,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Partition timestamps mutated since {@link #clearDirtyPartitions()}. See the {@code dirtyPartitions}
+     * field for the completeness contract this set carries.
+     */
+    public LongHashSet getDirtyPartitions() {
+        return dirtyPartitions;
+    }
+
+    /**
+     * Drop the accumulated write set. Called by the adaptive epoch ONLY after the flush it drove has
+     * succeeded, so a failed epoch retries against the same set rather than losing it.
+     */
+    public void clearDirtyPartitions() {
+        dirtyPartitions.clear();
+    }
+
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
         this.extensionListener = extensionListener;
     }
@@ -684,6 +713,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
+        markPartitionDirtyByRawIndex(index);
         updatePartitionSizeByRawIndex(index, partitionSize);
         // New partition version is written, reset the squash counter.
         setPartitionSquashCounterByRawIndex(index, (short) 0);
@@ -840,6 +870,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
+        dirtyPartitions.add(partitionTimestamp);
         initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
     }
 
@@ -887,6 +918,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private void setPartitionFormat(long timestamp, boolean isParquetFormat, long version) {
         int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -905,6 +937,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        markPartitionDirtyByRawIndex(partitionRawIndex);
         int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
         long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
         // Clear the existing squash counter bits
@@ -941,7 +974,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
+    // Record a partition whose on-disk bytes this writer has changed. Marks unconditionally rather than
+    // only when a value actually differs: an over-broad set costs one extra fsync, an under-broad one
+    // leaves data non-durable behind an epoch that references it.
+    private void markPartitionDirtyByRawIndex(int indexRaw) {
+        if (indexRaw > -1) {
+            dirtyPartitions.add(attachedPartitions.getQuick(indexRaw + PARTITION_TS_OFFSET));
+        }
+    }
+
     private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
+        markPartitionDirtyByRawIndex(index);
         int offset = index + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {

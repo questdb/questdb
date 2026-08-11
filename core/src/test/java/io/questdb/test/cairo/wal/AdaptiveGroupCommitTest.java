@@ -366,6 +366,82 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
      * PUBLISHED epoch, rather than merely "it did not throw", is what separates the fix from the swallow
      * that hid the failure.
      */
+    /**
+     * The epoch's non-wide-syncfs flush must scale with the UN-EPOCHED WRITE SET, not with table history.
+     * Everything older than the previous epoch was made durable by that epoch, so re-walking it buys nothing
+     * and costs three syscalls per file per partition, forever, at the epoch cadence.
+     * <p>
+     * Pins both halves: the first epoch of a writer's life still walks everything (it must cover partitions a
+     * previous writer instance left un-epoched), and a second epoch that follows a write to ONE partition
+     * opens files under that partition only.
+     */
+    @Test
+    public void testEpochFlushesOnlyTheWriteSetOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final EpochOpenTrackingFacade ff = new EpochOpenTrackingFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+
+            // Three days of history.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                commitRow(walWriter, Micros.DAY_MICROS, 2L);
+                commitRow(walWriter, 2 * Micros.DAY_MICROS, 3L);
+            }
+            drainWalQueue();
+
+            try (TableWriter tableWriter = getWriter(tt)) {
+                Assert.assertEquals(3, tableWriter.getTxWriter().getPartitionCount());
+
+                // First epoch of this writer's life: the write set cannot be vouched for, so everything is
+                // walked. This is the fail-safe that covers a previous writer instance's un-epoched work.
+                ff.reset();
+                tableWriter.advanceDurableEpoch(1L);
+                Assert.assertTrue(
+                        "the first epoch after open must walk every partition, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-01")
+                                && ff.openedPartitionDirs().contains("1970-01-02")
+                                && ff.openedPartitionDirs().contains("1970-01-03")
+                );
+
+                // Second epoch, with nothing written since the first: no partition owes a flush.
+                ff.reset();
+                tableWriter.advanceDurableEpoch(2L);
+                Assert.assertTrue(
+                        "an epoch with an empty write set must open no partition file, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().isEmpty()
+                );
+            }
+
+            // Write to the LAST partition only, then epoch again: history must not be re-walked.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 2 * Micros.DAY_MICROS + 1, 4L);
+            }
+            drainWalQueue();
+
+            try (TableWriter tableWriter = getWriter(tt)) {
+                ff.reset();
+                tableWriter.advanceDurableEpoch(3L);
+                Assert.assertTrue(
+                        "the epoch must touch the written partition, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-03")
+                );
+                Assert.assertFalse(
+                        "the epoch must NOT re-walk untouched history, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-01")
+                );
+                Assert.assertFalse(
+                        "the epoch must NOT re-walk untouched history, saw: " + ff.openedPartitionDirs(),
+                        ff.openedPartitionDirs().contains("1970-01-02")
+                );
+            }
+        });
+    }
+
     @Test
     public void testEpochSkipsReadOnlyPartitionsOnNonWideSyncfsPlatform() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -886,6 +962,38 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         @Override
         public boolean isSyncfsFileSystemWide() {
             return false;
+        }
+    }
+
+
+    /**
+     * Non-wide syncfs plus a record of which partition directories the epoch opened files under.
+     */
+    static class EpochOpenTrackingFacade extends WalFdatasyncFacade {
+        private final java.util.Set<String> openedPartitionDirs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            for (int day = 1; day <= 3; day++) {
+                final String dir = "1970-01-0" + day;
+                if (Utf8s.containsAscii(name, dir)) {
+                    openedPartitionDirs.add(dir);
+                }
+            }
+            return super.openRW(name, opts);
+        }
+
+        public java.util.Set<String> openedPartitionDirs() {
+            return openedPartitionDirs;
+        }
+
+        public void reset() {
+            openedPartitionDirs.clear();
         }
     }
 
