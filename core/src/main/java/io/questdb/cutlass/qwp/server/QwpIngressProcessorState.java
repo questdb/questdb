@@ -1375,6 +1375,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         if (e.isSchemaMismatch()) {
             return Status.SCHEMA_MISMATCH;
         }
+        if (e.isMalformedUtf8()) {
+            return Status.PARSE_ERROR;
+        }
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 

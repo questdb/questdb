@@ -2404,6 +2404,46 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateAndTimestampConversionsMatchNativePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table x (
+                        id int,
+                        ts_value varchar,
+                        date_value varchar,
+                        pg_date_value varchar,
+                        ts timestamp
+                    ) timestamp(ts) partition by hour
+                    """);
+            execute("""
+                    insert into x values
+                        (1, '2026-07-22 13:17:26.136', '2026-07-22', '2026-07-22', '2026-07-22T12:20:00Z'),
+                        (2, 'é', 'é', 'é', '2026-07-22T12:21:00Z'),
+                        (3, '2026-07-22 13:17:26.136', '2026-07-22', '2026-07-22', '2026-07-22T13:20:00Z')
+                    """);
+            execute("alter table x convert partition to parquet where ts = '2026-07-22T12'");
+
+            assertQuery("""
+                    select
+                        id,
+                        to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') parsed_ts,
+                        to_timestamp_ns(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') parsed_ts_ns,
+                        to_date(date_value, 'yyyy-MM-dd') parsed_date,
+                        to_pg_date(pg_date_value) parsed_pg_date
+                    from x
+                    where id in (1, 3)
+                    order by id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tparsed_ts\tparsed_ts_ns\tparsed_date\tparsed_pg_date
+                            1\t2026-07-22T13:17:26.136000Z\t2026-07-22T13:17:26.136000000Z\t2026-07-22T00:00:00.000Z\t2026-07-22T00:00:00.000Z
+                            3\t2026-07-22T13:17:26.136000Z\t2026-07-22T13:17:26.136000000Z\t2026-07-22T00:00:00.000Z\t2026-07-22T00:00:00.000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMixedPartitionsNativeLast() throws Exception {
         assertMemoryLeak(() -> {
             execute(
