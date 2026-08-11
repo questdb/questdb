@@ -78,6 +78,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -112,6 +113,7 @@ import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastTimestampToStrFunctionFactory;
@@ -322,6 +324,7 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -334,6 +337,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
@@ -375,6 +379,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
@@ -407,6 +412,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
+    // Upper bound on WhereClauseParser instances kept cached between top-level compilations. A deeply
+    // nested scalar-subquery query grows the pool to its recursion depth on demand; without a cap one
+    // such query would pin O(maxDepth) parsers (and their grown scratch pools) for the compiler
+    // lifetime and pay that cost on every subsequent clear(). Typical query nesting is one or two
+    // levels, so retaining a small head covers realistic reuse while releasing pathological depth.
+    private static final int MAX_RETAINED_WHERE_CLAUSE_PARSERS = 8;
     private static final ModelOperator RESTORE_WHERE_CLAUSE = IQueryModel::restoreWhereClause;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -523,7 +534,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-    private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    // Each recursively active generate() invocation owns separate parser scratch state.
+    private final ObjList<WhereClauseParser> whereClauseParsers = new ObjList<>();
     private final WindowJoinAggColumnVectorizedCheck windowJoinAggColumnVectorizedCheck = new WindowJoinAggColumnVectorizedCheck();
     private final WindowJoinColCheckVisitor windowJoinColCheckVisitor = new WindowJoinColCheckVisitor();
     // a bitset of string/symbol columns forced to be serialised as varchar
@@ -538,6 +550,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
+    private int whereClauseParserDepth;
+    @Nullable
+    private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -585,6 +600,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return expected;
+    }
+
+    @TestOnly
+    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+        freeTableNameFunctions(queryModel, failure);
     }
 
     public static int getUnionCastType(int typeA, int typeB) throws SqlException {
@@ -685,7 +705,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void clear() {
-        whereClauseParser.clear();
+        for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
+            whereClauseParsers.getQuick(i).clear();
+        }
+        // clear() runs only at a top-level compilation boundary (it resets the depth to 0), never
+        // mid-compile, so releasing the deep parsers an earlier deeply-nested compile grew on demand
+        // is safe. Each has already had its borrowed models freed by clear() above; dropping the
+        // surplus references lets them be collected instead of pinning O(maxDepth) parser scratch
+        // state for the compiler lifetime. The shallow head stays cached for zero-GC reuse.
+        if (whereClauseParsers.size() > MAX_RETAINED_WHERE_CLAUSE_PARSERS) {
+            whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
+        }
+        whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
         pushdownFilterExtractor.clear();
@@ -695,7 +726,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
+        Throwable failure = null;
+        for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
+            try {
+                whereClauseParsers.getQuick(i).clear();
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else {
+                    failure.addSuppressed(th);
+                }
+            }
+        }
+        // Bound the test hook by this generator's lifetime: clear() runs on every compile, so it
+        // cannot own the reset, but a hook must never outlive the compiler that installed it.
+        unionSymbolProjectionTestHook = null;
         Misc.free(jitIRMem);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @NotNull
@@ -707,6 +754,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function filter = functionParser.parseFunction(expr, metadata, executionContext);
         if (isBoolean(filter.getType())) {
             return filter;
+        }
+        // a scalar boolean sub-query used directly as a predicate evaluates once per execution
+        final Function coerced = BooleanSubQueryFunction.maybeWrap(filter, expr.position);
+        if (coerced != null) {
+            return coerced;
         }
         Misc.free(filter);
         throw SqlException.$(expr.position, "boolean expression expected");
@@ -772,8 +824,111 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    /**
+     * Closes table-function factories that the optimizer attached to a query graph but generation
+     * did not transfer. Transfer sites null the model field, so detaching each remaining field
+     * before close prevents duplicate ownership across shared model references.
+     */
+    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+        if (queryModel == null) {
+            return;
+        }
+
+        final ObjList<IQueryModel> pending = new ObjList<>();
+        final ObjHashSet<IQueryModel> visited = new ObjHashSet<>();
+        pending.add(queryModel);
+        while (pending.size() > 0) {
+            IQueryModel current = pending.popLast();
+            if (current instanceof QueryModelWrapper wrapper) {
+                current = wrapper.getDelegate();
+            }
+            if (current == null || !visited.add(current)) {
+                continue;
+            }
+
+            final RecordCursorFactory tableNameFunction = current.getTableNameFunction();
+            current.setTableNameFunction(null);
+            Misc.free(tableNameFunction, failure);
+
+            final ObjList<ExpressionNode> expressionModels = current.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    pending.add(expressionModel);
+                }
+            }
+
+            final IQueryModel nestedModel = current.getNestedModel();
+            if (nestedModel != null) {
+                pending.add(nestedModel);
+            }
+
+            final ObjList<IQueryModel> joinModels = current.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                pending.add(joinModels.getQuick(i));
+            }
+
+            final IQueryModel unionModel = current.getUnionModel();
+            if (unionModel != null) {
+                pending.add(unionModel);
+            }
+        }
+    }
+
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
-        return generateQuery(model, executionContext, true);
+        final int parserIndex = whereClauseParserDepth;
+        while (whereClauseParsers.size() <= parserIndex) {
+            whereClauseParsers.add(new WhereClauseParser());
+        }
+        final WhereClauseParser parser = whereClauseParsers.getQuick(parserIndex);
+        parser.clearTransientState();
+        // Carry the speculative scalar sub-query bound nesting depth down to the nested parser.
+        // Each generation depth uses its own parser instance, so the budget that bounds the
+        // doubling compile in WhereClauseParser only survives if it is seeded from the parent.
+        parser.setScalarBoundDepth(parserIndex == 0 ? 0 : whereClauseParsers.getQuick(parserIndex - 1).childScalarBoundDepth());
+        whereClauseParserDepth++;
+        Throwable failure = null;
+        try {
+            return generateQuery(model, executionContext, true);
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
+        } finally {
+            whereClauseParserDepth--;
+            // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
+            // them downstream; free them here so a throw before that handoff does not leak the
+            // open factory. On the success path ownership was already transferred, so this is a
+            // no-op free. Preserve the in-flight failure by suppressing any cleanup failure onto it.
+            if (failure != null) {
+                try {
+                    freeTableNameFunctions(model, failure);
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != failure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+                try {
+                    parser.freeBorrowedModels();
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != failure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+                try {
+                    parser.freeScalarBoundCompileCaches();
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != failure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+            } else {
+                parser.freeBorrowedModels();
+                // A speculative sub-query compile parked for a declined bound is claimed by the
+                // residual filter, which is generated inside the call above. Anything still parked
+                // here was never claimed, so release it rather than hold an open factory.
+                parser.freeScalarBoundCompileCaches();
+            }
+        }
     }
 
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
@@ -811,6 +966,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
         return recordComparatorCompiler;
+    }
+
+    @TestOnly
+    public int getWhereClauseParserPoolSizeForTesting() {
+        return whereClauseParsers.size();
+    }
+
+    @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
+        unionSymbolProjectionTestHook = hook;
     }
 
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
@@ -1555,7 +1720,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         Function stolenFilter = null;
         ExpressionNode stolenFilterExpr = null;
         IntHashSet stolenFilterUsedColumnIndexes = null;
-        if (filterFactory.supportsFilterStealing()) {
+        // Mirror of the caller's pageFrameLeaf selection: when filterFactory itself provides
+        // page frames (the runtime-const gate), it IS the leaf and its filter must stay put -
+        // stealing here would apply the filter per row on top of the leaf that already gates.
+        if (!filterFactory.supportsPageFrameCursor() && filterFactory.supportsFilterStealing()) {
             stolenCompiledFilter = filterFactory.getCompiledFilter();
             stolenBindVarMemory = filterFactory.getBindVarMemory();
             stolenBindVarFunctions = filterFactory.getBindVarFunctions();
@@ -1727,6 +1895,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    private boolean checkIfSetCastIsRequired(
+            RecordMetadata metadataA,
+            RecordMetadata metadataB,
+            boolean symbolDisallowed,
+            IntList symbolUnionColumns,
+            boolean isSeedRequired
+    ) {
+        int columnCount = metadataA.getColumnCount();
+        assert columnCount == metadataB.getColumnCount();
+        assert !isSeedRequired || symbolUnionColumns.size() == 0;
+
+        boolean castIsRequired = false;
+        int candidateIndex = 0;
+        final int candidateCount = symbolUnionColumns.size();
+        int nextCandidate = !isSeedRequired && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
+        int retainedCandidateCount = 0;
+        // This compatibility pass already has to read every column in a UNION segment. Seed the
+        // sorted SYMBOL candidate list here, then compact it in place on later legs so tracking
+        // adds no second metadata traversal and no work proportional to eliminated candidates.
+        for (int i = 0; i < columnCount; i++) {
+            int typeA = metadataA.getColumnType(i);
+            int typeB = metadataB.getColumnType(i);
+            if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
+                castIsRequired = true;
+            }
+            if (isSeedRequired) {
+                if (isSymbol(typeA) && isSymbol(typeB)) {
+                    symbolUnionColumns.add(i);
+                }
+            } else if (i == nextCandidate) {
+                if (isSymbol(typeB)) {
+                    symbolUnionColumns.setQuick(retainedCandidateCount++, i);
+                }
+                nextCandidate = ++candidateIndex < candidateCount
+                        ? symbolUnionColumns.getQuick(candidateIndex)
+                        : -1;
+            }
+        }
+        if (!isSeedRequired) {
+            symbolUnionColumns.setPos(retainedCandidateCount);
+        }
+        return castIsRequired;
     }
 
     @Nullable
@@ -4331,6 +4543,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         try {
+            if (filter.isRuntimeConstant()) {
+                // The whole predicate is a runtime constant (e.g. a scalar boolean sub-query used
+                // directly, or its negation). Gate the outer scan behind a single per-execution
+                // evaluation instead of an async/serial per-row filter: false returns an empty
+                // cursor without opening the base, true delegates straight to the base. The
+                // retained expression clone backs the gate's filter-stealing contract, which the
+                // ASOF/LT join fast paths use to unwrap the gate over a time-frame-capable base.
+                return new RuntimeConstGateRecordCursorFactory(factory, filter, deepClone(expressionNodePool, filterExpr));
+            }
+
             // This path applies only to the read_parquet() table function.
             // For native tables, generateTableQuery0() handles pushdown separately.
             if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
@@ -4523,7 +4745,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // after the parallelism check. If parallelism gets downgraded (e.g., due to
             // unsupported group by functions), we leave the filter in the master factory
             // so the non-parallel path applies it correctly.
+            // !supportsPageFrameCursor(): the runtime-const gate supports page frames AND
+            // stealing; riding its frames directly (zero per-row filter cost, empty frames when
+            // false) dominates a stolen per-row filter, so steal only when frames are missing.
             canStealFilter = parallelHorizonJoinEnabled
+                    && !masterFactory.supportsPageFrameCursor()
                     && masterFactory.supportsFilterStealing()
                     && masterFactory.getBaseFactory().supportsPageFrameCursor();
             supportsParallelism |= canStealFilter;
@@ -5059,7 +5285,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext, null);
         }
         return unionAllFactory;
     }
@@ -6031,7 +6257,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     Function masterFilter = null;
                                     ExpressionNode masterFilterExpr = null;
                                     IntHashSet masterFilterUsedColumnIndexes = null;
-                                    if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
+                                    // Steal only when the master cannot provide page frames itself:
+                                    // the runtime-const gate supports both, and its passthrough
+                                    // (zero per-row filter cost, empty frames when false) dominates
+                                    // a stolen per-row filter.
+                                    if (!master.supportsPageFrameCursor() && master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
                                         RecordCursorFactory filterFactory = master;
                                         master = master.getBaseFactory();
                                         compiledFilter = filterFactory.getCompiledFilter();
@@ -6382,41 +6612,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
-                    if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
-                        final Function filter = compileJoinFilter(
-                                filterExpr,
-                                master.getMetadata(),
-                                executionContext
-                        );
-                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
+                    // Compile the post-join filter ONCE, then branch on its runtime-constant-ness.
+                    // From here on `filter` must be freed on every path that does not hand it to a
+                    // retained factory. The enclosing join-loop catch frees `joinFilter`/`master`,
+                    // not this filter, so a throw from any pre-adoption step below (argument
+                    // evaluation or a factory constructor) would otherwise leak it. Adoption is the
+                    // terminal statement of each branch, so on success the catch is never reached
+                    // and cannot double-free an already-owned filter.
+                    final Function filter = compileJoinFilter(filterExpr, master.getMetadata(), executionContext);
+                    try {
+                        if (filter.isRuntimeConstant()) {
+                            // The whole post-join filter is a runtime constant (e.g. a scalar
+                            // boolean sub-query used directly, now(), or a bind variable). Gate the
+                            // join output behind a single per-execution evaluation instead of an
+                            // async/serial per-row filter: false returns an empty cursor without
+                            // scanning the join output, true delegates straight to it with the
+                            // join's page-frame capability preserved. The gate retains `master` as
+                            // its base and frees it once on close, so - unlike the const-false
+                            // branch that builds EmptyTableRecordCursorFactory over the freed
+                            // master's JoinRecordMetadata - no incrementRefCount is needed here.
+                            master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
+                        } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                            collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        filterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, filterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
-                    } else {
-                        master = new FilteredRecordCursorFactory(
-                                master,
-                                compileJoinFilter(filterExpr, master.getMetadata(), executionContext)
-                        );
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    compileWorkerFiltersConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedQueryWorkerCount(),
+                                            filterExpr,
+                                            master.getMetadata()
+                                    ),
+                                    deepClone(expressionNodePool, filterExpr),
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } else {
+                            master = new FilteredRecordCursorFactory(master, filter);
+                        }
+                    } catch (Throwable e) {
+                        Misc.free(filter);
+                        throw e;
                     }
                 }
             }
@@ -6441,56 +6687,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
                 if (!isBoolean(filter.getType())) {
-                    Misc.free(filter);
-                    throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
+                    // a scalar boolean sub-query used directly as a predicate evaluates once per execution
+                    final Function coerced = BooleanSubQueryFunction.maybeWrap(filter, constFilterExpr.position);
+                    if (coerced == null) {
+                        Misc.free(filter);
+                        throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
+                    }
+                    filter = coerced;
                 }
-                filter.init(null, executionContext);
-                if (filter.isConstant()) {
-                    boolean filterValue = filter.getBool(null);
-                    Misc.free(filter);
-                    if (!filterValue) {
-                        // do not copy metadata here
-                        // this would have been JoinRecordMetadata, which is new instance anyway
-                        // we have to make sure that this metadata is safely transitioned
-                        // to empty cursor factory
-                        RecordMetadata metadata = master.getMetadata();
-                        if (metadata instanceof JoinRecordMetadata that) {
-                            that.incrementRefCount();
+                // From here on `filter` must be freed on every path that does not hand it to a
+                // retained/returned factory. The enclosing catch only frees `master`, so a throw
+                // from filter.init() (or any pre-adoption step below) would otherwise leak the
+                // filter. Null out `filter` once it is freed or adopted so this catch never
+                // double-frees an already-freed or now-owned filter.
+                try {
+                    filter.init(null, executionContext);
+                    if (filter.isConstant()) {
+                        boolean filterValue = filter.getBool(null);
+                        filter = Misc.free(filter);
+                        if (!filterValue) {
+                            // do not copy metadata here
+                            // this would have been JoinRecordMetadata, which is new instance anyway
+                            // we have to make sure that this metadata is safely transitioned
+                            // to empty cursor factory
+                            RecordMetadata metadata = master.getMetadata();
+                            if (metadata instanceof JoinRecordMetadata that) {
+                                that.incrementRefCount();
+                            }
+                            RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                            Misc.free(master);
+                            return factory;
                         }
-                        RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
-                        Misc.free(master);
-                        return factory;
-                    }
-                } else {
-                    // make it a post-join filter (same as for post join where clause above)
-                    if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
-                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
-
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        constFilterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, constFilterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
                     } else {
-                        master = new FilteredRecordCursorFactory(master, filter);
+                        // make it a post-join filter (same as for post join where clause above)
+                        if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                            collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
+
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    compileWorkerFiltersConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedQueryWorkerCount(),
+                                            constFilterExpr,
+                                            master.getMetadata()
+                                    ),
+                                    deepClone(expressionNodePool, constFilterExpr),
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } else {
+                            master = new FilteredRecordCursorFactory(master, filter);
+                        }
+                        filter = null;
                     }
+                } catch (Throwable e) {
+                    Misc.free(filter);
+                    throw e;
                 }
             }
             return master;
@@ -6983,7 +7245,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
             if (executionContext.isParallelHorizonJoinEnabled()) {
-                canStealFilter = masterFactory.supportsFilterStealing()
+                // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
+                // passthrough over stealing its filter, same as the single-slave horizon path.
+                canStealFilter = !masterFactory.supportsPageFrameCursor()
+                        && masterFactory.supportsFilterStealing()
                         && masterFactory.getBaseFactory().supportsPageFrameCursor();
                 supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
             }
@@ -7646,7 +7911,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             ? recordCursorFactory : null;
                                     final RecordCursorFactory filterFactory = projectionWrapper != null
                                             ? projectionWrapper.getBaseFactory() : recordCursorFactory;
-                                    final RecordCursorFactory pageFrameLeaf = filterFactory.supportsFilterStealing()
+                                    // A factory may support BOTH page frames and filter stealing
+                                    // (the runtime-const gate). Riding its page frames directly
+                                    // dominates stealing - zero per-row filter cost, zero frames
+                                    // when false - so unwrap only when page frames are missing.
+                                    // Must stay consistent with buildAsyncTopKOverStolenFilter's
+                                    // steal condition.
+                                    final RecordCursorFactory pageFrameLeaf = !filterFactory.supportsPageFrameCursor() && filterFactory.supportsFilterStealing()
                                             ? filterFactory.getBaseFactory() : filterFactory;
 
                                     if (pageFrameLeaf != null && pageFrameLeaf.supportsPageFrameCursor()) {
@@ -7827,7 +8098,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
-            return generateSetFactory(model, factory, executionContext);
+            return generateSetFactory(model, factory, executionContext, null);
         }
         return factory;
     }
@@ -8911,7 +9182,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // the optimization, we must restore the original tree.
                                     ExpressionNode savedWhereClause = ExpressionNode.deepClone(
                                             expressionNodePool, whereClause);
-                                    distinctIntrinsic = whereClauseParser.extract(
+                                    distinctIntrinsic = getWhereClauseParser().extract(
                                             tableModel,
                                             whereClause,
                                             tableMeta,
@@ -10467,16 +10738,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Parent factory will perform one of SET operations on its arguments, such as UNION, UNION ALL,
      * INTERSECT or EXCEPT
      *
-     * @param model            incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
-     * @param factoryA         is compiled first argument
-     * @param executionContext execution context for authorization and parallel execution purposes
+     * @param model              incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
+     * @param factoryA           is compiled first argument
+     * @param executionContext   execution context for authorization and parallel execution purposes
+     * @param symbolUnionColumns tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
+     *                           segment; null at the head of a segment (the compatibility pass seeds it
+     *                           from the first branch). A pending segment is re-symbolised before an EXCEPT /
+     *                           INTERSECT so the next operation observes the same metadata as a parenthesised union.
      * @return factory that performs a SET operation
      * @throws SqlException when query contains syntax errors
      */
     private RecordCursorFactory generateSetFactory(
             IQueryModel model,
             RecordCursorFactory factoryA,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         RecordCursorFactory factoryB = null;
         ObjList<Function> castFunctionsA = null;
@@ -10484,14 +10760,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
 
+            final int setOperationType = model.getSetOperationType();
+            if (symbolUnionColumns != null
+                    && setOperationType != IQueryModel.SET_OPERATION_UNION
+                    && setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
+                // The running UNION is internally STRING-typed. Finalise it before a different set
+                // operation so flat and explicitly parenthesised forms expose identical metadata.
+                final RecordCursorFactory pendingUnionFactory = factoryA;
+                factoryA = null;
+                factoryA = maybeResymboliseUnion(pendingUnionFactory, symbolUnionColumns);
+            }
+
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();
             final int positionB = model.getUnionModel().getModelPosition();
 
-            switch (model.getSetOperationType()) {
+            switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
-                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final boolean isSeedRequired = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = isSeedRequired ? new IntList(0) : symbolUnionColumns;
+                    final boolean castIsRequired = checkIfSetCastIsRequired(
+                            metadataA,
+                            metadataB,
+                            true,
+                            nextSymbolUnionColumns,
+                            isSeedRequired
+                    );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -10506,11 +10801,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_UNION_CONSTRUCTOR
+                            SET_UNION_CONSTRUCTOR,
+                            nextSymbolUnionColumns
                     );
                 }
                 case IQueryModel.SET_OPERATION_UNION_ALL: {
-                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final boolean isSeedRequired = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = isSeedRequired ? new IntList(0) : symbolUnionColumns;
+                    final boolean castIsRequired = checkIfSetCastIsRequired(
+                            metadataA,
+                            metadataB,
+                            true,
+                            nextSymbolUnionColumns,
+                            isSeedRequired
+                    );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -10524,7 +10828,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            unionMetadata
+                            unionMetadata,
+                            nextSymbolUnionColumns
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT: {
@@ -10543,7 +10848,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_EXCEPT_CONSTRUCTOR
+                            SET_EXCEPT_CONSTRUCTOR,
+                            null // EXCEPT keeps side-A symbols as-is; never re-symbolise
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT_ALL: {
@@ -10581,7 +10887,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_INTERSECT_CONSTRUCTOR
+                            SET_INTERSECT_CONSTRUCTOR,
+                            null // INTERSECT keeps side-A symbols as-is; never re-symbolise
                     );
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT_ALL: {
@@ -10719,7 +11026,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode withinExtracted;
 
         if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
-            withinExtracted = whereClauseParser.extractWithin(
+            withinExtracted = getWhereClauseParser().extractWithin(
                     model,
                     model.getWhereClause(),
                     queryMeta,
@@ -10764,7 +11071,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                intrinsicModel = whereClauseParser.extract(
+                intrinsicModel = getWhereClauseParser().extract(
                         model,
                         whereClause,
                         metadata,
@@ -10778,7 +11085,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         SqlHints.hasNoIndexHint(model)
                 );
             } else {
-                intrinsicModel = whereClauseParser.getEmpty(
+                intrinsicModel = getWhereClauseParser().getEmpty(
                         reader.getMetadata().getTimestampType(),
                         reader.getPartitionedBy(),
                         executionContext.getCairoEngine().getConfiguration()
@@ -11439,7 +11746,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
-            RecordMetadata unionMetadata
+            RecordMetadata unionMetadata,
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         final RecordCursorFactory unionFactory = new UnionAllRecordCursorFactory(
                 unionMetadata,
@@ -11450,9 +11758,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
         }
-        return unionFactory;
+        return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
     }
 
     private RecordCursorFactory generateUnionFactory(
@@ -11463,7 +11771,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordMetadata unionMetadata,
-            SetRecordCursorFactoryConstructor constructor
+            SetRecordCursorFactoryConstructor constructor,
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         writeSymbolAsString.clear();
         valueTypes.clear();
@@ -11501,9 +11810,131 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
         }
-        return unionFactory;
+        return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
+    }
+
+    // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
+    // symbolUnionColumns) and that the chain downcast to STRING (see getUnionCastType). The cast
+    // sits outside the union, so it builds one dictionary over the merged stream instead of trying
+    // to reconcile the per-branch dictionaries the wire cannot merge. It reuses only the column
+    // resolution of generateSelectVirtualWithSubQuery - functions resolve references through
+    // priorityMetadata, base column i mapping to i + reservedSlots - and deliberately skips that
+    // method's model-driven work (timestamp propagation, memoization, constant folding, update
+    // typing), because a union result carries no model, no designated timestamp and no update target.
+    // Columns that are not re-symbolised pass through unchanged; maybeResymboliseUnion returns the
+    // union factory as-is when there is nothing to re-symbolise.
+    private RecordCursorFactory maybeResymboliseUnion(
+            RecordCursorFactory unionFactory,
+            @Nullable IntList symbolUnionColumns
+    ) throws SqlException {
+        if (symbolUnionColumns == null || symbolUnionColumns.size() == 0) {
+            return unionFactory;
+        }
+        final RecordMetadata baseMetadata = unionFactory.getMetadata();
+        final int columnCount = baseMetadata.getColumnCount();
+        // Own unionFactory from here on: the guard assert and the metadata/list allocations below can
+        // all throw (an OutOfMemoryError, say), and for a distinct UNION unionFactory already holds a
+        // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
+        ObjList<Function> functions = null;
+        try {
+            if (unionSymbolProjectionTestHook != null) {
+                unionSymbolProjectionTestHook.onProjectionConstruction();
+            }
+            // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
+            // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
+            // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
+            // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
+            // Enforce the invariant unconditionally rather than with an assert: -ea strips asserts in
+            // production, and a future page-frame-capable union must fail loudly here instead of shipping
+            // a stale, empty dictionary snapshot to a worker.
+            if (unionFactory.supportsPageFrameCursor()
+                    || unionFactory.supportsFilterStealing()
+                    || unionFactory.supportsTimeFrameCursor()) {
+                throw CairoException.critical(0).put("union symbol projection requires a serial base cursor");
+            }
+            final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
+            final IntList columnToFunctionIndex = new IntList(columnCount);
+            functions = new ObjList<>();
+            int symbolColumnIndex = 0;
+            int nextSymbolColumn = symbolUnionColumns.getQuick(0);
+            for (int i = 0; i < columnCount; i++) {
+                final String columnName = baseMetadata.getColumnName(i);
+                final boolean isSymbolCastRequired = i == nextSymbolColumn;
+                if (isSymbolCastRequired) {
+                    assert tagOf(baseMetadata.getColumnType(i)) == STRING;
+                    nextSymbolColumn = ++symbolColumnIndex < symbolUnionColumns.size()
+                            ? symbolUnionColumns.getQuick(symbolColumnIndex)
+                            : -1;
+                    // Register baseColumn before wrapping it: the hook and wrapper construction can
+                    // throw, and the catch can only free objects already owned by this list. Once the
+                    // symbol function is built it owns baseColumn, so replace the slot to avoid a
+                    // double close. Only symbol columns enter this list; all other getters delegate
+                    // directly to the union record in UnionSymbolCastRecordCursorFactory.
+                    final int functionIndex = functions.size();
+                    Function baseColumn = new StrColumn(i);
+                    functions.add(baseColumn);
+                    if (unionSymbolProjectionTestHook != null) {
+                        baseColumn = unionSymbolProjectionTestHook.wrapFunction(
+                                baseColumn,
+                                UnionSymbolProjectionTestHook.BASE_COLUMN
+                        );
+                        functions.setQuick(functionIndex, baseColumn);
+                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.BASE_COLUMN);
+                    }
+                    Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    functions.setQuick(functionIndex, function);
+                    if (unionSymbolProjectionTestHook != null) {
+                        function = unionSymbolProjectionTestHook.wrapFunction(
+                                function,
+                                UnionSymbolProjectionTestHook.SYMBOL_FUNCTION
+                        );
+                        functions.setQuick(functionIndex, function);
+                    }
+                    if (unionSymbolProjectionTestHook != null) {
+                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.SYMBOL_FUNCTION);
+                    }
+                    // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
+                    virtualMetadata.add(new TableColumnMetadata(
+                            columnName,
+                            SYMBOL,
+                            IndexType.NONE,
+                            0,
+                            false,
+                            function.getMetadata()
+                    ));
+                    columnToFunctionIndex.add(functionIndex);
+                } else {
+                    virtualMetadata.add(baseMetadata.getColumnMetadata(i));
+                    columnToFunctionIndex.add(-1);
+                }
+            }
+            virtualMetadata.setTimestampIndex(baseMetadata.getTimestampIndex());
+            return new UnionSymbolCastRecordCursorFactory(
+                    virtualMetadata,
+                    unionFactory,
+                    columnToFunctionIndex,
+                    functions
+            );
+        } catch (Throwable e) {
+            Misc.freeObjList(functions);
+            Misc.free(unionFactory);
+            throw e;
+        }
+    }
+
+    @TestOnly
+    public interface UnionSymbolProjectionTestHook {
+        int BASE_COLUMN = 0;
+        int SYMBOL_FUNCTION = 1;
+        int PROJECTION = 2;
+
+        void onFunctionRegistered(int functionKind) throws SqlException;
+
+        void onProjectionConstruction() throws SqlException;
+
+        Function wrapFunction(Function function, int functionKind);
     }
 
     private RecordCursorFactory generateUnnest(
@@ -11770,6 +12201,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
+    }
+
+    private WhereClauseParser getWhereClauseParser() {
+        assert whereClauseParserDepth > 0;
+        return whereClauseParsers.getQuick(whereClauseParserDepth - 1);
     }
 
     private void guardAgainstDotsInOrderByAdvice(IQueryModel model) throws SqlException {
