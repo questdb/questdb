@@ -775,6 +775,358 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLateralAliasCollisionCarrierNotLeakedWhenNotEliminable() throws Exception {
+        // Correlation through an expression (t0.a + 0) cannot be eliminated, so the
+        // hidden __qdb_outer_ref__ carrier column survives in the decorrelated join
+        // model. SELECT * and l1.* must not expose it, and the scalar count must still
+        // coalesce to 0 for non-matching outer rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionCountAliasedAsCorrelationColumn() throws Exception {
+        // The user aliases the scalar count with the correlation column name (x). The
+        // decorrelated sub-query carries its own hidden x-derived key column; neither
+        // wildcard shape may expose it, and the count keeps 0-for-no-match semantics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tx
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionFunctionStealsCorrelationColumn() throws Exception {
+        // Inside the lateral body a function takes the correlation column's name that
+        // GROUP BY also refers to. Grouped (non-scalar) count keeps SQL
+        // NULL semantics for unmatched outer rows - a contrast to the scalar-count
+        // coalesce - and no helper columns may leak into either wildcard.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx\tcnt
+                            1\t1\t1
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tx\tcnt
+                            1\t10\t1\t1
+                            2\t20\tnull\tnull
+                            """);
+        });
+    }
+
+    // A bare (unqualified) reference to the lateral scalar-count column keeps its
+    // coalesce-to-zero compensation even when an outer projection alias steals the
+    // column name: the parser dedupes the bare ref (cnt -> cnt1), and the scalar-count
+    // marking must follow the join column the data comes from, not the same-named
+    // projection alias. See also the qualified-reference twin
+    // (testLateralAliasCollisionScalarCountVsOuterProjection) and the collision-free
+    // baseline (testLateralAliasCollisionScalarCountBareReferenceBaseline).
+    @Test
+    public void testLateralAliasCollisionScalarCountBareRefStolenAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // same shape with a non-eliminable correlation
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // bare reference inside an expression, same stolen alias: the coalesced
+            // count feeds the arithmetic, so the unmatched row yields 0, not NULL
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt + 0 c2
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tc2
+                            10\t1
+                            20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionScalarCountBareReferenceBaseline() throws Exception {
+        // A bare (unqualified) reference to the lateral scalar-count column must carry
+        // the coalesce-to-zero semantics the same way a qualified reference does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT cnt, abs(t0.b) cnt2
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY cnt
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt2
+                            0\t20
+                            1\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionScalarCountVsOuterProjection() throws Exception {
+        // The outer projection declares a function column with the same alias as the
+        // lateral scalar-count column. The count reference is renamed (cnt -> cnt1) to
+        // stay unique, and must keep scalar-count semantics: 0 for a non-matching outer
+        // row, never NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // same collision with a non-eliminable correlation (expression forces the
+            // decorrelated outer-ref carrier to survive into the execution plan)
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionUserColumnOccupiesCarrierName() throws Exception {
+        // The user declares a column whose alias matches the generated correlation
+        // carrier name. The rewriter must keep the two apart: the user column stays
+        // visible under its name, the internal carrier stays hidden, and scalar count
+        // still coalesces to 0. The compensation rebuilds the row the aggregate body
+        // yields for an empty input, so the deterministic sibling constant
+        // materializes alongside the zero count for the unmatched outer row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt, 1 __qdb_outer_ref__0_a FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\t__qdb_outer_ref__0_a
+                            1\t1\t1
+                            2\t0\t1
+                            """);
+        });
+    }
+
+    // A chain LIMIT on a per-side-push-eligible NON-count body must apply per
+    // outer row, not globally over the decorrelated result.
+    @Test
+    public void testLateralChainLimitPerSideShapePerOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t0 (k INT, x INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (1, 11), (1, 12), (2, 20)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            // a global LIMIT 2 would keep two rows TOTAL; per outer row it keeps
+            // two rows for k=1, one for k=2, and LEFT preserves k=3
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t0.x FROM t0 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
+                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t10
+                            1\t11
+                            2\t20
+                            3\tnull
+                            """);
+
+            // INNER lateral: same per-outer-row limiting, no row preservation
+            assertQuery("SELECT t1.k, l.x FROM t1 JOIN LATERAL "
+                    + "(SELECT t0.x FROM t0 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
+                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t10
+                            1\t11
+                            2\t20
+                            """);
+        });
+    }
+
+    // Chain LIMITs on the per-side-eligible shape follow the general-path
+    // contracts: provably negative values and outer-column references over a
+    // scalar count are rejected, for LEFT and INNER laterals alike.
+    @Test
+    public void testLateralChainLimitPerSideShapeRejections() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 1), (2, 1), (3, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String negativeLeft = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT -1) l ON true";
+            assertException(negativeLeft, negativeLeft.indexOf("-1"),
+                    "negative LIMIT is not supported in a correlated lateral sub-query");
+
+            String negativeInner = "SELECT t1.k, l.x FROM t1 JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT -1) l ON true";
+            assertException(negativeInner, negativeInner.indexOf("-1"),
+                    "negative LIMIT is not supported in a correlated lateral sub-query");
+
+            String outerColumn = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT t1.n) l ON true";
+            assertException(outerColumn, outerColumn.indexOf("t1.n"),
+                    "LIMIT referencing an outer column is not supported over a scalar count");
+        });
+    }
+
     // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
     // The same regression is also covered black-box by the LATERAL-count assertQuery
     // tests; this pins the unit-level contract of replaceAndTransferDependents.
@@ -794,6 +1146,43 @@ public class LateralJoinTest extends AbstractCairoTest {
         Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
     }
 
+    // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
+    // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
+    // to silently empty the lateral body; it must now be rejected.
+    @Test
+    public void testLateralNegativeLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            // scalar-count body
+            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
+                    93, "negative LIMIT is not supported in a correlated lateral sub-query");
+            // plain row body - same defect, no count involved
+            assertException("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
+                    90, "negative LIMIT is not supported in a correlated lateral sub-query");
+            // an UNCORRELATED body is not decorrelated, so negative LIMIT still works
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t2
+                            2\t2
+                            3\t2
+                            """);
+            // a non-lateral negative LIMIT is untouched
+            assertQuery("SELECT k FROM t2 LIMIT -1").noLeakCheck().expectSize().returns("""
+                    k
+                    2
+                    """);
+        });
+    }
+
     @Test
     public void testLateralRequiresSubquery() throws Exception {
         assertMemoryLeak(() -> {
@@ -802,6 +1191,731 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             assertQuery("SELECT * FROM orders o JOIN LATERAL trades t")
                     .fails(36, "LATERAL requires a subquery");
+        });
+    }
+
+    // A LIMIT BELOW the aggregate caps the counted input; it can never drop the
+    // aggregate row, so the count must degrade to 0, not NULL, and the guard
+    // must not include it.
+    @Test
+    public void testLateralScalarCountBelowAggregateLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT :m) z) l "
+                    + "ON true ORDER BY t1.k";
+
+            // emptied input still aggregates to a 0 row - never NULL
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t1
+                    2\t1
+                    3\t0
+                    """);
+
+            // compile-time constant below the aggregate folds the same way
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT 0) z) l "
+                    + "ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t0
+                            2\t0
+                            3\t0
+                            """);
+
+            // an outer-column LIMIT below the aggregate needs no guard, so it is
+            // supported: each outer row caps its own counted input (k-1 rows)
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) z) l "
+                    + "ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t0
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Same below-aggregate LIMIT, per-side-eligible shape: the chain LIMIT
+    // disqualifies per-side push and the fallback applies it per outer row
+    // beneath the count.
+    @Test
+    public void testLateralScalarCountBelowAggregateLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM ("
+                    + "   SELECT t2.k FROM t2 JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k LIMIT :m"
+                    + " ) z) l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t1
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A bind variable is only runtime-constant: a cached plan may be re-executed with a
+    // different value, so whether the aggregate row survives the LIMIT cannot be folded
+    // at compile time. It is emitted as a SQL guard and re-evaluated per execution.
+    @Test
+    public void testLateralScalarCountBindVariableLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k";
+
+            // row-preserving value: no-match outer row must still yield 0
+            bindVariableService.setLong("lim", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // LIMIT 0 empties the body, so NULL - and this must be observed on the SAME
+            // statement, proving the decision is not baked into the compiled plan
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            // and back again, to rule out a one-way latch
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountBindVariableLimitCachedPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "limit keeps the aggregate row",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+            cases.add(BindVarTuple.ok(
+                    "limit drops the aggregate row",
+                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 0)
+            ));
+            cases.add(BindVarTuple.ok(
+                    "limit keeps the aggregate row again",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .assertBinds(cases);
+
+            final ObjList<BindVarTuple> outerWhereCases = new ObjList<>();
+            outerWhereCases.add(BindVarTuple.ok(
+                    "outer WHERE keeps the unmatched group",
+                    "k\n3\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+            outerWhereCases.add(BindVarTuple.ok(
+                    "outer WHERE drops NULL counts",
+                    "k\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 0)
+            ));
+            outerWhereCases.add(BindVarTuple.ok(
+                    "outer WHERE keeps the unmatched group again",
+                    "k\n3\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+
+            assertQuery("SELECT t1.k FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true "
+                    + "WHERE l.c = 0 ORDER BY t1.k")
+                    .noLeakCheck()
+                    .assertBinds(outerWhereCases);
+        });
+    }
+
+    // An outer WHERE over the compensated count hoists into the carrier scope with
+    // the same run-time guard the column materializes with: when the bind-variable
+    // LIMIT empties the body, the predicate judges NULL, not an unguarded 0.
+    @Test
+    public void testLateralScalarCountBindVariableLimitOuterWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true "
+                    + "WHERE l.c = 0 ORDER BY t1.k";
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k
+                    3
+                    """);
+
+            // LIMIT 0 empties the body: every count is NULL and NULL = 0 keeps no row
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k
+                    """);
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k
+                    3
+                    """);
+        });
+    }
+
+    // The count layer's OWN LIMIT on a per-side-push-eligible body (correlation
+    // only inside a join branch, uncorrelated main chain). Per-side push cannot
+    // key the chain per outer row, so a chain LIMIT disqualifies it and the body
+    // takes the general path, which partitions the LIMIT per outer row and
+    // guards the coalesce(count, 0) compensation.
+    @Test
+    public void testLateralScalarCountChainBindVarLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT :m) l ON true ORDER BY t1.k";
+
+            // row-preserving value: every outer row keeps its own count, and the
+            // no-match outer row yields 0, not NULL
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // LIMIT 0 empties the body per outer row, so NULL - observed on the
+            // SAME statement, proving the guard is not baked into the cached plan
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            // and back again, to rule out a one-way latch
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // compile-time decidable values fold without a guard on the same shape
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT 1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT 0) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
+        });
+    }
+
+    // Two-sided runtime LIMIT on the count layer of a per-side-push-eligible
+    // body: the guard mirrors the row_number filter at row 1, so lo >= 1 drops
+    // the single aggregate row and NULL survives.
+    @Test
+    public void testLateralScalarCountChainTwoSidedBindVarLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT :lo,:hi) l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("lo", 0);
+            bindVariableService.setLong("hi", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // (lo, hi] = (1, 2] skips the single aggregate row -> NULL, on the
+            // same statement
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            bindVariableService.setLong("lo", 0);
+            bindVariableService.setLong("hi", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A LIMIT on a join branch INSIDE the lateral body never drops the aggregate
+    // row, so it must not produce an outer NULL guard. The count layer's own rows
+    // are limited by the branch, but count() over an empty join still returns 0.
+    // Per-side push path: INNER branch, uncorrelated main chain.
+    @Test
+    public void testLateralScalarCountJoinBranchBindVarLimitPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k"
+                    + ") l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("n", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // emptying the BRANCH empties the join, but the aggregate row survives:
+            // count() = 0, never NULL; same statement, so a leaked guard baked into
+            // the cached plan would flip the whole column here
+            bindVariableService.setLong("n", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+        });
+    }
+
+    // Two-sided branch LIMIT with lo=1: drops the branch's first row, but the
+    // aggregate row above the join is untouched.
+    @Test
+    public void testLateralScalarCountJoinBranchTwoSidedBindVarLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :lo,:hi) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    """);
+        });
+    }
+
+    // Join-branch push path: LEFT branch plus correlated main-chain WHERE.
+    @Test
+    public void testLateralScalarCountLeftJoinBranchBindVarLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k";
+
+            // LEFT branch: emptying it must not change the count of t2 rows
+            bindVariableService.setLong("n", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("n", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // The pinned contract in testLateralScalarCountOuterColumnLimitRejected: only a
+    // LIMIT over the scalar count itself is rejected. The same LIMIT on a NON-count
+    // join branch inside the body must stay supported.
+    @Test
+    public void testLateralScalarCountNonCountBranchOuterColumnLimitSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1,1), (2,1), (3,1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT t1.n) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Regression: a row-preserving LIMIT must keep the coalesce(count, 0) compensation
+    // so a no-match outer row still yields 0 rather than NULL. Covers non-literal forms
+    // (1+1, abs(1)) which the head revision silently dropped the compensation for.
+    @Test
+    public void testLateralScalarCountNonLiteralPositiveLimitKeepsCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            for (String limit : new String[]{"LIMIT 1", "LIMIT 2", "LIMIT 1+1", "LIMIT abs(1)", "LIMIT 0,1", ""}) {
+                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
+                        .noLeakCheck()
+                        .returns("""
+                                k\tc
+                                1\t2
+                                2\t1
+                                3\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountOuterColumnLimitExpressionWrapperFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 2), (2, 1), (3, 1), (4, 0)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (4)");
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT v
+                        FROM (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.k = t1.k
+                        ) counted
+                        LIMIT t1.n
+                    ) l ON true
+                    ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t4
+                            2\t3
+                            3\tnull
+                            4\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT v
+                        FROM (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.k = t1.k
+                        ) counted
+                        LIMIT t1.n
+                    ) l
+                    ORDER BY t1.k
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t4
+                            2\t3
+                            """);
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT v
+                        FROM (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.k = t1.k
+                        ) counted
+                        LIMIT t1.n
+                    ) l ON true
+                    ORDER BY t1.k
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t4
+                            2\t3
+                            """);
+        });
+    }
+
+    // A LIMIT reading an outer column cannot be guarded: the guard is evaluated in the
+    // outer projection, where the body-local rewrite of that reference does not resolve.
+    @Test
+    public void testLateralScalarCountOuterColumnLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1,2), (2,2), (3,2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true",
+                    93, "LIMIT referencing an outer column is not supported over a scalar count");
+
+            // the same LIMIT over a NON-count body stays supported
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            1\t1
+                            2\t2
+                            3\tnull
+                            """);
+        });
+    }
+
+    // The count layer's OWN LIMIT and a branch LIMIT together: the outer guard
+    // must reflect the count layer's LIMIT (:m=0 drops the aggregate row -> NULL),
+    // not be displaced by the branch-local one.
+    @Test
+    public void testLateralScalarCountOwnLimitWithJoinBranchLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k LIMIT :m) l ON true ORDER BY t1.k";
+
+            // LIMIT 0 on the count layer drops the aggregate row: NULL for every
+            // outer row, regardless of the branch's LIMIT
+            bindVariableService.setLong("m", 0);
+            bindVariableService.setLong("n", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A limit that provably removes the single aggregate row must NOT be
+    // compensated - NULL fill is the correct answer there.
+    @Test
+    public void testLateralScalarCountRowDroppingLimitYieldsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            for (String limit : new String[]{"LIMIT 0", "LIMIT 1-1", "LIMIT 1,2"}) {
+                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
+                        .noLeakCheck()
+                        .returns("""
+                                k\tc
+                                1\tnull
+                                2\tnull
+                                3\tnull
+                                """);
+            }
+        });
+    }
+
+    // Two correlated branches with independent bind-variable LIMITs. Neither guard
+    // may escape onto the outer count; the asymmetric bind sets would expose a
+    // last-branch-wins leak ((:n1,:n2)=(1,0) nulls, (0,1) coincidentally passes).
+    @Test
+    public void testLateralScalarCountTwoJoinBranchesBindVarLimitsPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t4 (k INT)");
+            execute("INSERT INTO t4 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n1) s1 ON s1.k = t2.k"
+                    + " JOIN (SELECT k FROM t4 WHERE t4.k = t1.k LIMIT :n2) s2 ON s2.k = t2.k"
+                    + ") l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("n1", 0);
+            bindVariableService.setLong("n2", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("n1", 1);
+            bindVariableService.setLong("n2", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("n1", 1);
+            bindVariableService.setLong("n2", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
         });
     }
 
@@ -3587,6 +4701,71 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // C1 companion - the count body as the SECOND join model already compensates
+    // to 0. Pinned so the keeps-the-row fix cannot be taken by suppressing this
+    // path instead, and so a plain revert of the wrapper handling is caught here.
+    @Test
+    public void testNestedLateralLeftCountAsSecondJoinModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.cnt
+                        FROM (SELECT 1 AS z) d
+                        CROSS JOIN (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountAsSecondJoinModelOuterRefExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (3)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.val
+                        FROM (SELECT 1 AS z) d
+                        CROSS JOIN (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t2
+                            3\t3
+                            """);
+        });
+    }
+
     @Test
     public void testNestedLateralLeftCountBranchArithmetic() throws Exception {
         assertMemoryLeak(() -> {
@@ -4480,565 +5659,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                             a\tcnt
                             1\t1
                             2\tnull
-                            """);
-        });
-    }
-
-    // C1 - a lateral count() body under a wrapper layer that provably KEEPS the
-    // aggregate row. count() with no GROUP BY over an empty input is one implicit
-    // group, so the body emits one row holding 0 even for an unmatched outer row.
-    // Every predicate/layer below is satisfied by that zero row, so the body is
-    // non-empty and LEFT JOIN must not NULL-fill: SQL requires 0, not NULL.
-    //
-    // The existing wrapper-predicate coverage in this file is WHERE cnt > 1 at
-    // three sites, the one predicate that is FALSE at 0 - i.e. the only shape
-    // where NULL is right. These assert the complementary, keeps-the-row half.
-    @Test
-    public void testNestedLateralLeftCountWrapperFilterDisjunctionCoversZero() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt = 0 OR cnt > 0
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    // C1 guards, the other direction. The compensation must stay suppressed
-    // wherever the wrapper provably rejects the zero row, so these pin NULL as
-    // the right answer and fail if the classifier ever turns permissive.
-    @Test
-    public void testNestedLateralLeftCountWrapperFilterConjunctionDropsZeroRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            // cnt >= 0 holds at 0 but cnt > 1 does not, and FALSE AND TRUE is FALSE
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt >= 0 AND cnt > 1
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\tnull
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperFilterInequalityDropsZeroRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt <> 0
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\tnull
-                            """);
-        });
-    }
-
-    // A filter that rejects part of the count domain cannot stay inside the body:
-    // once it removes a group, that group is indistinguishable at the outer
-    // projection from one that never existed. Such a filter is lifted into the
-    // guard, where it judges the compensated value instead, and both cells come
-    // out right - the matched row the filter rejects becomes NULL, the unmatched
-    // row the filter accepts becomes 0. Fails if the lift regresses to either
-    // half: suppressing gives NULL for the unmatched row, compensating without
-    // the lift gives a fabricated 0 for the rejected one.
-    @Test
-    public void testNestedLateralLeftCountWrapperNegatedFilterLifted() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE NOT (cnt > 1)
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\tnull
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperNonTotalFilterLifted() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            // cnt < 2 accepts the zero row but rejects a count of 2
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt < 2
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\tnull
-                            2\t0
-                            """);
-        });
-    }
-
-    // A lifted wrapper filter and a bind-variable LIMIT compose into one guard:
-    // the compensated value must pass the filter AND the limit must keep row 1.
-    @Test
-    public void testNestedLateralLeftCountWrapperNonTotalFilterLiftedBindVarLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            String sql = """
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt < 1
-                        LIMIT :lim
-                    ) l1
-                    ORDER BY t0.a
-                    """;
-
-            bindVariableService.setLong("lim", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    a\tcnt
-                    1\tnull
-                    2\t0
-                    """);
-
-            bindVariableService.setLong("lim", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    a\tcnt
-                    1\tnull
-                    2\tnull
-                    """);
-
-            bindVariableService.setLong("lim", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    a\tcnt
-                    1\tnull
-                    2\t0
-                    """);
-        });
-    }
-
-    // Lifting a filter is only safe while the body projects nothing but the
-    // count: every other column would then be exposed to rows the filter removed,
-    // and only the count is compensated. With a second column present the filter
-    // must stay inside the body, so the row it rejects stays gone in full.
-    @Test
-    public void testNestedLateralLeftCountWrapperNonTotalFilterNotLiftedWhenBodyHasOtherColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt, l1.tag
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt, tag
-                        FROM (
-                            SELECT count(*) AS cnt, 'T' AS tag
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt < 2
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt\ttag
-                            1\tnull\t
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt >= 0
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperFilterTautology() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE 1 = 1
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperFilterLowerBoundAcceptsWholeDomain() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            // count() is non-negative, so cnt > -1 cannot reject anything
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt > -1
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperGroupByCountOutput() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            // GROUP BY above the aggregate groups the single zero row by its own
-            // value: one group in, one group out. The row survives.
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        GROUP BY cnt
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperJoinKeepsZeroRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            // count body as the FIRST join model. The companion shape with the
-            // operands swapped is asserted by
-            // testNestedLateralLeftCountAsSecondJoinModel and already returns 0:
-            // the two must agree, a CROSS JOIN d and d CROSS JOIN a are the same
-            // relation.
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT counted.cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        CROSS JOIN (SELECT 1 AS z) d
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperUnionAllEmptyBranch() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            // the second branch is provably empty for every outer row, so the union
-            // contributes exactly the first branch: one row per outer row.
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        UNION ALL
-                        SELECT cnt
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted2
-                        WHERE cnt > 1000
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountWrapperWildcardFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT *
-                        FROM (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                        WHERE cnt >= 0
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    // C1 companion - the count body as the SECOND join model already compensates
-    // to 0. Pinned so the keeps-the-row fix cannot be taken by suppressing this
-    // path instead, and so a plain revert of the wrapper handling is caught here.
-    @Test
-    public void testNestedLateralLeftCountAsSecondJoinModel() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT counted.cnt
-                        FROM (SELECT 1 AS z) d
-                        CROSS JOIN (
-                            SELECT count(*) AS cnt
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLateralLeftCountAsSecondJoinModelOuterRefExpression() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (3)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.val
-                    FROM t0
-                    LEFT JOIN LATERAL (
-                        SELECT counted.val
-                        FROM (SELECT 1 AS z) d
-                        CROSS JOIN (
-                            SELECT count(*) + t0.a AS val
-                            FROM t2
-                            WHERE t2.x = t0.a
-                        ) counted
-                    ) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tval
-                            1\t2
-                            3\t3
                             """);
         });
     }
@@ -5937,846 +6557,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Regression: a row-preserving LIMIT must keep the coalesce(count, 0) compensation
-    // so a no-match outer row still yields 0 rather than NULL. Covers non-literal forms
-    // (1+1, abs(1)) which the head revision silently dropped the compensation for.
-    @Test
-    public void testLateralScalarCountNonLiteralPositiveLimitKeepsCoalesce() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            for (String limit : new String[]{"LIMIT 1", "LIMIT 2", "LIMIT 1+1", "LIMIT abs(1)", "LIMIT 0,1", ""}) {
-                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
-                        .noLeakCheck()
-                        .returns("""
-                                k\tc
-                                1\t2
-                                2\t1
-                                3\t0
-                                """);
-            }
-        });
-    }
-
-    // A limit that provably removes the single aggregate row must NOT be
-    // compensated - NULL fill is the correct answer there.
-    @Test
-    public void testLateralScalarCountRowDroppingLimitYieldsNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            for (String limit : new String[]{"LIMIT 0", "LIMIT 1-1", "LIMIT 1,2"}) {
-                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
-                        .noLeakCheck()
-                        .returns("""
-                                k\tc
-                                1\tnull
-                                2\tnull
-                                3\tnull
-                                """);
-            }
-        });
-    }
-
-    // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
-    // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
-    // to silently empty the lateral body; it must now be rejected.
-    @Test
-    public void testLateralNegativeLimitRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            // scalar-count body
-            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
-                    93, "negative LIMIT is not supported in a correlated lateral sub-query");
-            // plain row body - same defect, no count involved
-            assertException("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
-                    90, "negative LIMIT is not supported in a correlated lateral sub-query");
-            // an UNCORRELATED body is not decorrelated, so negative LIMIT still works
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tx
-                            1\t2
-                            2\t2
-                            3\t2
-                            """);
-            // a non-lateral negative LIMIT is untouched
-            assertQuery("SELECT k FROM t2 LIMIT -1").noLeakCheck().expectSize().returns("""
-                    k
-                    2
-                    """);
-        });
-    }
-
-    // A bind variable is only runtime-constant: a cached plan may be re-executed with a
-    // different value, so whether the aggregate row survives the LIMIT cannot be folded
-    // at compile time. It is emitted as a SQL guard and re-evaluated per execution.
-    @Test
-    public void testLateralScalarCountBindVariableLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k";
-
-            // row-preserving value: no-match outer row must still yield 0
-            bindVariableService.setLong("lim", 2);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-
-            // LIMIT 0 empties the body, so NULL - and this must be observed on the SAME
-            // statement, proving the decision is not baked into the compiled plan
-            bindVariableService.setLong("lim", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\tnull
-                    2\tnull
-                    3\tnull
-                    """);
-
-            // and back again, to rule out a one-way latch
-            bindVariableService.setLong("lim", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-        });
-    }
-
-    @Test
-    public void testLateralScalarCountBindVariableLimitCachedPlan() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            final ObjList<BindVarTuple> cases = new ObjList<>();
-            cases.add(BindVarTuple.ok(
-                    "limit keeps the aggregate row",
-                    "k\tc\n1\t2\n2\t1\n3\t0\n",
-                    bindVariableService -> bindVariableService.setLong("lim", 2)
-            ));
-            cases.add(BindVarTuple.ok(
-                    "limit drops the aggregate row",
-                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
-                    bindVariableService -> bindVariableService.setLong("lim", 0)
-            ));
-            cases.add(BindVarTuple.ok(
-                    "limit keeps the aggregate row again",
-                    "k\tc\n1\t2\n2\t1\n3\t0\n",
-                    bindVariableService -> bindVariableService.setLong("lim", 1)
-            ));
-
-            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .assertBinds(cases);
-
-            final ObjList<BindVarTuple> outerWhereCases = new ObjList<>();
-            outerWhereCases.add(BindVarTuple.ok(
-                    "outer WHERE keeps the unmatched group",
-                    "k\n3\n",
-                    bindVariableService -> bindVariableService.setLong("lim", 2)
-            ));
-            outerWhereCases.add(BindVarTuple.ok(
-                    "outer WHERE drops NULL counts",
-                    "k\n",
-                    bindVariableService -> bindVariableService.setLong("lim", 0)
-            ));
-            outerWhereCases.add(BindVarTuple.ok(
-                    "outer WHERE keeps the unmatched group again",
-                    "k\n3\n",
-                    bindVariableService -> bindVariableService.setLong("lim", 1)
-            ));
-
-            assertQuery("SELECT t1.k FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true "
-                            + "WHERE l.c = 0 ORDER BY t1.k")
-                    .noLeakCheck()
-                    .assertBinds(outerWhereCases);
-        });
-    }
-
-    // An outer WHERE over the compensated count hoists into the carrier scope with
-    // the same run-time guard the column materializes with: when the bind-variable
-    // LIMIT empties the body, the predicate judges NULL, not an unguarded 0.
-    @Test
-    public void testLateralScalarCountBindVariableLimitOuterWhere() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            String sql = "SELECT t1.k FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true "
-                    + "WHERE l.c = 0 ORDER BY t1.k";
-
-            bindVariableService.setLong("lim", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k
-                    3
-                    """);
-
-            // LIMIT 0 empties the body: every count is NULL and NULL = 0 keeps no row
-            bindVariableService.setLong("lim", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k
-                    """);
-
-            bindVariableService.setLong("lim", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k
-                    3
-                    """);
-        });
-    }
-
-    @Test
-    public void testLateralScalarCountOuterColumnLimitExpressionWrapperFallsBack() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT, n INT)");
-            execute("INSERT INTO t1 VALUES (1, 2), (2, 1), (3, 1), (4, 0)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2), (4)");
-
-            assertQuery("""
-                    SELECT t1.k, l.v
-                    FROM t1
-                    LEFT JOIN LATERAL (
-                        SELECT v
-                        FROM (
-                            SELECT count(*) + 2 AS v
-                            FROM t2
-                            WHERE t2.k = t1.k
-                        ) counted
-                        LIMIT t1.n
-                    ) l ON true
-                    ORDER BY t1.k
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            k\tv
-                            1\t4
-                            2\t3
-                            3\tnull
-                            4\tnull
-                            """);
-
-            assertQuery("""
-                    SELECT t1.k, l.v
-                    FROM t1
-                    CROSS JOIN LATERAL (
-                        SELECT v
-                        FROM (
-                            SELECT count(*) + 2 AS v
-                            FROM t2
-                            WHERE t2.k = t1.k
-                        ) counted
-                        LIMIT t1.n
-                    ) l
-                    ORDER BY t1.k
-                    """)
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns("""
-                            k\tv
-                            1\t4
-                            2\t3
-                            """);
-
-            assertQuery("""
-                    SELECT t1.k, l.v
-                    FROM t1
-                    JOIN LATERAL (
-                        SELECT v
-                        FROM (
-                            SELECT count(*) + 2 AS v
-                            FROM t2
-                            WHERE t2.k = t1.k
-                        ) counted
-                        LIMIT t1.n
-                    ) l ON true
-                    ORDER BY t1.k
-                    """)
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns("""
-                            k\tv
-                            1\t4
-                            2\t3
-                            """);
-        });
-    }
-
-    // A LIMIT reading an outer column cannot be guarded: the guard is evaluated in the
-    // outer projection, where the body-local rewrite of that reference does not resolve.
-    @Test
-    public void testLateralScalarCountOuterColumnLimitRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT, n INT)");
-            execute("INSERT INTO t1 VALUES (1,2), (2,2), (3,2)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true",
-                    93, "LIMIT referencing an outer column is not supported over a scalar count");
-
-            // the same LIMIT over a NON-count body stays supported
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, l.x")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tx
-                            1\t1
-                            1\t1
-                            2\t2
-                            3\tnull
-                            """);
-        });
-    }
-
-    // A LIMIT on a join branch INSIDE the lateral body never drops the aggregate
-    // row, so it must not produce an outer NULL guard. The count layer's own rows
-    // are limited by the branch, but count() over an empty join still returns 0.
-    // Per-side push path: INNER branch, uncorrelated main chain.
-    @Test
-    public void testLateralScalarCountJoinBranchBindVarLimitPerSide() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k"
-                    + ") l ON true ORDER BY t1.k";
-
-            bindVariableService.setLong("n", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-
-            // emptying the BRANCH empties the join, but the aggregate row survives:
-            // count() = 0, never NULL; same statement, so a leaked guard baked into
-            // the cached plan would flip the whole column here
-            bindVariableService.setLong("n", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t0
-                    2\t0
-                    3\t0
-                    """);
-        });
-    }
-
-    // Two correlated branches with independent bind-variable LIMITs. Neither guard
-    // may escape onto the outer count; the asymmetric bind sets would expose a
-    // last-branch-wins leak ((:n1,:n2)=(1,0) nulls, (0,1) coincidentally passes).
-    @Test
-    public void testLateralScalarCountTwoJoinBranchesBindVarLimitsPerSide() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t4 (k INT)");
-            execute("INSERT INTO t4 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n1) s1 ON s1.k = t2.k"
-                    + " JOIN (SELECT k FROM t4 WHERE t4.k = t1.k LIMIT :n2) s2 ON s2.k = t2.k"
-                    + ") l ON true ORDER BY t1.k";
-
-            bindVariableService.setLong("n1", 0);
-            bindVariableService.setLong("n2", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t0
-                    2\t0
-                    3\t0
-                    """);
-
-            bindVariableService.setLong("n1", 1);
-            bindVariableService.setLong("n2", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t0
-                    2\t0
-                    3\t0
-                    """);
-
-            bindVariableService.setLong("n1", 1);
-            bindVariableService.setLong("n2", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-        });
-    }
-
-    // Join-branch push path: LEFT branch plus correlated main-chain WHERE.
-    @Test
-    public void testLateralScalarCountLeftJoinBranchBindVarLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k "
-                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k";
-
-            // LEFT branch: emptying it must not change the count of t2 rows
-            bindVariableService.setLong("n", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-
-            bindVariableService.setLong("n", 2);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-        });
-    }
-
-    // Two-sided branch LIMIT with lo=1: drops the branch's first row, but the
-    // aggregate row above the join is untouched.
-    @Test
-    public void testLateralScalarCountJoinBranchTwoSidedBindVarLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (1), (2)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :lo,:hi) s ON s.k = t2.k "
-                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k";
-
-            bindVariableService.setLong("lo", 1);
-            bindVariableService.setLong("hi", 2);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    """);
-        });
-    }
-
-    // The pinned contract in testLateralScalarCountOuterColumnLimitRejected: only a
-    // LIMIT over the scalar count itself is rejected. The same LIMIT on a NON-count
-    // join branch inside the body must stay supported.
-    @Test
-    public void testLateralScalarCountNonCountBranchOuterColumnLimitSupported() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT, n INT)");
-            execute("INSERT INTO t1 VALUES (1,1), (2,1), (3,1)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT t1.n) s ON s.k = t2.k "
-                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tc
-                            1\t2
-                            2\t1
-                            3\t0
-                            """);
-        });
-    }
-
-    // The count layer's OWN LIMIT and a branch LIMIT together: the outer guard
-    // must reflect the count layer's LIMIT (:m=0 drops the aggregate row -> NULL),
-    // not be displaced by the branch-local one.
-    @Test
-    public void testLateralScalarCountOwnLimitWithJoinBranchLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k "
-                    + " WHERE t2.k = t1.k LIMIT :m) l ON true ORDER BY t1.k";
-
-            // LIMIT 0 on the count layer drops the aggregate row: NULL for every
-            // outer row, regardless of the branch's LIMIT
-            bindVariableService.setLong("m", 0);
-            bindVariableService.setLong("n", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\tnull
-                    2\tnull
-                    3\tnull
-                    """);
-
-            bindVariableService.setLong("m", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-        });
-    }
-
-    // The count layer's OWN LIMIT on a per-side-push-eligible body (correlation
-    // only inside a join branch, uncorrelated main chain). Per-side push cannot
-    // key the chain per outer row, so a chain LIMIT disqualifies it and the body
-    // takes the general path, which partitions the LIMIT per outer row and
-    // guards the coalesce(count, 0) compensation.
-    @Test
-    public void testLateralScalarCountChainBindVarLimitPerSideShape() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT :m) l ON true ORDER BY t1.k";
-
-            // row-preserving value: every outer row keeps its own count, and the
-            // no-match outer row yields 0, not NULL
-            bindVariableService.setLong("m", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-
-            // LIMIT 0 empties the body per outer row, so NULL - observed on the
-            // SAME statement, proving the guard is not baked into the cached plan
-            bindVariableService.setLong("m", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\tnull
-                    2\tnull
-                    3\tnull
-                    """);
-
-            // and back again, to rule out a one-way latch
-            bindVariableService.setLong("m", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-
-            // compile-time decidable values fold without a guard on the same shape
-            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT 1) l ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tc
-                            1\t2
-                            2\t1
-                            3\t0
-                            """);
-            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT 0) l ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tc
-                            1\tnull
-                            2\tnull
-                            3\tnull
-                            """);
-        });
-    }
-
-    // Two-sided runtime LIMIT on the count layer of a per-side-push-eligible
-    // body: the guard mirrors the row_number filter at row 1, so lo >= 1 drops
-    // the single aggregate row and NULL survives.
-    @Test
-    public void testLateralScalarCountChainTwoSidedBindVarLimitPerSideShape() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT :lo,:hi) l ON true ORDER BY t1.k";
-
-            bindVariableService.setLong("lo", 0);
-            bindVariableService.setLong("hi", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-
-            // (lo, hi] = (1, 2] skips the single aggregate row -> NULL, on the
-            // same statement
-            bindVariableService.setLong("lo", 1);
-            bindVariableService.setLong("hi", 2);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\tnull
-                    2\tnull
-                    3\tnull
-                    """);
-
-            bindVariableService.setLong("lo", 0);
-            bindVariableService.setLong("hi", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t2
-                    2\t1
-                    3\t0
-                    """);
-        });
-    }
-
-    // Chain LIMITs on the per-side-eligible shape follow the general-path
-    // contracts: provably negative values and outer-column references over a
-    // scalar count are rejected, for LEFT and INNER laterals alike.
-    @Test
-    public void testLateralChainLimitPerSideShapeRejections() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT, n INT)");
-            execute("INSERT INTO t1 VALUES (1, 1), (2, 1), (3, 1)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String negativeLeft = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT -1) l ON true";
-            assertException(negativeLeft, negativeLeft.indexOf("-1"),
-                    "negative LIMIT is not supported in a correlated lateral sub-query");
-
-            String negativeInner = "SELECT t1.k, l.x FROM t1 JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT -1) l ON true";
-            assertException(negativeInner, negativeInner.indexOf("-1"),
-                    "negative LIMIT is not supported in a correlated lateral sub-query");
-
-            String outerColumn = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT t1.n) l ON true";
-            assertException(outerColumn, outerColumn.indexOf("t1.n"),
-                    "LIMIT referencing an outer column is not supported over a scalar count");
-        });
-    }
-
-    // A LIMIT BELOW the aggregate caps the counted input; it can never drop the
-    // aggregate row, so the count must degrade to 0, not NULL, and the guard
-    // must not include it.
-    @Test
-    public void testLateralScalarCountBelowAggregateLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT :m) z) l "
-                    + "ON true ORDER BY t1.k";
-
-            // emptied input still aggregates to a 0 row - never NULL
-            bindVariableService.setLong("m", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t0
-                    2\t0
-                    3\t0
-                    """);
-
-            bindVariableService.setLong("m", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t1
-                    2\t1
-                    3\t0
-                    """);
-
-            // compile-time constant below the aggregate folds the same way
-            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT 0) z) l "
-                    + "ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tc
-                            1\t0
-                            2\t0
-                            3\t0
-                            """);
-
-            // an outer-column LIMIT below the aggregate needs no guard, so it is
-            // supported: each outer row caps its own counted input (k-1 rows)
-            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) z) l "
-                    + "ON true ORDER BY t1.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tc
-                            1\t0
-                            2\t1
-                            3\t0
-                            """);
-        });
-    }
-
-    // Same below-aggregate LIMIT, per-side-eligible shape: the chain LIMIT
-    // disqualifies per-side push and the fallback applies it per outer row
-    // beneath the count.
-    @Test
-    public void testLateralScalarCountBelowAggregateLimitPerSideShape() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t2 (k INT)");
-            execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM ("
-                    + "   SELECT t2.k FROM t2 JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k LIMIT :m"
-                    + " ) z) l ON true ORDER BY t1.k";
-
-            bindVariableService.setLong("m", 0);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t0
-                    2\t0
-                    3\t0
-                    """);
-
-            bindVariableService.setLong("m", 1);
-            assertQuery(sql).noLeakCheck().returns("""
-                    k\tc
-                    1\t1
-                    2\t1
-                    3\t0
-                    """);
-        });
-    }
-
-    // A chain LIMIT on a per-side-push-eligible NON-count body must apply per
-    // outer row, not globally over the decorrelated result.
-    @Test
-    public void testLateralChainLimitPerSideShapePerOuterRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
-            execute("CREATE TABLE t0 (k INT, x INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (1, 11), (1, 12), (2, 20)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
-
-            // a global LIMIT 2 would keep two rows TOTAL; per outer row it keeps
-            // two rows for k=1, one for k=2, and LEFT preserves k=3
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t0.x FROM t0 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
-                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tx
-                            1\t10
-                            1\t11
-                            2\t20
-                            3\tnull
-                            """);
-
-            // INNER lateral: same per-outer-row limiting, no row preservation
-            assertQuery("SELECT t1.k, l.x FROM t1 JOIN LATERAL "
-                    + "(SELECT t0.x FROM t0 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
-                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tx
-                            1\t10
-                            1\t11
-                            2\t20
-                            """);
-        });
-    }
-
     @Test
     public void testNestedLateralLeftCountLimitCardinality() throws Exception {
         assertMemoryLeak(() -> {
@@ -7622,6 +7402,500 @@ public class LateralJoinTest extends AbstractCairoTest {
                             a\tb\tcnt
                             1\t10\t1
                             2\t20\t0
+                            """);
+        });
+    }
+
+    // C1 guards, the other direction. The compensation must stay suppressed
+    // wherever the wrapper provably rejects the zero row, so these pin NULL as
+    // the right answer and fail if the classifier ever turns permissive.
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterConjunctionDropsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // cnt >= 0 holds at 0 but cnt > 1 does not, and FALSE AND TRUE is FALSE
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0 AND cnt > 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\tnull
+                            """);
+        });
+    }
+
+    // C1 - a lateral count() body under a wrapper layer that provably KEEPS the
+    // aggregate row. count() with no GROUP BY over an empty input is one implicit
+    // group, so the body emits one row holding 0 even for an unmatched outer row.
+    // Every predicate/layer below is satisfied by that zero row, so the body is
+    // non-empty and LEFT JOIN must not NULL-fill: SQL requires 0, not NULL.
+    //
+    // The existing wrapper-predicate coverage in this file is WHERE cnt > 1 at
+    // three sites, the one predicate that is FALSE at 0 - i.e. the only shape
+    // where NULL is right. These assert the complementary, keeps-the-row half.
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterDisjunctionCoversZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt = 0 OR cnt > 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterInequalityDropsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt <> 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterLowerBoundAcceptsWholeDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // count() is non-negative, so cnt > -1 cannot reject anything
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt > -1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterTautology() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE 1 = 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperGroupByCountOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // GROUP BY above the aggregate groups the single zero row by its own
+            // value: one group in, one group out. The row survives.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        GROUP BY cnt
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperJoinKeepsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // count body as the FIRST join model. The companion shape with the
+            // operands swapped is asserted by
+            // testNestedLateralLeftCountAsSecondJoinModel and already returns 0:
+            // the two must agree, a CROSS JOIN d and d CROSS JOIN a are the same
+            // relation.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        CROSS JOIN (SELECT 1 AS z) d
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    // A filter that rejects part of the count domain cannot stay inside the body:
+    // once it removes a group, that group is indistinguishable at the outer
+    // projection from one that never existed. Such a filter is lifted into the
+    // guard, where it judges the compensated value instead, and both cells come
+    // out right - the matched row the filter rejects becomes NULL, the unmatched
+    // row the filter accepts becomes 0. Fails if the lift regresses to either
+    // half: suppressing gives NULL for the unmatched row, compensating without
+    // the lift gives a fabricated 0 for the rejected one.
+    @Test
+    public void testNestedLateralLeftCountWrapperNegatedFilterLifted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE NOT (cnt > 1)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterLifted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // cnt < 2 accepts the zero row but rejects a count of 2
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\t0
+                            """);
+        });
+    }
+
+    // A lifted wrapper filter and a bind-variable LIMIT compose into one guard:
+    // the compensated value must pass the filter AND the limit must keep row 1.
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterLiftedBindVarLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            String sql = """
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 1
+                        LIMIT :lim
+                    ) l1
+                    ORDER BY t0.a
+                    """;
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    a\tcnt
+                    1\tnull
+                    2\t0
+                    """);
+
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    a\tcnt
+                    1\tnull
+                    2\tnull
+                    """);
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    a\tcnt
+                    1\tnull
+                    2\t0
+                    """);
+        });
+    }
+
+    // Lifting a filter is only safe while the body projects nothing but the
+    // count: every other column would then be exposed to rows the filter removed,
+    // and only the count is compensated. With a second column present the filter
+    // must stay inside the body, so the row it rejects stays gone in full.
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterNotLiftedWhenBodyHasOtherColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt, l1.tag
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt, tag
+                        FROM (
+                            SELECT count(*) AS cnt, 'T' AS tag
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\ttag
+                            1\tnull\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperUnionAllEmptyBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // the second branch is provably empty for every outer row, so the union
+            // contributes exactly the first branch: one row per outer row.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        UNION ALL
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted2
+                        WHERE cnt > 1000
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperWildcardFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
                             """);
         });
     }
@@ -15798,280 +16072,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tqty\tadj\tdisc
                             1\t10.0\t1.5\t0.9
                             2\t30.0\t2.0\t0.8
-                            """);
-        });
-    }
-
-    @Test
-    public void testLateralAliasCollisionScalarCountVsOuterProjection() throws Exception {
-        // The outer projection declares a function column with the same alias as the
-        // lateral scalar-count column. The count reference is renamed (cnt -> cnt1) to
-        // stay unique, and must keep scalar-count semantics: 0 for a non-matching outer
-        // row, never NULL.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT abs(t0.b) cnt, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            cnt\tcnt1
-                            10\t1
-                            20\t0
-                            """);
-
-            // same collision with a non-eliminable correlation (expression forces the
-            // decorrelated outer-ref carrier to survive into the execution plan)
-            assertQuery("""
-                    SELECT abs(t0.b) cnt, l1.cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            cnt\tcnt1
-                            10\t1
-                            20\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testLateralAliasCollisionScalarCountBareReferenceBaseline() throws Exception {
-        // A bare (unqualified) reference to the lateral scalar-count column must carry
-        // the coalesce-to-zero semantics the same way a qualified reference does.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT cnt, abs(t0.b) cnt2
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY cnt
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            cnt\tcnt2
-                            0\t20
-                            1\t10
-                            """);
-        });
-    }
-
-    @Test
-    public void testLateralAliasCollisionCarrierNotLeakedWhenNotEliminable() throws Exception {
-        // Correlation through an expression (t0.a + 0) cannot be eliminated, so the
-        // hidden __qdb_outer_ref__ carrier column survives in the decorrelated join
-        // model. SELECT * and l1.* must not expose it, and the scalar count must still
-        // coalesce to 0 for non-matching outer rows.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT *
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tb\tcnt
-                            1\t10\t1
-                            2\t20\t0
-                            """);
-
-            assertQuery("""
-                    SELECT t0.a, l1.*
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt
-                            1\t1
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testLateralAliasCollisionCountAliasedAsCorrelationColumn() throws Exception {
-        // The user aliases the scalar count with the correlation column name (x). The
-        // decorrelated sub-query carries its own hidden x-derived key column; neither
-        // wildcard shape may expose it, and the count keeps 0-for-no-match semantics.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT *
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tb\tx
-                            1\t10\t1
-                            2\t20\t0
-                            """);
-
-            assertQuery("""
-                    SELECT t0.a, l1.*
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tx
-                            1\t1
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
-    public void testLateralAliasCollisionFunctionStealsCorrelationColumn() throws Exception {
-        // Inside the lateral body a function takes the correlation column's name that
-        // GROUP BY also refers to. Grouped (non-scalar) count keeps SQL
-        // NULL semantics for unmatched outer rows - a contrast to the scalar-count
-        // coalesce - and no helper columns may leak into either wildcard.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.*
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tx\tcnt
-                            1\t1\t1
-                            2\tnull\tnull
-                            """);
-
-            assertQuery("""
-                    SELECT *
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
-                    ORDER BY t0.a
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tb\tx\tcnt
-                            1\t10\t1\t1
-                            2\t20\tnull\tnull
-                            """);
-        });
-    }
-
-    @Test
-    public void testLateralAliasCollisionUserColumnOccupiesCarrierName() throws Exception {
-        // The user declares a column whose alias matches the generated correlation
-        // carrier name. The rewriter must keep the two apart: the user column stays
-        // visible under its name, the internal carrier stays hidden, and scalar count
-        // still coalesces to 0. The compensation rebuilds the row the aggregate body
-        // yields for an empty input, so the deterministic sibling constant
-        // materializes alongside the zero count for the unmatched outer row.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT t0.a, l1.*
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt, 1 __qdb_outer_ref__0_a FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            a\tcnt\t__qdb_outer_ref__0_a
-                            1\t1\t1
-                            2\t0\t1
-                            """);
-        });
-    }
-
-    // A bare (unqualified) reference to the lateral scalar-count column keeps its
-    // coalesce-to-zero compensation even when an outer projection alias steals the
-    // column name: the parser dedupes the bare ref (cnt -> cnt1), and the scalar-count
-    // marking must follow the join column the data comes from, not the same-named
-    // projection alias. See also the qualified-reference twin
-    // (testLateralAliasCollisionScalarCountVsOuterProjection) and the collision-free
-    // baseline (testLateralAliasCollisionScalarCountBareReferenceBaseline).
-    @Test
-    public void testLateralAliasCollisionScalarCountBareRefStolenAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT, b INT)");
-            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t2 (x INT, v INT)");
-            execute("INSERT INTO t2 VALUES (1, 42)");
-
-            assertQuery("""
-                    SELECT abs(t0.b) cnt, cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            cnt\tcnt1
-                            10\t1
-                            20\t0
-                            """);
-
-            // same shape with a non-eliminable correlation
-            assertQuery("""
-                    SELECT abs(t0.b) cnt, cnt
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            cnt\tcnt1
-                            10\t1
-                            20\t0
-                            """);
-
-            // bare reference inside an expression, same stolen alias: the coalesced
-            // count feeds the arithmetic, so the unmatched row yields 0, not NULL
-            assertQuery("""
-                    SELECT abs(t0.b) cnt, cnt + 0 c2
-                    FROM t0
-                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
-                    ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            cnt\tc2
-                            10\t1
-                            20\t0
                             """);
         });
     }
