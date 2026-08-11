@@ -3268,8 +3268,17 @@ mod tests {
         );
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+        // The block faulted is the one whose *end* is out of bounds - row group
+        // 2, whose extent runs to row group 3's start - and not row group 3,
+        // which the inverted-extent bound would catch an iteration later. That
+        // distinction is the whole of this predicate: without it the file is
+        // still rejected, but the reported row group is the wrong one.
         assert!(
-            err.msg.contains("is outside the block region"),
+            err.msg.contains(&format!(
+                "row group 2 block extent [{}, {})",
+                SAMPLE_BLOCK_0_OFF + 2 * SAMPLE_BLOCK_SIZE,
+                SAMPLE_SECTIONS_OFF + BLOCK_ALIGNMENT
+            )),
             "{}",
             err.msg
         );
