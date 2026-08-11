@@ -121,8 +121,11 @@ public class IndexMetaFileReader implements QuietCloseable {
     // Column descriptor layout (32B each, starting right after the header),
     // identical to _pm's; see ParquetMetaFileReader.
     private static final int COL_DESC_COL_TYPE_OFF = 12;
+    private static final int COL_DESC_FIXED_BYTE_LEN_OFF = 20;
     private static final int COL_DESC_FLAGS_OFF = 16;
     private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
+    private static final int COL_DESC_MAX_REP_LEVEL_OFF = 29;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int COL_DESC_PHYSICAL_TYPE_OFF = 28;
@@ -470,6 +473,18 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * Byte width of a {@code FIXED_LEN_BYTE_ARRAY} column, {@code 0} for every
+     * other physical type. This is the only record of the width: a
+     * {@code UUID}, {@code LONG256} or {@code VARCHAR} covered column is a
+     * fixed-length byte array whose width lives nowhere else in {@code _im},
+     * and the point of the format is to decode index bytes without reading the
+     * parquet footer.
+     */
+    public int getColumnFixedByteLen(int column) {
+        return Unsafe.getInt(columnDescriptorAddr(column) + COL_DESC_FIXED_BYTE_LEN_OFF);
+    }
+
+    /**
      * Raw FLAGS bitfield of the column descriptor.
      */
     public int getColumnFlags(int column) {
@@ -509,6 +524,26 @@ public class IndexMetaFileReader implements QuietCloseable {
             }
         }
         return -1;
+    }
+
+    /**
+     * Maximum definition level of the column, {@code 0} when the column is
+     * required. A page decoder needs it to size the definition level data it
+     * must skip or decode, which is the other half of decoding a chunk without
+     * the parquet footer. Named after
+     * {@link ParquetMetaFileReader#getColumnMaxDefLevel(int)}.
+     */
+    public int getColumnMaxDefLevel(int column) {
+        return Unsafe.getByte(columnDescriptorAddr(column) + COL_DESC_MAX_DEF_LEVEL_OFF) & 0xFF;
+    }
+
+    /**
+     * Maximum repetition level of the column, {@code 0} for the flat schemas
+     * the index writer produces. Kept because a page decoder must know whether
+     * repetition levels are present at all.
+     */
+    public int getColumnMaxRepLevel(int column) {
+        return Unsafe.getByte(columnDescriptorAddr(column) + COL_DESC_MAX_REP_LEVEL_OFF) & 0xFF;
     }
 
     /**

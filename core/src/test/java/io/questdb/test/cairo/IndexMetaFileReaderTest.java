@@ -59,6 +59,11 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     private static final int ENC_DELTA_BINARY_PACKED = 1 << 2;
     private static final int ENC_PLAIN = 1;
     private static final int ENC_RLE_DICTIONARY = 1 << 1;
+    // Parquet physical types as the raw descriptor byte, from the Rust
+    // physical_type_to_u8.
+    private static final int PHYSICAL_FIXED_LEN_BYTE_ARRAY = 7;
+    private static final int PHYSICAL_INT32 = 1;
+    private static final int PHYSICAL_INT64 = 2;
     private static final int STAT_DISTINCT_COUNT_PRESENT = 1 << 6;
     private static final int STAT_MAX_EXACT = 1 << 5;
     private static final int STAT_MAX_INLINED = 1 << 4;
@@ -90,6 +95,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     private static final int TYPE_DOUBLE = 10;
     private static final int TYPE_INT = 5;
     private static final int TYPE_LONG = 6;
+    private static final int TYPE_LONG256 = 13;
     private static final int TYPE_UUID = 19;
 
     /**
@@ -943,6 +949,65 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }));
     }
 
+    /**
+     * A {@code UUID}, {@code LONG256} or {@code VARCHAR} covered column is a
+     * parquet FIXED_LEN_BYTE_ARRAY, and its width is recorded only in the
+     * descriptor's FIXED_BYTE_LEN. Without it a reader cannot decode the chunk
+     * without the parquet footer, which is the whole point of {@code _im}.
+     * MAX_REP_LEVEL and MAX_DEF_LEVEL are the two adjacent bytes after
+     * PHYSICAL_TYPE, so the fixture gives every column a different pair: a
+     * reader that transposed them would read a plausible value and pass.
+     */
+    @Test
+    public void testRoundTripFixedLenByteArrayDescriptors() throws Exception {
+        assertMemoryLeak(() -> withReader(IndexMetaFileReaderTest::buildFixedLenByteArraySample, reader -> {
+            Assert.assertEquals(4, reader.getColumnCount());
+
+            Assert.assertEquals(PHYSICAL_INT32, reader.getColumnPhysicalType(0));
+            Assert.assertEquals(0, reader.getColumnFixedByteLen(0));
+            Assert.assertEquals(0, reader.getColumnMaxRepLevel(0));
+            Assert.assertEquals(1, reader.getColumnMaxDefLevel(0));
+
+            Assert.assertEquals(PHYSICAL_INT64, reader.getColumnPhysicalType(1));
+            Assert.assertEquals(0, reader.getColumnFixedByteLen(1));
+            Assert.assertEquals(0, reader.getColumnMaxRepLevel(1));
+            Assert.assertEquals(0, reader.getColumnMaxDefLevel(1));
+
+            // The 16-byte UUID: the width the parquet footer would otherwise
+            // have to supply.
+            Assert.assertEquals(TYPE_UUID, reader.getColumnType(2));
+            Assert.assertEquals(PHYSICAL_FIXED_LEN_BYTE_ARRAY, reader.getColumnPhysicalType(2));
+            Assert.assertEquals(16, reader.getColumnFixedByteLen(2));
+            Assert.assertEquals(2, reader.getColumnMaxRepLevel(2));
+            Assert.assertEquals(3, reader.getColumnMaxDefLevel(2));
+
+            // The 32-byte LONG256, so the width is read and not assumed.
+            Assert.assertEquals(TYPE_LONG256, reader.getColumnType(3));
+            Assert.assertEquals(PHYSICAL_FIXED_LEN_BYTE_ARRAY, reader.getColumnPhysicalType(3));
+            Assert.assertEquals(32, reader.getColumnFixedByteLen(3));
+            Assert.assertEquals(1, reader.getColumnMaxRepLevel(3));
+            Assert.assertEquals(2, reader.getColumnMaxDefLevel(3));
+
+            // Against the raw bytes the Rust writer laid down: FIXED_BYTE_LEN
+            // at descriptor offset 20, PHYSICAL_TYPE 28, MAX_REP_LEVEL 29,
+            // MAX_DEF_LEVEL 30.
+            final long uidDesc = reader.getAddr() + 64 + 2 * 32;
+            Assert.assertEquals(16, Unsafe.getUnsafe().getInt(uidDesc + 20));
+            Assert.assertEquals(PHYSICAL_FIXED_LEN_BYTE_ARRAY, Unsafe.getByte(uidDesc + 28));
+            Assert.assertEquals(2, Unsafe.getByte(uidDesc + 29));
+            Assert.assertEquals(3, Unsafe.getByte(uidDesc + 30));
+
+            // The accessors bound their column index like every other
+            // descriptor accessor.
+            try {
+                reader.getColumnFixedByteLen(4);
+                Assert.fail("expected CairoException from the column index bound");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im column index out of range");
+            }
+        }));
+    }
+
     @Test
     public void testRoundTripHeaderFields() throws Exception {
         assertMemoryLeak(() -> withSample(reader -> {
@@ -1060,15 +1125,29 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     private static void addColumn(long writerPtr, String name, int id, int colType) {
+        // flags 0, fixedByteLen 0, physicalType 1, maxRepLevel 0, maxDefLevel 1,
+        // matching the Rust fixtures' descriptor().
+        addColumn(writerPtr, name, id, colType, 0, 1, 0, 1);
+    }
+
+    private static void addColumn(
+            long writerPtr,
+            String name,
+            int id,
+            int colType,
+            int fixedByteLen,
+            int physicalType,
+            int maxRepLevel,
+            int maxDefLevel
+    ) {
         final int nameLen = name.length();
         final long namePtr = Unsafe.malloc(nameLen, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < nameLen; i++) {
                 Unsafe.putByte(namePtr + i, (byte) name.charAt(i));
             }
-            // flags 0, fixedByteLen 0, physicalType 1, maxRepLevel 0, maxDefLevel 1,
-            // matching the Rust fixtures' descriptor().
-            IndexMetaFileWriter.addColumn(writerPtr, namePtr, nameLen, id, colType, 0, 0, 1, 0, 1);
+            IndexMetaFileWriter.addColumn(
+                    writerPtr, namePtr, nameLen, id, colType, 0, fixedByteLen, physicalType, maxRepLevel, maxDefLevel);
         } finally {
             Unsafe.free(namePtr, nameLen, MemoryTag.NATIVE_DEFAULT);
         }
@@ -1122,6 +1201,33 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         addKeyAndRowIdRowGroup(writerPtr, 5, 10, 0, 99);
         addKeyAndRowIdRowGroup(writerPtr, 9, 10, 0, 99);
         setDataRowGroupBoundaries(writerPtr, 0L, 20L);
+    }
+
+    /**
+     * Two covered columns of parquet type FIXED_LEN_BYTE_ARRAY, whose widths
+     * live only in the descriptor's FIXED_BYTE_LEN: a 16-byte UUID and a
+     * 32-byte LONG256. Every descriptor carries a different MAX_REP_LEVEL and
+     * MAX_DEF_LEVEL, so a reader that transposed the two adjacent bytes fails
+     * rather than reading a plausible value.
+     */
+    private static void buildFixedLenByteArraySample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 50);
+        addColumn(writerPtr, "key_id", -1, TYPE_INT, 0, PHYSICAL_INT32, 0, 1);
+        addColumn(writerPtr, "row_id", -1, TYPE_LONG, 0, PHYSICAL_INT64, 0, 0);
+        addColumn(writerPtr, "uid", 4, TYPE_UUID, 16, PHYSICAL_FIXED_LEN_BYTE_ARRAY, 2, 3);
+        addColumn(writerPtr, "l256", 9, TYPE_LONG256, 32, PHYSICAL_FIXED_LEN_BYTE_ARRAY, 1, 2);
+        final long chunksSize = 4L * IndexMetaFileWriter.CHUNK_SIZE;
+        final long chunksPtr = Unsafe.calloc(chunksSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            putKeyIdChunk(chunksPtr, 0, 7, 7, 64);
+            putRowIdChunk(chunksPtr, 1, 0, 63, 64);
+            putChunk(chunksPtr, 2, CODEC_ZSTD, ENC_PLAIN, 0, 0, 64, 0, 0, 0, 0, 0, 0);
+            putChunk(chunksPtr, 3, CODEC_ZSTD, ENC_PLAIN, 0, 0, 64, 0, 0, 0, 0, 0, 0);
+            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 64, chunksPtr, chunksSize, 4);
+        } finally {
+            Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+        }
+        setDataRowGroupBoundaries(writerPtr, 0L, 64L);
     }
 
     /**
