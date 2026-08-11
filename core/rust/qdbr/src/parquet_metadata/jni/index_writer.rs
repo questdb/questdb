@@ -40,6 +40,11 @@
 //! parameters are null-checked via the `check_not_null!` macro before
 //! dereferencing, so the functions are safe in practice but cannot be marked
 //! `unsafe` because they must match the JNI calling convention.
+//!
+//! Every entry point routes its body through [`ffi_guard`]. Unwinding out of an
+//! `extern "system"` fn aborts the process, so without it any panic anywhere
+//! under the writer -- today or after a future change -- takes the JVM down
+//! instead of throwing. See [`ffi_guard`] for the reachability argument.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use crate::parquet::error::{fmt_err, parquet_meta_err};
@@ -48,9 +53,11 @@ use crate::parquet_metadata::header::ColumnDescriptorRaw;
 use crate::parquet_metadata::index_meta::IndexMetaWriter;
 use crate::parquet_metadata::types::{ColumnFlags, COLUMN_CHUNK_SIZE};
 use crate::parquet_metadata::{ColumnChunkRaw, RowGroupBlockBuilder};
+use crate::qwp_zstd::payload_message;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
 /// Byte width of one `data.parquet` row group boundary, matching Java's
@@ -80,6 +87,60 @@ macro_rules! check_not_null {
     };
 }
 
+/// Runs `f` and catches any panic escaping it, returning the panic's message.
+///
+/// Split out of [`ffi_guard`] so the catching half can be tested without a JVM:
+/// the throwing half is `ParquetError::into_cairo_exception().throw()`, the
+/// same call every error path in this file already makes and the Java tests
+/// already cover.
+///
+/// The message is also logged to stderr (the JVM forwards stderr to the
+/// QuestDB log), matching [`crate::qwp_zstd`]'s guards, so an operator gets a
+/// tagged record of which entry point failed.
+fn catch_ffi_panic<T, F: FnOnce() -> T>(name: &str, f: F) -> Result<T, String> {
+    catch_unwind(AssertUnwindSafe(f)).map_err(|payload| {
+        let message = format!(
+            "{} panicked across the JNI boundary: {}",
+            name,
+            payload_message(&payload)
+        );
+        eprintln!("ERROR qdbr::parquet_metadata::jni::index_writer::{message}");
+        message
+    })
+}
+
+/// Wraps an entry point body so a panic becomes a thrown `CairoException`
+/// rather than a process abort. Unwinding out of an `extern "system"` fn is an
+/// abort, so an unguarded entry point turns any panic into a dead JVM.
+///
+/// A 300_000-sequence fuzz of the writer API reached no panic through these
+/// entry points today, so this is defence in depth. It is not decoration: the
+/// Rust `IndexMetaReader` gains a JNI binding of its own, and it panics on a
+/// truncated file -- unguarded, that turns a corrupt `_im` sidecar into a JVM
+/// abort rather than a query that fails.
+///
+/// Modelled on [`crate::qwp_zstd::Java_io_questdb_std_Zstd_decompress`]'s
+/// `ffi_guard_jlong`, which returns a sentinel because the Zstd bindings have
+/// no exception channel. These entry points do have one -- every error here is
+/// already a `CairoException` -- so a panic is reported the same way, and the
+/// sentinel is only the value returned after the throw is queued.
+fn ffi_guard<T: Default, F: FnOnce(&mut JNIEnv) -> T>(
+    env: &mut JNIEnv,
+    name: &'static str,
+    f: F,
+) -> T {
+    // The reborrow keeps `env` usable after the closure is dropped, which is
+    // what lets the panic path throw.
+    let caught = catch_ffi_panic(name, || f(&mut *env));
+    match caught {
+        Ok(value) => value,
+        Err(message) => {
+            let err = fmt_err!(InvalidType, "{}", message);
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 /// Appends an index column: the `_pm` 32-byte descriptor plus its name. `id`
 /// carries the covered column's QuestDB writer index, or `-1` for the
 /// synthetic `key_id` / `row_id` columns.
@@ -99,74 +160,75 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addColumn(
     max_rep_level: jint,
     max_def_level: jint,
 ) {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaFileWriter");
-    check_not_null!(env, name_ptr, "IndexMetaFileWriter column name");
-    // A negative jint would become an enormous slice length below.
-    check_not_negative!(env, name_len, "IndexMetaFileWriter column name");
-    let physical_type = match u8::try_from(physical_type) {
-        Ok(v) => v,
-        Err(_) => {
-            let err = fmt_err!(
-                InvalidType,
-                "physical_type {} out of u8 range",
-                physical_type
-            );
-            return err.into_cairo_exception().throw(env);
-        }
-    };
-    let max_rep_level = match u8::try_from(max_rep_level) {
-        Ok(v) => v,
-        Err(_) => {
-            let err = fmt_err!(
-                InvalidType,
-                "max_rep_level {} out of u8 range",
-                max_rep_level
-            );
-            return err.into_cairo_exception().throw(env);
-        }
-    };
-    let max_def_level = match u8::try_from(max_def_level) {
-        Ok(v) => v,
-        Err(_) => {
-            let err = fmt_err!(
-                InvalidType,
-                "max_def_level {} out of u8 range",
-                max_def_level
-            );
-            return err.into_cairo_exception().throw(env);
-        }
-    };
-    let name_bytes = unsafe { slice::from_raw_parts(name_ptr, name_len as usize) };
-    let name = match std::str::from_utf8(name_bytes) {
-        Ok(s) => s,
-        Err(e) => {
-            let err = parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "invalid UTF-8 in index column name: {}",
-                e
-            );
-            return err.into_cairo_exception().throw(env);
-        }
-    };
-    let writer = unsafe { &mut *ptr };
-    // name_offset / name_length are owned by the writer and backpatched on
-    // finish, so whatever is passed here would be discarded.
-    writer.add_column(
-        name,
-        ColumnDescriptorRaw {
-            name_offset: 0,
-            id,
-            col_type,
-            flags: ColumnFlags(flags).0,
-            fixed_byte_len,
-            name_length: 0,
-            physical_type,
-            max_rep_level,
-            max_def_level,
-            _reserved: 0,
-        },
-    );
+    ffi_guard(&mut env, "addColumn", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        check_not_null!(env, name_ptr, "IndexMetaFileWriter column name");
+        // A negative jint would become an enormous slice length below.
+        check_not_negative!(env, name_len, "IndexMetaFileWriter column name");
+        let physical_type = match u8::try_from(physical_type) {
+            Ok(v) => v,
+            Err(_) => {
+                let err = fmt_err!(
+                    InvalidType,
+                    "physical_type {} out of u8 range",
+                    physical_type
+                );
+                return err.into_cairo_exception().throw(env);
+            }
+        };
+        let max_rep_level = match u8::try_from(max_rep_level) {
+            Ok(v) => v,
+            Err(_) => {
+                let err = fmt_err!(
+                    InvalidType,
+                    "max_rep_level {} out of u8 range",
+                    max_rep_level
+                );
+                return err.into_cairo_exception().throw(env);
+            }
+        };
+        let max_def_level = match u8::try_from(max_def_level) {
+            Ok(v) => v,
+            Err(_) => {
+                let err = fmt_err!(
+                    InvalidType,
+                    "max_def_level {} out of u8 range",
+                    max_def_level
+                );
+                return err.into_cairo_exception().throw(env);
+            }
+        };
+        let name_bytes = unsafe { slice::from_raw_parts(name_ptr, name_len as usize) };
+        let name = match std::str::from_utf8(name_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                let err = parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "invalid UTF-8 in index column name: {}",
+                    e
+                );
+                return err.into_cairo_exception().throw(env);
+            }
+        };
+        let writer = unsafe { &mut *ptr };
+        // name_offset / name_length are owned by the writer and backpatched on
+        // finish, so whatever is passed here would be discarded.
+        writer.add_column(
+            name,
+            ColumnDescriptorRaw {
+                name_offset: 0,
+                id,
+                col_type,
+                flags: ColumnFlags(flags).0,
+                fixed_byte_len,
+                name_length: 0,
+                physical_type,
+                max_rep_level,
+                max_def_level,
+                _reserved: 0,
+            },
+        );
+    })
 }
 
 /// Patches a min or max stat of the most recently added row group's column
@@ -183,25 +245,26 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addOutOfLineSta
     data_ptr: *const u8,
     data_len: jint,
 ) {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaFileWriter");
-    check_not_null!(env, data_ptr, "IndexMetaFileWriter out-of-line stat");
-    // A negative jint would become an enormous slice length below.
-    check_not_negative!(env, data_len, "IndexMetaFileWriter out-of-line stat");
-    check_not_negative!(
-        env,
-        col_index,
-        "IndexMetaFileWriter out-of-line stat column"
-    );
-    let writer = unsafe { &mut *ptr };
-    let data = unsafe { slice::from_raw_parts(data_ptr, data_len as usize) };
-    if let Err(err) =
-        writer.add_out_of_line_stat_to_last_row_group(col_index as usize, is_min != 0, data)
-    {
-        let mut err: crate::parquet::error::ParquetError = err.into();
-        err.add_context("error in IndexMetaFileWriter.addOutOfLineStat");
-        err.into_cairo_exception().throw::<()>(env);
-    }
+    ffi_guard(&mut env, "addOutOfLineStat", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        check_not_null!(env, data_ptr, "IndexMetaFileWriter out-of-line stat");
+        // A negative jint would become an enormous slice length below.
+        check_not_negative!(env, data_len, "IndexMetaFileWriter out-of-line stat");
+        check_not_negative!(
+            env,
+            col_index,
+            "IndexMetaFileWriter out-of-line stat column"
+        );
+        let writer = unsafe { &mut *ptr };
+        let data = unsafe { slice::from_raw_parts(data_ptr, data_len as usize) };
+        if let Err(err) =
+            writer.add_out_of_line_stat_to_last_row_group(col_index as usize, is_min != 0, data)
+        {
+            let mut err: crate::parquet::error::ParquetError = err.into();
+            err.add_context("error in IndexMetaFileWriter.addOutOfLineStat");
+            err.into_cairo_exception().throw::<()>(env);
+        }
+    })
 }
 
 /// Appends one index row group: its first (smallest) key id, `NUM_ROWS`, and
@@ -224,48 +287,49 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     chunks_len: jlong,
     chunk_count: jint,
 ) {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaFileWriter");
-    check_not_null!(env, chunks_ptr, "IndexMetaFileWriter column chunks");
-    // A negative jint would become an enormous chunk count below.
-    check_not_negative!(env, chunk_count, "IndexMetaFileWriter column chunks");
-    if num_rows < 0 {
-        let err = parquet_meta_err!(
-            ParquetMetaErrorKind::InvalidValue,
-            "row group num rows {} is negative",
-            num_rows
-        );
-        return err.into_cairo_exception().throw(env);
-    }
-    // chunk_count is non-negative by the check above, so this product is exact
-    // in i64 and the comparison bounds the reads that follow by the buffer the
-    // caller actually allocated.
-    let expected_len = chunk_count as i64 * COLUMN_CHUNK_SIZE as i64;
-    if chunks_len != expected_len {
-        let err = parquet_meta_err!(
-            ParquetMetaErrorKind::InvalidValue,
-            "column chunk buffer length {} does not match {} chunks of {} bytes",
-            chunks_len,
-            chunk_count,
-            COLUMN_CHUNK_SIZE
-        );
-        return err.into_cairo_exception().throw(env);
-    }
-    let mut block = RowGroupBlockBuilder::new(chunk_count as u32);
-    block.set_num_rows(num_rows as u64);
-    let chunks = chunks_ptr as *const ColumnChunkRaw;
-    for i in 0..chunk_count as usize {
-        // read_unaligned: the buffer comes from a Java-side allocation whose
-        // alignment the JVM does not guarantee to be 8.
-        let chunk = unsafe { std::ptr::read_unaligned(chunks.add(i)) };
-        if let Err(err) = block.set_column_chunk(i, chunk) {
-            let mut err: crate::parquet::error::ParquetError = err.into();
-            err.add_context("error in IndexMetaFileWriter.addRowGroup");
+    ffi_guard(&mut env, "addRowGroup", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        check_not_null!(env, chunks_ptr, "IndexMetaFileWriter column chunks");
+        // A negative jint would become an enormous chunk count below.
+        check_not_negative!(env, chunk_count, "IndexMetaFileWriter column chunks");
+        if num_rows < 0 {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row group num rows {} is negative",
+                num_rows
+            );
             return err.into_cairo_exception().throw(env);
         }
-    }
-    let writer = unsafe { &mut *ptr };
-    writer.add_row_group(first_key as u32, block);
+        // chunk_count is non-negative by the check above, so this product is exact
+        // in i64 and the comparison bounds the reads that follow by the buffer the
+        // caller actually allocated.
+        let expected_len = chunk_count as i64 * COLUMN_CHUNK_SIZE as i64;
+        if chunks_len != expected_len {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "column chunk buffer length {} does not match {} chunks of {} bytes",
+                chunks_len,
+                chunk_count,
+                COLUMN_CHUNK_SIZE
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+        let mut block = RowGroupBlockBuilder::new(chunk_count as u32);
+        block.set_num_rows(num_rows as u64);
+        let chunks = chunks_ptr as *const ColumnChunkRaw;
+        for i in 0..chunk_count as usize {
+            // read_unaligned: the buffer comes from a Java-side allocation whose
+            // alignment the JVM does not guarantee to be 8.
+            let chunk = unsafe { std::ptr::read_unaligned(chunks.add(i)) };
+            if let Err(err) = block.set_column_chunk(i, chunk) {
+                let mut err: crate::parquet::error::ParquetError = err.into();
+                err.add_context("error in IndexMetaFileWriter.addRowGroup");
+                return err.into_cairo_exception().throw(env);
+            }
+        }
+        let writer = unsafe { &mut *ptr };
+        writer.add_row_group(first_key as u32, block);
+    })
 }
 
 /// Creates a writer. `key_id_column` and `row_id_column` are indices into the
@@ -273,41 +337,47 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
 /// row-per-key payload kind.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_create(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     payload_kind: jint,
     key_count: jint,
     key_id_column: jint,
     row_id_column: jint,
 ) -> *mut IndexMetaWriter {
-    Box::into_raw(Box::new(IndexMetaWriter::new(
-        payload_kind as u32,
-        key_count as u32,
-        key_id_column,
-        row_id_column,
-    )))
+    ffi_guard(&mut env, "create", |_env| {
+        Box::into_raw(Box::new(IndexMetaWriter::new(
+            payload_kind as u32,
+            key_count as u32,
+            key_id_column,
+            row_id_column,
+        )))
+    })
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_destroyResult(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     ptr: *mut IndexMetaBuiltFile,
 ) {
-    if !ptr.is_null() {
-        drop(unsafe { Box::from_raw(ptr) });
-    }
+    ffi_guard(&mut env, "destroyResult", |_env| {
+        if !ptr.is_null() {
+            drop(unsafe { Box::from_raw(ptr) });
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_destroyWriter(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     ptr: *mut IndexMetaWriter,
 ) {
-    if !ptr.is_null() {
-        drop(unsafe { Box::from_raw(ptr) });
-    }
+    ffi_guard(&mut env, "destroyWriter", |_env| {
+        if !ptr.is_null() {
+            drop(unsafe { Box::from_raw(ptr) });
+        }
+    })
 }
 
 /// Finishes building the _im file. Borrows (does not consume) the writer.
@@ -318,17 +388,18 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_finish(
     _class: JClass,
     ptr: *mut IndexMetaWriter,
 ) -> *mut IndexMetaBuiltFile {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaFileWriter");
-    let writer = unsafe { &*ptr };
-    match writer.finish() {
-        Ok(data) => Box::into_raw(Box::new(IndexMetaBuiltFile { data })),
-        Err(err) => {
-            let mut err: crate::parquet::error::ParquetError = err.into();
-            err.add_context("error in IndexMetaFileWriter.finish");
-            err.into_cairo_exception().throw(env)
+    ffi_guard(&mut env, "finish", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        let writer = unsafe { &*ptr };
+        match writer.finish() {
+            Ok(data) => Box::into_raw(Box::new(IndexMetaBuiltFile { data })),
+            Err(err) => {
+                let mut err: crate::parquet::error::ParquetError = err.into();
+                err.add_context("error in IndexMetaFileWriter.finish");
+                err.into_cairo_exception().throw(env)
+            }
         }
-    }
+    })
 }
 
 #[no_mangle]
@@ -337,10 +408,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_resultDataLen(
     _class: JClass,
     ptr: *const IndexMetaBuiltFile,
 ) -> jlong {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaBuiltFile");
-    let result = unsafe { &*ptr };
-    result.data.len() as jlong
+    ffi_guard(&mut env, "resultDataLen", |env| {
+        check_not_null!(env, ptr, "IndexMetaBuiltFile");
+        let result = unsafe { &*ptr };
+        result.data.len() as jlong
+    })
 }
 
 #[no_mangle]
@@ -349,10 +421,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_resultDataPtr(
     _class: JClass,
     ptr: *const IndexMetaBuiltFile,
 ) -> *const u8 {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaBuiltFile");
-    let result = unsafe { &*ptr };
-    result.data.as_ptr()
+    ffi_guard(&mut env, "resultDataPtr", |env| {
+        check_not_null!(env, ptr, "IndexMetaBuiltFile");
+        let result = unsafe { &*ptr };
+        result.data.as_ptr()
+    })
 }
 
 /// Sets `data.parquet`'s cumulative row group boundaries from `count`
@@ -371,28 +444,29 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
     boundaries_len: jlong,
     count: jint,
 ) {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaFileWriter");
-    check_not_null!(env, boundaries_ptr, "IndexMetaFileWriter boundaries");
-    // A negative jint would become an enormous slice length below.
-    check_not_negative!(env, count, "IndexMetaFileWriter boundaries");
-    // count is non-negative by the check above, so this product is exact in
-    // i64 and the comparison bounds the read that follows by the buffer the
-    // caller actually allocated.
-    let expected_len = count as i64 * BOUNDARY_SIZE as i64;
-    if boundaries_len != expected_len {
-        let err = parquet_meta_err!(
-            ParquetMetaErrorKind::InvalidValue,
-            "boundary buffer length {} does not match {} boundaries of {} bytes",
-            boundaries_len,
-            count,
-            BOUNDARY_SIZE
-        );
-        return err.into_cairo_exception().throw(env);
-    }
-    let writer = unsafe { &mut *ptr };
-    let boundaries = unsafe { slice::from_raw_parts(boundaries_ptr, count as usize) };
-    writer.set_data_row_group_boundaries(boundaries);
+    ffi_guard(&mut env, "setDataRowGroupBoundaries", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        check_not_null!(env, boundaries_ptr, "IndexMetaFileWriter boundaries");
+        // A negative jint would become an enormous slice length below.
+        check_not_negative!(env, count, "IndexMetaFileWriter boundaries");
+        // count is non-negative by the check above, so this product is exact in
+        // i64 and the comparison bounds the read that follows by the buffer the
+        // caller actually allocated.
+        let expected_len = count as i64 * BOUNDARY_SIZE as i64;
+        if boundaries_len != expected_len {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "boundary buffer length {} does not match {} boundaries of {} bytes",
+                boundaries_len,
+                count,
+                BOUNDARY_SIZE
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+        let writer = unsafe { &mut *ptr };
+        let boundaries = unsafe { slice::from_raw_parts(boundaries_ptr, count as usize) };
+        writer.set_data_row_group_boundaries(boundaries);
+    })
 }
 
 /// Overwrites the payload kind and key count passed to `create`, for callers
@@ -405,8 +479,85 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setPayload(
     payload_kind: jint,
     key_count: jint,
 ) {
-    let env = &mut env;
-    check_not_null!(env, ptr, "IndexMetaFileWriter");
-    let writer = unsafe { &mut *ptr };
-    writer.set_payload(payload_kind as u32, key_count as u32);
+    ffi_guard(&mut env, "setPayload", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        let writer = unsafe { &mut *ptr };
+        writer.set_payload(payload_kind as u32, key_count as u32);
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guard's throwing half is `into_cairo_exception().throw()`, which
+    /// needs a JVM; its catching half is what stands between a panic and an
+    /// abort, and that is what these assert. Without the catch, a panic in any
+    /// entry point body unwinds out of an `extern "system"` fn and kills the
+    /// process -- this test would take the test runner down with it rather
+    /// than fail.
+    #[test]
+    fn catch_ffi_panic_catches_a_static_str_panic() {
+        let caught: Result<(), String> =
+            catch_ffi_panic("addRowGroup", || panic!("deliberate test panic"));
+        assert_eq!(
+            caught.unwrap_err(),
+            "addRowGroup panicked across the JNI boundary: deliberate test panic"
+        );
+    }
+
+    /// `panic!("{}", x)` produces a `String` payload rather than a
+    /// `&'static str`, and an index-out-of-bounds panic -- the shape most
+    /// likely to reach here from a future reader binding -- is one of those.
+    #[test]
+    fn catch_ffi_panic_catches_a_formatted_panic() {
+        let boundaries: Vec<i64> = Vec::new();
+        let caught: Result<i64, String> = catch_ffi_panic("finish", || boundaries[0]);
+        let message = caught.unwrap_err();
+        assert!(
+            message.starts_with("finish panicked across the JNI boundary: "),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("index out of bounds"),
+            "unexpected message: {message}"
+        );
+    }
+
+    #[test]
+    fn catch_ffi_panic_passes_a_value_through() {
+        let caught = catch_ffi_panic("resultDataLen", || 42i64);
+        assert_eq!(caught.unwrap(), 42);
+    }
+
+    /// A guard on ten of eleven entry points is a guard on none of them: the
+    /// eleventh is the one a corrupt file reaches. Reading the source is the
+    /// only way to assert the property over every entry point at once, and it
+    /// costs nothing at runtime. The count is asserted too, so a new entry
+    /// point has to come past this test.
+    #[test]
+    fn every_entry_point_routes_through_the_guard() {
+        const MARKER: &str = "pub extern \"system\" fn Java_";
+        let source = include_str!("index_writer.rs");
+        // Everything below this module is the test's own text, including the
+        // marker literal itself.
+        let tests_at = source
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("test module");
+        let source = &source[..tests_at];
+        let mut checked = 0;
+        for (index, _) in source.match_indices(MARKER) {
+            let body = &source[index..];
+            let name_end = body.find('(').expect("entry point signature");
+            let name = &body[..name_end];
+            // The body runs to the next entry point, or to the end of file.
+            let body_end = body[1..].find(MARKER).map(|i| i + 1).unwrap_or(body.len());
+            assert!(
+                body[..body_end].contains("ffi_guard("),
+                "{name} does not route through ffi_guard; a panic in it aborts the JVM"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 11, "entry point count changed");
+    }
 }
