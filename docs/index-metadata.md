@@ -401,6 +401,12 @@ Reader:
    is `-1` if and only if `PAYLOAD_KIND == 1`, otherwise in range. These are the sanctioned route to the
    synthetic columns, so a caller passes them straight to a column-chunk accessor; an unvalidated value
    indexes past the mapping.
+
+   The **writer** additionally requires both selectors to be **below `FIRST_COVER_COLUMN`**. Bounding
+   them only by `COLUMN_COUNT` would let a caller name a *covered* column as `key_id` or `row_id`,
+   contradicting "synthetic columns first" and making one descriptor reachable both as a synthetic
+   column and as a cover slot. Readers take the weaker bound, since a reader's concern is only that
+   the index is addressable.
 9. Validate every `RG_BLOCK_OFFSET` entry: strictly ascending; each block starting at or after
    `128 + COLUMN_COUNT * 32` (the end of the descriptor array — note `128`, the v3 header size, not
    v2's `64`); each block ending at or before `INDEX_SECTIONS_OFFSET`; and each extent at least
