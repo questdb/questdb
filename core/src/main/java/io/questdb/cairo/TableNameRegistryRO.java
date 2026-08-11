@@ -87,7 +87,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken swapTable(TableToken oldToken, String tableName, String newDirName, int newTableId, boolean isView, boolean isMatView, boolean isWal) {
+    public TableToken swapTable(TableToken oldToken, String tableName, String newDirName, int newTableId, TableToken.Type type, boolean isWal) {
         throw CairoException.critical(0).put("instance is read only");
     }
 

@@ -4730,8 +4730,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         tableName,
                         newDirName,
                         newTableId,
-                        oldToken.isView(),
-                        oldToken.isMatView(),
+                        oldToken.getType(),
                         true
                 );
                 if (swapped == null) {

@@ -129,7 +129,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken swapTable(TableToken oldToken, String tableName, String newDirName, int newTableId, boolean isView, boolean isMatView, boolean isWal) {
+    public TableToken swapTable(TableToken oldToken, String tableName, String newDirName, int newTableId, TableToken.Type type, boolean isWal) {
         // Reserve the (shared) logical name for the whole swap so no concurrent create/drop can grab it
         // while the old dir is repointed to the new one. Fails if the name is no longer bound to oldToken.
         final ReverseTableMapItem oldReverse = dirNameToTableTokenMap.get(oldToken.getDirName());
@@ -143,9 +143,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             final boolean isSystem = tableFlagResolver.isSystem(tableName);
             final boolean isPublic = tableFlagResolver.isPublic(tableName);
             final String dbLogName = engine.getConfiguration().getDbLogName();
-            final TableToken.Type type = isMatView ? TableToken.Type.MAT_VIEW
-                    : isView ? TableToken.Type.VIEW
-                      : TableToken.Type.TABLE;
             final TableToken newToken = new TableToken(tableName, newDirName, dbLogName, newTableId, type, isWal, isSystem, isProtected, isPublic);
 
             // Metadata cache first (unsafe, can throw) — mirrors registerName ordering.
