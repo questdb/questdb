@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8s;
@@ -329,8 +330,17 @@ public class QwpMessageCursor implements Mutable {
                     );
                 }
 
-                // Read symbol value as UTF-8 directly from memory
-                String symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
+                // Read symbol value as UTF-8 directly from memory. Invalid UTF-8 is a protocol
+                // parse error, not a transient storage failure.
+                final String symbol;
+                try {
+                    symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
+                } catch (CairoException e) {
+                    if (e.isMalformedUtf8()) {
+                        throw QwpParseException.create(QwpParseException.ErrorCode.INVALID_UTF8, e.getFlyweightMessage());
+                    }
+                    throw e;
+                }
                 address += symbolLen;
 
                 // Store in dictionary. Flag a redefinition when an existing client

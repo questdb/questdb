@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -270,17 +271,6 @@ public class MemoryCARWImplTest {
             for (char i = n; i > 0; i--) {
                 assertEquals(i, mem.getChar(o));
                 o += 2;
-            }
-        }
-    }
-
-    @Test
-    public void testDeadCodeForUtf8() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
-            try {
-                mem.putStrUtf8(null);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignored) {
             }
         }
     }
@@ -1013,6 +1003,27 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testMalformedStrUtf8IsRejected() {
+        final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(ptr, (byte) '1');
+            Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+            try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+                try {
+                    mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                Assert.assertEquals(0, mem.getAppendOffset());
+            }
+        } finally {
+            Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testMaxPages() {
         int pageSize = 256;
         int maxPages = 3;
@@ -1044,6 +1055,14 @@ public class MemoryCARWImplTest {
     public void testNullBin() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             testNullBin0(mem);
+        }
+    }
+
+    @Test
+    public void testNullStrUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(Integer.BYTES, mem.putStrUtf8(null));
+            Assert.assertNull(mem.getStrA(0));
         }
     }
 
