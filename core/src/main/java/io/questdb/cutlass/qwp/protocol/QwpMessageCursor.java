@@ -27,6 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
@@ -96,6 +97,11 @@ public class QwpMessageCursor implements Mutable {
         releaseDictRollbackScratch();
     }
 
+    @TestOnly
+    public long getRetainedCacheBytes() {
+        return tableBlockCursor.getRetainedCacheBytes();
+    }
+
     /**
      * Returns whether there are more tables to iterate.
      */
@@ -140,9 +146,15 @@ public class QwpMessageCursor implements Mutable {
             );
         }
         int remainingBytes = (int) remaining;
-        int consumed = tableBlockCursor.of(
-                currentTableAddress, remainingBytes, gorillaEnabled,
-                connectionSymbolDict, deltaSymbolDictEnabled);
+        final int consumed;
+        try {
+            consumed = tableBlockCursor.of(
+                    currentTableAddress, remainingBytes, gorillaEnabled,
+                    connectionSymbolDict, deltaSymbolDictEnabled);
+        } catch (QwpParseException e) {
+            tableBlockCursor.releaseCachedResources();
+            throw e;
+        }
         currentTableAddress += consumed;
 
         return tableBlockCursor;
@@ -190,6 +202,11 @@ public class QwpMessageCursor implements Mutable {
         }
 
         this.currentTableIndex = -1;
+    }
+
+    public void releaseCachedResources() {
+        clear();
+        tableBlockCursor.releaseCachedResources();
     }
 
     /**
