@@ -384,10 +384,15 @@ Reader:
 3. Map exactly `IM_FILE_SIZE` bytes.
 4. Check `IM_MAGIC` and `FORMAT_VERSION`; reject unknown required feature bits.
 5. Verify the CRC over `[8, IM_FILE_SIZE - 4)` before trusting any offset.
-6. Read `INDEX_SECTIONS_OFFSET` and validate it (8-byte aligned; at or after the end of the column
-   descriptors and every descriptor's name range; the three sections it implies fit within
-   `IM_FILE_SIZE - 4`). Resolve the three sections forward from it using the header counts, then
-   row group blocks via `RG_BLOCK_OFFSET`.
+6. Read `INDEX_SECTIONS_OFFSET` and validate it: 8-byte aligned, and **the five sections it implies
+   fit within `IM_FILE_SIZE - 4`**. That fit bound is a *precondition*, not merely one check among
+   several — it is what proves the descriptor array lies inside the mapping. **No descriptor byte may
+   be dereferenced before it holds.** A reader that checks the name ranges first will read past the
+   end of a truncated file: that is a panic in Rust and a SIGSEGV in a reader using unchecked memory
+   access, and it is a real bug this format shipped and fixed.
+   Only then validate that `INDEX_SECTIONS_OFFSET` is at or after the end of the descriptors and
+   after every descriptor's name range. Resolve the five sections forward from it using the header
+   counts, then row group blocks via `RG_BLOCK_OFFSET`.
 7. Because step 6 validates every descriptor's `NAME_OFFSET` / `NAME_LENGTH`, a bad name entry is
    rejected at open time rather than on first access. Both reader implementations must do this, or
    they disagree on which files are valid.
@@ -397,8 +402,18 @@ Reader:
    synthetic columns, so a caller passes them straight to a column-chunk accessor; an unvalidated value
    indexes past the mapping.
 9. Validate every `RG_BLOCK_OFFSET` entry: strictly ascending; each block starting at or after
-   `64 + COLUMN_COUNT * 32`; each block ending at or before `INDEX_SECTIONS_OFFSET`; and each extent at
-   least `8 + COLUMN_COUNT * 64`, the minimum a block needs for its chunks.
+   `128 + COLUMN_COUNT * 32` (the end of the descriptor array — note `128`, the v3 header size, not
+   v2's `64`); each block ending at or before `INDEX_SECTIONS_OFFSET`; and each extent at least
+   `8 + COLUMN_COUNT * 64`, the minimum a block needs for its chunks.
+
+Two further bounds both readers enforce, stated here so a third does not omit them:
+
+- `IM_FILE_SIZE >= 128 + 4` — the header plus the CRC trailer. Anything smaller is rejected before
+  any field is read.
+- The five sections are, in order: `RG_BLOCK_OFFSET`, `RG_FIRST_KEY`, `RG_ROW_ID_MIN`,
+  `RG_ROW_ID_MAX`, `DATA_RG_BOUNDARY`. Omitting the two row-id sections when computing the fit bound
+  places `DATA_RG_BOUNDARY` `16 * INDEX_RG_COUNT` bytes early, over the row-id minima, so every
+  row-id-to-data-row-group lookup silently returns a row id instead of a boundary.
 
 ### What the reader does *not* re-check
 
@@ -407,6 +422,14 @@ enforces them would reject files the others accept:
 
 - `RG_FIRST_KEY` non-decreasing, and its cross-check against the `key_id` chunk's `MIN_STAT`.
 - `DATA_RG_BOUNDARY[0] == 0` and its monotonicity.
+- `RG_ROW_ID_MIN` / `RG_ROW_ID_MAX` against the `row_id` chunk stats.
+- The header's `RESERVED` bytes. They are `must be 0` for a *writer*; a reader ignores them, so that
+  a later writer can spend them without a version bump.
+- `FIRST_COVER_COLUMN`. It is bounds-checked at the point of use, not at open — unlike
+  `KEY_ID_COLUMN` and `ROW_ID_COLUMN`, which are validated at open because they are the sanctioned
+  route to the synthetic columns and reach an address computation unmediated.
+- `PIDX_FOOTER_OFFSET` / `PIDX_FOOTER_LENGTH`. The writer requires them non-zero; a reader takes them
+  as given.
 
 Slack between the end of `DATA_RG_BOUNDARY` and the CRC is permitted — readers bound the sections with
 `sections_end <= crc_offset`, not equality.
