@@ -14820,10 +14820,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 final String name = "pci_size_stability";
                 final int plen = path.size();
                 final FilesFacade ff = configuration.getFilesFacade();
-                final long colAddr = Unsafe.malloc(Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long colAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
                     Unsafe.putDouble(colAddr, 42.0);
-                    final long sizeWhileOpen;
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    final long stableSize;
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                         writer.configureCovering(
                                 new long[]{colAddr},
@@ -14840,16 +14841,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
                                 path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
                         );
-                        sizeWhileOpen = ff.length(pciFile);
-                        assertEquals(Files.ceilPageSize(3L * Integer.BYTES), sizeWhileOpen);
+                        stableSize = ff.length(pciFile);
+                        assertEquals(Files.ceilPageSize(3L * Integer.BYTES), stableSize);
                     }
 
                     LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
                             path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
                     );
-                    assertEquals(sizeWhileOpen, ff.length(pciFile));
+                    assertEquals(stableSize, ff.length(pciFile));
+
+                    final long oversizedSize = configuration.getDataIndexValueAppendPageSize();
+                    assertTrue(oversizedSize > stableSize);
+                    long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                    assertTrue(fd > 0);
+                    try {
+                        assertTrue(ff.truncate(fd, oversizedSize));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(oversizedSize, ff.length(pciFile));
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 1);
+                        writer.setMaxValue(1);
+                        writer.seal();
+                        assertEquals(oversizedSize, ff.length(PostingIndexUtils.coverInfoFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        )));
+                    }
+
+                    assertEquals(oversizedSize, ff.length(PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )));
                 } finally {
-                    Unsafe.free(colAddr, Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(colAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
