@@ -2873,6 +2873,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
+    /**
+     * Lifts a WITHIN geohash predicate out of the residual filter into {@link #prefixes}, which
+     * {@link LatestByAllIndexedRecordCursorFactory} reads as a prefix scan over the index.
+     * <p>
+     * That factory is the only consumer, and it evaluates no filter of its own, so the predicate
+     * may be lifted only when the plan is certain to build it: a single BITMAP-indexed SYMBOL
+     * LATEST ON key, no key extraction, and a residual filter that is nothing but the WITHIN node.
+     * Under any other shape - several LATEST ON keys, a key predicate alongside the WITHIN, or
+     * anything else left in the filter - the generator builds a factory that never looks at
+     * {@link #prefixes}, and lifting the predicate would drop it from the query. Leaving it in the
+     * filter costs a per-row evaluation and keeps the answer right.
+     * <p>
+     * This runs after {@link WhereClauseParser#extract}, not before, so the decision can read the
+     * residual filter rather than predict it. A timestamp predicate alongside the WITHIN is
+     * already in the interval model by now and leaves the filter empty, so that shape still
+     * prefix-scans.
+     */
+    private void extractWithinPrefixes(
+            IQueryModel model,
+            IntrinsicModel intrinsicModel,
+            ObjList<ExpressionNode> latestBy,
+            RecordMetadata queryMeta,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!configuration.useWithinLatestByOptimisation()
+                || intrinsicModel.filter == null
+                || intrinsicModel.keyColumn != null
+                || intrinsicModel.keySubQuery != null
+                || !latestByConsumesKeyColumn(latestBy, queryMeta)) {
+            return;
+        }
+        // Read the key column off latestBy rather than listColumnFilterA: compiling a sub-query in
+        // the WHERE clause reuses those index lists, and the caller only regenerates them further
+        // down.
+        final int latestByIndex = SqlUtil.getColumnIndexQuiet(queryMeta, latestBy.getQuick(0).token);
+        if (queryMeta.getColumnIndexType(latestByIndex) != IndexType.BITMAP || SqlHints.hasNoIndexHint(model)) {
+            return;
+        }
+        // extractWithin() rewrites the tree it is given in place, so a filter that is anything more
+        // than the WITHIN node would have to be put back together on the reject path. Recognise the
+        // one shape it can consume whole, where the rewrite is a no-op that returns null.
+        if (!isWithinKeyword(intrinsicModel.filter.token)) {
+            return;
+        }
+        final ExpressionNode residual = getWhereClauseParser().extractWithin(
+                model,
+                intrinsicModel.filter,
+                queryMeta,
+                functionParser,
+                executionContext,
+                prefixes
+        );
+        assert residual == null;
+        if (prefixes.size() > 0) {
+            intrinsicModel.filter = null;
+        }
+    }
+
     private ObjList<Function> generateCastFunctions(
             SqlExecutionContext executionContext,
             RecordMetadata castToMetadata,
@@ -6844,6 +6902,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         || intrinsicModel.keyValueFuncs.size() > 0
                         || intrinsicModel.keyExcludedValueFuncs.size() > 0
                         || intrinsicModel.keyExcludedNodes.size() > 0) {
+                    // Nothing downstream adopts these Functions once we throw. The outer catch frees
+                    // the filter and the frame cursor factory, and IntrinsicModel.clear() only drops
+                    // the references, so this is the last place that can close them.
+                    Misc.freeObjListAndClear(intrinsicModel.keyValueFuncs);
+                    Misc.freeObjListAndClear(intrinsicModel.keyExcludedValueFuncs);
                     throw CairoException.critical(0)
                             .put("LATEST ON planner invariant violated: a WHERE predicate was lifted out of the filter " +
                                     "for an index-backed cursor this shape does not build, and would not be applied. " +
@@ -6853,6 +6916,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put(intrinsicModel.keyColumn != null ? intrinsicModel.keyColumn : "null")
                             .put(']');
                 }
+                // Neither factory below reads prefixes either, and extractWithinPrefixes() only
+                // fills them for the single-key shape, so a WITHIN predicate cannot have been
+                // lifted out of the filter here.
+                assert prefixes.size() == 0;
                 boolean symbolKeysOnly = true;
                 for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
                     symbolKeysOnly &= isSymbol(keyTypes.getColumnType(i));
@@ -7132,6 +7199,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         prefixes
                 );
             } else {
+                // This factory ignores prefixes, and extractWithinPrefixes() only fills them when
+                // the branch above is the one this shape takes.
+                assert prefixes.size() == 0;
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         metadata,
@@ -10954,32 +11024,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
         final TableToken tableToken = metadata.getTableToken();
-        ExpressionNode withinExtracted;
-
-        if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
-            withinExtracted = getWhereClauseParser().extractWithin(
-                    model,
-                    model.getWhereClause(),
-                    queryMeta,
-                    functionParser,
-                    executionContext,
-                    prefixes
-            );
-
-            boolean allSymbolsAreIndexed = true;
-            if (prefixes.size() > 0) {
-                for (int i = 0; i < latestByColumnCount; i++) {
-                    int idx = listColumnFilterA.getColumnIndexFactored(i);
-                    if (!isSymbol(queryMeta.getColumnType(idx)) || !queryMeta.isColumnIndexed(idx)) {
-                        allSymbolsAreIndexed = false;
-                    }
-                }
-            }
-
-            if (allSymbolsAreIndexed) {
-                model.setWhereClause(withinExtracted);
-            }
-        }
+        // Generator-wide state shared by every query this generator compiles, so it must start
+        // empty for this one. extractWithinPrefixes() below fills it only once it knows a factory
+        // will read it back.
+        prefixes.clear();
 
         int hasInterval = -1;
         RuntimeIntrinsicIntervalModel pushedIntervalModel = null;
@@ -11079,6 +11127,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (latestByColumnCount > 0) {
+                extractWithinPrefixes(model, intrinsicModel, latestBy, queryMeta, executionContext);
                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
                     // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
@@ -11580,6 +11629,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
             if (queryMeta.getColumnIndexType(latestByColumnIndex) == IndexType.BITMAP
                     && !SqlHints.hasNoIndexHint(model)) {
+                // prefixes is always empty here. A WITHIN predicate is a WHERE clause, and
+                // extractWithinPrefixes() only fills prefixes off the residual filter, so any query
+                // carrying one returns from the branch above rather than reaching this one. The
+                // factory still takes the list because that branch hands it a populated one.
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,

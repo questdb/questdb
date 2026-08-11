@@ -312,6 +312,15 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         clearKeys();
         clearExcludedKeys();
+        // The node lists track predicates this extraction lifted out of the filter, so they must
+        // start empty. Only a nested extract() resets them via clearTransientState(); sibling
+        // extractions at the same depth - union branches, join slaves - share one parser instance
+        // and reach here with whatever the previous branch left behind. A leftover node is later
+        // copied into this branch's model by applyKeyExclusions(), which attributes another
+        // query's predicate to this one. Clear rather than revert: these nodes belong to a tree
+        // that has already been generated, and their intrinsicValue is that tree's business.
+        keyNodes.clear();
+        keyExclNodes.clear();
 
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
@@ -2760,7 +2769,11 @@ public final class WhereClauseParser implements Mutable {
             );
             model.keyExcludedValueFuncs.add(func);
         }
+        // Hand the nodes over the same way applyKeyExclusions() does. The single-node fast path in
+        // extract0() reaches here without going through applyKeyExclusions(), so this is the only
+        // place that empties the list for that shape.
         model.keyExcludedNodes.addAll(keyExclNodes);
+        keyExclNodes.clear();
         clearExcludedKeys();
     }
 

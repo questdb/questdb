@@ -3566,21 +3566,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A prefix scan can serve one WITHIN, so the pre-extraction pass used to reject a second one
+     * with "Multiple 'within' expressions not supported". The generator now recognises the shapes a
+     * prefix scan can serve and leaves every other WITHIN in the filter, where an OR of two of them
+     * evaluates like any other predicate - the same answer this query gives with the optimisation
+     * off.
+     */
     @Test
     public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
 
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
-            try {
-                assertQuery("select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid")
-                        .timestamp("time")
-                        .sizeMayVary()
-                        .noLeakCheck()
-                        .returns("");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Multiple 'within' expressions not supported");
-            }
+            assertQuery("select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid")
+                    .timestamp("time")
+                    .sizeMayVary()
+                    .returns("""
+                            time\tuuid\thash
+                            2021-05-10T23:59:59.150000Z\tXXX\tf9
+                            2021-05-11T00:00:00.083000Z\tYYY\tz3
+                            2021-05-11T00:00:00.123000Z\taaa\tz3
+                            2021-05-12T00:00:00.245000Z\tddd\tf9
+                            """);
         });
     }
 
@@ -8664,10 +8672,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     /**
-     * Should not fail any more.
+     * The residual {@code x > 0} rules out a prefix scan, because the factory that reads prefixes
+     * applies no filter, so the WITHIN stays in the filter alongside it. No row in this table
+     * carries the #zz prefix, and this used to answer with the two rows that are merely latest per
+     * symbol - the WITHIN had been lifted out of the filter for a cursor that never read it back.
+     * Running the same query with the optimisation off returns nothing too.
      */
     @Test
-    public void testWithinClauseWithFilterFails() throws Exception {
+    public void testWithinClauseWithFilterAppliesBothPredicates() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
 
         assertQuery("select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym")
@@ -8678,11 +8690,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "), index(sym) timestamp(ts)")
                 .timestamp("ts")
                 .expectSize()
-                .returns("""
-                        x\tsym\tgeo\tts
-                        19\tb\tz2\t1970-01-01T00:00:00.000019Z
-                        20\ta\trk\t1970-01-01T00:00:00.000020Z
-                        """);
+                .returns("x\tsym\tgeo\tts\n");
     }
 
     @Test
