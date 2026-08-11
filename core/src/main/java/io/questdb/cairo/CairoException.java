@@ -104,10 +104,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final int FLAG_CANCELLATION = 1 << 2; // query was explicitly cancelled by the user
     private static final int FLAG_HOUSEKEEPING = 1 << 3;
     private static final int FLAG_INTERRUPTION = 1 << 4; // query execution was interrupted
-    private static final int FLAG_OUT_OF_MEMORY = 1 << 5;
-    private static final int FLAG_PREFERENCES_OUT_OF_DATE_ERROR = 1 << 6;
-    private static final int FLAG_READ_ONLY_ACCESS_REFUSAL = 1 << 7;
-    private static final int FLAG_SCHEMA_MISMATCH = 1 << 8;
+    private static final int FLAG_MALFORMED_UTF8 = 1 << 5; // rejected value, not a broken writer
+    private static final int FLAG_OUT_OF_MEMORY = 1 << 6;
+    private static final int FLAG_PREFERENCES_OUT_OF_DATE_ERROR = 1 << 7;
+    private static final int FLAG_READ_ONLY_ACCESS_REFUSAL = 1 << 8;
+    private static final int FLAG_SCHEMA_MISMATCH = 1 << 9;
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
@@ -172,6 +173,18 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static boolean isCairoOomError(Throwable t) {
         return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
+    }
+
+    /**
+     * Raised when a value cannot be stored because its UTF-8 is malformed. Every such site uses
+     * this factory, so {@link #isMalformedUtf8()} is correct by construction.
+     */
+    public static CairoException malformedUtf8() {
+        return nonCritical().setMalformedUtf8();
+    }
+
+    public static CairoException malformedUtf8(@NotNull Utf8Sequence value) {
+        return malformedUtf8().put("invalid UTF8 in value for ").put(value);
     }
 
     public static CairoException matViewDoesNotExist(CharSequence matViewName) {
@@ -412,6 +425,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return (flags & FLAG_INTERRUPTION) != 0;
     }
 
+    /**
+     * Distinguishes a rejected value from a failing writer, so an ingestion path can drop the
+     * offending value without tearing down its writer.
+     */
+    public boolean isMalformedUtf8() {
+        return (flags & FLAG_MALFORMED_UTF8) != 0;
+    }
+
     public boolean isMetadataValidation() {
         return errno == METADATA_VALIDATION
                 || errno == METADATA_VALIDATION_RECOVERABLE
@@ -630,6 +651,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         } else {
             this.flags &= ~flag;
         }
+    }
+
+    private CairoException setMalformedUtf8() {
+        this.flags |= FLAG_MALFORMED_UTF8;
+        return this;
     }
 
     private CairoException setPreferencesOutOfDateError() {

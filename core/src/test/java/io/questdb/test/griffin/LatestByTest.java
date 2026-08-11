@@ -779,6 +779,49 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestBySymbolDifferentBindingServiceIndexed() throws Exception {
+        // Same as testLatestBySymbolDifferentBindingService, but the symbol column is INDEXED,
+        // which routes the query through LatestByValueDeferredIndexedRowCursorFactory.
+        // That factory used to inherit the no-op RowCursorFactory.init(), so it never rebound
+        // its bind-variable function to the executing context's service and kept resolving the
+        // value of whichever execution compiled it.
+
+        assertMemoryLeak(() -> {
+            execute("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
+                    "), index(s) timestamp(ts) partition by DAY");
+
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
+            try (
+                    SqlExecutionContextImpl contextC = new SqlExecutionContextImpl(engine, 1);
+                    SqlExecutionContextImpl contextA = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                contextC.with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(configuration));
+                contextA.with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(configuration));
+
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                // sanity check: same value as compiled with, via a different service
+                cases.add(BindVarTuple.ok(
+                        "different service, sym=c",
+                        "ts\ts\n1970-01-03T00:00:00.000000" + suffix + "\tc\n",
+                        bindVariableService -> bindVariableService.setStr("sym", "c")
+                ).withContext(contextC));
+                // different value via a different service must yield a different result
+                cases.add(BindVarTuple.ok(
+                        "different service, sym=a",
+                        "ts\ts\n1970-01-02T23:00:00.000000" + suffix + "\ta\n",
+                        bindVariableService -> bindVariableService.setStr("sym", "a")
+                ).withContext(contextA));
+
+                assertQuery("select ts, s from t where s = :sym latest on ts partition by s")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .assertBinds(cases);
+            }
+        });
+    }
+
+    @Test
     public void testLatestBySymbolEmpty() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
