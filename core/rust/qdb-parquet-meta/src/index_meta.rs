@@ -960,7 +960,11 @@ impl<'a> IndexMetaReader<'a> {
             lo - 1
         };
 
-        let mut ulo = 0usize;
+        // Upper bound: the first row group whose first key is strictly above
+        // `key`. A first key above `key` is also at or above it, so the upper
+        // bound is never below the lower bound and the search starts there
+        // instead of at zero. The Java reader narrows it the same way.
+        let mut ulo = lo;
         let mut uhi = n;
         while ulo < uhi {
             let mid = ulo + (uhi - ulo) / 2;

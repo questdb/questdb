@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zip;
@@ -99,6 +100,13 @@ public class IndexMetaFileReader implements QuietCloseable {
 
     public static final int IM_HEADER_SIZE = 64;
     public static final int IM_TRAILER_SIZE = 4;
+    /**
+     * {@link #getRowGroupRangeForKey(int)} for a key outside the covered key
+     * space. Both packed bounds decode to {@code -1}, which is what
+     * {@link #getRowGroupLoForKey(int)} and {@link #getRowGroupHiForKey(int)}
+     * answer for such a key.
+     */
+    public static final long KEY_ABSENT = -1L;
     // Index sections and row group blocks start on this boundary, which is what
     // lets RG_BLOCK_OFFSET store a byte offset right-shifted by 3 in a u32.
     private static final int BLOCK_ALIGNMENT = 8;
@@ -665,15 +673,12 @@ public class IndexMetaFileReader implements QuietCloseable {
      * {@code -1} when {@code key} is outside the covered key space. Together
      * with {@link #getRowGroupLoForKey(int)} this is the inclusive row group
      * range the key's postings live in, and it is contiguous, so the key's
-     * postings and covered values are one byte range per column.
+     * postings and covered values are one byte range per column. A caller that
+     * wants both bounds should ask {@link #getRowGroupRangeForKey(int)} once
+     * rather than call this and its companion.
      */
     public int getRowGroupHiForKey(int key) {
-        if (getRowGroupLoForKey(key) < 0) {
-            return -1;
-        }
-        // A valid lo implies at least one row group whose first key is <= key,
-        // so the upper bound is at least 1 and the subtraction stays in range.
-        return upperBound(key) - 1;
+        return Numbers.decodeHighInt(getRowGroupRangeForKey(key));
     }
 
     /**
@@ -683,17 +688,7 @@ public class IndexMetaFileReader implements QuietCloseable {
      * file holds no index row groups at all.
      */
     public int getRowGroupLoForKey(int key) {
-        if (Integer.compareUnsigned(key, keyCount) >= 0 || indexRowGroupCount == 0) {
-            return -1;
-        }
-        final int lo = lowerBound(key);
-        if (lo < indexRowGroupCount && firstKeyAt(lo) == key) {
-            return lo;
-        }
-        if (lo == 0) {
-            return -1;
-        }
-        return lo - 1;
+        return Numbers.decodeLowInt(getRowGroupRangeForKey(key));
     }
 
     /**
@@ -706,6 +701,69 @@ public class IndexMetaFileReader implements QuietCloseable {
      */
     public long getRowGroupNumRows(int rowGroup) {
         return Unsafe.getLong(rowGroupBlockAddr(rowGroup));
+    }
+
+    /**
+     * The inclusive index row group range holding {@code key}, packed with
+     * {@link Numbers#encodeLowHighInts(int, int)}: the low bound in the low
+     * int, the high bound in the high int. {@link #KEY_ABSENT} when
+     * {@code key} is outside the covered key space, which decodes to
+     * {@code -1} for both bounds.
+     * <p>
+     * This is the lookup hot path, and answering both bounds from one pass is
+     * the reason RG_FIRST_KEY is a dense u32 array rather than a stride over
+     * the 64-byte column chunks: a lookup should touch a couple of cache
+     * lines, not one per row group. {@link #getRowGroupLoForKey(int)} and
+     * {@link #getRowGroupHiForKey(int)} delegate here rather than searching
+     * again. Mirrors the Rust {@code row_group_range_for_key}.
+     */
+    public long getRowGroupRangeForKey(int key) {
+        // The comparison is unsigned: KEY_COUNT is a u32, so a key read back
+        // negative in Java is above it rather than below zero.
+        if (Integer.compareUnsigned(key, keyCount) >= 0 || indexRowGroupCount == 0) {
+            return KEY_ABSENT;
+        }
+        // Lower bound: the first row group whose first key is at or above
+        // key. Bounded at INDEX_RG_COUNT, so the sentinel is never read.
+        int lo = 0;
+        int hi = indexRowGroupCount;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (Integer.compareUnsigned(firstKeyAt(mid), key) < 0) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        final int rgLo;
+        if (lo < indexRowGroupCount && firstKeyAt(lo) == key) {
+            rgLo = lo;
+        } else if (lo == 0) {
+            // The key sorts below the first row group's first key, so no row
+            // group can hold it.
+            return KEY_ABSENT;
+        } else {
+            // No row group starts at key, so it is packed inside the one
+            // before the lower bound.
+            rgLo = lo - 1;
+        }
+        // Upper bound: the first row group whose first key is strictly above
+        // key. A first key above key is also at or above it, so the upper
+        // bound is never below the lower bound and the search starts there
+        // instead of at zero.
+        int upperLo = lo;
+        int upperHi = indexRowGroupCount;
+        while (upperLo < upperHi) {
+            final int mid = (upperLo + upperHi) >>> 1;
+            if (Integer.compareUnsigned(firstKeyAt(mid), key) <= 0) {
+                upperLo = mid + 1;
+            } else {
+                upperHi = mid;
+            }
+        }
+        // rgLo is a valid row group, so at least one first key is at or below
+        // key and the subtraction stays in range.
+        return Numbers.encodeLowHighInts(rgLo, upperLo - 1);
     }
 
     /**
@@ -851,25 +909,6 @@ public class IndexMetaFileReader implements QuietCloseable {
 
     private int firstKeyAt(int i) {
         return Unsafe.getInt(addr + rgFirstKeyOffset + (long) i * Integer.BYTES);
-    }
-
-    /**
-     * Index of the first row group whose first key is greater than or equal to
-     * {@code key}; {@code indexRowGroupCount} when there is none. Bounded at
-     * {@code INDEX_RG_COUNT}, so the sentinel is never read by the search.
-     */
-    private int lowerBound(int key) {
-        int lo = 0;
-        int hi = indexRowGroupCount;
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (Integer.compareUnsigned(firstKeyAt(mid), key) < 0) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        return lo;
     }
 
     /**
@@ -1139,24 +1178,5 @@ public class IndexMetaFileReader implements QuietCloseable {
                 .put(", indexRowGroupCount=").put(indexRowGroupCount)
                 .put(", dataRowGroupCount=").put(dataRowGroupCount)
                 .put(", size=").put(size).put(']');
-    }
-
-    /**
-     * Index of the first row group whose first key is strictly greater than
-     * {@code key}; {@code indexRowGroupCount} when there is none. Bounded at
-     * {@code INDEX_RG_COUNT}, so the sentinel is never read by the search.
-     */
-    private int upperBound(int key) {
-        int lo = 0;
-        int hi = indexRowGroupCount;
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (Integer.compareUnsigned(firstKeyAt(mid), key) <= 0) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        return lo;
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.IndexMetaFileWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zip;
@@ -1088,6 +1089,43 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The paired accessor answers the lookup hot path in one pass, and the two
+     * single-bound accessors delegate to it, so every one of the cases below
+     * must give the same answer through either route. Mirrors the Rust
+     * {@code row_group_range_for_key}, which returns the pair from one call.
+     */
+    @Test
+    public void testRowGroupRangeForKeyPairsBothBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            withSample(reader -> {
+                // The specification's worked example:
+                // RG_FIRST_KEY = [0, 11_403, 11_403, 11_404, KEY_COUNT].
+                assertRangeForKey(reader, 0, 0, 0); // exact match at index 0
+                assertRangeForKey(reader, 5, 0, 0); // packed inside row group 0
+                assertRangeForKey(reader, 11_403, 1, 2); // spans two row groups
+                assertRangeForKey(reader, 11_404, 3, 3); // exact match at index 3
+                // KEY_COUNT and above are absent, and the comparison is
+                // unsigned, so -1 read as a u32 is above KEY_COUNT.
+                assertKeyAbsent(reader, 11_405);
+                assertKeyAbsent(reader, -1);
+            });
+            // A key below the first row group's first key, and a file with no
+            // row groups at all, are absent through both routes too.
+            withReader(IndexMetaFileReaderTest::buildBelowFirstKeySample, reader -> {
+                assertKeyAbsent(reader, 0);
+                assertKeyAbsent(reader, 4);
+                assertRangeForKey(reader, 5, 0, 0);
+                assertRangeForKey(reader, 7, 0, 0);
+                assertRangeForKey(reader, 50, 1, 1);
+            });
+            withReader(IndexMetaFileReaderTest::buildZeroRowGroupSample, reader -> {
+                assertKeyAbsent(reader, 0);
+                assertKeyAbsent(reader, 50);
+            });
+        });
+    }
+
+    /**
      * Pins the fixture the crafted out-of-line references patch, so a layout
      * change cannot quietly turn them into harmless offsets. These are the
      * offsets the Rust {@code test_two_block_out_of_line_sample_layout} pins.
@@ -1163,6 +1201,28 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    /**
+     * A key outside the covered key space answers absent through the paired
+     * accessor and through both single-bound accessors.
+     */
+    private static void assertKeyAbsent(IndexMetaFileReader reader, int key) {
+        Assert.assertEquals(IndexMetaFileReader.KEY_ABSENT, reader.getRowGroupRangeForKey(key));
+        Assert.assertEquals(-1, reader.getRowGroupLoForKey(key));
+        Assert.assertEquals(-1, reader.getRowGroupHiForKey(key));
+    }
+
+    /**
+     * The paired accessor and the two single-bound accessors must give the
+     * same inclusive range, since the latter delegate to the former.
+     */
+    private static void assertRangeForKey(IndexMetaFileReader reader, int key, int expectedLo, int expectedHi) {
+        final long range = reader.getRowGroupRangeForKey(key);
+        Assert.assertEquals(expectedLo, Numbers.decodeLowInt(range));
+        Assert.assertEquals(expectedHi, Numbers.decodeHighInt(range));
+        Assert.assertEquals(expectedLo, reader.getRowGroupLoForKey(key));
+        Assert.assertEquals(expectedHi, reader.getRowGroupHiForKey(key));
     }
 
     /**
