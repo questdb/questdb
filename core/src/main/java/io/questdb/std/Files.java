@@ -199,6 +199,18 @@ public final class Files {
         return fdatasync0(toOsFd(fd));
     }
 
+    /**
+     * {@link #fsync(long)}'s contract -- data AND all metadata -- with the device cache actually flushed.
+     * <p>
+     * Distinct from {@link #fdatasync(long)} on purpose: fdatasync may skip metadata that is not needed to
+     * read the data back, so the two are not interchangeable where a caller has asked for fsync. Use this
+     * when fsync semantics are required AND the data must survive power loss; on macOS plain
+     * {@code fsync(2)} does not flush the drive's write cache, which is the gap this closes.
+     */
+    public static int fsyncDurable(long fd) {
+        return fsyncDurable0(toOsFd(fd));
+    }
+
     public static int fsync(long fd) {
         return fsync(toOsFd(fd));
     }
@@ -690,6 +702,8 @@ public final class Files {
     private native static long findFirst(long lpszName);
 
     private static native int fdatasync0(int fd);
+
+    private static native int fsyncDurable0(int fd);
 
     private static native int fsync(int fd);
 

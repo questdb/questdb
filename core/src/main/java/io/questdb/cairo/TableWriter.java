@@ -16031,12 +16031,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         path.trimTo(partitionDirLen).concat(namePtr);
                         final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                         try {
-                            // fdatasync, not fsync: this is the device-durability barrier (F_FULLFSYNC on
-                            // Darwin), and this fallback exists precisely because the platform has no
-                            // filesystem-wide syncfs. A plain fsync here would leave the epoch's columns in
-                            // the drive's write cache on macOS -- durable against process death, not against
-                            // the power cut the epoch is the recovery anchor for.
-                            ff.fdatasync(fd);
+                            // fsync semantics (data AND metadata), but with the device cache actually
+                            // flushed. NOT fdatasync: that is defined to skip metadata not needed to read
+                            // the data back, so it is not a drop-in for the fsync this path has always
+                            // done. The only thing corrected here is Darwin, where plain fsync(2) leaves
+                            // the epoch's columns in the drive's write cache -- durable against process
+                            // death, not against the power cut the epoch is the recovery anchor for. This
+                            // fallback exists precisely because the platform has no fs-wide syncfs.
+                            ff.fsyncDurable(fd);
                         } finally {
                             ff.close(fd);
                         }

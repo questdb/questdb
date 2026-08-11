@@ -309,6 +309,20 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
     return durable_fsync_fd((int) fd);
 }
 
+/* fsync's contract -- data AND all metadata -- with the device cache actually flushed.
+ *
+ * This is deliberately NOT fdatasync0: fdatasync is defined to skip metadata that is not required to read
+ * the data back, so the two are not interchangeable on a platform that has both. Callers that want fsync
+ * semantics must keep them; the only thing being corrected here is Darwin's missing device-cache flush,
+ * where F_FULLFSYNC is a superset of fsync and so preserves the contract. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsyncDurable0(JNIEnv *e, jclass cl, jint fd) {
+#if defined(__APPLE__)
+    return durable_fsync_fd((int) fd);
+#else
+    return fsync((int) fd);
+#endif
+}
+
 #if defined(__linux__)
 /* sync_file_range(2) is exposed by <fcntl.h> only under _GNU_SOURCE (glibc); this file does not
  * define it globally, so forward-declare the prototype here (mirrors the syncfs declaration below).

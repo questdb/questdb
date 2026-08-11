@@ -73,6 +73,15 @@ public interface FilesFacade {
 
     void fsync(long fd);
 
+    /**
+     * {@link #fsync(long)} semantics (data AND metadata) with the device write cache actually flushed.
+     * Not interchangeable with {@link #fdatasync(long)}, which may skip metadata not needed to read the
+     * data back. Default delegates to {@link #fsync(long)} so existing implementations keep working.
+     */
+    default void fsyncDurable(long fd) {
+        fsync(fd);
+    }
+
     void fsyncAndClose(long fd);
 
     /**

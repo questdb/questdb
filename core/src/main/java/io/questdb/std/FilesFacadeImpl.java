@@ -218,6 +218,16 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void fsyncDurable(long fd) {
+        int res = Files.fsyncDurable(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "fsyncDurable").put("could not fsyncDurable [fd=").put(fd).put(']');
+    }
+
+    @Override
     public void fsyncAndClose(long fd) {
         int res = Files.fsync(fd);
         if (res == 0) {
