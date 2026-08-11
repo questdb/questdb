@@ -14899,6 +14899,82 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPciFileShortExistingMetadataIsRepaired() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "pci_short_repair";
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+                    }
+
+                    LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                    assertTrue(fd > 0);
+                    try {
+                        assertTrue(ff.truncate(fd, Integer.BYTES));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(Integer.BYTES, ff.length(pciFile));
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        writer.add(0, 1);
+                        writer.setMaxValue(1);
+                        writer.commit();
+                        assertTrue("short .pci header must be rewritten", writer.isLastSidecarInfoHeaderWrittenForTesting());
+                    }
+
+                    final long payloadSize = 3L * Integer.BYTES;
+                    pciFile = PostingIndexUtils.coverInfoFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                    );
+                    assertEquals(Files.ceilPageSize(payloadSize), ff.length(pciFile));
+                    fd = ff.openRO(pciFile);
+                    assertTrue(fd > 0);
+                    try {
+                        assertEquals(payloadSize, ff.read(fd, colAddr, payloadSize, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    assertEquals(PostingIndexUtils.COVER_INFO_MAGIC, Unsafe.getInt(colAddr));
+                    assertEquals(1, Unsafe.getInt(colAddr + Integer.BYTES));
+                    assertEquals(1, Unsafe.getInt(colAddr + 2L * Integer.BYTES));
+                } finally {
+                    Unsafe.free(colAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPciFileSizeStableAndIdenticalHeaderNotRewrittenAcrossSealAndClose() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
