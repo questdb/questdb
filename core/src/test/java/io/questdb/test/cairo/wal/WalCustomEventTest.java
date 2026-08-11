@@ -440,10 +440,10 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 walWriter.appendCustomEvent(CUSTOM_TYPE_LONG, mem -> mem.putLong(1L));
             }
 
-            // Bytes 6..63 are neither a known OSS type (0..5) nor a reserved downstream
+            // Bytes 7..63 are neither a known OSS type (0..6) nor a reserved downstream
             // type (64..127): a corrupt type byte in this gap must be a hard read error,
             // not silently surfaced as an unknown/custom event.
-            for (byte corruptType : new byte[]{6, 32, 63}) {
+            for (byte corruptType : new byte[]{7, 32, 63}) {
                 corruptFirstRecordType(tableToken, walId, corruptType);
                 restampFirstRecordChecksum(tableToken, walId);
                 try (Path path = new Path();

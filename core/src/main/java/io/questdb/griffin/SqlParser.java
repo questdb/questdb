@@ -24,22 +24,28 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -75,6 +81,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -82,7 +89,9 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -116,6 +125,7 @@ public class SqlParser {
     private final ObjectPool<CompileViewModel> compileViewModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<ExportModel> copyModelPool;
+    private final CreateLiveViewOperationBuilderImpl createLiveViewOperationBuilder = new CreateLiveViewOperationBuilderImpl();
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
@@ -468,6 +478,10 @@ public class SqlParser {
                 || tag == ColumnType.TIMESTAMP;
     }
 
+    private static boolean isLexerWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         return switch (token.charAt(0)) {
@@ -490,6 +504,17 @@ public class SqlParser {
         return Chars.equals(token, ZERO_OFFSET.token)
                 || Chars.equals(token, "'+00:00'")
                 || Chars.equals(token, "'-00:00'");
+    }
+
+    private static CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateLiveViewOperationBuilderImpl builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateLiveViewExt(lexer, executionContext, builder, nextToken);
     }
 
     private static CreateMatViewOperationBuilder parseCreateMatViewExt(
@@ -1263,13 +1288,1262 @@ public class SqlParser {
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
+        if (isLiveKeyword(tok)) {
+            if (!configuration.isLiveViewEnabled()) {
+                throw SqlException.$(lexer.lastTokenPosition(), "live views are disabled");
+            }
+            // A view created with no refresh worker would never seed, never drain and never serve
+            // a row, while WalPurgeJob would have to hold the base WAL from its genesis seqTxn
+            // forever on its behalf. Refuse it here rather than hand back a view that only looks
+            // created. buildViewGraphs applies the same predicate to views already on disk.
+            if (configuration.getLiveViewRefreshWorkerCount() < 1) {
+                throw SqlException.$(lexer.lastTokenPosition(), "live view refresh is disabled, set ")
+                        .put(PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
+                        .put(" to a positive value");
+            }
+            // The CREATE body is the one place ANCHOR is written by hand, and it
+            // parses with isLiveViewCompile() still false (only the later re-compile
+            // of the stored SELECT sets that). Restore the flag afterwards so a
+            // failed CREATE cannot leave ANCHOR enabled for the next expr() call.
+            expressionParser.setAnchorAllowed(true);
+            try {
+                return parseCreateLiveView(lexer, executionContext, sqlParserCallback);
+            } finally {
+                expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
+            }
+        }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(0, "materialized views are disabled");
+                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    private ExecutionModel parseCreateLiveView(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateLiveViewOperationBuilderImpl builder = createLiveViewOperationBuilder;
+        builder.clear();
+
+        expectTok(lexer, "view");
+
+        // optional IF NOT EXISTS
+        CharSequence tok = tok(lexer, "live view name");
+        if (isIfKeyword(tok)) {
+            expectTok(lexer, "not");
+            expectTok(lexer, "exists");
+            builder.setIgnoreIfExists(true);
+            tok = tok(lexer, "live view name");
+        }
+
+        // view name - apply the same normalization as CREATE TABLE / MATERIALIZED
+        // VIEW: strip a leading public. schema, reject an unquoted keyword name, and
+        // reject dots/slashes. Without this the live-view path diverged (accepting
+        // keyword names and a public. prefix that the other CREATE paths normalize).
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        builder.setViewName(Chars.toString(assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
+        builder.setViewNamePosition(lexer.lastTokenPosition());
+
+        // FLUSH EVERY <duration> -- required
+        tok = tok(lexer, "'flush'");
+        if (!isFlushKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'flush every <duration>' expected");
+        }
+        expectTok(lexer, "every");
+        CharSequence flushTok = tok(lexer, "flush every duration");
+        int flushPos = lexer.lastTokenPosition();
+        long flushValue = LiveViewDefinition.parseDurationValue(flushTok, flushPos);
+        char flushUnit = LiveViewDefinition.parseDurationUnit(flushTok, flushPos);
+        long flushMicros = LiveViewDefinition.toMicrosChecked(flushValue, flushUnit, flushPos);
+        if (flushValue == 0 || flushMicros < 100_000) {
+            throw SqlException.$(flushPos, "live view FLUSH EVERY must be at least 100ms");
+        }
+        builder.setFlushEveryInterval(flushValue);
+        builder.setFlushEveryIntervalUnit(flushUnit);
+
+        // Defaults: IN MEMORY = FLUSH EVERY; PARTITION BY = base table's scheme.
+        // IN MEMORY is the user-facing knob for the in-memory tier's retention
+        // window. Parsed, bounded by cairo.live.view.in.memory.max, and persisted
+        // into _lv.
+        long inMemoryValue = flushValue;
+        char inMemoryUnit = flushUnit;
+        long inMemoryMicros = flushMicros;
+        boolean inMemorySpecified = false;
+        boolean partitionBySpecified = false;
+        boolean startFromSpecified = false;
+
+        // Clauses: IN MEMORY <duration>, PARTITION BY <unit>, START FROM <start>.
+        // Any of the three may appear, in any order, before AS, but each at most
+        // once - a repeat is rejected so a typo'd second clause does not silently
+        // overwrite the first. START FROM is the only mandatory one; the check for
+        // it sits below, once AS terminates the clause list.
+        tok = tok(lexer, "'in', 'partition', 'start', or 'as'");
+        while (true) {
+            if (isInKeyword(tok)) {
+                if (inMemorySpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view IN MEMORY clause specified more than once");
+                }
+                expectTok(lexer, "memory");
+                CharSequence memTok = tok(lexer, "in memory duration");
+                int memPos = lexer.lastTokenPosition();
+                inMemoryValue = LiveViewDefinition.parseDurationValue(memTok, memPos);
+                inMemoryUnit = LiveViewDefinition.parseDurationUnit(memTok, memPos);
+                inMemoryMicros = LiveViewDefinition.toMicrosChecked(inMemoryValue, inMemoryUnit, memPos);
+                if (inMemoryMicros < flushMicros) {
+                    SqlException ex = SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at least FLUSH EVERY (")
+                            .put(flushValue)
+                            .put(displayDurationUnit(flushUnit))
+                            .put(')');
+                    throw ex;
+                }
+                if (inMemoryMicros > configuration.getLiveViewInMemoryMaxMicros()) {
+                    SqlException ex = SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at most cairo.live.view.in.memory.max (");
+                    appendDurationFromMicros(ex, configuration.getLiveViewInMemoryMaxMicros());
+                    ex.put(')');
+                    throw ex;
+                }
+                inMemorySpecified = true;
+                builder.setInMemoryInterval(inMemoryValue);
+                builder.setInMemoryIntervalUnit(inMemoryUnit);
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isPartitionKeyword(tok)) {
+                if (partitionBySpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view PARTITION BY clause specified more than once");
+                }
+                expectTok(lexer, "by");
+                tok = tok(lexer, "year month week day hour");
+                int partPos = lexer.lastTokenPosition();
+                int partitionBy = PartitionBy.fromString(tok);
+                if (partitionBy < 0) {
+                    throw SqlException.$(partPos, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                }
+                // The LV's on-disk tier is a WAL-backed table, and WAL tables
+                // require a partition scheme. Explicit PARTITION BY NONE would
+                // fail downstream with a confusing "WAL is only supported for
+                // partitioned tables" error; reject up front with an LV-specific
+                // message instead.
+                if (partitionBy == PartitionBy.NONE) {
+                    throw SqlException.$(partPos,
+                            "live view PARTITION BY NONE is not supported; live views must be partitioned");
+                }
+                builder.setPartitionBy(partitionBy);
+                partitionBySpecified = true;
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isStartKeyword(tok)) {
+                if (startFromSpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view START FROM clause specified more than once");
+                }
+                expectTok(lexer, "from");
+                tok = tok(lexer, "'now', 'beginning' or a timestamp literal");
+                final int startPos = lexer.lastTokenPosition();
+                if (isNowKeyword(tok)) {
+                    builder.setStartFromNow();
+                    startFromSpecified = true;
+                    tok = tok(lexer, "next clause or 'as'");
+                    // NOW is grammar, not the now() function: the view resolves it to a single
+                    // clock reading at CREATE and persists that. Reject the call syntax rather
+                    // than letting the '(' fall through to a bare "'as' expected".
+                    if (Chars.equals(tok, '(')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "live view START FROM NOW does not take arguments");
+                    }
+                } else if (isBeginningKeyword(tok)) {
+                    builder.setStartFromBeginning();
+                    startFromSpecified = true;
+                    tok = tok(lexer, "next clause or 'as'");
+                } else if (isNullKeyword(tok)) {
+                    throw SqlException.$(startPos, "live view START FROM does not accept NULL");
+                } else if (tok.length() > 1 && tok.charAt(0) == '\'' && tok.charAt(tok.length() - 1) == '\'') {
+                    // Single quotes only: a double-quoted or back-quoted token is an identifier
+                    // in QuestDB SQL, and the boundary is a constant, not a name.
+                    //
+                    // The literal is parsed at CREATE, not here: its precision follows the base
+                    // table's designated timestamp type (MICRO or NANO), which the parser cannot
+                    // see. CairoEngine.createLiveView resolves it against the base's driver.
+                    builder.setStartFromTimestamp(Chars.toString(GenericLexer.unquote(tok)), startPos);
+                    startFromSpecified = true;
+                    tok = tok(lexer, "next clause or 'as'");
+                } else {
+                    throw SqlException.$(startPos, "'now', 'beginning' or a quoted timestamp literal expected");
+                }
+            } else if (isBackfillKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "live view BACKFILL is not supported, use START FROM BEGINNING");
+            } else {
+                break;
+            }
+        }
+
+        if (!inMemorySpecified) {
+            // IN MEMORY defaults to FLUSH EVERY when omitted, so the same
+            // cairo.live.view.in.memory.max cap that bounds the explicit clause
+            // must bound the default too. Otherwise a large FLUSH EVERY (which
+            // has no upper bound of its own) silently retains more than the cap
+            // in the in-memory tier.
+            if (inMemoryMicros > configuration.getLiveViewInMemoryMaxMicros()) {
+                SqlException ex = SqlException.position(flushPos)
+                        .put("live view FLUSH EVERY must be at most cairo.live.view.in.memory.max (");
+                appendDurationFromMicros(ex, configuration.getLiveViewInMemoryMaxMicros());
+                ex.put(") because IN MEMORY defaults to FLUSH EVERY");
+                throw ex;
+            }
+            builder.setInMemoryInterval(inMemoryValue);
+            builder.setInMemoryIntervalUnit(inMemoryUnit);
+        }
+
+        // expect AS
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        // START FROM decides which base rows the view ever contains, and the answer
+        // differs by orders of magnitude between NOW and BEGINNING. There is no
+        // defensible default, so the clause is mandatory: point at the AS that closed
+        // the clause list, which is where the missing clause belongs.
+        if (!startFromSpecified) {
+            throw SqlException.$(lexer.lastTokenPosition(),
+                    "live view requires a START FROM clause, one of 'START FROM NOW', 'START FROM BEGINNING' or 'START FROM <timestamp>'");
+        }
+
+        // parse SELECT
+        int selectStart = lexer.getPosition();
+        tok = tok(lexer, "'(' or 'select'");
+        boolean hasParens = Chars.equals(tok, '(');
+        if (hasParens) {
+            // Skip past the opening parenthesis so the captured SELECT text stays
+            // balanced; otherwise the stored SQL keeps the leading '(' but drops
+            // the trailing ')', and recompiling it later fails with "')' expected".
+            selectStart = lexer.getPosition();
+        } else {
+            lexer.unparseLast();
+        }
+        IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        if (hasParens) {
+            expectTok(lexer, ")");
+        }
+        // A live view freezes its output schema at CREATE, but persists the SELECT text
+        // verbatim and recompiles it whenever the base metadata drifts. A wildcard in the
+        // top-level projection would re-expand against the new base metadata, so a base
+        // ADD COLUMN - which the view otherwise treats as transparent - would widen the
+        // projection past the frozen on-disk schema and the row copier would write the new
+        // column into the slot of the one after it. Reject it at CREATE, mirroring the ban
+        // SAMPLE BY carries for exactly the same reason (see SqlOptimiser.rewriteSampleBy).
+        // The top-level projection is the only one to check: it alone fixes the view's schema,
+        // and a subquery in FROM - the one shape that could hide another projection - is
+        // already rejected below ("live view requires a single base table in FROM clause").
+        final ObjList<QueryColumn> projection = queryModel.getColumns();
+        for (int i = 0, n = projection.size(); i < n; i++) {
+            final ExpressionNode ast = projection.getQuick(i).getAst();
+            if (ast.isWildcard()) {
+                throw SqlException.$(ast.position, "wildcard column select is not allowed in live view queries");
+            }
+        }
+        // Trim whitespace between the query and any wrapping parentheses so the
+        // captured SELECT text round-trips cleanly. SHOW CREATE LIVE VIEW re-emits
+        // the definition as "AS (\n<sql>\n)"; without trimming, re-parsing that
+        // output would fold the surrounding newlines into the stored SQL and
+        // accumulate more whitespace on every round-trip.
+        final CharSequence content = lexer.getContent();
+        int selectTextStart = selectStart;
+        int selectTextEnd = lexer.getPosition() - (hasParens ? 1 : 0);
+        while (selectTextStart < selectTextEnd && isLexerWhitespace(content.charAt(selectTextStart))) {
+            selectTextStart++;
+        }
+        while (selectTextEnd > selectTextStart && isLexerWhitespace(content.charAt(selectTextEnd - 1))) {
+            selectTextEnd--;
+        }
+        builder.setSelectSql(Chars.toString(content, selectTextStart, selectTextEnd));
+        builder.setSelectModel(queryModel);
+
+        // extract base table name from query model
+        IQueryModel from = queryModel.getNestedModel() != null ? queryModel.getNestedModel() : queryModel;
+        if (from.getTableName() == null) {
+            throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
+        }
+        builder.setBaseTableName(Chars.toString(from.getTableName()));
+        // Position of the base table name in the source SQL; engine-side
+        // validation rules that reject based on the base table (DEDUP keys,
+        // missing designated timestamp, live-on-live) point at this offset.
+        final ExpressionNode baseNameExpr = from.getTableNameExpr();
+        builder.setBaseTableNamePosition(baseNameExpr != null ? baseNameExpr.position : selectStart);
+
+        // Validate ORDER BY on each named window: CREATE-time validation requires
+        // the ORDER BY column to be the base table's designated timestamp,
+        // ascending. Caught at parse time so the LV never reaches the engine with a
+        // shape its WAL-row-order processing can't honor.
+        validateLiveViewWindowOrderBy(queryModel, from.getTableName());
+
+        // Validate ANCHOR usage on each named window. Inline anchor expressions
+        // attached to anonymous OVER (...) clauses inside SELECT columns are also
+        // captured by the parser but live in the SELECT-column WindowExpressions;
+        // we walk the named-window map here.
+        validateLiveViewAnchors(queryModel);
+
+        // Enforce the bare-unbounded-window rule, which validateLiveViewAnchors
+        // used to carry: a PARTITION-BY-keyed window over the default frame needs
+        // an ANCHOR to bound its per-partition state. Resolved per window-function
+        // call rather than per window definition, because the state the rule is
+        // about belongs to the calls.
+        rejectBareUnboundedWindows(queryModel);
+
+        // Defense-in-depth lead() reject. The factory-side check inside
+        // CairoEngine only fires when the planner picks a window factory
+        // that exposes lead - a future planner path that bypasses both
+        // CachedWindowRecordCursorFactory and WindowRecordCursorFactory
+        // would silently accept lead-only LVs. Surface it at the parser
+        // level too. Runs before the finite-influence gate so a lead() over
+        // the default frame is named for what actually disqualifies it: lead
+        // reads forward and ignores the frame entirely, so "bound the frame"
+        // would be advice that cannot help.
+        rejectLeadInSelect(queryModel);
+
+        // Enforce the finite-influence scope cut: unanchored ranking functions
+        // (row_number / rank / dense_rank) and unbounded frame starts have no
+        // finite forward influence and are rejected at CREATE. Runs after
+        // validateLiveViewAnchors so the named-window anchor kinds it inspects
+        // are already validated.
+        validateLiveViewFiniteInfluence(queryModel);
+
+        // Capture the (at most one) anchored named WINDOW for persistence in _lv.
+        // The runtime side reads this back to compile the anchor expression and
+        // build the LiveViewWindow without re-parsing the SELECT.
+        builder.setAnchorSpec(captureAnchoredWindow(queryModel));
+
+        // Hand any trailing token to the edition grammar hook, as CREATE TABLE / VIEW /
+        // MATERIALIZED VIEW already do. Enterprise consumes OWNED BY '<principal>' here; the OSS
+        // default rejects whatever is left over, which is what a bare trailing token did before
+        // this hook existed. SHOW CREATE LIVE VIEW emits the same clause, so its output has to
+        // parse back through this call.
+        tok = optTok(lexer);
+        return parseCreateLiveViewExt(lexer, executionContext, sqlParserCallback, tok, builder);
+    }
+
+    private LiveViewDefinition.LvAnchorSpec captureAnchoredWindow(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence keyCs = keys.getQuick(i);
+            WindowExpression w = named.get(keyCs);
+            if (w == null || w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                continue;
+            }
+            // Per validateLiveViewAnchors, at most one anchored window survives.
+            String windowName = Chars.toString(keyCs);
+            byte anchorKind = w.getAnchorKind();
+            String anchorExpressionSql = null;
+            if (anchorKind == WindowExpression.ANCHOR_KIND_EXPRESSION) {
+                ExpressionNode expr = w.getAnchorExpression();
+                if (expr != null) {
+                    StringSink anchorSink = Misc.getThreadLocalSink();
+                    expr.toSink(anchorSink);
+                    anchorExpressionSql = anchorSink.toString();
+                }
+            } else if (anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
+                // Desugar ANCHOR DAILY 'HH:MM' [tz] into the equivalent
+                // timestamp_floor / timestamp_floor_utc expression so the runtime
+                // path that compiles ANCHOR EXPRESSION can drive resetPartition
+                // dispatch identically. The original DAILY fields stay persisted
+                // for round-tripping in SHOW CREATE LIVE VIEW.
+                anchorExpressionSql = desugarDailyAnchor(w);
+            }
+            ObjList<String> partitionColumnNames = new ObjList<>(w.getPartitionBy().size());
+            for (int j = 0, k = w.getPartitionBy().size(); j < k; j++) {
+                ExpressionNode pNode = w.getPartitionBy().getQuick(j);
+                if (pNode.type != ExpressionNode.LITERAL) {
+                    throw SqlException.$(pNode.position,
+                            "live view ANCHOR currently requires PARTITION BY to reference base columns directly");
+                }
+                partitionColumnNames.add(Chars.toString(pNode.token));
+            }
+            return new LiveViewDefinition.LvAnchorSpec(
+                    windowName,
+                    anchorKind,
+                    anchorExpressionSql,
+                    w.getAnchorDailyTimeUs(),
+                    w.getAnchorDailyTimeZone() == null ? null : Chars.toString(w.getAnchorDailyTimeZone()),
+                    w.getAnchorPosition(),
+                    partitionColumnNames
+            );
+        }
+        return null;
+    }
+
+    /**
+     * Builds the desugared {@code timestamp_floor} / {@code timestamp_floor_utc}
+     * expression text equivalent to {@code ANCHOR DAILY 'HH:MM' [tz]}. The runtime
+     * side feeds this through the same {@code ensureAnchorFunction} path that
+     * {@code ANCHOR EXPRESSION} uses, so the actual reset dispatch is identical.
+     * <ul>
+     *     <li>UTC midnight (no tz or {@code 'UTC'}): {@code timestamp_floor('1d', <ts>)} — a UTC tz at zero offset adds no information, so the two forms collapse into the same desugared expression.</li>
+     *     <li>No-tz non-midnight: {@code timestamp_floor('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp)}.</li>
+     *     <li>Tz-aware: {@code timestamp_floor_utc('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp, '+00:00', '<tz>')}
+     *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
+     * </ul>
+     */
+    private static String desugarDailyAnchor(WindowExpression w) throws SqlException {
+        ObjList<ExpressionNode> orderBy = w.getOrderBy();
+        if (orderBy.size() == 0) {
+            throw SqlException.$(w.getAnchorPosition(), "ANCHOR DAILY requires ORDER BY <timestamp column>");
+        }
+        ExpressionNode tsNode = orderBy.getQuick(0);
+        if (tsNode.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(tsNode.position, "ANCHOR DAILY requires ORDER BY a base timestamp column");
+        }
+        long timeUs = w.getAnchorDailyTimeUs();
+        CharSequence tz = w.getAnchorDailyTimeZone();
+        // A 'UTC' tz at zero offset is a no-op: tz='UTC' and tz=null produce
+        // the same buckets and the same desugared form. Collapse the UTC
+        // case into the no-tz branch so the persisted anchor expression
+        // skips the unnecessary timestamp_floor_utc call on the hot path.
+        final boolean tzIsUtc = tz != null && Chars.equalsIgnoreCase("UTC", tz);
+        StringSink sink = Misc.getThreadLocalSink();
+        if ((tz == null || tzIsUtc) && timeUs == 0) {
+            sink.put("timestamp_floor('1d', ").put(tsNode.token).put(')');
+        } else if (tz == null) {
+            sink.put("timestamp_floor('1d', ").put(tsNode.token).put(", '1970-01-01T");
+            putHHMM(sink, timeUs);
+            sink.put(":00.000000Z'::timestamp)");
+        } else {
+            sink.put("timestamp_floor_utc('1d', ").put(tsNode.token).put(", '1970-01-01T");
+            putHHMM(sink, timeUs);
+            sink.put(":00.000000Z'::timestamp, '+00:00', '").put(tz).put("')");
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Renders a duration in microseconds onto an asserted-wording error message,
+     * picking the largest unit that divides cleanly. Mirrors the user-facing
+     * grammar units accepted by {@link LiveViewDefinition#parseDurationUnit} so
+     * the rendered string can be copy-pasted back into a CREATE.
+     */
+    private static void appendDurationFromMicros(SqlException ex, long micros) {
+        if (micros > 0 && micros % Micros.HOUR_MICROS == 0) {
+            ex.put(micros / Micros.HOUR_MICROS).put('h');
+        } else if (micros > 0 && micros % Micros.MINUTE_MICROS == 0) {
+            ex.put(micros / Micros.MINUTE_MICROS).put('m');
+        } else if (micros > 0 && micros % Micros.SECOND_MICROS == 0) {
+            ex.put(micros / Micros.SECOND_MICROS).put('s');
+        } else if (micros > 0 && micros % Micros.MILLI_MICROS == 0) {
+            ex.put(micros / Micros.MILLI_MICROS).put("ms");
+        } else {
+            ex.put(micros).put("us");
+        }
+    }
+
+    /**
+     * Maps the internal duration-unit char ({@code 's'}, {@code 'm'}, {@code 'h'},
+     * {@code 'd'}, {@code 'T'} for milliseconds) back to the grammar string a user
+     * would type. Used to render values in CREATE-time error messages.
+     */
+    private static String displayDurationUnit(char unit) {
+        return switch (unit) {
+            case 's' -> "s";
+            case 'm' -> "m";
+            case 'h' -> "h";
+            case 'd' -> "d";
+            case 'T' -> "ms";
+            default -> String.valueOf(unit);
+        };
+    }
+
+    private static int positionOfWindow(WindowExpression w, ExpressionNode fallback) {
+        if (w.getAnchorPosition() > 0) {
+            return w.getAnchorPosition();
+        }
+        if (w.getPartitionBy().size() > 0) {
+            return w.getPartitionBy().getQuick(0).position;
+        }
+        if (w.getOrderBy().size() > 0) {
+            return w.getOrderBy().getQuick(0).position;
+        }
+        return fallback != null ? fallback.position : 0;
+    }
+
+    private static void putHHMM(StringSink sink, long timeUs) {
+        long totalSeconds = timeUs / 1_000_000;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        if (hours < 10) {
+            sink.put('0');
+        }
+        sink.put(hours);
+        sink.put(':');
+        if (minutes < 10) {
+            sink.put('0');
+        }
+        sink.put(minutes);
+    }
+
+    /**
+     * Validates the ORDER BY clause of every named WINDOW in a live-view SELECT
+     * against the requirement that windows order rows by the base table's
+     * designated timestamp ascending. The base table is resolved via
+     * {@link CairoEngine#getTableTokenIfExists(CharSequence)}; if the base can't
+     * be resolved (e.g. concurrent DROP, mistyped name) this validator skips the
+     * column-name match so the engine surfaces the primary "base does not exist"
+     * error rather than a misleading ORDER-BY message.
+     */
+    private void validateLiveViewWindowOrderBy(IQueryModel queryModel, CharSequence baseTableName) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        if (named.size() == 0) {
+            return;
+        }
+        String designatedTsName = null;
+        if (baseTableName != null) {
+            final TableToken baseToken = cairoEngine.getTableTokenIfExists(baseTableName);
+            if (baseToken != null) {
+                try (MetadataCacheReader metaRO = cairoEngine.getMetadataCache().readLock()) {
+                    final CairoTable baseTable = metaRO.getTable(baseToken);
+                    if (baseTable != null) {
+                        CharSequence n = baseTable.getTimestampName();
+                        if (n != null) {
+                            designatedTsName = Chars.toString(n);
+                        }
+                    }
+                }
+            }
+        }
+        if (designatedTsName == null) {
+            return;
+        }
+
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null) {
+                continue;
+            }
+            ObjList<ExpressionNode> orderBy = w.getOrderBy();
+            IntList orderDir = w.getOrderByDirection();
+            int fallbackPos = w.getAnchorPosition();
+            if (fallbackPos <= 0 && w.getPartitionBy().size() > 0) {
+                fallbackPos = w.getPartitionBy().getQuick(0).position;
+            }
+            if (orderBy.size() == 0) {
+                throw SqlException.$(fallbackPos,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName);
+            }
+            if (orderBy.size() > 1) {
+                throw SqlException.$(orderBy.getQuick(1).position,
+                                "live view named WINDOW must ORDER BY a single column (")
+                        .put(designatedTsName).put(')');
+            }
+            ExpressionNode tsNode = orderBy.getQuick(0);
+            if (tsNode.type != ExpressionNode.LITERAL
+                    || !Chars.equalsIgnoreCase(tsNode.token, designatedTsName)) {
+                throw SqlException.$(tsNode.position,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName);
+            }
+            if (orderDir.size() > 0
+                    && orderDir.getQuick(0) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                throw SqlException.$(tsNode.position,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName).put(" ASC");
+            }
+        }
+    }
+
+    private static void validateLiveViewAnchors(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<CharSequence> keys = named.keys();
+        int anchoredCount = 0;
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null) {
+                continue;
+            }
+            if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                // An unanchored window is this validator's business only through the
+                // bare-unbounded rule, which reads the calls over the window rather
+                // than the definition and so runs in rejectBareUnboundedWindows.
+                continue;
+            }
+            anchoredCount++;
+            if (anchoredCount > 1) {
+                // The LiveViewWindow runtime supports a single anchored WINDOW per
+                // LV. Multi-window LVs with different anchors would need per-WINDOW
+                // dispatch of resetPartition, which is not implemented yet.
+                throw SqlException.$(w.getAnchorPosition(),
+                        "live view supports at most one anchored WINDOW in V1");
+            }
+            if (w.getPartitionBy().size() == 0) {
+                // resetPartition is keyed on the partition; the LiveViewWindow
+                // anchor map cannot be built without at least one partition
+                // column, so the per-partition reset would never dispatch and
+                // window state would silently never reset at anchor boundaries.
+                throw SqlException.$(w.getAnchorPosition(),
+                        "live view anchored WINDOW requires PARTITION BY");
+            }
+            if (w.isNonDefaultFrame()) {
+                throw SqlException.$(w.getAnchorPosition(),
+                        "ANCHOR is incompatible with bounded frames; use a separate WINDOW without ANCHOR for ROWS / RANGE windows");
+            }
+            if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_EXPRESSION) {
+                ExpressionNode expr = w.getAnchorExpression();
+                if (expr != null && expr.type == ExpressionNode.CONSTANT) {
+                    throw SqlException.$(expr.position,
+                            "ANCHOR EXPRESSION must not be a constant");
+                }
+                walkAnchorExpressionForPurity(expr);
+            }
+        }
+
+        // Inline OVER (...) clauses attached to SELECT-column function calls.
+        // A column may either be an inline WindowExpression itself (e.g. SELECT
+        // sum(price) OVER (...) FROM t) or carry a nested inline OVER inside an
+        // arithmetic / function tree (e.g. sum(price) OVER (...) + 1). Walk both.
+        // One check fires here, the inline-ANCHOR reject: the runtime AnchorSpec
+        // is captured only from named WINDOW clauses, so an inline anchor parses
+        // but never wires through to the reset path - reject up front and
+        // point the user at the named-window form.
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                validateInlineWindow((WindowExpression) qc, qc.getAst());
+            }
+            walkInlineWindows(qc.getAst());
+        }
+    }
+
+    /**
+     * Enforces the bare-unbounded-window rule: a window carrying the default frame
+     * ({@code RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW}, spelled or left
+     * implicit) together with a {@code PARTITION BY} keeps per-partition state for a
+     * partition count that grows without bound, so it must carry an ANCHOR to reset.
+     * Bounded frames stay allowed without one; so does a single-partition window
+     * ({@code OVER ()}), whose state is O(1).
+     * <p>
+     * The rule reads the calls over a window rather than the window itself, because
+     * the state it is about is the calls'.
+     * {@link #hasStatelessCurrentRowShape} names the one family that keeps none:
+     * {@code last_value} respecting nulls over a frame ending at the current row,
+     * whose {@code computeNext} reads the row it was handed and whose partitioned
+     * implementation is constructed with no map at all. A window every call of which
+     * is that family is admitted; one call that is not takes the reject for the whole
+     * window, since a single growing map is enough.
+     * <p>
+     * The carve-out additionally requires the window to ORDER BY. An unordered
+     * default RANGE frame makes every row a peer of every other and compiles to the
+     * whole-partition {@code last_value} - a per-partition map after all - so it keeps
+     * this reject rather than being handed on to a downstream one.
+     * <p>
+     * A named window no call references keeps the reject too. Vacuously, every one of
+     * its zero calls is stateless, but admitting a definition on the strength of
+     * having no user would relax more than the shape this carve-out proves.
+     * <p>
+     * The same unreferenced-definition rule covers anchored windows, for a different
+     * reason. An ANCHOR bounds the state of the calls over its window, so a definition
+     * no call references anchors nothing: the runtime would capture the anchor spec,
+     * find no function for {@code resetPartition} to dispatch to, and fail every refresh
+     * cycle until the flush-retry budget invalidates the view. Refusing it at CREATE
+     * reports the mistake where the user can still fix it, and keeps the runtime's
+     * "an anchored window always has at least one function" invariant load-bearing.
+     */
+    private static void rejectBareUnboundedWindows(IQueryModel queryModel) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        // Named definitions a stateless call has vouched for. Collected during the
+        // walk and read after it, because a definition is only cleared by its calls.
+        final ObjList<WindowExpression> vouchedFor = new ObjList<>();
+        // Named definitions some call resolves to, whether or not that call clears the
+        // bare-unbounded rule. Read after the walk by the unreferenced-definition arms.
+        final ObjList<WindowExpression> referenced = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                rejectBareUnboundedWindowCall(qc.getAst(), (WindowExpression) qc, named, vouchedFor, referenced);
+            }
+            // Window calls nested in an arithmetic / function tree carry their OVER
+            // clause on the function node itself; walk for those too.
+            walkForBareUnboundedWindow(qc.getAst(), named, vouchedFor, referenced);
+        }
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null) {
+                continue;
+            }
+            if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
+                if (referenced.indexOf(w) < 0) {
+                    throw SqlException.$(positionOfWindow(w, null), "live view anchored WINDOW '")
+                            .put(keys.getQuick(i))
+                            .put("' is not referenced by any window function; an ANCHOR bounds the state of the calls over its window, so it has nothing to reset. A window inheriting from it, e.g. WINDOW w2 AS (")
+                            .put(keys.getQuick(i))
+                            .put(" ORDER BY ts), does not carry its ANCHOR either - the call has to name it directly, e.g. OVER ")
+                            .put(keys.getQuick(i));
+                }
+                continue;
+            }
+            if (isBareUnboundedWindow(w) && vouchedFor.indexOf(w) < 0) {
+                throw bareUnboundedWindowReject(positionOfWindow(w, null));
+            }
+        }
+    }
+
+    /**
+     * Recursive AST walk for the nested case of {@link #rejectBareUnboundedWindows}:
+     * a window function with an inline {@code OVER (...)} embedded inside a larger
+     * expression carries its window on {@code node.windowExpression}.
+     */
+    private static void walkForBareUnboundedWindow(
+            ExpressionNode node,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named,
+            ObjList<WindowExpression> vouchedFor,
+            ObjList<WindowExpression> referenced
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            rejectBareUnboundedWindowCall(node, node.windowExpression, named, vouchedFor, referenced);
+        }
+        if (node.paramCount < 3) {
+            walkForBareUnboundedWindow(node.lhs, named, vouchedFor, referenced);
+            walkForBareUnboundedWindow(node.rhs, named, vouchedFor, referenced);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForBareUnboundedWindow(node.args.getQuick(i), named, vouchedFor, referenced);
+            }
+        }
+    }
+
+    /**
+     * Applies the bare-unbounded-window rule to one window call, recording the
+     * definition in {@code vouchedFor} when the call clears it. See
+     * {@link #rejectBareUnboundedWindows}.
+     */
+    private static void rejectBareUnboundedWindowCall(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named,
+            ObjList<WindowExpression> vouchedFor,
+            ObjList<WindowExpression> referenced
+    ) throws SqlException {
+        if (fn == null || fn.type != ExpressionNode.FUNCTION || fn.token == null) {
+            return;
+        }
+        // Record the definition this call resolves to before the anchored short-circuit
+        // below: an anchored definition is exempt from the bare-unbounded rule but still
+        // has to have a user, and this is the only walk that sees the calls.
+        if (window != null && window.isNamedWindowReference()) {
+            final WindowExpression def = named.get(window.getWindowName());
+            if (def != null && referenced.indexOf(def) < 0) {
+                referenced.add(def);
+            }
+        }
+        if (isAnchoredWindow(window, named)) {
+            return;
+        }
+        // A named reference carries neither frame nor PARTITION BY of its own, so
+        // both halves of the shape are read off the definition it resolves to.
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        if (frame == null || !isBareUnboundedWindow(frame)) {
+            return;
+        }
+        if (frame.getOrderBy().size() > 0 && hasStatelessCurrentRowShape(fn, window, named)) {
+            vouchedFor.add(frame);
+            return;
+        }
+        throw bareUnboundedWindowReject(positionOfWindow(frame, fn));
+    }
+
+    /**
+     * Reports whether {@code window} is a PARTITION-BY-keyed window over the default
+     * frame - the shape {@link #rejectBareUnboundedWindows} governs. Takes the
+     * definition a named reference resolves to, not the reference.
+     */
+    private static boolean isBareUnboundedWindow(WindowExpression window) {
+        return !window.isNonDefaultFrame() && window.getPartitionBy().size() > 0;
+    }
+
+    private static SqlException bareUnboundedWindowReject(int position) {
+        return SqlException.$(position,
+                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
+    }
+
+    /**
+     * Parser-side half of the finite-influence scope cut (see
+     * {@code io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind}).
+     * The localized out-of-order repair the checkpoint timeline relies on can
+     * only bound its work when every window function has a finite forward
+     * influence boundary {@code H}. Two shapes have none, and both are rejected
+     * at CREATE, naming the function:
+     * <ul>
+     *     <li>Ranking functions - {@code row_number()}, {@code rank()},
+     *     {@code dense_rank()} - running unanchored: an out-of-order row shifts
+     *     every following row's rank without bound.</li>
+     *     <li>Any window function over a frame starting at UNBOUNDED PRECEDING:
+     *     an out-of-order row joins the frame of every following row, so it can
+     *     move every later value the function produces. That is plainly true of
+     *     an accumulator, and true of the value functions too - a row inserted
+     *     below a partition's current earliest row becomes the
+     *     {@code first_value} of every frame above it, and shifts what
+     *     {@code nth_value} counts to.</li>
+     * </ul>
+     * The rule reads the frame rather than the function, so a window function
+     * added later is covered without being listed anywhere. It still costs the
+     * shapes whose influence is in fact finite, and two of those are now proven
+     * and carved out, both of them {@code last_value} respecting nulls:
+     * {@link #hasHighBoundStateExtent} admits {@code ROWS ... AND K PRECEDING},
+     * which accumulates nothing, so its state is the {@code K} values behind it
+     * and a late row moves only the {@code K} outputs above it; and
+     * {@link #hasStatelessCurrentRowShape} admits a frame ending at
+     * {@code CURRENT ROW}, which reads the row it is handed and moves nothing at
+     * all. Every other unbounded start keeps the reject, because an unproven
+     * bound means a late row replays the whole history rather than an interval,
+     * and a frame the planner can bound is the price of admission.
+     * <p>
+     * The anchored, per-segment-reset forms have a finite {@code H} (the
+     * segment end) and stay eligible; they route through the fixed-anchor
+     * dependency kind.
+     * <p>
+     * Partitioned-but-unanchored ranking (e.g. {@code row_number() OVER
+     * (PARTITION BY sym ORDER BY ts)}) is already turned away by
+     * {@link #rejectBareUnboundedWindows}; this closes the remaining
+     * single-partition {@code OVER ()} / {@code OVER (ORDER BY ts)} hole, which
+     * that rule deliberately leaves open for O(1)-state single-partition
+     * windows. The frame reject closes that same
+     * hole plus the one an explicit frame opens: a window declaring
+     * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is a non-default
+     * frame, so the bare-unbounded rule skips it however it is partitioned.
+     */
+    private static void validateLiveViewFiniteInfluence(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                rejectUnboundedInfluence(qc.getAst(), (WindowExpression) qc, named);
+            }
+            // Window calls nested in an arithmetic / function tree carry their
+            // OVER clause on the function node itself; walk for those too.
+            walkForUnboundedInfluence(qc.getAst(), named);
+        }
+    }
+
+    /**
+     * Recursive AST walk for the nested case of {@link #validateLiveViewFiniteInfluence}:
+     * a window function with an inline {@code OVER (...)} embedded inside a larger
+     * expression carries its window on {@code node.windowExpression}.
+     */
+    private static void walkForUnboundedInfluence(
+            ExpressionNode node,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            rejectUnboundedInfluence(node, node.windowExpression, named);
+        }
+        if (node.paramCount < 3) {
+            walkForUnboundedInfluence(node.lhs, named);
+            walkForUnboundedInfluence(node.rhs, named);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForUnboundedInfluence(node.args.getQuick(i), named);
+            }
+        }
+    }
+
+    /**
+     * Applies both finite-influence rejects to one window call. See
+     * {@link #validateLiveViewFiniteInfluence}.
+     */
+    private static void rejectUnboundedInfluence(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (fn == null || fn.type != ExpressionNode.FUNCTION || fn.token == null) {
+            return;
+        }
+        rejectUnanchoredRanking(fn, window, named);
+        rejectUnboundedFrameStart(fn, window, named);
+    }
+
+    /**
+     * Throws when {@code fn} reads from an unbounded frame start over a window
+     * no anchor resets. See {@link #validateLiveViewFiniteInfluence}.
+     */
+    private static void rejectUnboundedFrameStart(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (isAnchoredWindow(window, named)
+                || !hasUnboundedFrameStart(window, named)
+                || hasHighBoundStateExtent(fn, window, named)
+                || hasStatelessCurrentRowShape(fn, window, named)) {
+            return;
+        }
+        throw SqlException.$(fn.position, "live view select cannot use ")
+                .put(fn.token)
+                .put("() over a frame starting at UNBOUNDED PRECEDING; it has no finite out-of-order influence boundary, ")
+                .put("so a late row would replay the whole history. ")
+                .put("Bound the frame, e.g. ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW, or add an ANCHOR to reset per segment, ")
+                .put("e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
+    }
+
+    /**
+     * Reports whether the frame governing {@code window} starts at UNBOUNDED
+     * PRECEDING. A frame start is bounded only when it names a row or time
+     * offset ({@code N PRECEDING}) or the current row; the parser leaves that
+     * offset in {@code rowsLoExpr}, so a PRECEDING start with no expression is
+     * the unbounded one. This is also the shape a window declaring no frame
+     * carries, since the SQL default is RANGE BETWEEN UNBOUNDED PRECEDING AND
+     * CURRENT ROW, and the shape {@code CUMULATIVE} desugars to.
+     */
+    private static boolean hasUnboundedFrameStart(
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        if (frame == null) {
+            // An unresolvable reference carries no frame this parse can read;
+            // the default it would inherit is unbounded, so treat it as such.
+            return true;
+        }
+        return frame.getRowsLoKind() == WindowExpression.PRECEDING && frame.getRowsLoExpr() == null;
+    }
+
+    /**
+     * Reports whether {@code fn} is the one call whose state the frame's <b>end</b>
+     * bounds rather than its start, and which therefore keeps a finite forward
+     * influence over an unbounded frame start: {@code last_value} respecting
+     * nulls over {@code ROWS BETWEEN ... AND K PRECEDING}.
+     * <p>
+     * It emits the row {@code K} back and accumulates nothing, so its state is
+     * the {@code K} values behind the current row however far back the frame
+     * says it starts, and a late row shifts only the {@code K} outputs above it.
+     * That is what the repair planner reads as the descriptor's state extent,
+     * and the compiler applies the same three narrowings this does.
+     * {@code IGNORE NULLS} scans the whole frame for the last non-null, so it is
+     * bounded by the frame's start like an accumulator; and a frame end at the
+     * current row leaves no ring at all - it compiles to a stateless per-row
+     * projection, a family whose admission needs a stateless window function to
+     * be able to declare itself.
+     * <p>
+     * A RANGE end keeps the reject for a reason of its own: it is a timestamp
+     * offset rather than a row, so it names no row for the state to be. The
+     * emitted value is the newest base row at or below {@code t - V}, which an
+     * unbounded start lets reach arbitrarily far back, and a row inserted at
+     * {@code m} moves every output from {@code m + V} up to the {@code + V} of
+     * whichever base row supersedes it next. Both distances are the data's
+     * rather than the lag's, so no bound follows from {@code V} - rows at 0s,
+     * 100s and 200s under a one-second lag move the output at 100s from a change
+     * at 50s. The bounded RANGE start needs none of this: its own width bounds
+     * the state and the forward influence alike.
+     * <p>
+     * The shape is read syntactically, because the parser has neither folded
+     * frame bound expressions to numbers nor picked a factory yet. So a couple
+     * of spellings pass here and are turned away further on for carrying no
+     * checkpoint surface: {@code AND 0 PRECEDING}, which folds to the stateless
+     * family, and a window with no {@code PARTITION BY}, whose ROWS-frame
+     * implementation has no checkpoint state whatever its frame starts at. For
+     * those this decides which reject names them, not whether they are one.
+     */
+    private static boolean hasHighBoundStateExtent(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        // IGNORE NULLS lives on the call rather than on the named definition, so
+        // the two halves are read from the windows that carry them.
+        if (window.isIgnoreNulls() || !Chars.equalsLowerCaseAscii(fn.token, "last_value")) {
+            return false;
+        }
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        return frame != null
+                && frame.getFramingMode() == WindowExpression.FRAMING_ROWS
+                && ((frame.getRowsHiKind() == WindowExpression.PRECEDING && frame.getRowsHiExpr() != null)
+                // EXCLUDE CURRENT ROW is the same shape with the smallest lag: the runtime
+                // rewrites the frame end to one row below the current one before any factory
+                // sees it, so the ring holds a single value.
+                || (frame.getRowsHiKind() == WindowExpression.CURRENT
+                && frame.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW));
+    }
+
+    /**
+     * Reports whether {@code fn} is the call that reads no history at all over an
+     * unbounded frame start: {@code last_value} respecting nulls over a frame
+     * ending at {@code CURRENT ROW}.
+     * <p>
+     * Its whole {@code computeNext} is a read of the argument off the row it was
+     * handed, so it accumulates nothing, keeps nothing, and moves no output but
+     * the changed row's own. That holds however far back the frame says it
+     * starts - an unbounded start and a bounded one compile to one class - which
+     * is what makes the reject an over-rejection here rather than a scope cut.
+     * <p>
+     * The two narrowings match the family the factory dispatches to.
+     * {@code IGNORE NULLS} keeps the last non-null across rows and so is bounded
+     * by the frame's start like an accumulator. {@code EXCLUDE CURRENT ROW}
+     * rewrites the frame end to one row below the current one before any factory
+     * sees it, which is a ring of one value rather than no ring, and
+     * {@link #hasHighBoundStateExtent} is what admits that shape.
+     * <p>
+     * Read syntactically like its sibling, so a spelling that folds to some other
+     * family passes here and is turned away downstream instead: a {@code RANGE}
+     * default frame with no {@code ORDER BY} makes every row a peer of every
+     * other and compiles to the whole-partition or whole-result-set
+     * {@code last_value}, whose influence really is unbounded, and the
+     * per-function checkpoint gate or the factory-shape one names it. This
+     * decides which reject such a query gets, not whether it is one.
+     * <p>
+     * A PARTITION-BY-keyed window carrying the default frame - {@code OVER
+     * (PARTITION BY <key> ORDER BY <ts>)} and its explicit {@code RANGE BETWEEN
+     * UNBOUNDED PRECEDING AND CURRENT ROW} spelling, which
+     * {@code WindowExpression.isNonDefaultFrame()} reads as the same thing - answers
+     * to the bare-unbounded-window rule as well, and this predicate is what clears
+     * it there too: {@link #rejectBareUnboundedWindows} admits such a window when
+     * every call over it has this shape, on the strength of the same no-map
+     * implementation. It adds one narrowing of its own, an ORDER BY, because an
+     * unordered default RANGE frame compiles to the whole-partition family instead.
+     */
+    private static boolean hasStatelessCurrentRowShape(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        if (window.isIgnoreNulls() || !Chars.equalsLowerCaseAscii(fn.token, "last_value")) {
+            return false;
+        }
+        final WindowExpression frame = resolveFrameWindow(window, named);
+        return frame != null
+                && frame.getRowsHiKind() == WindowExpression.CURRENT
+                && frame.getExclusionKind() != WindowExpression.EXCLUDE_CURRENT_ROW;
+    }
+
+    /**
+     * Resolves the window whose frame governs {@code window}: an {@code OVER w}
+     * reference carries no frame of its own and takes the named definition's.
+     * <p>
+     * Base-window inheritance ({@code WINDOW w2 AS (w1 ...)}) is not followed,
+     * because a live view cannot reach it: the optimizer expands an inherited
+     * window into a cached, multi-pass factory, which the live-view eligibility
+     * gate turns away before this frame ever matters. Were that to change, an
+     * inheriting window would read as its own default frame - unbounded - and
+     * be rejected, which is the conservative direction.
+     */
+    private static WindowExpression resolveFrameWindow(
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        if (window == null) {
+            return null;
+        }
+        return window.isNamedWindowReference() ? named.get(window.getWindowName()) : window;
+    }
+
+    /**
+     * Throws when {@code fn} is a ranking window function ({@code row_number} /
+     * {@code rank} / {@code dense_rank}) whose window {@code window} is not
+     * anchored. See {@link #validateLiveViewFiniteInfluence}.
+     */
+    private static void rejectUnanchoredRanking(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (!isRankingFunctionToken(fn.token)) {
+            return;
+        }
+        if (isAnchoredWindow(window, named)) {
+            return;
+        }
+        throw SqlException.$(fn.position, "live view select cannot use ")
+                .put(fn.token)
+                .put("() without an anchored WINDOW; it has no finite out-of-order influence boundary. ")
+                .put("Add an ANCHOR to reset per segment, e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
+    }
+
+    /**
+     * Resolves whether {@code window} carries an ANCHOR clause. A named-window
+     * reference ({@code OVER w}) inherits the anchor kind of its definition in
+     * {@code named}; an inline window carries its own.
+     */
+    private static boolean isAnchoredWindow(
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        if (window == null) {
+            return false;
+        }
+        if (window.isNamedWindowReference()) {
+            WindowExpression def = named.get(window.getWindowName());
+            return def != null && def.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE;
+        }
+        return window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE;
+    }
+
+    private static boolean isRankingFunctionToken(CharSequence token) {
+        return token != null
+                && (Chars.equalsLowerCaseAscii(token, "row_number")
+                || Chars.equalsLowerCaseAscii(token, "rank")
+                || Chars.equalsLowerCaseAscii(token, "dense_rank"));
+    }
+
+    /**
+     * Walks the SELECT columns and inline OVER trees looking for any
+     * {@code lead(...)} function call. The factory-side reject inside
+     * {@code CairoEngine} only fires when the planner picks a window factory
+     * exposing lead; a future planner change could bypass both factories for
+     * a lead-only query. This walk is the parser-level safety net.
+     */
+    private static void rejectLeadInSelect(IQueryModel queryModel) throws SqlException {
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            walkForLeadCall(columns.getQuick(i).getAst());
+        }
+    }
+
+    private static void validateInlineWindow(WindowExpression w, ExpressionNode fallback) throws SqlException {
+        // An OVER <named-window> reference inherits all checks from the named
+        // definition (already validated upstream in this method).
+        if (w.isNamedWindowReference()) {
+            return;
+        }
+        // Inline OVER (... ANCHOR ...) parses but the runtime AnchorSpec is
+        // captured only from named WINDOW clauses, so an inline anchor would
+        // silently never reset. Reject up front and direct the user at the
+        // named-window form.
+        if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
+            throw SqlException.$(positionOfWindow(w, fallback),
+                    "ANCHOR is only supported on named WINDOW clauses; declare the window with WINDOW <name> AS (...) and reference it from the SELECT");
+        }
+        // The bare-unbounded reject an inline window also answers to lives in
+        // rejectBareUnboundedWindows, which reads the call the window belongs to.
+    }
+
+    /**
+     * Recursive AST walk implementing the parser-side half of the anchor-expression
+     * validator. Rejects subqueries, bind variables, and function calls that the planner
+     * would later resolve to runtime-state ({@code now}, {@code current_timestamp},
+     * {@code systimestamp}) or random ({@code rnd_*}) functions. The function-property
+     * checks (constant-fold, isGroupBy, isRandom, isRuntimeConstant, isNonDeterministic)
+     * are Pass 2; they need the compiled {@code io.questdb.cairo.sql.Function} tree
+     * and live in {@code CairoEngine.validateAnchorPurity} (called at CREATE time
+     * after the SELECT factory has been compiled).
+     */
+    private static void walkAnchorExpressionForPurity(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            throw SqlException.$(node.position, "ANCHOR EXPRESSION must not contain subqueries");
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            throw SqlException.$(node.position, "ANCHOR EXPRESSION must not reference bind variables");
+        }
+        if (node.type == ExpressionNode.FUNCTION) {
+            CharSequence token = node.token;
+            if (token != null) {
+                if (Chars.startsWithLowerCase(token, "rnd_")) {
+                    throw SqlException.$(node.position,
+                            "ANCHOR EXPRESSION must be deterministic; ").put(token).put("() is not allowed");
+                }
+                if (SqlKeywords.isNowKeyword(token)
+                        || isCurrentTimestampToken(token)
+                        || isSystimestampToken(token)) {
+                    throw SqlException.$(node.position,
+                            "ANCHOR EXPRESSION must be deterministic; ").put(token).put("() is not allowed");
+                }
+            }
+        }
+        if (node.lhs != null) {
+            walkAnchorExpressionForPurity(node.lhs);
+        }
+        if (node.rhs != null) {
+            walkAnchorExpressionForPurity(node.rhs);
+        }
+        if (node.args != null) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                walkAnchorExpressionForPurity(node.args.getQuick(i));
+            }
+        }
+    }
+
+    /**
+     * Recursive AST walk for the parser-side lead() reject. Any function
+     * node whose token equals "lead" is rejected at its position with the
+     * same wording the factory-side reject in CairoEngine uses.
+     */
+    private static void walkForLeadCall(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION && node.token != null
+                && Chars.equalsLowerCaseAscii(node.token, "lead")) {
+            throw SqlException.$(node.position, "lead() is not supported in live views; use lag() for lookback");
+        }
+        if (node.paramCount < 3) {
+            walkForLeadCall(node.lhs);
+            walkForLeadCall(node.rhs);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForLeadCall(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private static void walkInlineWindows(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            validateInlineWindow(node.windowExpression, node);
+        }
+        if (node.paramCount < 3) {
+            walkInlineWindows(node.lhs);
+            walkInlineWindows(node.rhs);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkInlineWindows(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private static boolean isCurrentTimestampToken(CharSequence token) {
+        return token.length() == 17
+                && (token.charAt(0) | 32) == 'c'
+                && (token.charAt(1) | 32) == 'u'
+                && (token.charAt(2) | 32) == 'r'
+                && (token.charAt(3) | 32) == 'r'
+                && (token.charAt(4) | 32) == 'e'
+                && (token.charAt(5) | 32) == 'n'
+                && (token.charAt(6) | 32) == 't'
+                && token.charAt(7) == '_'
+                && (token.charAt(8) | 32) == 't'
+                && (token.charAt(9) | 32) == 'i'
+                && (token.charAt(10) | 32) == 'm'
+                && (token.charAt(11) | 32) == 'e'
+                && (token.charAt(12) | 32) == 's'
+                && (token.charAt(13) | 32) == 't'
+                && (token.charAt(14) | 32) == 'a'
+                && (token.charAt(15) | 32) == 'm'
+                && (token.charAt(16) | 32) == 'p';
+    }
+
+    private static boolean isSystimestampToken(CharSequence token) {
+        return token.length() == 12
+                && (token.charAt(0) | 32) == 's'
+                && (token.charAt(1) | 32) == 'y'
+                && (token.charAt(2) | 32) == 's'
+                && (token.charAt(3) | 32) == 't'
+                && (token.charAt(4) | 32) == 'i'
+                && (token.charAt(5) | 32) == 'm'
+                && (token.charAt(6) | 32) == 'e'
+                && (token.charAt(7) | 32) == 's'
+                && (token.charAt(8) | 32) == 't'
+                && (token.charAt(9) | 32) == 'a'
+                && (token.charAt(10) | 32) == 'm'
+                && (token.charAt(11) | 32) == 'p';
     }
 
     private ExecutionModel parseCreateMatView(
@@ -2608,6 +3882,10 @@ public class SqlParser {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else if (tok != null && isLiveKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = IQueryModel.SHOW_CREATE_LIVE_VIEW;
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_VIEW;
@@ -2615,7 +3893,7 @@ public class SqlParser {
                         showKind = IQueryModel.SHOW_CREATE_DATABASE;
                         model.setShowCreateDatabaseInclude(parseShowCreateDatabaseInclude(lexer));
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW' or 'DATABASE'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
@@ -5301,6 +6579,9 @@ public class SqlParser {
         if (Chars.equalsIgnoreCase(tok, "materialized_views")) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_MATERIALIZED_VIEWS;
         }
+        if (Chars.equalsIgnoreCase(tok, "live_views")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_LIVE_VIEWS;
+        }
         if (Chars.equalsIgnoreCase(tok, "users")) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_USERS;
         }
@@ -5323,7 +6604,7 @@ public class SqlParser {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("unexpected category [category=").put(tok)
-                .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
+                .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, LIVE_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
@@ -5551,6 +6832,12 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
+        // worker, the startup graph build, CREATE's own validating compile of the
+        // stored SELECT) parses the view's SELECT as a plain query with this flag
+        // set; parseCreateLiveView turns it on for the CREATE body itself, where
+        // the flag is still false. Every other statement rejects the clause.
+        expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
@@ -5649,6 +6936,16 @@ public class SqlParser {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         return viewSql;
+    }
+
+    /**
+     * Arms or disarms the live-view-only ANCHOR clause for the next expression parse.
+     * {@link #parse} stamps it per statement; a caller that parses a bare expression
+     * without going through {@code parse} stamps it here rather than inheriting the
+     * previous statement's value.
+     */
+    void setAnchorAllowed(boolean anchorAllowed) {
+        expressionParser.setAnchorAllowed(anchorAllowed);
     }
 
     public interface ReplacingVisitor {

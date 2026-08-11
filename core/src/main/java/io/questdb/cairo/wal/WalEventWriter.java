@@ -346,7 +346,8 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
-        assert txnType == WalTxnType.MAT_VIEW_DATA || txnType == WalTxnType.DATA : "unexpected txn type: " + txnType;
+        assert txnType == WalTxnType.MAT_VIEW_DATA || txnType == WalTxnType.DATA || txnType == WalTxnType.LIVE_VIEW_DATA
+                : "unexpected txn type: " + txnType;
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(txnType);
@@ -359,6 +360,11 @@ class WalEventWriter implements Closeable {
             assert lastRefreshBaseTxn != Numbers.LONG_NULL;
             eventMem.putLong(lastRefreshBaseTxn);
             eventMem.putLong(lastRefreshTimestamp);
+        } else if (txnType == WalTxnType.LIVE_VIEW_DATA) {
+            // Reuses the lastRefreshBaseTxn slot to carry the live view's
+            // maxBaseSeqTxnInBlock (highest base sequencer txn this commit reflects).
+            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+            eventMem.putLong(lastRefreshBaseTxn);
         }
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
@@ -393,6 +399,8 @@ class WalEventWriter implements Closeable {
         finishRecord();
         if (txnType == WalTxnType.MAT_VIEW_DATA) {
             setEventFormat(WALE_MAT_VIEW_FORMAT_VERSION);
+        } else if (txnType == WalTxnType.LIVE_VIEW_DATA) {
+            setEventFormat(WALE_LIVE_VIEW_FORMAT_VERSION);
         }
         return txn++;
     }

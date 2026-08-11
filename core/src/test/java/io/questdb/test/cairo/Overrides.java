@@ -307,9 +307,9 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE.getPropertyPath(), "4096");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES.getPropertyPath(), "128");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath(), "16g");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(), "128m");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(), "64m");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY.getPropertyPath(), "64");

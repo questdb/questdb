@@ -65,6 +65,12 @@ public interface WindowContext {
 
     boolean isIgnoreNulls();
 
+    // True when this window is being compiled as part of a live view's SELECT.
+    // Drives opt-in value-layout slots that only live views need (e.g. the
+    // tombstone slot that RowNumberFunctionFactory and
+    // RankFunctionFactory.RankOverPartitionFunction use for anchor-driven compaction).
+    boolean isLiveView();
+
     boolean isOrdered();
 
     boolean isOrderedByDesignatedTimestamp();

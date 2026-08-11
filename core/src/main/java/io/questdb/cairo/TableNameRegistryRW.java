@@ -78,13 +78,22 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
+        return lockTableName(tableName, dirName, tableId, isView, isMatView, false, isWal);
+    }
+
+    @Override
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isLiveView, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
             String dbLogName = engine.getConfiguration().getDbLogName();
-            return new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+            TableToken.Type type = isLiveView ? TableToken.Type.LIVE_VIEW
+                    : isMatView ? TableToken.Type.MAT_VIEW
+                      : isView ? TableToken.Type.VIEW
+                        : TableToken.Type.TABLE;
+            return new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }
@@ -102,7 +111,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
 
-        // This most unsafe, can throw, run it first.
+        // This is most unsafe, can throw, run it first.
         if (!tableToken.isView()) {
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(tableToken);
@@ -134,7 +143,10 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             final boolean isSystem = tableFlagResolver.isSystem(tableName);
             final boolean isPublic = tableFlagResolver.isPublic(tableName);
             final String dbLogName = engine.getConfiguration().getDbLogName();
-            final TableToken newToken = new TableToken(tableName, newDirName, dbLogName, newTableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+            final TableToken.Type type = isMatView ? TableToken.Type.MAT_VIEW
+                    : isView ? TableToken.Type.VIEW
+                      : TableToken.Type.TABLE;
+            final TableToken newToken = new TableToken(tableName, newDirName, dbLogName, newTableId, type, isWal, isSystem, isProtected, isPublic);
 
             // Metadata cache first (unsafe, can throw) — mirrors registerName ordering.
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

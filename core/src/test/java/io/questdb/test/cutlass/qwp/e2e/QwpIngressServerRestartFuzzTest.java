@@ -33,6 +33,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -95,6 +96,12 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpIngressServerRestartFuzzTest.class);
     private static final String TABLE_NAME = "qwp_restart_fuzz";
+    // Distinct SYMBOL values the producer cycles through. Small enough that the
+    // dictionary is fully warm long before the first server bounce (the producer
+    // writes ~1k rows in the bouncer's 100ms head start), and BOUNDED so that every
+    // row past the first TAG_CARDINALITY back-references an id an earlier frame
+    // registered -- which is what makes the reconnect catch-up load-bearing here.
+    private static final int TAG_CARDINALITY = 256;
     // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
     // does not override these, so the actual buffers are this size.
     private static final int RECV_BUFFER_SIZE = 131_072;
@@ -157,6 +164,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 AtomicLong rowsProduced = new AtomicLong();
                 CountDownLatch producerDone = new CountDownLatch(1);
                 CountDownLatch bouncerDone = new CountDownLatch(1);
+                CountDownLatch firstBatchAcked = new CountDownLatch(1);
 
                 Thread producer = new Thread(() -> {
                     try (Sender sender = Sender.fromConfig(connect)) {
@@ -165,7 +173,29 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                             for (int i = 0; i < batchRows; i++) {
                                 long currentId = id++;
                                 long ts = tsBase + currentId * tsStepNanos;
+                                // BOUNDED symbol cardinality, and that bound is what gives
+                                // this test its teeth. The first TAG_CARDINALITY rows grow
+                                // the dictionary (each frame carries a non-empty delta with
+                                // a climbing deltaStart); every row after that REUSES an
+                                // already-registered id, so its frame carries the global id
+                                // in the row data but an EMPTY delta section -- a pure
+                                // BACK-REFERENCE to a symbol some earlier frame registered.
+                                //
+                                // That back-reference is precisely what the reconnect
+                                // catch-up exists to make safe. When the bouncer below drops
+                                // the server, the fresh one starts with an EMPTY dictionary;
+                                // without the I/O thread re-registering the whole dictionary
+                                // first (a 0-table FLAG_DELTA_SYMBOL_DICT | FLAG_DEFER_COMMIT
+                                // frame), those back-references resolve against nothing,
+                                // QwpMessageCursor null-pads the hole, and the rows land with
+                                // SILENTLY NULL symbols. The tag assertion after the run is
+                                // what catches that.
+                                //
+                                // A distinct symbol per row would NOT work here: each frame
+                                // would register exactly the symbol its own rows use, never
+                                // back-reference, and so pass even with the catch-up removed.
                                 sender.table(TABLE_NAME)
+                                        .symbol("tag", "tag-" + (currentId % TAG_CARDINALITY))
                                         .longColumn("id", currentId)
                                         .doubleColumn("val", currentId * 1.5)
                                         .at(ts, ChronoUnit.NANOS);
@@ -176,6 +206,17 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                             // buffer.
                             sender.flush();
                             rowsProduced.set(id);
+                            if (firstBatchAcked.getCount() > 0) {
+                                // Deterministic barrier: the first batch's dictionary-
+                                // registering frames must be ACKED (and so trimmed) before
+                                // the first bounce. Unacked, they REPLAY on reconnect with
+                                // their original delta sections and re-register the
+                                // dictionary themselves -- masking a broken catch-up
+                                // completely (see the back-reference comment above).
+                                Assert.assertTrue("first batch must drain before the first bounce",
+                                        sender.drain(30_000));
+                                firstBatchAcked.countDown();
+                            }
                             Os.sleep(batchPauseMillis);
                         }
                         // Final sender.close() (try-with-resources) drains
@@ -191,10 +232,11 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
                 Thread bouncer = new Thread(() -> {
                     try {
-                        // Let the producer get into a steady-state rhythm
-                        // before the first bounce, so we exercise the
-                        // mid-flight reconnect path rather than first-connect.
-                        Os.sleep(100);
+                        // Wait for the producer's first batch to be acked and trimmed, so
+                        // every bounce exercises the catch-up as load-bearing rather than
+                        // racing the first connect.
+                        Assert.assertTrue("producer's first batch never drained",
+                                firstBatchAcked.await(60, TimeUnit.SECONDS));
                         for (int i = 0; i < bounces; i++) {
                             LOG.info().$("bouncer: bounce ").$(i + 1).$('/').$(bounces).$();
                             server.stop();
@@ -260,6 +302,17 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                                 "c\td\tlo\thi\n"
                                         + expected + "\t" + expected + "\t0\t" + (expected - 1) + "\n"
                         );
+
+                // The delta-symbol-dictionary oracle. Every row's tag must be exactly
+                // "tag-<id>", and this is the assertion that proves a REAL server
+                // resolved the ids the catch-up frame re-registered after each bounce:
+                //   - a catch-up that never shipped, or that the server failed to apply,
+                //     leaves the referenced ids unregistered and QwpMessageCursor
+                //     null-pads the hole -- the column reads back NULL;
+                //   - a dictionary shifted by even one id reads back the WRONG tag.
+                // Both land here as a non-zero count. Nothing else in this suite can see
+                // that: the row-count check above passes fine with an all-NULL tag column.
+                assertTagsIntact();
             }
         });
     }
@@ -359,6 +412,14 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 // Dedup collapses any replays so each unique (ts, id) maps
                 // to exactly one row.
                 assertRowCount(2L * rowsPerEpoch);
+                // Epoch 1's leftovers are DELTA frames whose ids live only in
+                // <sfDir>/default/.symbol-dict. Epoch 2's sender is a fresh object with an
+                // empty in-memory dictionary, so it can replay them only by rebuilding that
+                // side-file (or, failing that, the ids the frames themselves carry) and
+                // re-registering them on the new server first. This is the disk-recovery path
+                // the seed rewrite changes, and nothing else exercises it against a real
+                // server.
+                assertTagsIntact();
             }
         });
     }
@@ -380,6 +441,23 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     writeRows(sender, /*idBase*/ 0L, rowsPerPhase, 1_700_000_000_000_000_000L);
                     sender.flush();
 
+                    // Wait for phase 1 to land AND be acked, so the SF cursor TRIMS those
+                    // frames before the bounce. Without this the catch-up is not load-bearing
+                    // here at all: an unacked phase-1 frame is REPLAYED on reconnect, and it
+                    // carries the dictionary from id 0 -- so it re-registers the symbols by
+                    // itself and masks a broken catch-up completely. Trimmed, nothing replays,
+                    // and phase 2's bare ids have nowhere else to come from.
+                    TestUtils.assertEventually(() -> {
+                        drainWalQueue();
+                        engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
+                        assertRowCount(rowsPerPhase);
+                    });
+                    // Deterministic: drain() returns once the client has the acks, which is
+                    // what lets the cursor trim phase 1 -- the property the comment above
+                    // documents as load-bearing for this test.
+                    Assert.assertTrue("phase-1 acks must reach the client before the bounce",
+                            sender.drain(30_000));
+
                     // Bounce the server. Same port. The sender keeps the same
                     // sfDir and CursorSendEngine; the wire path needs to reconnect.
                     server.stop();
@@ -394,6 +472,11 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
                 assertRowCount(2L * rowsPerPhase);
+                // Phase 1 registered every tag, so phase 2's frames carry an EMPTY delta
+                // section and reference those ids bare. The bounced server came up with an
+                // empty dictionary, so phase 2's rows resolve ONLY if the reconnect shipped a
+                // catch-up frame that re-registered them.
+                assertTagsIntact();
             }
         });
     }
@@ -532,6 +615,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
                 assertRowCount(expected);
+                assertTagsIntact();
             }
         });
     }
@@ -540,17 +624,42 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         assertQuery(
                 "SELECT count() FROM " + TABLE_NAME)
                 .noLeakCheck()
-                .returnsOnce(
+                .noRandomAccess()
+                .expectSize()
+                .returns(
                         "count\n" + expected + "\n"
                 );
     }
 
+    /**
+     * Every row's tag must still be the one its id implies -- none NULL, none swapped for
+     * a neighbour's. See the call site in testSenderPushesContinuouslyWhileServerBounces
+     * for why the row-count oracles cannot see this.
+     */
+    private void assertTagsIntact() throws Exception {
+        assertQuery(
+                "SELECT count() FROM " + TABLE_NAME
+                        + " WHERE tag IS NULL OR tag != concat('tag-', (id % "
+                        + TAG_CARDINALITY + ")::string)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n0\n");
+    }
+
     private void createTargetTable() {
         try {
+            // `tag` is not decoration: it is what makes the QWP delta symbol
+            // dictionary engage. Without a SYMBOL column the client's sent-dictionary
+            // mirror stays empty, setWireBaselineWithCatchUp takes its else-branch, and
+            // NO catch-up frame is ever emitted -- so a symbol-free restart test cannot
+            // exercise the delta dictionary at all. With one, every reconnect below
+            // re-registers the whole dictionary against a REAL decoder.
             execute(
                     "CREATE TABLE " + TABLE_NAME + " ("
                             + "id LONG, "
                             + "val DOUBLE, "
+                            + "tag SYMBOL, "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
                             + "DEDUP UPSERT KEYS(ts, id)"
@@ -589,6 +698,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             long id = idBase + i;
             long ts = tsBaseNanos + (long) i * 1000L; // 1us steps; well under DAY partition
             sender.table(TABLE_NAME)
+                    .symbol("tag", "tag-" + (id % TAG_CARDINALITY))
                     .longColumn("id", id)
                     .doubleColumn("val", id * 1.5)
                     .at(ts, ChronoUnit.NANOS);
