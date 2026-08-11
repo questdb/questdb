@@ -418,6 +418,44 @@ impl IndexMetaWriter {
             ));
         }
 
+        // The shape of the key directory is settled first, in its own pass,
+        // because the per-row-group checks below read `RG_FIRST_KEY[i + 1]` and
+        // are only meaningful once the array is known to be non-decreasing.
+        for i in 1..self.row_groups.len() {
+            if self.row_groups[i].first_key < self.row_groups[i - 1].first_key {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row group first keys must be non-decreasing at index {i}"
+                ));
+            }
+        }
+
+        // Both readers answer "absent" for key >= KEY_SPACE_SIZE, so a first
+        // key at or above it would make every posting in that row group
+        // unreachable: the query returns zero rows and nothing reports an
+        // error. First keys are non-decreasing by the pass above, so the last
+        // one bounds them all. This is the check that catches a caller passing
+        // a distinct-key count where the key space bound belongs.
+        //
+        // It runs ahead of the loop, not after it, because the key-alignment
+        // check below is strictly stronger — the sentinel is KEY_SPACE_SIZE and
+        // `MAX_STAT >= MIN_STAT == RG_FIRST_KEY[i]`, so every fixture that
+        // trips this one trips that one too. Ordered the other way this check
+        // would be shadowed, and a distinct-key count in `key_space_size` would
+        // be reported as a split key: the wrong cause named for the commonest
+        // caller mistake. Kept separate rather than folded in because the two
+        // are different author errors and each deserves its own diagnostic.
+        if let Some(last) = self.row_groups.last() {
+            if last.first_key >= self.key_space_size {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row group first key {} must be below key space size {}",
+                    last.first_key,
+                    self.key_space_size
+                ));
+            }
+        }
+
         for (i, rg) in self.row_groups.iter().enumerate() {
             let first_key = &rg.first_key;
             let block = &rg.block;
@@ -435,12 +473,6 @@ impl IndexMetaWriter {
                     "row group {i} has zero rows"
                 ));
             }
-            if i > 0 && *first_key < self.row_groups[i - 1].first_key {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::InvalidValue,
-                    "row group first keys must be non-decreasing at index {i}"
-                ));
-            }
             // The dense key directory exists only because striding 64-byte
             // chunks on the lookup hot path is cache-hostile; it must agree
             // with the chunk stats it duplicates, or the fast path and the
@@ -450,11 +482,19 @@ impl IndexMetaWriter {
             // out-of-line stat is `(offset << 16) | length`, which for a short
             // out-of-line payload near the start of the region is a small
             // integer and could collide with a small key id.
+            // `MAX_STAT` is held to the same standard, in the same check: the
+            // key-alignment invariant below reads it exactly as this one reads
+            // `MIN_STAT`, and an out-of-line reference there would compare as a
+            // small key id in precisely the same way.
             let stat_flags = key_chunk.stat_flags();
-            if !stat_flags.has_min_stat() || !stat_flags.is_min_inlined() {
+            if !stat_flags.has_min_stat()
+                || !stat_flags.is_min_inlined()
+                || !stat_flags.has_max_stat()
+                || !stat_flags.is_max_inlined()
+            {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
-                    "row group {i} key id chunk min stat must be present and inline"
+                    "row group {i} key id chunk min and max stats must be present and inline"
                 ));
             }
             let min_stat = key_chunk.min_stat;
@@ -464,6 +504,62 @@ impl IndexMetaWriter {
                     "row group {i} first key {} does not match key id chunk min stat {}",
                     first_key,
                     min_stat
+                ));
+            }
+
+            // The single most important writer check. `rg_lo` resolves an exact
+            // match to the *first* `RG_FIRST_KEY` entry equal to the key, so if
+            // key `k` were the last key of a packed row group `i` and also the
+            // first key of row group `i + 1`, the lookup would return
+            // `rg_lo = i + 1` and `k`'s postings in row group `i` would be
+            // silently dropped - a query returning a strict subset of its rows
+            // with no error anywhere. No reader can detect it: detecting it
+            // means reading the postings the directory exists to avoid reading.
+            // So the writer refuses.
+            //
+            // A key too large for one row group may still span several,
+            // provided every one of them is *dedicated* to it. The directory
+            // records that as a repeated first key, which resolves to the first
+            // group of the run, so nothing is dropped - and that is the
+            // format's main use case, not an edge case. It is also why the
+            // bound is not flatly `MAX_STAT[i] < RG_FIRST_KEY[i + 1]`: inside
+            // such a run those two are equal, and a flat strict bound would
+            // reject the hot-key layout the format exists to express.
+            let (next_first_key, is_last) = match self.row_groups.get(i + 1) {
+                Some(next) => (next.first_key, false),
+                // Past the last row group stands the sentinel, which the writer
+                // emits as KEY_SPACE_SIZE.
+                None => (self.key_space_size, true),
+            };
+            let max_stat = key_chunk.max_stat;
+            if !is_last && next_first_key == *first_key {
+                // A shared first key means the next row group continues this
+                // key. Legal only if this row group holds that key and nothing
+                // else - otherwise the two groups share a key *and* this one is
+                // packed, which is the split the invariant forbids.
+                if max_stat != *first_key as u64 {
+                    let next_index = i + 1;
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "row group {i} shares first key {first_key} with row group {next_index} \
+                         but holds keys up to {max_stat}: a key may span row groups only when \
+                         every one of them is dedicated to it"
+                    ));
+                }
+            } else if max_stat >= next_first_key as u64 {
+                if is_last {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "row group {i} holds keys up to {max_stat}, at or above key space size {}",
+                        self.key_space_size
+                    ));
+                }
+                let next_index = i + 1;
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row group {i} holds keys up to {max_stat} but row group {next_index} starts \
+                     at key {next_first_key}: a key must not be split across a row group it \
+                     shares with another key"
                 ));
             }
 
@@ -505,22 +601,6 @@ impl IndexMetaWriter {
                         row_id_chunk.max_stat as i64
                     ));
                 }
-            }
-        }
-        // Both readers answer "absent" for key >= KEY_SPACE_SIZE, so a first
-        // key at or above it would make every posting in that row group
-        // unreachable: the query returns zero rows and nothing reports an
-        // error. First keys are non-decreasing by the check above, so the last
-        // one bounds them all. This is the check that catches a caller passing
-        // a distinct-key count where the key space bound belongs.
-        if let Some(last) = self.row_groups.last() {
-            if last.first_key >= self.key_space_size {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::InvalidValue,
-                    "row group first key {} must be below key space size {}",
-                    last.first_key,
-                    self.key_space_size
-                ));
             }
         }
         Ok(())
@@ -2601,6 +2681,139 @@ mod tests {
         );
     }
 
+    /// The fixture that passed every other writer check. `COLUMN_COUNT = 3`,
+    /// `KEY_SPACE_SIZE = 10`, `RG_FIRST_KEY = [0, 5, sentinel 10]`, row group 0
+    /// holding keys 0..=5 and row group 1 keys 5..=9. Non-decreasing passes,
+    /// `5 < 10` passes, `RG_FIRST_KEY[i] == MIN_STAT` passes for both, and
+    /// `finish()` used to return the bytes - after which a lookup for key 5
+    /// matched `RG_FIRST_KEY[1]` exactly, gave `rg_lo = rg_hi = 1`, and row
+    /// group 0's postings for key 5 were silently dropped. A query returning a
+    /// strict subset of its rows with no error anywhere.
+    #[test]
+    fn test_key_split_across_a_shared_row_group_is_rejected() {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 10, 0, 1, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.add_column("price", descriptor(7, TYPE_DOUBLE));
+        for (first_key, last_key, row_min, row_max) in [(0u32, 5u32, 0i64, 99i64), (5, 9, 100, 199)]
+        {
+            let mut block = RowGroupBlockBuilder::new(3);
+            block.set_num_rows(100);
+            block
+                .set_column_chunk(0, key_id_chunk(first_key, last_key, 100))
+                .unwrap();
+            block
+                .set_column_chunk(1, row_id_chunk(row_min, row_max, 100))
+                .unwrap();
+            let mut price = ColumnChunkRaw::zeroed();
+            price.codec = Codec::Snappy as u8;
+            price.encodings = EncodingMask::PLAIN;
+            price.num_values = 100;
+            block.set_column_chunk(2, price).unwrap();
+            w.add_row_group(first_key, row_min, row_max, block);
+        }
+        w.set_data_row_group_boundaries(&[0, 200]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg
+                .contains("a key must not be split across a row group it shares with another key"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// The complementary case, and the one a careless fix breaks: a hot key too
+    /// large for one row group may occupy several *consecutive dedicated*
+    /// ones, which the directory records as a repeated first key. The invariant
+    /// permits it, the spec's worked example relies on it, and it is the whole
+    /// point of a key-major index file. Without this test a check written as a
+    /// flat `MAX_STAT[i] < RG_FIRST_KEY[i + 1]` would reject the format's main
+    /// use case and the suite would still pass.
+    #[test]
+    fn test_hot_key_over_consecutive_dedicated_row_groups_is_accepted() {
+        let mut w = minimal_writer();
+        w.add_row_group(5, 0, 99, minimal_block(5, 10));
+        w.add_row_group(40, 0, 99, minimal_block(40, 10));
+        w.add_row_group(40, 0, 99, minimal_block(40, 10));
+        w.add_row_group(70, 0, 99, minimal_block(70, 10));
+        let bytes = w
+            .finish()
+            .expect("a key spanning consecutive dedicated row groups is legal");
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        // The run resolves to its first group, so no part of the key is lost.
+        assert_eq!(r.row_group_range_for_key(40), Some((1, 2)));
+        assert_eq!(r.row_group_range_for_key(5), Some((0, 0)));
+        assert_eq!(r.row_group_range_for_key(70), Some((3, 3)));
+    }
+
+    /// The last row group is bounded by the sentinel, which is
+    /// `KEY_SPACE_SIZE`. Its *first* key is below the bound here, so the
+    /// key-space check passes and this one catches it — with a message naming
+    /// the key space rather than a split key, because no row group follows for
+    /// it to share anything with.
+    #[test]
+    fn test_last_row_group_max_stat_above_key_space_size_is_rejected() {
+        let mut w = minimal_writer();
+        let mut block = minimal_block(5, 5);
+        block.set_column_chunk(0, key_id_chunk(5, 100, 5)).unwrap();
+        w.add_row_group(5, 0, 99, block);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("at or above key space size 100"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// The key-alignment check reads `MAX_STAT` exactly as the `RG_FIRST_KEY`
+    /// cross-check reads `MIN_STAT`, so it needs the same guarantee. An
+    /// out-of-line stat is `(offset << 16) | length`, a small integer for a
+    /// short payload near the start of the region, which would compare as a
+    /// plausible key id and let a split key through.
+    #[test]
+    fn test_out_of_line_or_absent_key_id_max_stat_is_rejected() {
+        let mut w = minimal_writer();
+        let mut block = minimal_block(16, 5);
+        let mut key_id = key_id_chunk(16, 16, 5);
+        key_id.stat_flags = StatFlags::new()
+            .with_min(true, true)
+            .with_max(false, true)
+            .0;
+        block.set_column_chunk(0, key_id).unwrap();
+        block.add_out_of_line_stat(0, false, &[0u8; 16]).unwrap();
+        // The reference encodes as (offset 0 << 16) | length 16, which sorts
+        // below the key space bound and would otherwise pass the check.
+        assert_eq!(block.column_chunk_raw(0).max_stat, 16);
+        w.add_row_group(16, 0, 99, block);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg
+                .contains("key id chunk min and max stats must be present and inline"),
+            "{}",
+            err.msg
+        );
+
+        // An absent max stat is rejected by the same check.
+        let mut w = minimal_writer();
+        let mut block = minimal_block(0, 5);
+        let mut key_id = key_id_chunk(0, 0, 5);
+        key_id.stat_flags = StatFlags::new().with_min(true, true).0;
+        block.set_column_chunk(0, key_id).unwrap();
+        w.add_row_group(0, 0, 99, block);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg
+                .contains("key id chunk min and max stats must be present and inline"),
+            "{}",
+            err.msg
+        );
+    }
+
     #[test]
     fn test_first_key_must_match_key_id_chunk_min_stat() {
         let mut w = minimal_writer();
@@ -2640,7 +2853,8 @@ mod tests {
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
-            err.msg.contains("min stat must be present and inline"),
+            err.msg
+                .contains("min and max stats must be present and inline"),
             "{}",
             err.msg
         );
@@ -2655,7 +2869,8 @@ mod tests {
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
-            err.msg.contains("min stat must be present and inline"),
+            err.msg
+                .contains("min and max stats must be present and inline"),
             "{}",
             err.msg
         );
