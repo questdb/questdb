@@ -14899,6 +14899,99 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPciFileMismatchedMetadataIsRepairedOnSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long colAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long payloadSize = 3L * Integer.BYTES;
+                final long scratchAddr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(colAddr, 42.0);
+                    Unsafe.putDouble(colAddr + Double.BYTES, 84.0);
+                    final long oversizedSize = configuration.getDataIndexValueAppendPageSize();
+                    assertTrue(oversizedSize > Files.ceilPageSize(payloadSize));
+
+                    final int[] corruptOffsets = {0, Integer.BYTES, 2 * Integer.BYTES};
+                    for (int corruption = 0; corruption < corruptOffsets.length; corruption++) {
+                        final String name = "pci_mismatch_repair_" + corruption;
+                        try (PostingIndexWriter writer = new PostingIndexWriter(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        )) {
+                            writer.configureCovering(
+                                    new long[]{colAddr},
+                                    new long[]{0},
+                                    new int[]{3},
+                                    new int[]{1},
+                                    new int[]{ColumnType.DOUBLE},
+                                    1
+                            );
+                            writer.add(0, 0);
+                            writer.setMaxValue(0);
+                            writer.commit();
+                        }
+
+                        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        );
+                        long fd = ff.openRW(pciFile, CairoConfiguration.O_NONE);
+                        assertTrue(fd > 0);
+                        try {
+                            assertTrue(ff.truncate(fd, oversizedSize));
+                            Unsafe.putInt(scratchAddr, -1);
+                            assertEquals(Integer.BYTES, ff.write(
+                                    fd, scratchAddr, Integer.BYTES, corruptOffsets[corruption]
+                            ));
+                        } finally {
+                            ff.close(fd);
+                        }
+                        assertEquals(oversizedSize, ff.length(pciFile));
+
+                        try (PostingIndexWriter writer = new PostingIndexWriter(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        )) {
+                            writer.configureCovering(
+                                    new long[]{colAddr},
+                                    new long[]{0},
+                                    new int[]{3},
+                                    new int[]{1},
+                                    new int[]{ColumnType.DOUBLE},
+                                    1
+                            );
+                            writer.add(0, 1);
+                            writer.setMaxValue(1);
+                            writer.seal();
+                            assertTrue(
+                                    "mismatched .pci header at offset " + corruptOffsets[corruption] + " must be rewritten",
+                                    writer.isLastSidecarInfoHeaderWrittenForTesting()
+                            );
+                        }
+
+                        pciFile = PostingIndexUtils.coverInfoFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                        );
+                        assertEquals(oversizedSize, ff.length(pciFile));
+                        fd = ff.openRO(pciFile);
+                        assertTrue(fd > 0);
+                        try {
+                            assertEquals(payloadSize, ff.read(fd, scratchAddr, payloadSize, 0));
+                        } finally {
+                            ff.close(fd);
+                        }
+                        assertEquals(PostingIndexUtils.COVER_INFO_MAGIC, Unsafe.getInt(scratchAddr));
+                        assertEquals(1, Unsafe.getInt(scratchAddr + Integer.BYTES));
+                        assertEquals(1, Unsafe.getInt(scratchAddr + 2L * Integer.BYTES));
+                    }
+                } finally {
+                    Unsafe.free(scratchAddr, payloadSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(colAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPciFileShortExistingMetadataIsRepaired() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
