@@ -74,6 +74,12 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     // either field, so every fixture records one.
     private static final int SAMPLE_PIDX_FOOTER_LEN = 2_048;
     private static final long SAMPLE_PIDX_FOOTER_OFF = 1_048_576;
+    // Filler for the permitted gap between the end of DATA_RG_BOUNDARY and the
+    // CRC, the same byte the Rust with_slack fixture pads with.
+    private static final byte SLACK_FILL = (byte) 0xA5;
+    // The sparse fixture's key space: an exclusive bound on key ids, not a
+    // count of the three distinct keys it holds.
+    private static final int SPARSE_KEY_SPACE_SIZE = 12_001;
     private static final int STAT_DISTINCT_COUNT_PRESENT = 1 << 6;
     private static final int STAT_MAX_EXACT = 1 << 5;
     private static final int STAT_MAX_INLINED = 1 << 4;
@@ -1134,6 +1140,79 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }));
     }
 
+    /**
+     * The committed IM_FILE_SIZE is the only boundary a reader has: bytes past
+     * it belong to a later, unpublished write and must reach neither an answer
+     * the reader gives nor the range whose CRC it verifies. Every other
+     * fixture hands {@code ofAddress} a buffer whose length is exactly
+     * IM_FILE_SIZE, so a reader that bound itself by the buffer instead would
+     * pass the whole suite.
+     * <p>
+     * The trailing bytes are deliberately shaped like a continuation of the
+     * file - a second DATA_RG_BOUNDARY array followed by four bytes where a
+     * trailer would sit - so a reader taking its bounds from the buffer finds
+     * something plausible rather than obvious rubbish. The four trailing bytes
+     * are the committed file's own CRC value, which is exactly what a naive
+     * "the checksum is the last four bytes" reader picks up. Mirrors the Rust
+     * {@code test_reader_ignores_bytes_past_committed_size}.
+     */
+    @Test
+    public void testReaderIsBoundedByCommittedSize() throws Exception {
+        assertMemoryLeak(() -> withSampleBytes((dataPtr, dataLen) -> {
+            // Three more i64 boundaries and a four-byte trailer.
+            final long trailingLen = 3L * Long.BYTES + Integer.BYTES;
+            final long extendedLen = dataLen + trailingLen;
+            final long copyPtr = Unsafe.malloc(extendedLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memcpy(copyPtr, dataPtr, dataLen);
+                Unsafe.getUnsafe().putLong(copyPtr + dataLen, 0L);
+                Unsafe.getUnsafe().putLong(copyPtr + dataLen + 8, 7_000_000L);
+                Unsafe.getUnsafe().putLong(copyPtr + dataLen + 16, 9_000_000L);
+                final int committedCrc = Unsafe.getUnsafe().getInt(copyPtr + dataLen - 4);
+                Unsafe.getUnsafe().putInt(copyPtr + extendedLen - 4, committedCrc);
+
+                // What makes those bytes load-bearing: over the longer range the
+                // stored trailer does not verify, so a reader bounded by the
+                // buffer rejects this file outright rather than answering from
+                // it. IM_FILE_SIZE itself is untouched and still the committed
+                // length.
+                Assert.assertNotEquals(
+                        Zip.crc32(0, copyPtr + 8, (int) (extendedLen - 12)),
+                        Unsafe.getUnsafe().getInt(copyPtr + extendedLen - 4)
+                );
+                Assert.assertEquals(dataLen, Unsafe.getUnsafe().getLong(copyPtr));
+
+                try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                    reader.ofAddress(copyPtr, extendedLen);
+                    // The reader's world is the committed image, not the buffer.
+                    Assert.assertEquals(dataLen, reader.getFileSize());
+                    // And every answer is the one the exact-sized image gives,
+                    // so the appended DATA_RG_BOUNDARY copy is invisible.
+                    Assert.assertEquals(1_048, reader.getIndexSectionsOffset());
+                    Assert.assertEquals(2, reader.getDataRowGroupCount());
+                    Assert.assertEquals(0, reader.getDataRowGroupBoundary(0));
+                    Assert.assertEquals(500_000, reader.getDataRowGroupBoundary(1));
+                    Assert.assertEquals(1_000_000, reader.getDataRowGroupBoundary(2));
+                    Assert.assertEquals(4, reader.getIndexRowGroupCount());
+                    Assert.assertEquals(11_405, reader.getRowGroupFirstKey(4));
+                    Assert.assertEquals(999_999, reader.getRowGroupRowIdMax(3));
+                    Assert.assertEquals(759_999, reader.getRowGroupNumRows(3));
+                    assertRangeForKey(reader, 11_403, 1, 2);
+                    // The boundary accessor still stops at DATA_RG_COUNT rather
+                    // than walking into the appended array.
+                    try {
+                        reader.getDataRowGroupBoundary(3);
+                        Assert.fail("expected CairoException from the data boundary bound");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "_im data boundary index out of range");
+                    }
+                }
+            } finally {
+                Unsafe.free(copyPtr, extendedLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        }));
+    }
+
     @Test
     public void testRoundTripColumnChunks() throws Exception {
         assertMemoryLeak(() -> withSample(reader -> {
@@ -1510,6 +1589,108 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Slack between the end of DATA_RG_BOUNDARY and the CRC is permitted:
+     * readers bound the sections with {@code sectionsEnd <= crcEnd}, not
+     * equality. No writer output has any, so without this fixture the
+     * comparison could be tightened to {@code !=} and the whole suite would
+     * still pass - and the two readers would then disagree about which files
+     * are valid. Mirrors the Rust
+     * {@code test_slack_before_the_crc_is_accepted}.
+     */
+    @Test
+    public void testSlackBeforeCrcIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int slack : new int[]{8, 16, 64}) {
+                withSlackBytes(IndexMetaFileReaderTest::buildSample, slack, (dataPtr, dataLen) -> {
+                    Assert.assertEquals(1_180 + slack, dataLen);
+                    // The sections stop where they did; only the gap ahead of
+                    // the CRC grew.
+                    Assert.assertEquals(1_048, Unsafe.getUnsafe().getLong(dataPtr + 56));
+                    for (int i = 0; i < slack; i++) {
+                        Assert.assertEquals(SLACK_FILL, Unsafe.getByte(dataPtr + 1_180 - 4 + i));
+                    }
+
+                    try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                        reader.ofAddress(dataPtr, dataLen);
+                        Assert.assertEquals(dataLen, reader.getFileSize());
+                        // Every answer is the one the exact-sized image gives.
+                        Assert.assertEquals(1_048, reader.getIndexSectionsOffset());
+                        Assert.assertEquals(11_405, reader.getKeySpaceSize());
+                        Assert.assertEquals(11_405, reader.getRowGroupFirstKey(4));
+                        Assert.assertEquals(999_999, reader.getRowGroupRowIdMax(3));
+                        Assert.assertEquals(1_000_000, reader.getDataRowGroupBoundary(2));
+                        Assert.assertEquals(759_999, reader.getRowGroupNumRows(3));
+                        assertRangeForKey(reader, 11_403, 1, 2);
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Posting-index keys are a dense key space with sparse occupancy, so a
+     * partition holding {@code {5, 900, 12_000}} has three distinct keys and a
+     * key space of at least 12_001. v2 defined the header field as a count of
+     * distinct keys, which made keys 900 and 12_000 fail the
+     * {@code key >= KEY_SPACE_SIZE} test, report absent, and the query return
+     * no rows with no error anywhere. Mirrors the Rust
+     * {@code test_sparse_key_set_round_trip}.
+     */
+    @Test
+    public void testSparseKeySetRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            withReader(IndexMetaFileReaderTest::buildSparseKeySample, reader -> {
+                // The key space bound is the id bound, not the occupancy count.
+                Assert.assertEquals(SPARSE_KEY_SPACE_SIZE, reader.getKeySpaceSize());
+                Assert.assertEquals(3, reader.getIndexRowGroupCount());
+
+                // Every key present resolves to its own row group, and the key
+                // directory agrees with the key id chunk it duplicates.
+                final int[] keys = {5, 900, 12_000};
+                for (int i = 0; i < keys.length; i++) {
+                    assertRangeForKey(reader, keys[i], i, i);
+                    Assert.assertEquals(keys[i], reader.getRowGroupFirstKey(i));
+                    Assert.assertEquals(keys[i], reader.getChunkMinStat(i, 0));
+                    Assert.assertEquals(i * 10L, reader.getRowGroupRowIdMin(i));
+                    Assert.assertEquals(i * 10L + 9, reader.getRowGroupRowIdMax(i));
+                }
+                // The sentinel is the key space bound, so the last row group's
+                // key id range reads as [12_000, 12_001).
+                Assert.assertEquals(SPARSE_KEY_SPACE_SIZE, reader.getRowGroupFirstKey(3));
+
+                // An unoccupied id inside a row group's key range still
+                // resolves: the directory answers which row groups could hold
+                // it, not whether it is present.
+                assertRangeForKey(reader, 6, 0, 0);
+                assertRangeForKey(reader, 899, 0, 0);
+                assertRangeForKey(reader, 11_999, 1, 1);
+                // Only ids below the first entry or outside the key space are
+                // absent.
+                assertKeyAbsent(reader, 4);
+                assertKeyAbsent(reader, SPARSE_KEY_SPACE_SIZE);
+                assertKeyAbsent(reader, Integer.MAX_VALUE);
+            });
+
+            // Writing the distinct-key count instead is not merely wrong, it is
+            // rejected: the last row group's first key would be unreachable.
+            final long writerPtr = IndexMetaFileWriter.create(
+                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 0, 0, 1, FIRST_COVER_COLUMN);
+            try {
+                buildSparseKeySample(writerPtr);
+                IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 3);
+                try {
+                    IndexMetaFileWriter.finish(writerPtr);
+                    Assert.fail("expected CairoException from the key space size check");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "must be below key space size");
+                }
+            } finally {
+                IndexMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    /**
      * Pins the fixture the crafted out-of-line references patch, so a layout
      * change cannot quietly turn them into harmless offsets. These are the
      * offsets the Rust {@code test_two_block_out_of_line_sample_layout} pins.
@@ -1819,6 +2000,25 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             }
         }
         setDataRowGroupBoundaries(writerPtr, 0L, 500_000L, 1_000_000L);
+    }
+
+    /**
+     * Three row groups holding keys 5, 900 and 12_000 over a key space of
+     * 12_001: three distinct keys, and an id bound four thousand times larger.
+     * A KEY_SPACE_SIZE written as the distinct-key count would make the last
+     * two report absent.
+     */
+    private static void buildSparseKeySample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(
+                writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, SPARSE_KEY_SPACE_SIZE);
+        IndexMetaFileWriter.setPidxFooter(writerPtr, 16_384, 512);
+        addColumn(writerPtr, "key_id", -1, TYPE_INT);
+        addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+        final int[] keys = {5, 900, 12_000};
+        for (int i = 0; i < keys.length; i++) {
+            addKeyAndRowIdRowGroup(writerPtr, keys[i], 10, i * 10L, i * 10L + 9);
+        }
+        setDataRowGroupBoundaries(writerPtr, 0L, 30L);
     }
 
     /**
@@ -2203,6 +2403,38 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
 
     private void withSampleBytes(BytesAssertion assertion) {
         withBytes(IndexMetaFileReaderTest::buildSample, assertion);
+    }
+
+    /**
+     * Copies a sample with {@code slack} filler bytes inserted between the end
+     * of DATA_RG_BOUNDARY and the CRC, IM_FILE_SIZE grown to match and the CRC
+     * repaired, and hands the copy to {@code assertion}. The spec permits the
+     * gap and no writer emits one, so it has to be crafted here. The Java
+     * spelling of the Rust {@code with_slack}. The copy is freed on every
+     * path, including the exceptional one.
+     */
+    private void withSlackBytes(SampleBuilder builder, int slack, BytesAssertion assertion) {
+        withBytes(builder, (dataPtr, dataLen) -> {
+            final long paddedLen = dataLen + slack;
+            final long copyPtr = Unsafe.malloc(paddedLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final long crcOffset = dataLen - 4;
+                Vect.memcpy(copyPtr, dataPtr, crcOffset);
+                for (int i = 0; i < slack; i++) {
+                    Unsafe.putByte(copyPtr + crcOffset + i, SLACK_FILL);
+                }
+                // IM_FILE_SIZE is at 0 and is the committed length, so it grows
+                // with the file; the CRC then covers [8, paddedLen - 4).
+                Unsafe.getUnsafe().putLong(copyPtr, paddedLen);
+                Unsafe.getUnsafe().putInt(
+                        copyPtr + paddedLen - 4,
+                        Zip.crc32(0, copyPtr + 8, (int) (paddedLen - 12))
+                );
+                assertion.run(copyPtr, paddedLen);
+            } finally {
+                Unsafe.free(copyPtr, paddedLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @FunctionalInterface
