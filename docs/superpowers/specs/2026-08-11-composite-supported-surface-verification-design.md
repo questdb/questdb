@@ -1,6 +1,6 @@
 # Composite Partitioning — Verifying the Supported Surface (Sub-project 8) — Design
 
-**Status:** approved 2026-08-11. Successor doc to
+**Status:** approved 2026-08-11. Sub-project 8 of 8 (built FIRST). Successor doc to
 `2026-07-15-composite-partitioning-design.md` (§3 "Phasing"); this is the test-completion sub-project
 that precedes Phases 2–4.
 

@@ -1,6 +1,6 @@
 # Composite Partitioning — Partition Lifecycle (Sub-project 1) — Design
 
-**Status:** approved 2026-08-11. Second of eight sub-projects closing out composite partitioning;
+**Status:** approved 2026-08-11. Sub-project 1 of 8, closing out composite partitioning;
 see `2026-08-11-composite-supported-surface-verification-design.md` (sub-project 8) for the
 decomposition and build order.
 
