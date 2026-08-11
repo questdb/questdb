@@ -28,7 +28,7 @@ import io.questdb.std.Os;
 
 /**
  * JNI wrapper for the Rust {@code _im} covering-index metadata file writer,
- * format version 2. Builds an {@code _im} file in memory using the Rust
+ * format version 3. Builds an {@code _im} file in memory using the Rust
  * writer implementation, so the bytes Java produces and the bytes Rust
  * produces are the same bytes by construction.
  * <p>
@@ -37,10 +37,11 @@ import io.questdb.std.Os;
  * 0. The caller accesses the data via {@link #resultDataPtr} and
  * {@link #resultDataLen}, and must call {@link #destroyResult} when done.
  * <p>
- * Usage: {@link #create} once, {@link #addColumn} per index column (the
- * synthetic {@code key_id} and {@code row_id} columns first, then the covered
- * columns), then per index row group {@link #addRowGroup} followed by an
- * {@link #addOutOfLineStat} for each statistic too wide to inline,
+ * Usage: {@link #create} once, {@link #setPidxFooter} once the index parquet
+ * has been written, {@link #addColumn} per index column (the synthetic
+ * {@code key_id} and {@code row_id} columns first, then the covered columns in
+ * cover-slot order), then per index row group {@link #addRowGroup} followed by
+ * an {@link #addOutOfLineStat} for each statistic too wide to inline,
  * {@link #setDataRowGroupBoundaries}, and finally {@link #finish}.
  * <p>
  * {@link #addRowGroup} takes a buffer of {@link #CHUNK_SIZE}-byte column
@@ -89,10 +90,18 @@ public class IndexMetaFileWriter {
     public static native void addOutOfLineStat(long writerPtr, int colIndex, boolean isMin, long dataPtr, int dataLen) throws CairoException;
 
     /**
-     * Appends one index row group: its first (smallest) key id, its row count
-     * and {@code chunkCount} column chunks read from {@code chunksPtr}, which
-     * must address {@code chunkCount * } {@link #CHUNK_SIZE} zeroed bytes laid
-     * out with the {@code CHUNK_*} offsets.
+     * Appends one index row group: its first (smallest) key id, the smallest
+     * and largest row id it holds, its row count and {@code chunkCount} column
+     * chunks read from {@code chunksPtr}, which must address
+     * {@code chunkCount * } {@link #CHUNK_SIZE} zeroed bytes laid out with the
+     * {@code CHUNK_*} offsets.
+     * <p>
+     * The row-id range is passed rather than derived from the {@code row_id}
+     * chunk because {@code RG_ROW_ID_MIN} and {@code RG_ROW_ID_MAX} are
+     * unconditional: under {@link #PAYLOAD_ROW_PER_KEY} there is no
+     * {@code row_id} column to take it from. Under
+     * {@link #PAYLOAD_ROW_PER_POSTING} the writer cross-checks it against that
+     * chunk's statistics.
      * <p>
      * {@code chunksLen} is the buffer's own byte length and must equal
      * {@code chunkCount * } {@link #CHUNK_SIZE}. The count alone decides how
@@ -100,16 +109,25 @@ public class IndexMetaFileWriter {
      * produces an out-of-bounds native read that neither side can detect; a
      * mismatch throws instead.
      */
-    public static native void addRowGroup(long writerPtr, int firstKey, long numRows, long chunksPtr, long chunksLen, int chunkCount) throws CairoException;
+    public static native void addRowGroup(long writerPtr, int firstKey, long rowIdMin, long rowIdMax, long numRows, long chunksPtr, long chunksLen, int chunkCount) throws CairoException;
 
     /**
      * Creates a writer. {@code keyIdColumn} and {@code rowIdColumn} are
      * indices into the columns added with {@link #addColumn};
      * {@code rowIdColumn} is {@code -1} under {@link #PAYLOAD_ROW_PER_KEY}.
-     * Callers that do not yet know the payload kind or key count pass any
-     * value and correct it later with {@link #setPayload}.
+     * Callers that do not yet know the payload kind or key space size pass any
+     * non-negative value and correct it later with {@link #setPayload}.
+     * <p>
+     * {@code keySpaceSize} is the exclusive upper bound on key ids - the native
+     * reader's {@code keyCountIncludingNulls} - and not a count of distinct
+     * keys present: occupancy is sparse, and a distinct-key count would make
+     * every key above the first report as absent.
+     * <p>
+     * {@code firstCoverColumn} is the descriptor index of cover slot 0, so
+     * {@code coverSlot -> descriptorIndex = firstCoverColumn + coverSlot}. Both
+     * it and {@code keySpaceSize} are rejected when negative.
      */
-    public static native long create(int payloadKind, int keyCount, int keyIdColumn, int rowIdColumn);
+    public static native long create(int payloadKind, int keySpaceSize, int keyIdColumn, int rowIdColumn, int firstCoverColumn) throws CairoException;
 
     public static native void destroyResult(long resultPtr);
 
@@ -135,9 +153,20 @@ public class IndexMetaFileWriter {
     public static native void setDataRowGroupBoundaries(long writerPtr, long boundariesPtr, long boundariesLen, int count) throws CairoException;
 
     /**
-     * Overwrites the payload kind and key count passed to {@link #create}.
+     * Overwrites the payload kind and key space size passed to
+     * {@link #create}. A negative {@code keySpaceSize} is rejected.
      */
-    public static native void setPayload(long writerPtr, int payloadKind, int keyCount);
+    public static native void setPayload(long writerPtr, int payloadKind, int keySpaceSize) throws CairoException;
+
+    /**
+     * Records where {@code <col>.pidx.<indexTxn>.parquet}'s own parquet footer
+     * starts and how long it is. The index parquet's committed size follows as
+     * {@code footerOffset + footerLength + 8}, which is what lets cold-storage
+     * upload and orphan validation work without an {@code ff.length()} call.
+     * Both values must be non-negative, and {@link #finish} rejects a zero in
+     * either.
+     */
+    public static native void setPidxFooter(long writerPtr, long footerOffset, int footerLength) throws CairoException;
 
     static {
         Os.init();

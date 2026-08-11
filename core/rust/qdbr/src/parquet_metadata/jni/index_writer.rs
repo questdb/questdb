@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 //! JNI bindings for `IndexMetaFileWriter` (Java class `io.questdb.cairo.IndexMetaFileWriter`),
-//! the `_im` covering-index metadata file writer, format version 2.
+//! the `_im` covering-index metadata file writer, format version 3.
 //!
 //! The surface mirrors the `_pm` writer bindings in the sibling `writer`
 //! module: create / populate / finish / destroy against a boxed
@@ -70,9 +70,9 @@ pub struct IndexMetaBuiltFile {
 }
 
 macro_rules! check_not_negative {
-    ($env:expr, $count:expr, $name:expr) => {
-        if $count < 0 {
-            let err = fmt_err!(InvalidType, concat!($name, " count is negative"));
+    ($env:expr, $value:expr, $name:expr) => {
+        if $value < 0 {
+            let err = fmt_err!(InvalidType, concat!($name, " is negative"));
             return err.into_cairo_exception().throw($env);
         }
     };
@@ -164,7 +164,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addColumn(
         check_not_null!(env, ptr, "IndexMetaFileWriter");
         check_not_null!(env, name_ptr, "IndexMetaFileWriter column name");
         // A negative jint would become an enormous slice length below.
-        check_not_negative!(env, name_len, "IndexMetaFileWriter column name");
+        check_not_negative!(env, name_len, "IndexMetaFileWriter column name length");
         let physical_type = match u8::try_from(physical_type) {
             Ok(v) => v,
             Err(_) => {
@@ -249,11 +249,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addOutOfLineSta
         check_not_null!(env, ptr, "IndexMetaFileWriter");
         check_not_null!(env, data_ptr, "IndexMetaFileWriter out-of-line stat");
         // A negative jint would become an enormous slice length below.
-        check_not_negative!(env, data_len, "IndexMetaFileWriter out-of-line stat");
+        check_not_negative!(env, data_len, "IndexMetaFileWriter out-of-line stat length");
         check_not_negative!(
             env,
             col_index,
-            "IndexMetaFileWriter out-of-line stat column"
+            "IndexMetaFileWriter out-of-line stat column index"
         );
         let writer = unsafe { &mut *ptr };
         let data = unsafe { slice::from_raw_parts(data_ptr, data_len as usize) };
@@ -267,21 +267,29 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addOutOfLineSta
     })
 }
 
-/// Appends one index row group: its first (smallest) key id, `NUM_ROWS`, and
-/// `chunk_count` column chunks read from `chunks_ptr`. The buffer holds
-/// `chunk_count` consecutive 64-byte `ColumnChunkRaw` structures in on-disk
-/// layout, so a row group costs one JNI transition regardless of schema width.
+/// Appends one index row group: its first (smallest) key id, the smallest and
+/// largest row id it holds, `NUM_ROWS`, and `chunk_count` column chunks read
+/// from `chunks_ptr`. The buffer holds `chunk_count` consecutive 64-byte
+/// `ColumnChunkRaw` structures in on-disk layout, so a row group costs one JNI
+/// transition regardless of schema width.
+///
+/// The row-id range crosses the boundary rather than being derived from the
+/// `row_id` chunk because `RG_ROW_ID_MIN` / `RG_ROW_ID_MAX` are unconditional:
+/// under the row-per-key payload there is no `row_id` column to take it from.
 ///
 /// `chunks_len` is the buffer's own byte length, and `chunk_count` chunks must
 /// account for exactly that many bytes. Without it the count alone decides how
 /// far the loop below reads, and a caller that miscounts produces an
 /// out-of-bounds native read that nothing on either side can detect.
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *mut IndexMetaWriter,
     first_key: jint,
+    row_id_min: jlong,
+    row_id_max: jlong,
     num_rows: jlong,
     chunks_ptr: *const u8,
     chunks_len: jlong,
@@ -291,7 +299,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
         check_not_null!(env, ptr, "IndexMetaFileWriter");
         check_not_null!(env, chunks_ptr, "IndexMetaFileWriter column chunks");
         // A negative jint would become an enormous chunk count below.
-        check_not_negative!(env, chunk_count, "IndexMetaFileWriter column chunks");
+        check_not_negative!(env, chunk_count, "IndexMetaFileWriter column chunk count");
         if num_rows < 0 {
             let err = parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -328,28 +336,46 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
             }
         }
         let writer = unsafe { &mut *ptr };
-        writer.add_row_group(first_key as u32, block);
+        writer.add_row_group(first_key as u32, row_id_min, row_id_max, block);
     })
 }
 
 /// Creates a writer. `key_id_column` and `row_id_column` are indices into the
 /// columns added with `addColumn`; `row_id_column` is `-1` under the
 /// row-per-key payload kind.
+///
+/// `key_space_size` is the exclusive upper bound on key ids -- the native
+/// reader's `keyCountIncludingNulls` -- not a count of distinct keys present.
+/// `first_cover_column` is the descriptor index of cover slot 0: the synthetic
+/// columns come first, then the covered columns in cover-slot order.
+///
+/// Both are rejected when negative: as a `u32` a negative `first_cover_column`
+/// is a descriptor index four billion past the schema, and a negative
+/// `key_space_size` is a key-space bound no key id can reach, which is the
+/// silent-wrong-answer the bound exists to prevent.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_create(
     mut env: JNIEnv,
     _class: JClass,
     payload_kind: jint,
-    key_count: jint,
+    key_space_size: jint,
     key_id_column: jint,
     row_id_column: jint,
+    first_cover_column: jint,
 ) -> *mut IndexMetaWriter {
-    ffi_guard(&mut env, "create", |_env| {
+    ffi_guard(&mut env, "create", |env| {
+        check_not_negative!(env, key_space_size, "IndexMetaFileWriter key space size");
+        check_not_negative!(
+            env,
+            first_cover_column,
+            "IndexMetaFileWriter first cover column"
+        );
         Box::into_raw(Box::new(IndexMetaWriter::new(
             payload_kind as u32,
-            key_count as u32,
+            key_space_size as u32,
             key_id_column,
             row_id_column,
+            first_cover_column as u32,
         )))
     })
 }
@@ -448,7 +474,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
         check_not_null!(env, ptr, "IndexMetaFileWriter");
         check_not_null!(env, boundaries_ptr, "IndexMetaFileWriter boundaries");
         // A negative jint would become an enormous slice length below.
-        check_not_negative!(env, count, "IndexMetaFileWriter boundaries");
+        check_not_negative!(env, count, "IndexMetaFileWriter boundary count");
         // count is non-negative by the check above, so this product is exact in
         // i64 and the comparison bounds the read that follows by the buffer the
         // caller actually allocated.
@@ -469,20 +495,46 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
     })
 }
 
-/// Overwrites the payload kind and key count passed to `create`, for callers
-/// that only learn them once the index build has run.
+/// Records where `<col>.pidx.<indexTxn>.parquet`'s own parquet footer starts
+/// and how long it is. The index parquet's committed size follows as
+/// `offset + length + 8`, which is what lets cold-storage upload and orphan
+/// validation work without an `ff.length()` call.
+///
+/// Negative values are rejected here rather than wrapping into an enormous
+/// `u64` / `u32`: the writer's own check only refuses zero, so a negative
+/// `jlong` would reach disk as a plausible-looking footer position.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setPidxFooter(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut IndexMetaWriter,
+    footer_offset: jlong,
+    footer_length: jint,
+) {
+    ffi_guard(&mut env, "setPidxFooter", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        check_not_negative!(env, footer_offset, "IndexMetaFileWriter pidx footer offset");
+        check_not_negative!(env, footer_length, "IndexMetaFileWriter pidx footer length");
+        let writer = unsafe { &mut *ptr };
+        writer.set_pidx_footer(footer_offset as u64, footer_length as u32);
+    })
+}
+
+/// Overwrites the payload kind and key space size passed to `create`, for
+/// callers that only learn them once the index build has run.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setPayload(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *mut IndexMetaWriter,
     payload_kind: jint,
-    key_count: jint,
+    key_space_size: jint,
 ) {
     ffi_guard(&mut env, "setPayload", |env| {
         check_not_null!(env, ptr, "IndexMetaFileWriter");
+        check_not_negative!(env, key_space_size, "IndexMetaFileWriter key space size");
         let writer = unsafe { &mut *ptr };
-        writer.set_payload(payload_kind as u32, key_count as u32);
+        writer.set_payload(payload_kind as u32, key_space_size as u32);
     })
 }
 
@@ -530,8 +582,8 @@ mod tests {
         assert_eq!(caught.unwrap(), 42);
     }
 
-    /// A guard on ten of eleven entry points is a guard on none of them: the
-    /// eleventh is the one a corrupt file reaches. Reading the source is the
+    /// A guard on eleven of twelve entry points is a guard on none of them: the
+    /// twelfth is the one a corrupt file reaches. Reading the source is the
     /// only way to assert the property over every entry point at once, and it
     /// costs nothing at runtime. The count is asserted too, so a new entry
     /// point has to come past this test.
@@ -558,6 +610,6 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 11, "entry point count changed");
+        assert_eq!(checked, 12, "entry point count changed");
     }
 }
