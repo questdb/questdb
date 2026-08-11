@@ -74,8 +74,15 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
     private static final int FLUSH_MID_STREAM_THEN_FINISH = 3;
     // Flush after the first frame, write the second frame, then drain.
     private static final int FLUSH_MID_STREAM_THEN_WRITE = 4;
+    // Never flush, draining after every page frame: every boundary comes from the fixed
+    // row group size, exactly as the copy export task drives the writer.
+    private static final int NO_FLUSH_DRAIN_EACH_FRAME = 5;
+    // Never flush, and never drain either: the caller only appends the buffer each write
+    // hands back, so a row group the threshold makes due is only emitted if the write that
+    // makes it due closes it there and then.
+    private static final int NO_FLUSH_NO_DRAIN = 6;
     // Large enough that the fixed-size path cannot split the 8 test rows: every
-    // row group boundary in this test comes from flushRowGroup().
+    // row group boundary in the flush tests comes from flushRowGroup().
     private static final long ROW_GROUP_SIZE = 1_000_000;
 
     @Test
@@ -111,6 +118,44 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
         assertRowGroupSizes(FLUSH_MID_STREAM_THEN_WRITE, "flush_then_write.parquet", 3, 5);
     }
 
+    @Test
+    public void testThresholdClosesRowGroupOnTheWriteThatMakesItDue() throws Exception {
+        // Same threshold of 3, but the caller never drains: it only appends the one buffer
+        // each write hands back. This pins WHEN the threshold fires, which the draining tests
+        // above cannot see: a row group must be closed by the write that first brings the
+        // pending count up TO the threshold, not by a later one that pushes it past.
+        // The first frame reaches 3 pending rows exactly, so its own write must close them
+        // and hand back a row group of 3. The second frame's write then closes 3 of its
+        // 5 rows and finish emits the remaining 2.
+        // Were the threshold only to fire once the pending count exceeded 3, the first
+        // frame's write would hand back nothing, its 3 rows would still be pending when the
+        // second frame arrived, and with no drain to close the backlog finish would emit the
+        // whole 5-row remainder as one group, giving 3, 5 instead.
+        assertRowGroupSizes(NO_FLUSH_NO_DRAIN, 3, "threshold_no_drain.parquet", 3, 3, 2);
+    }
+
+    @Test
+    public void testThresholdSplitsFramesAtFixedRowGroupSize() throws Exception {
+        // flushRowGroup() is never called, so every boundary below comes from the threshold.
+        // The frames are 3 and 5 rows wide and the threshold is 3, which does not divide the
+        // 8 rows. The first frame's write reaches 3 pending rows exactly and closes them; the
+        // drain that follows finds nothing pending. The second frame's write closes the first
+        // 3 of its 5 rows, the drain that follows finds 2 pending, which is below the
+        // threshold, and finish emits those 2 as a short final row group.
+        assertRowGroupSizes(NO_FLUSH_DRAIN_EACH_FRAME, 3, "threshold_uneven.parquet", 3, 3, 2);
+    }
+
+    @Test
+    public void testThresholdWithRowCountAMultipleOfRowGroupSize() throws Exception {
+        // A threshold that does divide the 8 rows, leaving no tail for finish. The first
+        // frame leaves 3 rows pending, below the threshold, so no row group is due and the
+        // drain returns nothing. The second frame brings the pending count to 8: its write
+        // closes 4 rows, which span the whole first frame plus the first row of the second,
+        // and the drain that follows closes the remaining 4. Row groups are always exactly
+        // the threshold, so the boundary falls inside a frame rather than at its edge.
+        assertRowGroupSizes(NO_FLUSH_DRAIN_EACH_FRAME, 4, "threshold_even.parquet", 4, 4);
+    }
+
     private static long appendBuffer(FilesFacade ff, long fd, long buffer, long fileOffset) {
         final long dataSize = Unsafe.getLong(buffer);
         if (dataSize > 0) {
@@ -118,6 +163,16 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
             Assert.assertEquals(dataSize, written);
         }
         return fileOffset + dataSize;
+    }
+
+    /**
+     * Whether the given flush mode captures a row group boundary once the first page frame
+     * has been written. The threshold-only modes capture nothing at all.
+     */
+    private static boolean armsBoundaryAfterFirstFrame(int flushMode) {
+        return flushMode == FLUSH_MID_STREAM_NO_DRAIN
+                || flushMode == FLUSH_MID_STREAM_THEN_FINISH
+                || flushMode == FLUSH_MID_STREAM_THEN_WRITE;
     }
 
     /**
@@ -161,6 +216,14 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
      * row group sizes the file ends up with.
      */
     private void assertRowGroupSizes(int flushMode, String fileName, int... expectedRowGroupSizes) throws Exception {
+        assertRowGroupSizes(flushMode, ROW_GROUP_SIZE, fileName, expectedRowGroupSizes);
+    }
+
+    /**
+     * Streams the test table into a parquet file under the given flush mode and configured row
+     * group size, and asserts the row group sizes the file ends up with.
+     */
+    private void assertRowGroupSizes(int flushMode, long rowGroupSize, String fileName, int... expectedRowGroupSizes) throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES" +
@@ -177,7 +240,7 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
             final FilesFacade ff = configuration.getFilesFacade();
             try (Path parquetPath = new Path().of(root).concat(fileName);
                  Path parquetMetaPath = new Path().of(root).concat(fileName + "._pm")) {
-                final long parquetFileSize = streamExport(ff, parquetPath, flushMode);
+                final long parquetFileSize = streamExport(ff, parquetPath, flushMode, rowGroupSize);
                 Assert.assertTrue(parquetFileSize > 0);
 
                 final long parquetMetaFileSize = generateParquetMeta(ff, parquetPath, parquetFileSize, parquetMetaPath);
@@ -209,7 +272,7 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
      *
      * @return the size of the written parquet file
      */
-    private long streamExport(FilesFacade ff, Path parquetPath, int flushMode) throws Exception {
+    private long streamExport(FilesFacade ff, Path parquetPath, int flushMode, long rowGroupSize) throws Exception {
         ff.remove(parquetPath.$());
         final long fd = ff.openRW(parquetPath.$(), CairoConfiguration.O_NONE);
         Assert.assertTrue(fd >= 0);
@@ -252,7 +315,7 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
                             ParquetCompression.packCompressionCodecLevel(ParquetCompression.COMPRESSION_UNCOMPRESSED, 0),
                             true,
                             false,
-                            ROW_GROUP_SIZE,
+                            rowGroupSize,
                             DATA_PAGE_SIZE,
                             ParquetVersion.PARQUET_VERSION_V2,
                             0,
@@ -288,9 +351,10 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
                             }
 
                             long buffer = writeStreamingParquetChunk(writerPtr, columnData.getAddress(), frameRowCount);
-                            if (flushMode == FLUSH_MID_STREAM_NO_DRAIN && frameIndex == 1) {
+                            if ((flushMode == FLUSH_MID_STREAM_NO_DRAIN && frameIndex == 1)
+                                    || flushMode == NO_FLUSH_NO_DRAIN) {
                                 // Take only what the write itself handed back: no drain call
-                                // between the flush and finish.
+                                // to close anything the write left pending.
                                 if (buffer != 0) {
                                     fileOffset = appendBuffer(ff, fd, buffer, fileOffset);
                                 }
@@ -309,7 +373,7 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
                                 // group: ParquetMetaFileReader treats a zero-row group as corruption.
                                 flushRowGroup(writerPtr);
                                 fileOffset = drain(writerPtr, ff, fd, fileOffset);
-                            } else if (frameIndex == 0 && flushMode != FLUSH_BEFORE_ANY_ROWS) {
+                            } else if (frameIndex == 0 && armsBoundaryAfterFirstFrame(flushMode)) {
                                 // Capture the boundary between the two key runs, then leave it to
                                 // the next write or to finish to emit it.
                                 flushRowGroup(writerPtr);
