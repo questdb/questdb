@@ -2286,6 +2286,126 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitIfMaxUncommittedRowsReachedStructuralTxnHoldsDurableWorkPending() throws Exception {
+        // The junction testCommitIfMaxUncommittedRowsReachedReportsStructuralTxnOnDeferredFrame
+        // stops short of: that test drives a bare consumer lambda, so it pins the cache's
+        // reporting but never where the reported txn lands. The metadata-only txn a
+        // below-the-cap FLAG_DEFER_COMMIT frame reports reaches
+        // QwpIngressProcessorState.recordCommittedTable, which fills pendingDurableSeqTxns
+        // and makes hasPendingDurableWork() true; the base shape reported nothing on this
+        // frame shape, so those maps stayed empty. QwpIngressUpgradeProcessor reads that
+        // predicate in opposite directions: roleChangeCloseWithUploadGrace consults the
+        // registry only while work is pending, and defers the close until the registry
+        // covers it, while beginCloseEchoWaitIfEligible demands !hasPendingDurableWork()
+        // among its three conjuncts, so pending work disqualifies the close-echo wait and
+        // finishServerFatalClose drains instead. This test pins the inputs those paths
+        // read -- the predicate and the snapshot coverage flags -- not the close outcome,
+        // which QwpIngressDeferredCloseDurableAckTest drives at the processor level.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE deferred_structural_pending (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // A REAL cache in place of the state's own, so the production
+                // committedTxnConsumer runs behind the real reportCommittedTxn.
+                // maxUncommittedRows far above the row count keeps the mid-group pass
+                // with nothing to flush -- the below-the-cap deferred shape. The state
+                // takes ownership on the successful field set and frees it in close().
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                QwpTudCache cache = new QwpTudCache(
+                        engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY, -1, 10_000
+                );
+                try {
+                    tudCacheField.set(state, cache);
+                } catch (Throwable th) {
+                    Misc.free(cache);
+                    throw new AssertionError("could not install the real cache", th);
+                }
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("deferred_structural_pending"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+                final String dirName = tud.getTableToken().getDirName();
+
+                Assert.assertFalse(
+                        "a fresh connection owes no durable work",
+                        state.hasPendingDurableWork()
+                );
+
+                // Stand in for the appender on a deferred frame: phase 1 runs the
+                // implicit ALTER for the column the frame introduced, phase 2 appends
+                // rows that stay below the cap.
+                final long preAlterSeqTxn = tud.getLastSeqTxn();
+                tud.getWriter().addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                final long structuralSeqTxn = tud.getLastSeqTxn();
+                // A writer with no txn yet reports NO_TXN (Long.MIN_VALUE), so the ALTER has to
+                // move getLastSeqTxn() strictly forward AND off the sentinel onto a real txn.
+                Assert.assertTrue(
+                        "the implicit ALTER must advance the sequencer txn, was: "
+                                + preAlterSeqTxn + " -> " + structuralSeqTxn,
+                        structuralSeqTxn > preAlterSeqTxn && structuralSeqTxn >= 0
+                );
+                tud.getWriter().newRow(0).append();
+                Assert.assertFalse("the deferred frame's rows must stay uncommitted", tud.isFirstRow());
+
+                // Production wiring: the state hands the cache this::recordCommittedTable.
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue("the mid-group pass must not reject the state", state.isOk());
+                Assert.assertFalse("reporting must not commit the deferred rows", tud.isFirstRow());
+
+                Field seqTxnsField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableSeqTxns");
+                seqTxnsField.setAccessible(true);
+                CharSequenceLongHashMap pendingDurableSeqTxns = (CharSequenceLongHashMap) seqTxnsField.get(state);
+                Assert.assertEquals(
+                        "the metadata-only txn must reach the durable-upload watermark",
+                        structuralSeqTxn,
+                        pendingDurableSeqTxns.get("deferred_structural_pending")
+                );
+                Assert.assertTrue(
+                        "a metadata-only txn from a deferred frame must hold the connection's "
+                                + "durable work pending, which is what defers a demote close",
+                        state.hasPendingDurableWork()
+                );
+
+                // What roleChangeCloseWithUploadGrace reads on a demote here: with no upload
+                // coverage yet the snapshot falls short of full coverage, which is what sends
+                // that path into the deferral. The snapshot itself stays empty because
+                // collectDurableProgress forwards only the registry's own uploadedSeqTxn,
+                // never the pending value.
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
+                Assert.assertFalse(
+                        "an unuploaded metadata-only txn must leave the snapshot short of full coverage",
+                        state.isDurableProgressSnapshotFullyUploaded()
+                );
+
+                // ...and the bound on that deferral: coverage of the ALTER's own seqTxn
+                // restores full coverage, without the deferred group ever committing its rows.
+                registry.set(dirName, structuralSeqTxn);
+                CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(structuralSeqTxn, progress.get("deferred_structural_pending"));
+                Assert.assertTrue(state.isDurableProgressSnapshotFullyUploaded());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCommitAlwaysInvokesConsumer() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
