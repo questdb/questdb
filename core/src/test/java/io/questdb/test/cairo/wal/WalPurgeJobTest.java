@@ -844,6 +844,32 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLogicReleaseLocksHandlesOversizedSegmentCount() throws ReflectiveOperationException {
+        // A corrupt segment count must not push the unlock cursor past the end of the
+        // tracking list. Without the candidate <= n clamp, i + 3 + nSegments overflows int
+        // to a negative index and the next getQuick() reads out of bounds. The walk must
+        // still unlock every valid WAL and terminate.
+        TestDeleter deleter = new TestDeleter();
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
+        TableToken tableToken = newTestTableToken();
+        logic.reset(tableToken);
+
+        logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
+        // trackDiscoveredWal returns the max-segment-locked slot; the segment count sits one past it.
+        final int corruptSegmentCountIdx = logic.trackDiscoveredWal(2) + 1;
+
+        Field discoveredField = WalPurgeJob.Logic.class.getDeclaredField("discovered");
+        discoveredField.setAccessible(true);
+        ((LongList) discoveredField.get(logic)).setQuick(corruptSegmentCountIdx, Integer.MAX_VALUE);
+
+        logic.releaseLocks();
+
+        Assert.assertEquals(2, deleter.unlocked.size());
+        Assert.assertEquals(1, deleter.unlocked.getQuick(0));
+        Assert.assertEquals(2, deleter.unlocked.getQuick(1));
+    }
+
+    @Test
     public void testLogicReleaseLocksHandlesTruncatedWalEntry() throws ReflectiveOperationException {
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
