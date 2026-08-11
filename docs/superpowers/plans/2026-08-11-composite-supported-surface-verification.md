@@ -18,6 +18,7 @@
 - Port **9003** is held by a local QuestDB. `ExpParquetExportTest#testParquetExportReadOnlyHttp` and `#testParquetExportDisabledReadOnlyInstance` will ERROR with `could not bind socket`. Environmental — do not kill that process, do not "fix" those tests.
 - Flag defaults stay: `cairo.wal.composite.fastappend.enabled=true`, `cairo.wal.composite.fastappend.max.open.cells=64`.
 - This sub-project changes **no production behaviour except Task 9's mat-view gate**. Any other production edit is out of scope — raise it, don't do it.
+- One narrow exception, already sanctioned: Task 4 may add `@TestOnly` counter accessors to `TableWriter` **if and only if** no existing composite counter exposes what it needs. Accessors only — no behaviour, no new counters on the hot path.
 - No probe/instrumentation may survive a commit: `grep -rn "PROBE-" core/src` must be empty before every commit.
 - Every guard test needs a negative control proving it fails when the thing it guards is broken.
 
@@ -246,7 +247,8 @@ Expected: FAIL — `cannot find symbol: comparedShapeCount()`.
 
 - [ ] **Step 3: Implement the seven comparisons**
 
-Each is `assertSqlCursors(plainSql, compositeSql)` with a counter increment. In order: forward full scan; backward full scan; `count(*)`/`min(ts)`/`max(ts)`; `LATEST ON ts PARTITION BY sym`; `SAMPLE BY` with a keyed aggregate; dimension-filtered `=` and `IN` (one value known present, one known absent); a timestamp interval crossing a partition boundary; a window-join with the table as slave. Composite-only sanity — `table_partitions()` row count equals distinct `(day, cell)` pairs and every named directory exists — is asserted separately, not compared to the twin.
+Each shape increments the counter once, even when it issues two queries. The seven, in order:
+(1) full scan, compared forward AND backward; (2) `count(*)`/`min(ts)`/`max(ts)`; (3) `LATEST ON ts PARTITION BY sym`; (4) `SAMPLE BY` with a keyed aggregate; (5) dimension-filtered `=` and `IN`, using one value known present and one known absent; (6) a timestamp interval crossing a partition boundary; (7) a window-join with the table as slave. Composite-only sanity — `table_partitions()` row count equals distinct `(day, cell)` pairs and every named directory exists — is asserted separately, not compared to the twin.
 
 - [ ] **Step 4: Run to verify it passes**
 
