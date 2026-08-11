@@ -33,7 +33,7 @@ QuestDB is hardware efficient, with quick setup and operational efficiency.
 
 <div align="center">
   <a href="https://demo.questdb.com/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src=".github/console.webp" width="900" />
+    <img alt="QuestDB Web Console showing a live technical-analysis dashboard, schema explorer, and monitoring panel" src=".github/console.webp" width="900" />
   </a>
   <p><em>QuestDB Web Console - click to launch demo</em></p>
 </div>
