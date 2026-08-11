@@ -73,12 +73,12 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     // would drive the full case count and never reach an accessor at all, and
     // an oracle that never runs proves nothing. Floors rather than exact
     // counts, because tightening a reader check legitimately moves both.
-    private static final int HOSTILE_BOUND_CASE_MIN = 3_000;
+    private static final int HOSTILE_BOUND_CASE_MIN = 5_000;
     // The number of cases the hostile sweep drives, pinned so a refactor that
     // silently stops enumerating one of the families fails rather than passing
     // with less coverage than the day it was written.
-    private static final int HOSTILE_CASE_COUNT = 5_293;
-    private static final int HOSTILE_CHECKED_ADDRESS_MIN = 12_000;
+    private static final int HOSTILE_CASE_COUNT = 7_633;
+    private static final int HOSTILE_CHECKED_ADDRESS_MIN = 28_000;
     // Tally slots the sweep accumulates into: cases driven, cases the reader
     // bound to, and addresses the oracle bounded.
     private static final int HOSTILE_TALLY_ADDRESSES = 2;
@@ -785,10 +785,15 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 sweepRowGroupBlockOffsets(tally, dataPtr, dataLen);
                 sweepTruncations(tally, dataPtr, dataLen);
             });
-            withBytes(
-                    IndexMetaFileReaderTest::buildTwoBlockOutOfLineStatSample,
-                    (dataPtr, dataLen) -> sweepOutOfLineStatReferences(tally, dataPtr, dataLen)
-            );
+            // The two-block fixture is the one whose blocks carry real
+            // out-of-line stat regions, so it gets the byte sweep as well as
+            // the crafted references: removing the out-of-line bound is caught
+            // by a flip of a STAT_FLAGS byte, which turns an inline statistic
+            // into a reference, and no crafted reference produces that.
+            withBytes(IndexMetaFileReaderTest::buildTwoBlockOutOfLineStatSample, (dataPtr, dataLen) -> {
+                sweepOutOfLineStatReferences(tally, dataPtr, dataLen);
+                sweepSingleBytes(tally, dataPtr, dataLen);
+            });
             Assert.assertEquals(HOSTILE_CASE_COUNT, tally[HOSTILE_TALLY_CASES]);
             Assert.assertTrue(
                     "the sweep bound only " + tally[HOSTILE_TALLY_BOUND] + " of its "
