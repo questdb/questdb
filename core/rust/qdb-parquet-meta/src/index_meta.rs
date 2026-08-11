@@ -1104,7 +1104,7 @@ impl<'a> IndexMetaReader<'a> {
         let offset = IM_HEADER_SIZE + index * COLUMN_DESCRIPTOR_SIZE;
         let ptr = self.data[offset..].as_ptr();
         // Safety: ColumnDescriptorRaw is #[repr(C)] with 8-byte max alignment,
-        // the header is 64 bytes and descriptors are 32 bytes, so every
+        // the header is 128 bytes and descriptors are 32 bytes, so every
         // descriptor offset is 8-byte aligned. The bounds were checked above
         // and again against `names_start` in `new`.
         debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
