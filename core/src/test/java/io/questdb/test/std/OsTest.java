@@ -266,5 +266,4 @@ public class OsTest {
         assertTrue("Could not obtain memory size from OperatingSystemMXBean",
                 fromMXBean > 0 && fromMXBean < (1L << 48));
     }
-
 }

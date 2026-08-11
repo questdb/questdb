@@ -91,15 +91,15 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
+    private final int threadCount;
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     @TestOnly
     @Nullable
     private volatile Runnable beforeFutureGetHook;
+    private ColumnVersionReader columnVersionReader;
     @TestOnly
     @Nullable
     private volatile Runnable futureGetInterruptedHook;
-    private final int threadCount;
-    private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private ColumnVersionReader columnVersionReader;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
     private Path partitionCleanPath;
     private DateFormat partitionDirFmt;
@@ -141,12 +141,6 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     public void abortParallelTasks() {
         abortParallelTasks.set(true);
-    }
-
-    @TestOnly
-    public void setFutureGetHooks(@Nullable Runnable beforeGetHook, @Nullable Runnable interruptedHook) {
-        this.beforeFutureGetHook = beforeGetHook;
-        this.futureGetInterruptedHook = interruptedHook;
     }
 
     @Override
@@ -600,6 +594,12 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .put("Recovery failed. Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
         }
         LOG.info().$("restored table registry [src=").$(srcPath).$(", dst=").$(dstPath).I$();
+    }
+
+    @TestOnly
+    public void setFutureGetHooks(@Nullable Runnable beforeGetHook, @Nullable Runnable interruptedHook) {
+        this.beforeFutureGetHook = beforeGetHook;
+        this.futureGetInterruptedHook = interruptedHook;
     }
 
     /**

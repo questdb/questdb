@@ -38,7 +38,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
@@ -51,21 +50,6 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "dump_thread_stacks()";
 
-    public static void dumpThreadStacks() {
-        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
-        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
-        // Each thread stack on its own LOG message to avoid overrunning log buffer
-        // Generally overrun will truncate the log message. We are likely to overrun considering how
-        // many threads we could be running
-        for (ThreadInfo threadInfo : threadInfos) {
-            // it turns out it is possible to have null "infos"
-            if (threadInfo != null) {
-                dumpThreadStack(threadInfo, LOG.advisory(), System.err);
-            }
-        }
-    }
-
-    @TestOnly
     public static void dumpThreadStack(ThreadInfo threadInfo, LogRecord record, PrintStream errorStream) {
         try {
             final Thread.State state = threadInfo.getThreadState();
@@ -81,6 +65,20 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
             th.printStackTrace(errorStream);
         } finally {
             record.$();
+        }
+    }
+
+    public static void dumpThreadStacks() {
+        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
+        // Each thread stack on its own LOG message to avoid overrunning log buffer
+        // Generally overrun will truncate the log message. We are likely to overrun considering how
+        // many threads we could be running
+        for (ThreadInfo threadInfo : threadInfos) {
+            // it turns out it is possible to have null "infos"
+            if (threadInfo != null) {
+                dumpThreadStack(threadInfo, LOG.advisory(), System.err);
+            }
         }
     }
 

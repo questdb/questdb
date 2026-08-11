@@ -60,19 +60,19 @@ public class LogAlertSocket implements Closeable {
     private final int inBufferSize;
     private final Log log;
     private final NetworkFacade nf;
+    private final Runnable onReconnectRef = this::onReconnect;
     private final int outBufferSize;
     private final Rnd rand;
     private final long reconnectDelay;
     private final long reconnectDelayMillis;
-    private final Runnable onReconnectRef = this::onReconnect;
     private final StringSink responseSink = new StringSink();
-    private LongConsumer reconnectSleeper = Os::sleep;
     private long addressInfoAddr = -1; // tcp/ip host:port address
     private int alertHostIdx;
     private int alertHostsCount;
     private String alertTargets; // host[:port](,host[:port])*
     private long inBufferPtr;
     private long outBufferPtr;
+    private LongConsumer reconnectSleeper = Os::sleep;
     private long socketFd = -1;
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
@@ -194,11 +194,6 @@ public class LogAlertSocket implements Closeable {
     @TestOnly
     public long getReconnectDelayMillis() {
         return reconnectDelayMillis;
-    }
-
-    @TestOnly
-    public void setReconnectSleeper(@NotNull LongConsumer reconnectSleeper) {
-        this.reconnectSleeper = reconnectSleeper;
     }
 
     @TestOnly
@@ -335,6 +330,11 @@ public class LogAlertSocket implements Closeable {
                     .I$();
         }
         return success;
+    }
+
+    @TestOnly
+    public void setReconnectSleeper(@NotNull LongConsumer reconnectSleeper) {
+        this.reconnectSleeper = reconnectSleeper;
     }
 
     private static boolean isContentLength(CharSequence tok, int lo, int hi) {

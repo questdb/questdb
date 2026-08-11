@@ -67,6 +67,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -450,19 +451,7 @@ public class LogFactoryTest {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
-                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                    consumerSequence.set(seq);
-                    return new LogWriter() {
-                        @Override
-                        public void bindProperties(LogFactory factory) {
-                        }
-
-                        @Override
-                        public boolean run(@NotNull WorkerContext workerContext) {
-                            return false;
-                        }
-                    };
-                }));
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence));
                 factory.bind();
 
                 final Log logger = factory.create("x");
@@ -520,19 +509,7 @@ public class LogFactoryTest {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
-                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                    consumerSequence.set(seq);
-                    return new LogWriter() {
-                        @Override
-                        public void bindProperties(LogFactory factory) {
-                        }
-
-                        @Override
-                        public boolean run(@NotNull WorkerContext workerContext) {
-                            return false;
-                        }
-                    };
-                }));
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence));
                 factory.bind();
 
                 final Log logger = factory.create("x");
@@ -584,19 +561,7 @@ public class LogFactoryTest {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
-                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                    consumerSequence.set(seq);
-                    return new LogWriter() {
-                        @Override
-                        public void bindProperties(LogFactory factory) {
-                        }
-
-                        @Override
-                        public boolean run(@NotNull WorkerContext workerContext) {
-                            return false;
-                        }
-                    };
-                }));
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence));
                 factory.bind();
 
                 final Log logger = factory.create("x");
@@ -655,19 +620,7 @@ public class LogFactoryTest {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
-                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                    consumerSequence.set(seq);
-                    return new LogWriter() {
-                        @Override
-                        public void bindProperties(LogFactory factory) {
-                        }
-
-                        @Override
-                        public boolean run(@NotNull WorkerContext workerContext) {
-                            return false;
-                        }
-                    };
-                }));
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence));
                 factory.bind();
 
                 final Log logger = factory.create("x");
@@ -722,19 +675,7 @@ public class LogFactoryTest {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
-                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                    consumerSequence.set(seq);
-                    return new LogWriter() {
-                        @Override
-                        public void bindProperties(LogFactory factory) {
-                        }
-
-                        @Override
-                        public boolean run(@NotNull WorkerContext workerContext) {
-                            return false;
-                        }
-                    };
-                }));
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence));
                 factory.bind();
 
                 final Log logger = factory.create("x");
@@ -797,20 +738,7 @@ public class LogFactoryTest {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             final AtomicReference<RingQueue<LogRecordUtf8Sink>> logRing = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
-                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                    consumerSequence.set(seq);
-                    logRing.set(ring);
-                    return new LogWriter() {
-                        @Override
-                        public void bindProperties(LogFactory factory) {
-                        }
-
-                        @Override
-                        public boolean run(@NotNull WorkerContext workerContext) {
-                            return false;
-                        }
-                    };
-                }));
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence, logRing));
                 factory.bind();
 
                 final Log logger = factory.create("x");
@@ -1668,6 +1596,32 @@ public class LogFactoryTest {
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException("Could not set logger", e);
         }
+    }
+
+    private static LogWriterConfig newSequenceCapturingWriterConfig(AtomicReference<SCSequence> consumerSequence) {
+        return newSequenceCapturingWriterConfig(consumerSequence, null);
+    }
+
+    private static LogWriterConfig newSequenceCapturingWriterConfig(
+            AtomicReference<SCSequence> consumerSequence,
+            @Nullable AtomicReference<RingQueue<LogRecordUtf8Sink>> consumerRing
+    ) {
+        return new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+            consumerSequence.set(seq);
+            if (consumerRing != null) {
+                consumerRing.set(ring);
+            }
+            return new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(@NotNull WorkerContext workerContext) {
+                    return false;
+                }
+            };
+        });
     }
 
     private void assertFileLength(String file) {

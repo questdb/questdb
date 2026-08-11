@@ -639,7 +639,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         // WAL 1: segments 1-7, writer active, maxSegmentLocked = 5
@@ -705,7 +705,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         // WAL 1: segments 1-3, writer active, maxSegmentLocked = 1
@@ -748,7 +748,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
         };
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
@@ -780,28 +780,28 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         };
 
         class CountingWalLocker extends QdbrWalLocker {
-            private boolean locked;
+            private boolean isLocked;
 
             public void forceUnlock(TableToken token, int walId) {
-                if (locked) {
+                if (isLocked) {
                     super.unlockPurge(token, walId);
-                    locked = false;
+                    isLocked = false;
                 }
             }
 
             @Override
             public int lockPurge(TableToken token, int walId) {
                 final int maxSegmentLocked = super.lockPurge(token, walId);
-                locked = true;
+                isLocked = true;
                 return maxSegmentLocked;
             }
 
             @Override
             public void unlockPurge(TableToken token, int walId) {
                 unlockAttempts.incrementAndGet();
-                if (locked) {
+                if (isLocked) {
                     super.unlockPurge(token, walId);
-                    locked = false;
+                    isLocked = false;
                     nativeUnlocks.incrementAndGet();
                 }
             }
@@ -847,7 +847,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     public void testLogicReleaseLocksHandlesTruncatedWalEntry() throws ReflectiveOperationException {
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         logic.trackDiscoveredWal(1);
@@ -873,7 +873,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
         };
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
@@ -902,7 +902,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         };
         final TestDeleter deleter = new TestDeleter();
         final WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        logic.reset(new TableToken("test", "test~1", null, 42, true, false, false));
+        logic.reset(newTestTableToken());
 
         final Field discoveredField = WalPurgeJob.Logic.class.getDeclaredField("discovered");
         Unsafe.putObject(logic, Unsafe.objectFieldOffset(discoveredField), discovered);
@@ -930,7 +930,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
         };
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
@@ -966,7 +966,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
         };
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
         logic.reset(tableToken);
 
         logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
@@ -996,7 +996,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 throw sleepFailure;
             }
         };
-        logic.reset(new TableToken("test", "test~1", null, 42, true, false, false));
+        logic.reset(newTestTableToken());
         logic.endWalTracking(logic.trackDiscoveredWal(1), WalUtils.SEG_NONE_ID, true);
         logic.endWalTracking(logic.trackDiscoveredWal(2), WalUtils.SEG_NONE_ID, true);
 
@@ -1014,7 +1014,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         final int waitMs = 500;
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, waitMs);
-        TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
+        TableToken tableToken = newTestTableToken();
 
         logic.reset(tableToken);
         int idx = logic.trackDiscoveredWal(1);
@@ -2035,6 +2035,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             row.append();
             writer.commit();
         });
+    }
+
+    private static TableToken newTestTableToken() {
+        return new TableToken("test", "test~1", null, 42, true, false, false);
     }
 
     private void assertExistence(boolean exists, TableToken tableToken) {

@@ -77,10 +77,10 @@ public final class TimerShards {
     private final DelayHeap<DelayedFireable>[] shards;
     private final String threadNamePrefix;
     private final Thread[] threads;
+    private volatile boolean hasTimedOutThread;
     @TestOnly
     @Nullable
     private volatile Runnable joinThreadsHook;
-    private volatile boolean hasTimedOutThread;
     private volatile boolean running;
 
     @SuppressWarnings("unchecked")
@@ -140,6 +140,11 @@ public final class TimerShards {
         }
     }
 
+    @TestOnly
+    public void setJoinThreadsHook(@Nullable Runnable hook) {
+        this.joinThreadsHook = hook;
+    }
+
     /**
      * Drains every shard and invokes {@link DelayedFireable#shutdown()} on each entry.
      * Halts the timer threads. Idempotent. Must run while worker pools are still
@@ -184,11 +189,6 @@ public final class TimerShards {
             total += shards[i].size();
         }
         return total;
-    }
-
-    @TestOnly
-    public void setJoinThreadsHook(@Nullable Runnable hook) {
-        this.joinThreadsHook = hook;
     }
 
     /**

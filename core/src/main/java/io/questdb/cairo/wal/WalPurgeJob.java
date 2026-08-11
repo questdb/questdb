@@ -838,10 +838,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        protected void sleepBeforeDelete() {
-            Os.sleep(waitBeforeDelete);
-        }
-
         public void trackBackupLockedPart(long partNo) {
             backupLockedPart = partNo;
         }
@@ -873,6 +869,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         public void trackSeqPart(long part) {
             discovered.add(WalUtils.METADATA_WALID);
             discovered.add(part);
+        }
+
+        protected void sleepBeforeDelete() {
+            Os.sleep(waitBeforeDelete);
         }
 
         private long getSeqPart(int walId, long value) {
