@@ -108,12 +108,13 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
         lastNotifiedTxnByTableName.computeIfAbsent(viewDefinition.getBaseTableName(), createLastNotifiedTxn);
 
-        // Publish a timer creation task.
-        // We need timer(s) in all cases, but immediate non-period view.
-        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE || viewDefinition.getPeriodLength() > 0) {
-            final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofAdd(viewToken));
-        }
+        // Publish a timer creation task unconditionally. Which timers, if any, a view needs is
+        // decided by MatViewTimerJob.addTimers() from the definition alone, and it creates nothing
+        // for an immediate, non-period view. That rule belongs in one place: encoding it here too
+        // used to keep such a view out of the timer queue entirely, so a later ALTER ... SET
+        // REFRESH could not register the timers its new definition asked for.
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofAdd(viewToken));
 
         return state;
     }

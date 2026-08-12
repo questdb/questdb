@@ -710,30 +710,92 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterRefreshImmediateToPeriod() throws Exception {
-        // Same defect as testAlterRefreshImmediateToTimer, reached through the period timer:
-        // an immediate, non-period view has no timers, so adding a period to it has to register
-        // the period timer from scratch.
+    public void testAlterRefreshImmediateToManual() throws Exception {
+        // The same missing registration, seen through the refresh intervals update timer. A manual
+        // view is not expected to refresh, so nothing looks wrong, yet without that timer
+        // refreshIntervalsBaseTxn never advances and WalPurgeJob.getSafeToPurgeUpToTxn keeps the
+        // base table's purge floor pinned at the last refresh, so base table WAL segments
+        // accumulate for as long as the view stays manual.
         assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
             executeWithRewriteTimestamp(
-                    "CREATE TABLE base_price (" +
-                            "sym VARCHAR, price DOUBLE, ts #TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
-            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
             execute(
-                    "CREATE MATERIALIZED VIEW price_1h REFRESH IMMEDIATE AS " +
-                            "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h"
+                    "create materialized view price_1h refresh immediate as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
             );
 
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            execute("INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.320, '2000-01-01T02:01')");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')");
             drainQueues();
 
-            assertQuery("price_1h ORDER BY sym")
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewStateStoreImpl stateStore = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = stateStore.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            final long refreshedTxn = state.getLastRefreshBaseTxn();
+            Assert.assertTrue("precondition: immediate refresh has run", refreshedTxn > -1);
+
+            execute("alter materialized view price_1h set refresh manual;");
+            drainQueues();
+            drainMatViewTimerQueue(timerJob);
+
+            // base table transactions that the manual view will never refresh
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.321, '2024-09-10T13:02')");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.322, '2024-09-10T14:02')");
+            drainWalQueue();
+
+            // tick past the refresh intervals update period
+            currentMicros += Micros.DAY_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            Assert.assertEquals(
+                    "the manual view must not refresh on its own",
+                    refreshedTxn,
+                    state.getLastRefreshBaseTxn()
+            );
+            // the refresh intervals update timer registered by the ALTER must have cached the new
+            // intervals; that is what lets WalPurgeJob move its floor past the last refresh
+            Assert.assertTrue(
+                    "refreshIntervalsBaseTxn must advance past the last refresh [intervalsBaseTxn=" +
+                            state.getRefreshIntervalsBaseTxn() + ", lastRefreshBaseTxn=" + refreshedTxn + ']',
+                    state.getRefreshIntervalsBaseTxn() > refreshedTxn
+            );
+        });
+    }
+
+    @Test
+    public void testAlterRefreshImmediateToPeriod() throws Exception {
+        // Same defect as testAlterRefreshImmediateToTimer, reached through the period timer:
+        // an immediate, non-period view has no timers, so adding a period to it has to register
+        // the period timer from scratch.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2000-01-01T02:01')");
+            drainQueues();
+
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""
@@ -741,16 +803,16 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.32\t2000-01-01T02:00:00.000000Z
                             """));
 
-            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH IMMEDIATE PERIOD (LENGTH 4h);");
+            execute("alter materialized view price_1h set refresh immediate period (length 4h);");
             drainQueues();
 
             // the view is a period view now, so a row in the incomplete period must not show up yet
-            execute("INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.323, '2000-01-01T05:01')");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.323, '2000-01-01T05:01')");
             currentMicros = parseFloorPartialTimestamp("2000-01-01T07:59:59.999999Z");
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            assertQuery("price_1h ORDER BY sym")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""
@@ -763,7 +825,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            assertQuery("price_1h ORDER BY sym")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""
@@ -782,14 +844,14 @@ public class MatViewTest extends AbstractCairoTest {
         // applies and no timer ever fires.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
-                    "CREATE TABLE base_price (" +
-                            "sym VARCHAR, price DOUBLE, ts #TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
             execute(
-                    "CREATE MATERIALIZED VIEW price_1h REFRESH IMMEDIATE AS (" +
-                            "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h" +
-                            ") PARTITION BY DAY"
+                    "create materialized view price_1h refresh immediate as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
             );
 
             final String start = "1999-01-01T01:01:01.842574Z";
@@ -799,14 +861,14 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             execute(
-                    "INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                             ",('jpyusd', 103.21, '2024-09-10T12:02')"
             );
             drainQueues();
 
             // immediate refresh drives the view while it is still immediate
-            assertQuery("price_1h ORDER BY sym")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""
@@ -815,12 +877,12 @@ public class MatViewTest extends AbstractCairoTest {
                             jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                             """));
 
-            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH EVERY 1m START '" + start + "';");
+            execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
             drainQueues();
 
-            final String matViewsSql = "SELECT view_name, refresh_type, view_status, " +
+            final String matViewsSql = "select view_name, refresh_type, view_status, " +
                     "timer_start, timer_interval, timer_interval_unit " +
-                    "FROM materialized_views";
+                    "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
@@ -830,10 +892,10 @@ public class MatViewTest extends AbstractCairoTest {
                             """);
 
             // the view is no longer immediate, so this insert must not refresh it on its own
-            execute("INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.321, '2024-09-10T13:02')");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.321, '2024-09-10T13:02')");
             drainQueues();
 
-            assertQuery("price_1h ORDER BY sym")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""
@@ -847,7 +909,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            assertQuery("price_1h ORDER BY sym")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""

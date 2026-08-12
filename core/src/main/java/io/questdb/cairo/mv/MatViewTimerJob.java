@@ -349,19 +349,18 @@ public class MatViewTimerJob extends SynchronizedJob {
         retryEntryPool.add(entry);
     }
 
-    private boolean removeTimers(TableToken viewToken) {
+    private void removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
         try {
             // Remove all timers for the given view, if any.
             if (timerQueue.removeIf(filterByDirName)) {
                 LOG.info().$("unregistered timers for materialized view [view=").$(viewToken).I$();
-                return true;
+                return;
             }
         } finally {
             filteredDirName = null;
         }
         LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
-        return false;
     }
 
     @Override
@@ -380,11 +379,11 @@ public class MatViewTimerJob extends SynchronizedJob {
                     break;
                 case MatViewTimerTask.UPDATE:
                     // Register the new timers even when the view had none. An immediate,
-                    // non-period view registers no timers at all, so gating addTimers() on
-                    // removeTimers() finding something would drop the timers of a view that
-                    // ALTER ... SET REFRESH has just switched to timer or period refresh, and
-                    // that view would never refresh again. addTimers() itself decides what the
-                    // new definition needs, so it is a no-op when the view stays immediate.
+                    // non-period view holds no timers, so gating addTimers() on removeTimers()
+                    // finding something would drop the timers of a view that ALTER ... SET REFRESH
+                    // has just switched to timer, period or manual refresh, leaving it with no
+                    // refresh mechanism at all. addTimers() decides what the new definition needs,
+                    // so it is a no-op when the view stays immediate and non-period.
                     removeTimers(viewToken);
                     addTimers(viewToken, nowUs);
                     break;
