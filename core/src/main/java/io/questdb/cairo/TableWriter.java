@@ -488,6 +488,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // unsupported cell still splits the two counts. Static for the same reason as its siblings above.
     // Test-visible via getCompositeMultiCellFastAppendCommittedCount().
     private static final AtomicLong compositeMultiCellFastAppendCommittedCount = new AtomicLong();
+    // SP8 Task 4 (anti-vacuity floors): counts calls to processO3BlockComposite -- the general
+    // composite dispatch path every non-fast-appended composite commit takes (see that method's own
+    // "every composite dispatch always takes the async merge path" doc). No existing composite
+    // counter distinguishes "this commit went through the O3/full path" from "this commit
+    // fast-appended", so the fuzz harness's O3-merge-path floor (spec Sec 4.5) needs this one. Static
+    // for the same reason as its siblings above (the writer that processes a WAL commit is internal
+    // to drainWalQueue()/the WAL-apply job and released right after). Test-visible via
+    // getCompositeO3MergeCommitCount().
+    private static final AtomicLong compositeO3MergeCommitCount = new AtomicLong();
+    // SP8 Task 4 (anti-vacuity floors): counts ROWS (not commits) dispatched by
+    // dispatchCompositeCellRange into a cell that already has committed data (srcDataMax > 0) --
+    // spec Sec 4.5's "rows landing in a non-last partition (O3 into an existing cell)" floor. No
+    // existing counter exposes this; srcDataMax is a local computed at dispatch time, not persisted
+    // anywhere else. Static for the same reason as its siblings above. Test-visible via
+    // getCompositeExistingCellRowCount().
+    private static final AtomicLong compositeExistingCellRowCount = new AtomicLong();
     // (Task 2 removed the dedicated compositeMultiCellMaxTimestamp cache Task 1 had added as a
     // workaround: isCompositeMultiCellFastAppendPossible now reads and folds the SHARED
     // compositeCellMaxTimestamp above -- see its FOLD-NOT-WIPE docs -- so one source of truth exists for
@@ -6049,6 +6065,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public static long getCompositeFastAppendCommittedCount() {
         return compositeFastAppendCommittedCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeO3MergeCommitCount} (SP8 Task 4 anti-vacuity floor:
+     * commits that took the composite O3/full dispatch path, i.e. every non-fast-appended composite
+     * commit). Static -- see that field's own docs.
+     */
+    @TestOnly
+    public static long getCompositeO3MergeCommitCount() {
+        return compositeO3MergeCommitCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeExistingCellRowCount} (SP8 Task 4 anti-vacuity floor:
+     * rows dispatched into a cell that already had committed data, i.e. an O3 merge/append into a
+     * non-last, non-empty partition). Static -- see that field's own docs.
+     */
+    @TestOnly
+    public static long getCompositeExistingCellRowCount() {
+        return compositeExistingCellRowCount.get();
     }
 
     /**
@@ -12863,6 +12899,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableWriterPressureControl pressureControl,
             long committedDataMaxTimestamp
     ) {
+        // SP8 Task 4 anti-vacuity floor: every entry here is a commit taking the composite O3/full
+        // dispatch path (as opposed to fast-append, which returns early before this method is ever
+        // called -- see this method's own "every composite dispatch always takes the async merge
+        // path" doc). Counted before the guards below so a REPLACE-mode throw still records that this
+        // WAS a genuine attempt at the O3 path, not a fast-append.
+        compositeO3MergeCommitCount.incrementAndGet();
         if (isCommitReplaceMode()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support the REPLACE commit mode [table=")
@@ -13172,6 +13214,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
         final long newPartitionSize = srcDataMax + srcOooBatchRowSize;
+
+        // SP8 Task 4 anti-vacuity floor: srcDataMax > 0 means this range dispatches into a cell that
+        // already has committed data -- an O3 merge or append into a non-last, non-empty partition,
+        // spec Sec 4.5's "rows landing in a non-last partition" shape. Counts ROWS, not dispatches,
+        // since the floor is row-granular.
+        if (srcDataMax > 0) {
+            compositeExistingCellRowCount.addAndGet(srcOooBatchRowSize);
+        }
 
         LOG.info().$("o3 composite cell task [table=").$(tableToken)
                 .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)

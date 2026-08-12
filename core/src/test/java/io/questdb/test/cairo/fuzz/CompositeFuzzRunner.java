@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -61,8 +62,14 @@ public class CompositeFuzzRunner {
     private static final Log LOG = LogFactory.getLog(CompositeFuzzRunner.class);
     private final CairoEngine engine;
     private final Rnd rnd;
+    private final long seed0;
+    private final long seed1;
     private final SqlExecutionContext sqlExecutionContext;
     private Axes axes;
+    private long baselineExistingCellRowCount;
+    private long baselineFastAppendCommittedCount;
+    private long baselineMultiCellFastAppendCommittedCount;
+    private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
     private String compositeName;
     private String plainName;
@@ -70,6 +77,11 @@ public class CompositeFuzzRunner {
     private CompositeFuzzRunner(CairoEngine engine, Rnd rnd) {
         this.engine = engine;
         this.rnd = rnd;
+        // Captured BEFORE anything (Axes.resolve, generate()) consumes rnd, since Rnd#getSeed0/1
+        // return current internal state, not the constructor args -- this is the only point at
+        // which they coincide. Used only to name a seed in assertExercised()'s failure messages.
+        this.seed0 = rnd.getSeed0();
+        this.seed1 = rnd.getSeed1();
         this.sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
     }
 
@@ -154,10 +166,21 @@ public class CompositeFuzzRunner {
 
     /**
      * Applies every operation of every transaction to both the composite and the plain writer,
-     * in transaction order, then drains the WAL queue so both twins are fully applied before
-     * comparison.
+     * in transaction order, draining the WAL queue periodically (not only once at the very end) so
+     * a long enough run genuinely produces MULTIPLE separate WAL-apply passes over the same table --
+     * needed for Task 4's "rows landing in a non-last (already-populated) partition" anti-vacuity
+     * floor. A single trailing drain would merge every logical transaction into one WAL-apply batch
+     * (confirmed empirically: 40 transactions -> exactly 1 {@code processO3BlockComposite} call),
+     * so EVERY cellKey's first appearance would have {@code srcDataMax == 0} -- the floor could never
+     * be satisfied, structurally, regardless of seed. Draining every {@link #DRAIN_CHUNK_SIZE}
+     * transactions forces earlier commits to actually land in table storage before later ones are
+     * generated against overlapping dimension values, so a later commit revisiting an already-
+     * populated cell is a real WAL-apply shape, not merely simulated. This does not change WHAT is
+     * compared (final content is drain-frequency-independent), only how many separate apply passes
+     * produce it -- Task 1/2/3's existing tests are unaffected by construction.
      */
     public void applyToBoth(ObjList<FuzzTransaction> transactions) {
+        final int drainChunkSize = 8;
         TableWriterAPI compositeWriter = engine.getTableWriterAPI(compositeName, "composite fuzz apply");
         TableWriterAPI plainWriter = engine.getTableWriterAPI(plainName, "composite fuzz apply");
         try {
@@ -185,6 +208,9 @@ public class CompositeFuzzRunner {
                 } else {
                     compositeWriter.commit();
                     plainWriter.commit();
+                }
+                if ((i + 1) % drainChunkSize == 0) {
+                    TestUtils.drainWalQueue(engine);
                 }
             }
         } finally {
@@ -229,6 +255,66 @@ public class CompositeFuzzRunner {
         compareWindowJoinSlave();   // 7: window-join, table as slave
     }
 
+    /**
+     * Anti-vacuity floors (spec Sec 4.5). {@link #assertTwinEqual()} passing proves the two tables
+     * agree; it does NOT prove the run actually exercised anything composite-specific -- a run that
+     * never routes a second cell, never takes the O3/full dispatch path, never fast-appends (with
+     * the flag on), or never lands a row in an already-populated cell would pass every shape while
+     * testing nothing. This is the check that makes a green {@link #assertTwinEqual()} meaningful:
+     * call it AFTER {@code assertTwinEqual()} (so a real product divergence is reported as that,
+     * not masked by an under-exercised-run failure here), and it throws {@link AssertionError} on
+     * the first unmet floor, naming the seed and {@link Axes#toString()} so an under-exercising run
+     * is a loud, diagnosable failure rather than a silently-vacuous green.
+     * <p>
+     * Per the brief, the "gated operations attempted" floor (spec Sec 4.5's fifth row) is wired in
+     * Task 5, once gate classification exists -- not checked here.
+     * <p>
+     * The cellKey floor is normally &ge;2; it relaxes to &ge;1 only when the generated data itself
+     * cannot possibly have produced a second cell -- i.e. every row shares one {@code (exch, sym)}
+     * tuple on the reference table. {@code (exch, sym)} is an upper bound on the number of distinct
+     * cells the subject could have routed (a HASH/TRUNCATE dimension can only ever coarsen that,
+     * never add cells beyond it), so this is the harness's own analog of "the axis deliberately
+     * chose a single-cell shape" without needing a dedicated axis flag for it.
+     */
+    public void assertExercised() throws SqlException {
+        final long distinctCellKeys = queryLong("SELECT count() FROM table_partitions('" + compositeName + "')");
+        final long maxPossibleCells = queryLong(
+                "SELECT count() FROM (SELECT DISTINCT exch, sym FROM " + plainName + ")"
+        );
+        final long cellKeyFloor = maxPossibleCells < 2 ? 1 : 2;
+        if (distinctCellKeys < cellKeyFloor) {
+            throw new AssertionError(exercisedFailureMessage(
+                    "distinct cellKeys routed=" + distinctCellKeys + " floor=" + cellKeyFloor
+                            + " (maxPossibleCells=" + maxPossibleCells + " distinct (exch,sym) tuples generated)"
+            ));
+        }
+
+        final long o3MergeCommits = TableWriter.getCompositeO3MergeCommitCount() - baselineO3MergeCommitCount;
+        if (o3MergeCommits < 1) {
+            throw new AssertionError(exercisedFailureMessage(
+                    "commits taking the composite O3/full dispatch path=" + o3MergeCommits + " floor=1"
+            ));
+        }
+
+        if (axes.fastAppend) {
+            final long fastAppendCommits =
+                    (TableWriter.getCompositeFastAppendCommittedCount() - baselineFastAppendCommittedCount)
+                            + (TableWriter.getCompositeMultiCellFastAppendCommittedCount() - baselineMultiCellFastAppendCommittedCount);
+            if (fastAppendCommits < 1) {
+                throw new AssertionError(exercisedFailureMessage(
+                        "fast-append commits=" + fastAppendCommits + " floor=1 (fastAppend flag is ON for this run)"
+                ));
+            }
+        }
+
+        final long existingCellRows = TableWriter.getCompositeExistingCellRowCount() - baselineExistingCellRowCount;
+        if (existingCellRows < 1) {
+            throw new AssertionError(exercisedFailureMessage(
+                    "rows landing in a non-last (already-populated) partition=" + existingCellRows + " floor=1"
+            ));
+        }
+    }
+
     public int comparedShapeCount() {
         return comparedShapeCount;
     }
@@ -250,6 +336,16 @@ public class CompositeFuzzRunner {
     public void createTables(String base) throws SqlException {
         this.compositeName = base + "_composite";
         this.plainName = base + "_plain";
+        // Anti-vacuity floors (Task 4) read these TableWriter counters as deltas, not absolutes:
+        // they are static/JVM-wide (see each field's own doc -- the writer that processes a WAL
+        // commit is internal to drainWalQueue() and released right after, so a per-instance field
+        // would not reliably be observable afterwards), and therefore accumulate across every
+        // runner/test sharing this JVM. Snapshotting here, before any transaction is applied to
+        // THIS runner's tables, isolates this run's own contribution.
+        this.baselineO3MergeCommitCount = TableWriter.getCompositeO3MergeCommitCount();
+        this.baselineExistingCellRowCount = TableWriter.getCompositeExistingCellRowCount();
+        this.baselineFastAppendCommittedCount = TableWriter.getCompositeFastAppendCommittedCount();
+        this.baselineMultiCellFastAppendCommittedCount = TableWriter.getCompositeMultiCellFastAppendCommittedCount();
         this.axes = Axes.resolve(rnd);
         final String cols = "(ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE, qty LONG)";
 
@@ -427,6 +523,34 @@ public class CompositeFuzzRunner {
                     );
                 }
                 return Chars.toString(cursor.getRecord().getSymA(0));
+            }
+        }
+    }
+
+    /**
+     * Builds an {@link #assertExercised()} failure message naming the seed (captured at
+     * construction, before {@code rnd} was consumed) and the resolved {@link Axes}, so an
+     * under-exercising run is reproducible rather than a bare number.
+     */
+    private String exercisedFailureMessage(String detail) {
+        return "composite fuzz run under-exercised the feature -- " + detail
+                + " [seed0=" + seed0 + ", seed1=" + seed1 + ", axes=" + axes + "]";
+    }
+
+    /**
+     * Reads a single {@code long} from a single-row, single-column query -- used by
+     * {@link #assertExercised()} for {@code table_partitions()} and distinct-tuple counts. Returns
+     * 0 for an empty result (e.g. {@code table_partitions()} on a never-routed composite table, or
+     * a {@code DISTINCT} query over an empty reference table), which is the correct "nothing
+     * happened" value for every floor this feeds.
+     */
+    private long queryLong(String sql) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                if (!cursor.hasNext()) {
+                    return 0;
+                }
+                return cursor.getRecord().getLong(0);
             }
         }
     }

@@ -64,4 +64,30 @@ public class CompositeFuzzTest extends AbstractCairoTest {
                     7, runner.comparedShapeCount());
         });
     }
+
+    @Test
+    public void testRunMustProveItExercisedComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(7L, 7L));
+            runner.createTables("exercised");
+            runner.applyGeneratedTransactions(800, 40);
+            runner.assertTwinEqual();
+            runner.assertExercised();   // must throw if the run was vacuous
+        });
+    }
+
+    @Test
+    public void testFloorsFailAVacuousRun() throws Exception {
+        assertMemoryLeak(() -> {
+            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(7L, 7L));
+            runner.createTables("vacuous");
+            // no transactions applied at all -> nothing routed
+            try {
+                runner.assertExercised();
+                org.junit.Assert.fail("expected the anti-vacuity floors to reject an unexercised run");
+            } catch (AssertionError expected) {
+                io.questdb.test.tools.TestUtils.assertContains(expected.getMessage(), "distinct cellKeys");
+            }
+        });
+    }
 }
