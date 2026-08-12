@@ -414,4 +414,18 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
         }
     }
+    @Override
+    public void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    ) {
+        throw new UnsupportedOperationException();
+    }
+
 }

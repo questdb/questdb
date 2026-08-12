@@ -51,6 +51,28 @@ public interface FrameColumn extends Closeable {
      */
     void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 
+    /**
+     * Appends the MERGE of two sources to this column's tail, interleaved by {@code mergeIndexAddr}.
+     * <p>
+     * The append primitive above carries one source through unchanged; this one carries two, in the order
+     * a merge index dictates. That index is the standard 16-bytes-per-row form {@code mergeTwoLongIndexesAsc}
+     * produces - timestamp, then a row id whose top bit says which side it came from - so both sources are
+     * read in one pass and the result lands contiguously at {@code appendOffsetRowCount}.
+     *
+     * @param mergeIndexAddr native address of the merge index
+     * @param mergeIndexRows number of rows the index describes, which is the number of rows appended
+     */
+    void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    );
+
     void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
     void close();

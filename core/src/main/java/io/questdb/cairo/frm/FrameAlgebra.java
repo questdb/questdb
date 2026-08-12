@@ -28,7 +28,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 
 /**
- * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ * Frame-level algebra: whole partitions and pieces in, bytes appended at a target's tail.
+ * <p>
+ * Used for partition squashing in {@link io.questdb.cairo.TableWriter}, and for writing COMPOSITE
+ * partitions, where the two operations map onto the two actions that write anything: a NEW_PIECE is
+ * {@link #append} of the incoming rows, and a MERGE is {@link #merge} of a piece with the rows landing
+ * inside it. A KEEP writes nothing at all, which is why it has no operation here.
  */
 public class FrameAlgebra {
 
@@ -59,6 +64,66 @@ public class FrameAlgebra {
                 }
             }
             target.setRowCount(target.getRowCount() + (sourceHi - sourceLo));
+        }
+    }
+
+    /**
+     * Appends the MERGE of two frames to {@code target}'s tail, interleaved by {@code mergeIndexAddr}.
+     * <p>
+     * {@link #append} carries ONE source through unchanged, and is what writes a brand-new piece: the
+     * incoming rows go down at the tail as they are. This carries TWO, in the order the merge index
+     * dictates, and is what rewrites a piece the incoming rows land inside - the piece and the batch go out
+     * as one image at the tail, in timestamp order, and the piece's old bytes become dead space.
+     * <p>
+     * The index is the standard 16-bytes-per-row form {@code Vect.mergeTwoLongIndexesAsc} produces from the
+     * piece's designated-timestamp slice and the sorted O3 index: a timestamp, then a row id whose top bit
+     * says which side it came from. So the row count appended is the index's row count, and both sources
+     * are read in a single pass.
+     * <p>
+     * Column TOPS are each column's own business, exactly as they are in {@link #append}: a source column
+     * knows the row its data starts at and offsets its own reads, and the target knows where its data
+     * starts and offsets its own writes. Nothing here has to reason about them.
+     *
+     * @param mergeIndexAddr native address of the merge index over {@code [source1Lo, source1Hi)} and
+     *                       {@code [source2Lo, source2Hi)}
+     */
+    public static void merge(
+            Frame target,
+            Frame source1,
+            long source1Lo,
+            long source1Hi,
+            Frame source2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long upcomingTableTxn,
+            int commitMode
+    ) {
+        final long mergeIndexRows = (source1Hi - source1Lo) + (source2Hi - source2Lo);
+        if (mergeIndexRows > 0) {
+            for (int i = 0, n = source1.columnCount(); i < n; i++) {
+                try (
+                        FrameColumn sourceColumn1 = source1.createColumn(i);
+                        FrameColumn sourceColumn2 = source2.createColumn(i);
+                        FrameColumn targetColumn = target.createColumn(i)
+                ) {
+                    if (sourceColumn1.getColumnType() >= 0) {
+                        targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+                        targetColumn.merge(
+                                target.getRowCount(),
+                                sourceColumn1,
+                                source1Lo,
+                                sourceColumn2,
+                                source2Lo,
+                                mergeIndexAddr,
+                                mergeIndexRows,
+                                commitMode
+                        );
+                        target.saveChanges(targetColumn);
+                    }
+                }
+            }
+            target.setRowCount(target.getRowCount() + mergeIndexRows);
         }
     }
 

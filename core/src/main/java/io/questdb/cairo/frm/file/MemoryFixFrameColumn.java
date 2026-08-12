@@ -121,4 +121,18 @@ public final class MemoryFixFrameColumn implements FrameColumn {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }
+    @Override
+    public void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    ) {
+        throw new UnsupportedOperationException();
+    }
+
 }

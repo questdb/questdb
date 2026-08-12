@@ -126,6 +126,67 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
+    public void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    ) {
+        // Each side offsets by its OWN column top, exactly as append does. A row below a column's top is
+        // not in that column's file at all, so the top is the difference between the row a caller names and
+        // the row the file holds - and it is the column that knows it, which is why none of this has to be
+        // reasoned about a level up.
+        source1Lo -= sourceColumn1.getColumnTop();
+        source2Lo -= sourceColumn2.getColumnTop();
+        appendOffsetRowCount -= columnTop;
+
+        assert source1Lo >= 0;
+        assert source2Lo >= 0;
+        assert appendOffsetRowCount >= 0;
+
+        final long size = mergeIndexRows << shl;
+        TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
+
+        // The shuffle reads both sources by absolute row id out of the merge index, so each source is
+        // addressed from ITS row 0 and the index does the rest.
+        final long src1Address = sourceColumn1.getContiguousDataAddr(source1Lo + mergeIndexRows);
+        final long src2Address = sourceColumn2.getContiguousDataAddr(source2Lo + mergeIndexRows);
+        long dstAddress = 0;
+        try {
+            dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
+            mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            if (dstAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
+            }
+        }
+    }
+
+    /**
+     * The O3 merge kernels, picked by column width. These are the same routines the per-column O3 copy path
+     * uses; what changes here is only who calls them and with what - two frame columns and an index, rather
+     * than a task carrying two dozen scalars.
+     */
+    private static void mergeShuffle(long src1, long src2, long dst, long mergeIndexAddr, long rows, int shl) {
+        switch (shl) {
+            case 0 -> Vect.mergeShuffle8Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 1 -> Vect.mergeShuffle16Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 2 -> Vect.mergeShuffle32Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 3 -> Vect.mergeShuffle64Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 4 -> Vect.mergeShuffle128Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 5 -> Vect.mergeShuffle256Bit(src1, src2, dst, mergeIndexAddr, rows);
+            default -> throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
+        }
+    }
+
+    @Override
     public void appendNulls(long rowCount, long sourceColumnTop, int commitMode) {
         rowCount -= columnTop;
         assert rowCount >= 0;
