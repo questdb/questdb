@@ -31,7 +31,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.Path;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -69,6 +72,24 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
     private static final int DAY1_ROWS = 4;
     private static final int DAY2_ROWS = 3;
     private static final int TOTAL = DAY1_ROWS + DAY2_ROWS;
+
+    /**
+     * Every assertion in this class is that the epoch issued a FILESYSTEM-WIDE syncfs, which only exists on
+     * Linux: {@code syncfs(2)} is a Linux-specific syscall (2.6.39 / glibc 2.14), absent from the macOS SDK
+     * and libSystem, and Windows offers nothing equivalent that a non-elevated process can call. On those
+     * platforms {@link io.questdb.std.FilesFacade#isSyncfsFileSystemWide()} is false and the epoch takes the
+     * per-file fallback ({@code TableWriter.fsyncAttachedPartitionFiles}) instead, so the syncfs counter
+     * correctly never moves and all five tests fail for a reason that has nothing to do with the behaviour
+     * under test. Gate on the capability itself rather than on the OS, so a future platform that gains a
+     * scoped whole-filesystem barrier is covered automatically.
+     */
+    @Before
+    public void assumeFsWideSyncfs() {
+        Assume.assumeTrue(
+                "syncfs(2) is Linux-only; this class asserts the fs-wide epoch flush path",
+                TestFilesFacadeImpl.INSTANCE.isSyncfsFileSystemWide()
+        );
+    }
 
     @Test
     public void testNonBatchedEpochFlushIsFsWideClosedPartitionSurvives() throws Exception {
