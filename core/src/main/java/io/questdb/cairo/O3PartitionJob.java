@@ -62,6 +62,8 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -110,8 +112,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     file arrives already divided because the encoder wrote it in row groups, so
      *     {@code computeMergeActions} always has somewhere small to merge into; a native partition arrives
      *     as ONE piece, and merging a batch into it rewrites everything. Cutting is FREE - two entries over
-     *     the same files, no bytes move - so the structure is manufactured lazily, aimed at where this
-     *     batch actually lands. This step decides the write amplification; everything after it executes;</li>
+     *     the same files, no bytes move - so the structure is manufactured lazily, aimed at where the work
+     *     actually lands: at the cold gaps transaction clustering found across the whole block, and at the
+     *     edges of this batch inside whichever piece it hits. This step decides the write amplification;
+     *     everything after it merely executes;</li>
      *     <li>assign every O3 row to a piece or to a gap between pieces, as
      *     {@link O3ParquetMergeStrategy#computeMergeActions} does over row groups;</li>
      *     <li>execute the action list, then publish one {@code _geometry} record and one {@code _txn}
@@ -131,6 +135,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooHi,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
+            @Nullable LongList clusterCutTimestamps,
             LongList boundsOut,
             LongList cutsOut,
             ObjList<O3CompositeMergeStrategy.Action> actionsOut
@@ -151,8 +156,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         // 2. The pre-split, applied in memory. A cut moves no bytes, so the plan can refine the partition's
-        // structure before deciding anything else.
+        // structure before deciding anything else. Cuts come from two places, and they answer different
+        // questions:
+        //
+        //   - TRANSACTION CLUSTERING (clusterCutTimestamps, decided on the writer thread, which is where
+        //     the incoming transactions are known) cuts at the edges of the COLD GAPS between the strides
+        //     the incoming work is dense in. It looks at the shape of the whole block, so it can spare
+        //     data no single batch happens to straddle;
+        //   - the BATCH EDGES below cut around where THIS batch lands inside a piece, sparing the rows on
+        //     either side of it.
+        //
+        // Clustering goes first: it is the coarser division, and the batch-edge cuts then refine whichever
+        // piece the batch actually lands in.
         final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
+        if (clusterCutTimestamps != null) {
+            for (int i = 0, n = clusterCutTimestamps.size(); i < n; i++) {
+                O3CompositeMergeStrategy.applyCutAt(boundsOut, clusterCutTimestamps.getQuick(i));
+            }
+        }
         O3CompositeMergeStrategy.computeCuts(
                 boundsOut,
                 sortedTimestampsAddr,
@@ -859,6 +880,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcOooHi,
                     sortedTimestampsAddr,
                     tableWriter,
+                    null,
                     // Allocated here only because this path throws immediately below. The executor will
                     // hold the plan's scratch on the task, the way the parquet path holds its context.
                     new LongList(),

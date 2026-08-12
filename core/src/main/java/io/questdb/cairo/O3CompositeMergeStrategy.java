@@ -102,6 +102,21 @@ public class O3CompositeMergeStrategy {
     }
 
     /**
+     * Cuts whichever piece CONTAINS {@code cutTs}, wherever it now sits. The timestamp-addressed form of
+     * {@link #applyCut}, for a cut chosen from something other than the batch - transaction clustering
+     * picks its cuts from the shape of the incoming work, not from any one batch, so it has a timestamp
+     * and no piece index.
+     * <p>
+     * Because the piece is located afresh each time, cuts may be applied in any order.
+     *
+     * @return true when the cut was applied
+     */
+    public static boolean applyCutAt(LongList bounds, long cutTs) {
+        final int piece = findPieceContaining(bounds, cutTs);
+        return piece > -1 && applyCut(bounds, piece, cutTs);
+    }
+
+    /**
      * Assigns every O3 row in {@code [srcOooLo, srcOooHi]} to a piece or to a gap, then emits the action
      * list in timestamp order.
      * <p>
@@ -240,6 +255,20 @@ public class O3CompositeMergeStrategy {
             }
         }
         return cuts;
+    }
+
+    /**
+     * The piece whose DATA range contains {@code ts}, or {@code -1}. A piece whose {@code tsHi} was never
+     * recorded cannot answer, and is skipped rather than guessed at.
+     */
+    public static int findPieceContaining(LongList bounds, long ts) {
+        for (int p = 0, n = bounds.size() / LONGS_PER_BOUND; p < n; p++) {
+            final long tsHi = getTsHi(bounds, p);
+            if (tsHi != Numbers.LONG_NULL && getTsLo(bounds, p) <= ts && ts <= tsHi) {
+                return p;
+            }
+        }
+        return -1;
     }
 
     /**

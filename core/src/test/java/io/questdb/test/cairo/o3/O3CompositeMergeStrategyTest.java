@@ -71,6 +71,63 @@ public class O3CompositeMergeStrategyTest {
     }
 
     @Test
+    public void testACutTimestampOutsideEveryPieceIsDeclined() {
+        // Clustering proposes cuts from the shape of the incoming work, so a cut can name a timestamp no
+        // piece holds. It is dropped, not guessed at.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 100);
+        Assert.assertFalse(O3CompositeMergeStrategy.applyCutAt(bounds, 50));
+        Assert.assertFalse(O3CompositeMergeStrategy.applyCutAt(bounds, 500));
+        Assert.assertEquals("P0(tsLo=100,tsHi=199,rows=100)", formatBounds(bounds));
+    }
+
+    @Test
+    public void testClusteringCutsThenBatchCutsThenDecisions() {
+        // The whole decision pipeline on one partition that arrives as a SINGLE piece covering a day.
+        //
+        // Transaction clustering has looked at the incoming block and found the work is dense in two
+        // strides with a cold gap between them, so it asks for cuts at that gap's edges. The batch then
+        // lands inside the first stride, and its own edges refine that piece further. What comes out is a
+        // decision per piece: the cold gap and the untouched tail are KEPT - not copied, not read - and
+        // only the sliver the batch actually overlaps is MERGED.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
+
+        final LongList clusterCuts = new LongList();
+        clusterCuts.add(300);  // start of the cold gap
+        clusterCuts.add(700);  // end of the cold gap
+        for (int i = 0, n = clusterCuts.size(); i < n; i++) {
+            Assert.assertTrue(O3CompositeMergeStrategy.applyCutAt(bounds, clusterCuts.getQuick(i)));
+        }
+        Assert.assertEquals(
+                "P0(tsLo=0,tsHi=299,rows=300) P1(tsLo=300,tsHi=699,rows=400) P2(tsLo=700,tsHi=999,rows=300)",
+                formatBounds(bounds)
+        );
+
+        withTimestamps(new long[]{100, 110}, addr -> {
+            final LongList cuts = new LongList();
+            final int cutCount = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 50, 8, cuts);
+            for (int c = cutCount - 1; c >= 0; c--) {
+                O3CompositeMergeStrategy.applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1));
+            }
+            Assert.assertEquals(
+                    "P0(tsLo=0,tsHi=99,rows=100) P1(tsLo=100,tsHi=110,rows=11) P2(tsLo=111,tsHi=299,rows=189)"
+                            + " P3(tsLo=300,tsHi=699,rows=400) P4(tsLo=700,tsHi=999,rows=300)",
+                    formatBounds(bounds)
+            );
+
+            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
+            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
+            Assert.assertEquals(5, n);
+            Assert.assertEquals("KEEP(p=0)", actions.getQuick(0).toString());
+            Assert.assertEquals("MERGE(p=1, o3=[0,1])", actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=2)", actions.getQuick(2).toString());
+            Assert.assertEquals("KEEP(p=3)", actions.getQuick(3).toString());
+            Assert.assertEquals("KEEP(p=4)", actions.getQuick(4).toString());
+        });
+    }
+
+    @Test
     public void testBatchBelowFirstPieceBecomesAHeadPiece() {
         // The shape batchBelowPieceRows carries today behind an isCommitReplaceMode gate, and the shape
         // the phantom-floor rescue founds a second _txn record for. Here it is just a gap action.
