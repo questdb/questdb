@@ -504,9 +504,14 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * Race-free with concurrent writers: the whole area is commit-immutable, and the caller re-checks the
      * version after this returns.
      * <p>
-     * The verdict itself is delegated to {@link ChecksumTrailer#classify}, the single shared
-     * present/absent/torn classifier ({@code _cv} is the reference implementation it was generalised
-     * from). This method still owns the EOF/length guard above -- {@code classify} takes a bare address
+     * The verdict itself is delegated to {@link ChecksumTrailer#classify}, the shared classifier for
+     * magic-gated trailers of this shape -- {@code [MAGIC][checksum]} sitting immediately after the
+     * covered area, verified with {@link TableUtils#calculateCvAreaChecksum} ({@code _cv} is the
+     * reference implementation it was generalised from). {@code _txn} does not use it: it has no
+     * magic beside its checksum and verifies with the three-argument
+     * {@link TableUtils#calculateTxnBodyChecksum}, so it only uses {@link ChecksumTrailer}'s
+     * capability half ({@code isCovered} / {@code applyCapability}), which is shared more widely.
+     * This method still owns the EOF/length guard above -- {@code classify} takes a bare address
      * and does no bounds checking -- and still owns reading the two trailer longs off the mapping.
      * {@code PRESENT_OK} and {@code ABSENT} both mean "nothing wrong here" (true); only {@code MISMATCH}
      * means torn (false), exactly as this method returned before the delegation.

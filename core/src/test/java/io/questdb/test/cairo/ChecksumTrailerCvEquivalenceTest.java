@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,10 +43,12 @@ public class ChecksumTrailerCvEquivalenceTest extends AbstractCairoTest {
     @Test
     public void testHealthyCvLoadsClean() throws Exception {
         assertMemoryLeak(() -> {
+            ColumnVersionReader.resetBodyChecksumFallbackCount();
             execute("create table cv_ok (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into cv_ok values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
             assertQuery("select count() from cv_ok").noRandomAccess().expectSize().returns("count\n1\n");
+            Assert.assertEquals("healthy _cv must not trigger a checksum fallback", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
         });
     }
 
@@ -68,7 +71,7 @@ public class ChecksumTrailerCvEquivalenceTest extends AbstractCairoTest {
                 CvCorruptionUtils.forceReload(engine, "cv_rot");
                 Assert.fail("expected the _cv checksum to reject a flipped byte");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "checksum");
+                TestUtils.assertContains(e.getFlyweightMessage(), "_cv checksum mismatch in both A and B areas");
             }
         });
     }
