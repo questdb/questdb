@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+class UnionRecordCursor extends AbstractUnionSymbolSourceCursor implements NoRandomAccessRecordCursor {
     private final Map map;
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
@@ -100,6 +100,7 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     @Override
     public void toTop() {
         map.clear();
+        isUsingCursorA = true;
         record.setAb(true);
         nextMethod = nextA;
         cursorA.toTop();
@@ -118,8 +119,10 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     }
 
     private boolean switchToCursorB() {
+        isUsingCursorA = false;
         record.setAb(false);
         nextMethod = nextB;
+        updateSymbolSource();
         return nextMethod.next();
     }
 

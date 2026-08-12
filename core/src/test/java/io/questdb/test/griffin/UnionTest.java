@@ -1130,20 +1130,20 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             typeof\tt
-                            STRING\tCAR
-                            STRING\tCAR
-                            STRING\tVAN
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tBICYCLE
-                            STRING\tPLANE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tSCOOTER
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
+                            SYMBOL\tCAR
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tPLANE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
                             """);
 
             assertQuery("select typeof(t), t from (select t from x union all y order by t)")
@@ -1151,20 +1151,20 @@ public class UnionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             typeof\tt
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tCAR
-                            STRING\tCAR
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tSCOOTER
-                            STRING\tVAN
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tCAR
+                            SYMBOL\tCAR
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\tVAN
                             """);
 
             assertQuery("select typeof(t), t from (select t from x union all y) order by t")
@@ -1172,28 +1172,28 @@ public class UnionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             typeof\tt
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tBICYCLE
-                            STRING\tCAR
-                            STRING\tCAR
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tPLANE
-                            STRING\tSCOOTER
-                            STRING\tVAN
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tCAR
+                            SYMBOL\tCAR
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tPLANE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\tVAN
                             """);
 
             assertQuery("select typeof(t), t from (select t from x union all y union y except x) order by t")
                     .noLeakCheck()
                     .returns("""
                             typeof\tt
-                            STRING\tBICYCLE
-                            STRING\tSCOOTER
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
                             """);
 
             assertQuery("select typeof(t), t from (x union y union z)")
@@ -1201,13 +1201,13 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             typeof\tt
-                            STRING\tCAR
-                            STRING\tVAN
-                            STRING\tPLANE
-                            STRING\tBICYCLE
-                            STRING\tSCOOTER
-                            STRING\t
-                            STRING\tBUS
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
+                            SYMBOL\t
+                            SYMBOL\tBUS
                             """);
 
             assertQuery("select typeof(t), t from (x union y union z intersect x)")
@@ -1215,9 +1215,9 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             typeof\tt
-                            STRING\tCAR
-                            STRING\tVAN
-                            STRING\tPLANE
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
                             """);
         });
     }
@@ -1673,9 +1673,9 @@ public class UnionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             typeof\ts\tsum
-                            STRING\tb\t9.711630235623893
-                            STRING\ta\t4.567523321042871
-                            STRING\tc\t6.077503835152431
+                            SYMBOL\tb\t9.711630235623893
+                            SYMBOL\ta\t4.567523321042871
+                            SYMBOL\tc\t6.077503835152431
                             """);
         });
     }
