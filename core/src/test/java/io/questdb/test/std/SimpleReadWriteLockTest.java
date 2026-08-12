@@ -33,6 +33,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReadWriteLock;
 
 public class SimpleReadWriteLockTest {
@@ -113,6 +114,82 @@ public class SimpleReadWriteLockTest {
         } finally {
             releaser.join();
         }
+    }
+
+    /**
+     * Phase 1 of the timed write acquire: the exclusive flag is already taken, so the CAS never
+     * succeeds and the deadline must end the wait. Held on this same thread on purpose -- the lock is
+     * documented as non-reentrant, and {@link java.util.concurrent.locks.Lock#lock()} would deadlock
+     * here, so this also pins down that the timed variant fails cleanly instead.
+     */
+    @Test
+    public void testTimedWriteTryLockGivesUpWhileFlagHeld() throws Exception {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        lock.writeLock().lock();
+        try {
+            final long t0 = System.nanoTime();
+            Assert.assertFalse(lock.writeLock().tryLock(200, TimeUnit.MILLISECONDS));
+            final long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            Assert.assertTrue("must wait at least the timeout, waited " + elapsedMs + "ms", elapsedMs >= 150);
+            Assert.assertTrue("must not wait unboundedly, waited " + elapsedMs + "ms", elapsedMs < 10_000);
+            // The incumbent must be undisturbed by the failed attempt.
+            Assert.assertTrue(lock.isWriteLocked());
+        } finally {
+            lock.writeLock().unlock();
+        }
+        Assert.assertTrue(lock.writeLock().tryLock(200, TimeUnit.MILLISECONDS));
+        lock.writeLock().unlock();
+    }
+
+    @Test
+    public void testTimedReadTryLockGivesUpWhileWriteHeld() throws Exception {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        lock.writeLock().lock();
+        try {
+            final long t0 = System.nanoTime();
+            Assert.assertFalse(lock.readLock().tryLock(200, TimeUnit.MILLISECONDS));
+            final long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            Assert.assertTrue("must wait at least the timeout, waited " + elapsedMs + "ms", elapsedMs >= 150);
+            Assert.assertTrue("must not wait unboundedly, waited " + elapsedMs + "ms", elapsedMs < 10_000);
+        } finally {
+            lock.writeLock().unlock();
+        }
+        Assert.assertTrue(lock.readLock().tryLock(200, TimeUnit.MILLISECONDS));
+        lock.readLock().unlock();
+    }
+
+    /**
+     * A zero timeout must still make one attempt and must not spin.
+     */
+    @Test
+    public void testTimedTryLockZeroTimeout() throws Exception {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        Assert.assertTrue(lock.writeLock().tryLock(0, TimeUnit.MILLISECONDS));
+        lock.writeLock().unlock();
+
+        lock.readLock().lock();
+        try {
+            Assert.assertFalse(lock.writeLock().tryLock(0, TimeUnit.MILLISECONDS));
+        } finally {
+            lock.readLock().unlock();
+        }
+        Assert.assertTrue(lock.writeLock().tryLock(0, TimeUnit.MILLISECONDS));
+        lock.writeLock().unlock();
+    }
+
+    @Test
+    public void testHammerTimedTryLockMultipleReaderMultipleWriter() throws Exception {
+        testHammerTimedTryLock(4, 4, 1000);
+    }
+
+    @Test
+    public void testHammerTimedTryLockMultipleReaderSingleWriter() throws Exception {
+        testHammerTimedTryLock(4, 1, 1000);
+    }
+
+    @Test
+    public void testHammerTimedTryLockSingleReaderSingleWriter() throws Exception {
+        testHammerTimedTryLock(1, 1, 1000);
     }
 
     @Test
@@ -236,6 +313,100 @@ public class SimpleReadWriteLockTest {
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                latch.countDown();
+            }
+        }
+    }
+
+    /**
+     * Stress the TIMED acquire under contention. The {@code activity} invariant proves mutual
+     * exclusion still holds, and {@code acquisitions} guards against the test passing vacuously:
+     * if every timed acquire simply returned false, exclusion would hold trivially and prove nothing.
+     */
+    private void testHammerTimedTryLock(int readers, int writers, int iterations) throws Exception {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        final CyclicBarrier barrier = new CyclicBarrier(readers + writers);
+        final CountDownLatch latch = new CountDownLatch(readers + writers);
+        final AtomicInteger activity = new AtomicInteger();
+        final AtomicInteger acquisitions = new AtomicInteger();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        for (int i = 0; i < readers; i++) {
+            new Reader(lock, barrier, latch, activity, iterations).start();
+        }
+        for (int i = 0; i < writers; i++) {
+            new TimedTryWriter(lock, barrier, latch, activity, iterations, acquisitions, failure).start();
+        }
+
+        latch.await();
+
+        if (failure.get() != null) {
+            throw new AssertionError("mutual exclusion violated under timed tryLock", failure.get());
+        }
+        Assert.assertEquals("activity must settle back to zero", 0, activity.get());
+        Assert.assertTrue(
+                "no timed acquire ever succeeded, so exclusion held vacuously and this proves nothing",
+                acquisitions.get() > 0);
+
+        // The lock must still be fully usable after all that contention -- i.e. no leaked reader bias
+        // and no stuck exclusive flag from a timed-out attempt.
+        Assert.assertFalse(lock.isWriteLocked());
+        lock.writeLock().lock();
+        lock.writeLock().unlock();
+        lock.readLock().lock();
+        lock.readLock().unlock();
+    }
+
+    private static class TimedTryWriter extends Thread {
+
+        private final AtomicInteger acquisitions;
+        private final AtomicInteger activity;
+        private final CyclicBarrier barrier;
+        private final AtomicReference<Throwable> failure;
+        private final int iterations;
+        private final CountDownLatch latch;
+        private final ReadWriteLock lock;
+
+        private TimedTryWriter(
+                ReadWriteLock lock,
+                CyclicBarrier barrier,
+                CountDownLatch latch,
+                AtomicInteger activity,
+                int iterations,
+                AtomicInteger acquisitions,
+                AtomicReference<Throwable> failure
+        ) {
+            this.lock = lock;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.activity = activity;
+            this.iterations = iterations;
+            this.acquisitions = acquisitions;
+            this.failure = failure;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                for (int i = 0; i < iterations; i++) {
+                    if (lock.writeLock().tryLock(5, TimeUnit.MILLISECONDS)) {
+                        try {
+                            acquisitions.incrementAndGet();
+                            int n = activity.addAndGet(WRITER_ACTIVITY_NUM);
+                            if (n != WRITER_ACTIVITY_NUM) {
+                                throw new IllegalStateException("writer lock not exclusive: " + n);
+                            }
+                            Os.pause();
+                            activity.addAndGet(-WRITER_ACTIVITY_NUM);
+                        } finally {
+                            lock.writeLock().unlock();
+                        }
+                    }
+                }
+            } catch (Throwable e) {
+                failure.compareAndSet(null, e);
             } finally {
                 latch.countDown();
             }
