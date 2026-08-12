@@ -96,14 +96,14 @@ public class CompositeSilentSkipTest extends AbstractCairoTest {
 
             assertNotSuspended();
 
-            // An explicit squash request must also be harmless.
-            try {
-                execute("alter table c squash partitions");
-                drainWalQueue();
-            } catch (Exception e) {
-                // A loud refusal is an acceptable outcome too -- what must NOT happen is silent
-                // corruption. Either way the table has to still match its twin below.
-            }
+            // An explicit squash request must be ACCEPTED, not merely survivable. Verified against a
+            // plain twin: ALTER TABLE ... SQUASH PARTITIONS is valid syntax and throws on neither table.
+            // This was previously wrapped in a catch that tolerated a throw as "also acceptable"; since
+            // the statement demonstrably does not throw, that catch could only ever have hidden a
+            // regression -- composite starting to refuse a statement plain accepts is exactly the
+            // divergence this suite exists to catch.
+            execute("alter table c squash partitions");
+            drainWalQueue();
             assertTwinEquivalence(5);
         });
     }
