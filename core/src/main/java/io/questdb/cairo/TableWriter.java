@@ -280,6 +280,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final IntList parquetDecodedTableColumnIdx = new IntList();
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
+    // Covering-index tokens the parquet seals of the partition currently being
+    // indexed produced, three longs per entry: column id (the writer index the
+    // _pm records as a column id), index txn and _im file size. Collected across
+    // the partition's whole column loop and published as one _pm footer
+    // afterwards, because a footer carries the complete set and a per-column
+    // append would drop the columns sealed before it.
+    private final LongList parquetIndexTokens = new LongList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -8087,7 +8094,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexWriter.setMaxValue(partitionSize - 1);
                 if (isParquetIndexFormat) {
                     sealParquetIndexColumn(
-                            columnName, plen, timestamp, columnTop,
+                            columnName, columnIndex, plen, timestamp, columnTop,
                             partitionSize, normalizeColumnTops,
                             indexWriter.getKeyCount(), txWriter.getTxn() + 1,
                             coveringColumnIndices, covMmaps, parquetMetadata, sealRowKeys
@@ -8166,6 +8173,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
+        // After the mappings above are released: the publish reopens the _pm
+        // through the same reader, and appends to the file the decoder was
+        // reading.
+        publishParquetIndexTokens(
+                timestamp,
+                txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp),
+                txWriter.getPartitionParquetFileSize(partitionIndex)
+        );
     }
 
     private void initLastPartition(long timestamp) {
@@ -12113,6 +12128,142 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
     }
 
+    /**
+     * Publishes the covering-index tokens staged by this partition's parquet
+     * seals into the partition's {@code _pm}, as one appended footer carrying
+     * the complete set.
+     * <p>
+     * The append is the last step of the seal's commit sequence:
+     * {@code pidx.parquet} (fsynced), then {@code _im} with its
+     * {@code IM_FILE_SIZE} patched last, then this footer with
+     * {@code PARQUET_META_FILE_SIZE} patched last, then {@code _txn}. Until
+     * those eight header bytes land, the committed footer is still the one a
+     * reader resolves, so a crash anywhere before them leaves the new bytes as
+     * an invisible dead tail rather than a half-published index.
+     * <p>
+     * The footer carries the complete set, never a delta, so any entry the
+     * prior footer held for a column this pass did not reseal is copied
+     * forward. An entry this pass did reseal is replaced, and its previous
+     * {@code index_txn} is handed to the reader-gated posting seal purge: the
+     * prior footer stays reachable through {@code resolveFooter} for as long as
+     * a reader is pinned to the older {@code data.parquet} size, so the
+     * artifacts it names must outlive the supersession.
+     */
+    private void publishParquetIndexTokens(long partitionTimestamp, long partitionNameTxn, long parquetFileSize) {
+        if (parquetIndexTokens.size() == 0) {
+            return;
+        }
+        // Set the partition path here rather than take a length from the
+        // caller: every caller reaches this after its own finally block has
+        // already rewound the path buffer.
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int plen = path.size();
+        final LongList merged = new LongList();
+        final LongList supersededColumnIds = new LongList();
+        final LongList supersededIndexTxns = new LongList();
+        long entriesAddr = 0;
+        long entriesSize = 0;
+        long parquetMetaAddr = 0;
+        long parquetMetaSize = 0;
+        long resultPtr = 0;
+        long fd = -1;
+        try {
+            openParquetMetadataOrThrow(path, plen, parquetFileSize);
+            parquetMetaAddr = parquetMetaReader.getAddr();
+            parquetMetaSize = parquetMetaReader.getFileSize();
+            final long parseAnchor = parquetMetaReader.getResolvedFileSize();
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                final long existingColumnId = parquetMetaReader.getCoveringIndexColumnId(i);
+                final long existingIndexTxn = parquetMetaReader.getCoveringIndexTxn(i);
+                int resealedAt = -1;
+                for (int j = 0, m = parquetIndexTokens.size(); j < m; j += 3) {
+                    if (parquetIndexTokens.getQuick(j) == existingColumnId) {
+                        resealedAt = j;
+                        break;
+                    }
+                }
+                if (resealedAt < 0) {
+                    merged.add(existingColumnId);
+                    merged.add(existingIndexTxn);
+                    merged.add(parquetMetaReader.getCoveringIndexImFileSize(i));
+                    continue;
+                }
+                if (parquetIndexTokens.getQuick(resealedAt + 1) != existingIndexTxn) {
+                    supersededColumnIds.add(existingColumnId);
+                    supersededIndexTxns.add(existingIndexTxn);
+                }
+            }
+            for (int i = 0, n = parquetIndexTokens.size(); i < n; i++) {
+                merged.add(parquetIndexTokens.getQuick(i));
+            }
+
+            entriesSize = (long) merged.size() * Long.BYTES;
+            entriesAddr = Unsafe.malloc(entriesSize, MemoryTag.NATIVE_TABLE_WRITER);
+            for (int i = 0, n = merged.size(); i < n; i++) {
+                Unsafe.putLong(entriesAddr + (long) i * Long.BYTES, merged.getQuick(i));
+            }
+            resultPtr = ParquetMetaFileWriter.buildCoveringIndexAppend(
+                    parquetMetaAddr,
+                    parseAnchor,
+                    parquetMetaSize,
+                    entriesAddr,
+                    merged.size() / 3
+            );
+            final long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
+            final long dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
+            final long newParquetMetaFileSize = ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr);
+
+            path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+            fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            final long written = ff.write(fd, dataPtr, dataLen, parquetMetaSize);
+            if (written != dataLen) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not append _pm covering index footer [path=").put(path)
+                        .put(", size=").put(dataLen)
+                        .put(", written=").put(written).put(']');
+            }
+            final boolean sync = configuration.getCommitMode() != CommitMode.NOSYNC;
+            if (sync) {
+                // The appended footer must be durable while the old header is
+                // still authoritative; otherwise a power loss can publish a
+                // header whose newest footer is torn.
+                ff.fsync(fd);
+            }
+            Unsafe.putLong(tempMem16b, newParquetMetaFileSize);
+            if (ff.write(fd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not patch _pm header [path=").put(path).put(']');
+            }
+            if (sync) {
+                ff.fsync(fd);
+            }
+        } finally {
+            if (resultPtr != 0) {
+                ParquetMetaFileWriter.destroyResult(resultPtr);
+            }
+            if (fd != -1) {
+                ff.close(fd);
+            }
+            if (entriesAddr != 0) {
+                Unsafe.free(entriesAddr, entriesSize, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            parquetIndexTokens.clear();
+            path.trimTo(pathSize);
+        }
+        for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
+            purgeSupersededParquetIndexArtifacts(
+                    supersededColumnIds.getQuick(i),
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    supersededIndexTxns.getQuick(i)
+            );
+        }
+    }
+
     private void publishPendingPostingSealPurges(long currentTableTxn) {
         if (!hasPostingIndexers) {
             return;
@@ -12281,6 +12432,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", correlationId=").$(correlationId)
                     .I$();
         }
+    }
+
+    /**
+     * Hands one superseded {@code <col>.pidx.<indexTxn>} pair to the
+     * reader-gated posting seal purge, which unlinks it only once the table's
+     * scoreboard says no reader can still be inside its visibility window.
+     * <p>
+     * Supersession alone is not grounds to delete. The {@code _pm} MVCC chain
+     * deliberately keeps the prior footer, and a reader pinned to the older
+     * committed {@code data.parquet} size resolves it through
+     * {@code resolveFooter} and so still resolves the old {@code index_txn}.
+     * The window is bounded conservatively at {@code [0, currentTableTxn)}:
+     * wider than the true one, so the purge waits longer than it must, never
+     * less.
+     */
+    private void purgeSupersededParquetIndexArtifacts(long columnId, long partitionTimestamp, long partitionNameTxn, long indexTxn) {
+        for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+            if (metadata.getColumnType(columnIndex) <= 0
+                    || metadata.getColumnMetadata(columnIndex).getWriterIndex() != columnId) {
+                continue;
+            }
+            final LongList sealTxns = new LongList();
+            sealTxns.add(indexTxn);
+            publishAbandonedPostingSealPurges(
+                    metadata.getColumnName(columnIndex),
+                    getColumnNameTxn(partitionTimestamp, columnIndex),
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    txWriter.getTxn(),
+                    sealTxns
+            );
+            return;
+        }
+        LOG.error().$("could not resolve the column of a superseded parquet index token [table=").$(tableToken)
+                .$(", columnId=").$(columnId)
+                .$(", indexTxn=").$(indexTxn)
+                .I$();
     }
 
     private long readMinTimestamp() {
@@ -12661,6 +12849,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             path.trimTo(pathSize);
         }
+        // After the mappings above are released: the publish reopens the _pm
+        // through the same reader, and appends to the file the decoder was
+        // reading.
+        publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
     }
 
     private void rebuildColumnIndex(
@@ -13828,6 +14020,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void sealParquetIndexColumn(
             CharSequence columnName,
+            int columnIndex,
             int plen,
             long partitionTimestamp,
             long columnTop,
@@ -13880,7 +14073,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             dataRowGroupBoundaries.add(cumulative);
         }
 
-        ParquetIndexSeal.seal(
+        final long imFileSize = ParquetIndexSeal.seal(
                 configuration,
                 ff,
                 path.trimTo(plen),
@@ -13898,6 +14091,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dataRowGroupBoundaries
         );
         path.trimTo(plen);
+        if (imFileSize > 0) {
+            // Stage the token rather than publishing it here: the _pm footer
+            // carries the complete set, so it is written once the partition's
+            // whole column loop has run.
+            parquetIndexTokens.add(metadata.getColumnMetadata(columnIndex).getWriterIndex());
+            parquetIndexTokens.add(indexTxn);
+            parquetIndexTokens.add(imFileSize);
+        }
         LOG.info().$("sealed parquet covering index [table=").$(tableToken)
                 .$(", column=").$(columnName)
                 .$(", partitionTimestamp=").$ts(partitionTimestamp)

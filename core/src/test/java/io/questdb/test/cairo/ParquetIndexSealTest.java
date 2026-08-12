@@ -27,11 +27,14 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileReader;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -83,6 +86,10 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private static final String PACKED_TABLE_NAME = "t_pidx_packed";
     private static final int[] PRESENT_KEYS = {1, 8, 16};
     private static final int SKEWED_ROW_COUNT = 300_000;
+    // Writer index of the indexed SYMBOL column in every fixture: ts is 0, sym
+    // is 1. The _pm covering-index entry is keyed by writer index, which is what
+    // the _pm records as a column id.
+    private static final int SYM_COLUMN_ID = 1;
     private static final String TABLE_NAME = "t_pidx";
 
     @Test
@@ -198,6 +205,25 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             assertPostingsCoverEveryRow(indexParquetPath, PACKED_ROW_COUNT);
             assertPostingKeysAgree(indexParquetPath, PACKED_KEY_OF_ROW_ID);
             assertCoveredValuesAgree(indexParquetPath, INDEXED_PARTITION);
+        });
+    }
+
+    @Test
+    public void testSealPublishesTheCoveringIndexTokenIntoTheParquetMeta() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+
+            try (Path path = new Path()) {
+                final String indexMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                final long indexTxn = Numbers.parseLong(
+                        indexMeta.substring("sym.pidx.".length(), indexMeta.length() - "._im".length())
+                );
+                final long imFileSize = configuration.getFilesFacade()
+                        .length(partitionPath(path).concat(indexMeta).$());
+                assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, indexTxn, imFileSize);
+            }
         });
     }
 
@@ -378,6 +404,43 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 files.length
         );
         return files[0].getName();
+    }
+
+    /**
+     * The partition's {@code _pm} footer names the sealed index. Without this
+     * entry the artifacts exist but nothing references them, so a reader has no
+     * way to find them and no way to tell a committed index from an orphan a
+     * failed seal left behind.
+     * <p>
+     * The footer is resolved through the partition's committed
+     * {@code data.parquet} size, which is the same MVCC walk a reader makes, so
+     * this reads exactly the snapshot a reader pinned to the current txn would.
+     */
+    private void assertCoveringIndexToken(Path path, String tableName, int columnId, long indexTxn, long imFileSize) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final TableToken token = engine.verifyTableName(tableName);
+        final long parquetFileSize;
+        try (TableReader reader = engine.getReader(token)) {
+            parquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+        }
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        final long addr = ParquetMetaFileReader.openAndMapRO(
+                ff,
+                partitionPath(path, tableName).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                reader
+        );
+        Assert.assertTrue("_pm must be readable", addr != 0);
+        final long fileSize = reader.getFileSize();
+        try {
+            Assert.assertTrue("_pm footer must resolve for the committed parquet size", reader.resolveFooter(parquetFileSize));
+            Assert.assertEquals("covering index entry count", 1, reader.getCoveringIndexCount());
+            Assert.assertEquals("covering index column id", columnId, reader.getCoveringIndexColumnId(0));
+            Assert.assertEquals("covering index txn", indexTxn, reader.getCoveringIndexTxn(0));
+            Assert.assertEquals("covering index _im file size", imFileSize, reader.getCoveringIndexImFileSize(0));
+        } finally {
+            reader.clear();
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        }
     }
 
     /**

@@ -48,6 +48,29 @@ public class ParquetMetaFileWriter {
 
     public static native void addSortingColumn(long writerPtr, int index);
 
+    /**
+     * Builds an append-only {@code _pm} snapshot that restates the
+     * covering-index section and changes nothing else: same row group offsets,
+     * same parquet footer, same {@code unused_bytes}, and the prior footer's
+     * {@code seqTxn} explicitly inherited. This is how a seal publishes its
+     * index token without rewriting {@code data.parquet}.
+     * <p>
+     * {@code existingAddr} must address {@code appendBase} bytes of the
+     * {@code _pm}. {@code parseAnchor} is the committed {@code _pm} size the
+     * current {@code data.parquet} size resolves to, and {@code appendBase} is
+     * the {@code _pm} header at offset 0; the two differ only inside the crash
+     * window a rolled-back update leaves behind.
+     * <p>
+     * {@code entriesAddr} addresses {@code entryCount} entries of three longs
+     * each: {@code column_id}, {@code index_txn} and {@code im_file_size}. That
+     * is the complete set, not a delta; zero entries drops the section.
+     * <p>
+     * The result's {@link #resultDataPtr} bytes go at {@code appendBase}, not at
+     * offset 0, and {@link #resultParquetMetaFileSize} is what the caller
+     * patches into the header as the last write of the sequence.
+     */
+    public static native long buildCoveringIndexAppend(long existingAddr, long parseAnchor, long appendBase, long entriesAddr, int entryCount) throws CairoException;
+
     public static native long create();
 
     public static native void destroyResult(long resultPtr);

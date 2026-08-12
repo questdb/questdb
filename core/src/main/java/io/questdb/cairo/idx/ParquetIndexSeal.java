@@ -149,7 +149,9 @@ public final class ParquetIndexSeal {
      *                               here, which is the one case a 0 address is legal for
      * @param dataRowGroupBoundaries {@code data.parquet}'s cumulative row counts, one more
      *                               entry than it has row groups, starting at 0
-     * @return the index txn the artifacts were written under
+     * @return the committed size of the {@code _im} sidecar, which is the third
+     * field of the {@code _pm} covering-index entry the caller must publish, or
+     * 0 when the partition holds no indexed row and nothing was written
      */
     public static long seal(
             CairoConfiguration configuration,
@@ -171,7 +173,7 @@ public final class ParquetIndexSeal {
         final int plen = path.size();
         final long rowCount = rowKeys.size();
         if (rowCount == 0) {
-            return indexTxn;
+            return 0;
         }
         validateCoveredColumns(coveredNames, coveredTypes, coveredAddrs, coveredColumnTops, partitionSize);
 
@@ -185,6 +187,7 @@ public final class ParquetIndexSeal {
 
         final long keyIdsSize = rowCount * Integer.BYTES;
         final long rowIdsSize = rowCount * Long.BYTES;
+        long imFileSize;
         long keyIdsAddr = 0;
         long rowIdsAddr = 0;
         try {
@@ -213,7 +216,7 @@ public final class ParquetIndexSeal {
                     keyIdsAddr, rowIdsAddr, rowCount,
                     groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs
             );
-            writeIndexArtifacts(
+            imFileSize = writeIndexArtifacts(
                     configuration, ff, path, plen, indexColumnName, indexTxn, keySpaceSize,
                     rowCount, keyIdsAddr, keyIdsSize, rowIdsAddr, rowIdsSize,
                     coveredNames, coveredTypes, coveredWriterIndices,
@@ -229,7 +232,7 @@ public final class ParquetIndexSeal {
             freeIfSet(keyIdsAddr, keyIdsSize);
             path.trimTo(plen);
         }
-        return indexTxn;
+        return imFileSize;
     }
 
     private static void addChunkColumn(DirectLongList columnData, long dataAddr, long dataSize) {
@@ -498,7 +501,10 @@ public final class ParquetIndexSeal {
         }
     }
 
-    private static void writeIndexArtifacts(
+    /**
+     * @return the committed size of the {@code _im} sidecar
+     */
+    private static long writeIndexArtifacts(
             CairoConfiguration configuration,
             FilesFacade ff,
             Path path,
@@ -589,7 +595,7 @@ public final class ParquetIndexSeal {
                         .put("index parquet write produced no bytes [column=").put(indexColumnName)
                         .put(", indexTxn=").put(indexTxn).put(']');
             }
-            writeIndexMeta(
+            return writeIndexMeta(
                     ff, path, plen, indexColumnName, indexTxn, writerPtr, keySpaceSize,
                     groupFirstKeys, groupRowIdMins, groupRowIdMaxs, dataRowGroupBoundaries
             );
@@ -608,8 +614,10 @@ public final class ParquetIndexSeal {
      * Generates the {@code _im} from the finished writer's own thrift metadata
      * and commits it, patching {@code IM_FILE_SIZE} last: until those eight
      * bytes land the file reads as uncommitted rather than as a short file.
+     *
+     * @return the committed size of the {@code _im}
      */
-    private static void writeIndexMeta(
+    private static long writeIndexMeta(
             FilesFacade ff,
             Path path,
             int plen,
@@ -682,6 +690,7 @@ public final class ParquetIndexSeal {
             } finally {
                 ff.close(fd);
             }
+            return dataLen;
         } finally {
             if (resultPtr != 0) {
                 IndexMetaFileWriter.destroyResult(resultPtr);

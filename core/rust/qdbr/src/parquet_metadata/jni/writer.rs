@@ -383,3 +383,98 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_destroyResult
         drop(unsafe { Box::from_raw(ptr) });
     }
 }
+
+/// Builds an append-only `_pm` snapshot that restates the covering-index
+/// section and changes nothing else: same row group offsets, same parquet
+/// footer, same `unused_bytes`, and the prior footer's `seqTxn` explicitly
+/// inherited. This is how a seal publishes its index token without rewriting
+/// `data.parquet`.
+///
+/// `existing_ptr` must address `append_base` bytes of the `_pm` file.
+/// `parse_anchor` is the committed `_pm` size the current `data.parquet` size
+/// resolves to, and `append_base` is the `_pm` header at offset 0; they differ
+/// only inside the crash window a rolled-back update leaves behind.
+///
+/// `entries_ptr` addresses `entry_count` entries of three `i64` each:
+/// `column_id`, `index_txn`, `im_file_size`. The set is complete, not a delta;
+/// zero entries drops the section.
+///
+/// Returns a `ParquetMetaBuiltFile` whose `data` the caller writes **at
+/// `append_base`**, not at offset 0, and whose `parquet_meta_file_size` the
+/// caller patches into the header as the last write of the sequence.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_buildCoveringIndexAppend(
+    mut env: JNIEnv,
+    _class: JClass,
+    existing_ptr: *const u8,
+    parse_anchor: i64,
+    append_base: i64,
+    entries_ptr: *const i64,
+    entry_count: jint,
+) -> *mut ParquetMetaBuiltFile {
+    let env = &mut env;
+    check_not_null!(env, existing_ptr, "_pm buffer");
+    if parse_anchor <= 0 || append_base < parse_anchor {
+        let err = fmt_err!(
+            InvalidType,
+            "_pm append base {append_base} out of range for parse anchor {parse_anchor}"
+        );
+        return err.into_cairo_exception().throw(env);
+    }
+    if entry_count < 0 || (entry_count > 0 && entries_ptr.is_null()) {
+        let err = fmt_err!(
+            InvalidType,
+            "covering index buffer is null for {entry_count} entries"
+        );
+        return err.into_cairo_exception().throw(env);
+    }
+
+    let mut entries: Vec<(u32, u64, u64)> = Vec::with_capacity(entry_count as usize);
+    for i in 0..entry_count as usize {
+        // SAFETY: Java guarantees `entry_count` entries of three i64 each at
+        // `entries_ptr`, valid for the duration of the call. Read unaligned:
+        // nothing in the JNI contract guarantees the allocation's alignment,
+        // and an unaligned `&[i64]` is undefined behaviour the moment it is
+        // constructed.
+        let entry = unsafe { entries_ptr.add(i * 3) };
+        let column_id = unsafe { entry.read_unaligned() };
+        let index_txn = unsafe { entry.add(1).read_unaligned() };
+        let im_file_size = unsafe { entry.add(2).read_unaligned() };
+        let column_id = match u32::try_from(column_id) {
+            Ok(id) => id,
+            Err(_) => {
+                let err = fmt_err!(
+                    InvalidType,
+                    "covering index entry {i} has out of range column id {column_id}"
+                );
+                return err.into_cairo_exception().throw(env);
+            }
+        };
+        entries.push((column_id, index_txn as u64, im_file_size as u64));
+    }
+
+    // SAFETY: the caller guarantees `append_base` readable bytes at
+    // `existing_ptr` for the duration of the call.
+    let existing = unsafe { slice::from_raw_parts(existing_ptr, append_base as usize) };
+    let build = || -> crate::parquet_metadata::error::ParquetMetaResult<(Vec<u8>, u64)> {
+        let mut updater =
+            qdb_parquet_meta::writer::ParquetMetaUpdateWriter::new(existing, parse_anchor as u64)?;
+        // Nothing about the data changed, so the prior footer's seqTxn is the
+        // right value and inheriting it is the explicit opt-in rather than a
+        // forgotten setter.
+        updater.inherit_seq_txn();
+        updater.set_covering_index(entries);
+        updater.finish_appending_at(append_base as u64)
+    };
+    match build() {
+        Ok((data, parquet_meta_file_size)) => Box::into_raw(Box::new(ParquetMetaBuiltFile {
+            data,
+            parquet_meta_file_size,
+        })),
+        Err(err) => {
+            let mut err: crate::parquet::error::ParquetError = err.into();
+            err.add_context("error in ParquetMetaFileWriter.buildCoveringIndexAppend");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
