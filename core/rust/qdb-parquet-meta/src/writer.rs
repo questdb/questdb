@@ -59,6 +59,7 @@ pub struct ParquetMetaWriter {
     squash_tracker: i64,
     seq_txn: SeqTxn,
     scratchpad: Vec<(u32, Vec<u8>)>,
+    covering_index: Vec<(u32, u64, u64)>,
 }
 
 impl Default for ParquetMetaWriter {
@@ -78,6 +79,7 @@ impl ParquetMetaWriter {
             squash_tracker: -1,
             seq_txn: SeqTxn::UNSET,
             scratchpad: Vec::new(),
+            covering_index: Vec::new(),
         }
     }
 
@@ -150,6 +152,19 @@ impl ParquetMetaWriter {
     /// An empty `Vec` omits the section.
     pub fn set_scratchpad_entries(&mut self, entries: Vec<(u32, Vec<u8>)>) -> &mut Self {
         self.scratchpad = entries;
+        self
+    }
+
+    /// Adds a covering-index entry `(column_id, index_txn, im_file_size)` to
+    /// the footer. No entries added omits the section.
+    pub fn add_covering_index(
+        &mut self,
+        column_id: u32,
+        index_txn: u64,
+        im_file_size: u64,
+    ) -> &mut Self {
+        self.covering_index
+            .push((column_id, index_txn, im_file_size));
         self
     }
 
@@ -252,6 +267,9 @@ impl ParquetMetaWriter {
         fb.set_seq_txn(self.seq_txn);
         fb.set_scratchpad_entries(self.scratchpad.clone());
         fb.validate_scratchpad()?;
+        for &(column_id, index_txn, im_file_size) in &self.covering_index {
+            fb.add_covering_index(column_id, index_txn, im_file_size);
+        }
         fb.write_to(&mut buf);
 
         // Compute and write CRC32 over [HEADER_CRC_AREA_OFF, checksum_field_offset).
@@ -1141,6 +1159,32 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.footer_feature_flags().has_seq_txn());
         assert_eq!(reader.seq_txn(), None);
+    }
+
+    #[test]
+    fn writer_round_trips_covering_index() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_covering_index(3, 7, 1_180);
+        w.add_covering_index(9, 7, 2_048);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 2);
+        assert_eq!(reader.covering_index(0), (3, 7, 1_180));
+        assert_eq!(reader.covering_index(1), (9, 7, 2_048));
+    }
+
+    #[test]
+    fn writer_covering_index_default_omitted() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 0);
     }
 
     #[test]

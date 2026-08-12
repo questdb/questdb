@@ -122,6 +122,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
+    private static final int COVERING_INDEX_COLUMN_ID_OFF = 0;
+    // Covering-index entry layout (20B each: column_id(4) + index_txn(8) + im_file_size(8)),
+    // indexed off the section address the native side resolves (it may sit after
+    // bloom/seq_txn/scratchpad sections whose sizes only the native side knows how to walk).
+    private static final int COVERING_INDEX_ENTRY_COUNT_SIZE = 4;
+    private static final int COVERING_INDEX_ENTRY_SIZE = 20;
+    private static final int COVERING_INDEX_IM_FILE_SIZE_OFF = 12;
+    private static final int COVERING_INDEX_TXN_OFF = 4;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
     private static final int FOOTER_FIXED_SIZE = 40;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
@@ -448,6 +456,42 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     public int getColumnType(int columnIndex) {
         return Unsafe.getInt(columnDescriptorAddr(columnIndex) + COL_DESC_COL_TYPE_OFF);
+    }
+
+    /**
+     * Returns the column id of the covering-index entry at {@code index}.
+     * {@code index} must be in {@code [0, getCoveringIndexCount())}.
+     */
+    public int getCoveringIndexColumnId(int index) {
+        return Unsafe.getInt(coveringIndexEntryAddr(index) + COVERING_INDEX_COLUMN_ID_OFF);
+    }
+
+    /**
+     * Returns the number of covering-index entries in the resolved footer's
+     * {@code COVERING_INDEX} section, or 0 when the bit is absent. Caller
+     * must hold an open, resolved reader ({@link #isOpen()}).
+     */
+    public int getCoveringIndexCount() {
+        long sectionAddr = getCoveringIndexSectionAddr0(getOrCreateNativeReaderPtr());
+        return sectionAddr == 0 ? 0 : Unsafe.getInt(sectionAddr);
+    }
+
+    /**
+     * Returns the Parquet-form covering index artifact's file size (bytes)
+     * for the entry at {@code index}. {@code index} must be in
+     * {@code [0, getCoveringIndexCount())}.
+     */
+    public long getCoveringIndexImFileSize(int index) {
+        return Unsafe.getLong(coveringIndexEntryAddr(index) + COVERING_INDEX_IM_FILE_SIZE_OFF);
+    }
+
+    /**
+     * Returns the index version token of the covering-index entry at
+     * {@code index}, anchoring it to the partition's MVCC snapshot.
+     * {@code index} must be in {@code [0, getCoveringIndexCount())}.
+     */
+    public long getCoveringIndexTxn(int index) {
+        return Unsafe.getLong(coveringIndexEntryAddr(index) + COVERING_INDEX_TXN_OFF);
     }
 
     /**
@@ -790,6 +834,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     private static native void destroyNativeReader(long ptr);
 
+    /**
+     * Returns the absolute address of the covering-index section's
+     * {@code entry_count} field for the footer the cached native reader is
+     * bound to, or {@code 0} when {@code COVERING_INDEX_BIT} is absent. The
+     * native side resolves the section location (accounting for any
+     * preceding bloom / seq_txn / scratchpad sections); the Java side then
+     * indexes the fixed-size entry array itself, mirroring how
+     * {@link #columnDescriptorAddr} and {@link #rowGroupBlockAddr} index
+     * fixed-size records off a resolved base address.
+     */
+    private static native long getCoveringIndexSectionAddr0(long ptr);
+
     private static native void readPartitionMeta0(long ptr, long destAddr);
 
     /**
@@ -827,6 +883,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private long columnDescriptorAddr(int columnIndex) {
         assert columnIndex >= 0 && columnIndex < columnCount;
         return addr + HEADER_FIXED_SIZE + (long) columnIndex * COLUMN_DESCRIPTOR_SIZE;
+    }
+
+    /**
+     * Computes the absolute memory address of the covering-index entry at
+     * {@code index}. The section base address is resolved natively (see
+     * {@link #getCoveringIndexSectionAddr0}); the fixed 20-byte entry
+     * stride is then applied here in Java.
+     */
+    private long coveringIndexEntryAddr(int index) {
+        long sectionAddr = getCoveringIndexSectionAddr0(getOrCreateNativeReaderPtr());
+        assert sectionAddr != 0 : "covering index section absent";
+        assert index >= 0 && index < Unsafe.getInt(sectionAddr)
+                : "covering index entry index " + index + " out of range";
+        return sectionAddr + COVERING_INDEX_ENTRY_COUNT_SIZE + (long) index * COVERING_INDEX_ENTRY_SIZE;
     }
 
     /**

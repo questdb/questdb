@@ -214,6 +214,34 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addBloomFilte
     }
 }
 
+/// Adds a covering-index entry `(column_id, index_txn, im_file_size)` to the
+/// footer's `COVERING_INDEX` section. Unlike `addBloomFilter`, this is not
+/// tied to the last row group -- one entry per indexed column, valid for
+/// the whole footer.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addCoveringIndex(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut JniParquetMetaWriter,
+    column_id: jint,
+    index_txn: u64,
+    im_file_size: u64,
+) {
+    let env = &mut env;
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
+    let column_id_u32 = match u32::try_from(column_id) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = fmt_err!(InvalidType, "column_id {} out of u32 range", column_id);
+            return err.into_cairo_exception().throw(env);
+        }
+    };
+    let wrapper = unsafe { &mut *ptr };
+    wrapper
+        .writer
+        .add_covering_index(column_id_u32, index_txn, im_file_size);
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(
     mut env: JNIEnv,

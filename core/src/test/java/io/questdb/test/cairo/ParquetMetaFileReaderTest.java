@@ -442,6 +442,40 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexCountZeroWhenBitClear() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveLastFooter();
+
+                Assert.assertEquals(0, reader.getCoveringIndexCount());
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringIndexRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFileWithCoveringIndex(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveLastFooter();
+
+                Assert.assertEquals(2, reader.getCoveringIndexCount());
+                Assert.assertEquals(3, reader.getCoveringIndexColumnId(0));
+                Assert.assertEquals(7, reader.getCoveringIndexTxn(0));
+                Assert.assertEquals(1_180, reader.getCoveringIndexImFileSize(0));
+                Assert.assertEquals(9, reader.getCoveringIndexColumnId(1));
+                Assert.assertEquals(7, reader.getCoveringIndexTxn(1));
+                Assert.assertEquals(2_048, reader.getCoveringIndexImFileSize(1));
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
     public void testCyclicMvccChainRejected() throws Exception {
         // Forge an MVCC chain that doubles back on itself. resolveFooter walks
         // back via prev_parquet_meta_file_size; a cyclic chain like B -> A -> B
@@ -1952,6 +1986,33 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Unsafe.free(bitsetAddr, 32, MemoryTag.NATIVE_DEFAULT);
                 }
             }
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new ParquetMetaTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
+    /**
+     * Builds a _pm file carrying two covering-index entries
+     * (column id 3 and 9, both txn 7, im file sizes 1180 and 2048).
+     */
+    private static ParquetMetaTestFile buildFileWithCoveringIndex(int columnCount, long... rowGroupSizes) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
+            for (int i = 0; i < columnCount; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+            }
+            ParquetMetaFileWriter.addCoveringIndex(writerPtr, 3, 7, 1_180);
+            ParquetMetaFileWriter.addCoveringIndex(writerPtr, 9, 7, 2_048);
             ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
             return new ParquetMetaTestFile(resultPtr);

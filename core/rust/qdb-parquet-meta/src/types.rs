@@ -71,7 +71,7 @@ pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 /// Number of footer-flag-gated section offsets `Footer` tracks. Indexed by
 /// the gating flag's bit position; grow when adding sections at higher
 /// bit positions.
-pub const SUPPORTED_FOOTER_SECTIONS: usize = 2;
+pub const SUPPORTED_FOOTER_SECTIONS: usize = 3;
 
 /// Hard cap on the total scratchpad payload (4-byte count + 8 bytes per entry
 /// header + entry contents) per footer. Real entries are tens to hundreds of
@@ -240,6 +240,16 @@ impl FooterFeatureFlags {
     /// length])*]`.
     pub const SCRATCHPAD_BIT: u64 = 1 << 1;
 
+    /// Per-indexed-column covering index token is stored in the footer
+    /// feature sections. Fixed-stride: `[entry_count u32][(column_id u32,
+    /// index_txn u64, im_file_size u64)*]`. Absent when the partition has no
+    /// Parquet-form covering index; set only when at least one entry exists.
+    /// A dedicated bit rather than the `SCRATCHPAD` TLV: the scratchpad's
+    /// update writer silently inherits the previous footer's entries when
+    /// its setter is not called, which would leave a stale index token
+    /// pointing at a superseded index. This bit fails loudly instead.
+    pub const COVERING_INDEX_BIT: u64 = 1 << 2;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -266,6 +276,14 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn has_covering_index(self) -> bool {
+        self.0 & Self::COVERING_INDEX_BIT != 0
+    }
+
+    pub const fn with_covering_index(self) -> Self {
+        Self(self.0 | Self::COVERING_INDEX_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.

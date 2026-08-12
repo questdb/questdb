@@ -219,6 +219,43 @@ fn read_seq_txn_impl(reader: &ParquetMetaReader) -> i64 {
     reader.seq_txn().unwrap_or(SeqTxn::UNSET).get()
 }
 
+/// Returns the absolute address of the covering-index section's
+/// `entry_count` field for the footer the cached reader at `ptr` is bound
+/// to, or `0` when `COVERING_INDEX_BIT` is absent.
+///
+/// Unlike `readSeqTxn0`, this resolves a *location* rather than a value:
+/// the section may sit after bloom/seq_txn/scratchpad sections whose sizes
+/// this crate already knows how to walk, so that walk happens once here
+/// (the single source of truth for the on-disk layout) and the Java side
+/// then indexes the fixed 20-byte-stride entry array directly off the
+/// returned address -- mirroring how it already indexes row-group entries
+/// and column descriptors off a resolved base address.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_getCoveringIndexSectionAddr0(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *const JniParquetMetaReader,
+) -> i64 {
+    let env = &mut env;
+    if ptr.is_null() {
+        let err = fmt_err!(InvalidLayout, "JniParquetMetaReader pointer is null");
+        return err.into_cairo_exception().throw(env);
+    }
+    let jni_reader = unsafe { &*ptr };
+    let reader = jni_reader.reader();
+    match reader.footer().covering_index_section_offset() {
+        Some(rel_off) => {
+            let abs_off = reader.footer_offset() as usize + rel_off;
+            // Safety: `abs_off` is within [0, reader.data().len()) -- it was
+            // validated by Footer::new against the CRC offset, which itself
+            // is bounded by the file the caller mapped.
+            let base = reader.data().as_ptr();
+            unsafe { base.add(abs_off) as i64 }
+        }
+        None => 0,
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGroup0(
     mut env: JNIEnv,

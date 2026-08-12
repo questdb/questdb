@@ -359,6 +359,18 @@ impl<'a> ParquetMetaReader<'a> {
         self.footer.scratchpad_entry(code)
     }
 
+    /// Number of covering-index entries in the currently selected footer, or
+    /// 0 when `COVERING_INDEX_BIT` is unset.
+    pub fn covering_index_count(&self) -> u32 {
+        self.footer.covering_index_count()
+    }
+
+    /// Returns `(column_id, index_txn, im_file_size)` for the covering-index
+    /// entry at `index`. Panics if `index >= covering_index_count()`.
+    pub fn covering_index(&self, index: usize) -> (u32, u64, u64) {
+        self.footer.covering_index(index)
+    }
+
     /// Returns the raw file data slice.
     pub fn data(&self) -> &'a [u8] {
         self.data
