@@ -29,7 +29,6 @@ import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
-import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -867,30 +866,79 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Refuses to read a posting index over a parquet partition while
-     * {@code cairo.posting.index.parquet.partition.format} selects
-     * {@code parquet}.
+     * Refuses to read a posting index over a parquet partition whose index is
+     * published in the parquet form, for which no reader exists yet.
      * <p>
-     * In that mode {@code TableWriter.indexParquetColumn} discards the native
-     * chain and seals the index as {@code <col>.pidx.<txn>.parquet} instead, so
-     * the chain is left with no visible generation. A reader treats that as "no
-     * keys, no rows" and returns an empty cursor, which turns a configuration
-     * flip into silently wrong answers: ADD INDEX reports success and every
-     * indexed query over a parquet partition returns nothing. The reader for
-     * the parquet form lands in a later phase; until it does, this is the point
-     * where the two disagree, so this is where it fails.
+     * When {@code TableWriter} seals such an index it writes
+     * {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im} and discards
+     * the native chain, then names the pair in the partition's {@code _pm}
+     * covering-index section. The chain is left with no visible generation, and
+     * a native reader treats that as "no keys, no rows" and answers with an
+     * empty cursor -- so without this the write would report success and every
+     * indexed query over that partition would return nothing.
      * <p>
-     * Reachable only when the format is explicitly set to {@code parquet}; the
-     * default is {@code native} and takes the first branch out.
+     * The decision is the published token, not the configured format. The
+     * format says what the next seal will write; it says nothing about what
+     * this partition already carries, and the two disagree in both directions.
+     * Flip the property to {@code parquet} over a natively sealed partition and
+     * a format-keyed check refuses a read that would have been served
+     * correctly; flip it back to {@code native} over a parquet-sealed one and a
+     * format-keyed check waves through exactly the silent-empty-result this
+     * exists to prevent.
+     * <p>
+     * The footer is resolved through this reader's own committed
+     * {@code data.parquet} size, so a reader pinned to an older snapshot asks
+     * the footer that snapshot resolves and gets the answer for the artifacts
+     * that snapshot can still reach.
+     * <p>
+     * Reachable only for a POSTING-indexed column of a parquet partition, so
+     * the common path costs two comparisons. Remove this when the parquet-form
+     * reader lands; until then it is the point where the writer's form and the
+     * reader's expectation meet.
      */
     private void checkPostingIndexIsReadable(int partitionIndex, int columnIndex) {
-        if (configuration.getPostingIndexParquetPartitionFormat() != PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET) {
-            return;
-        }
         if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
             return;
         }
         if (getPartitionFormatFromMetadata(partitionIndex) != PartitionFormat.PARQUET) {
+            return;
+        }
+        final int writerIndex = metadata.getWriterIndex(columnIndex);
+        final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+        final int plen = path.size();
+        long indexTxn = -1;
+        long addr = 0;
+        long fileSize = 0;
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(
+                    ff,
+                    pathGenNativePartition(partitionIndex, partitionNameTxn).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                    reader
+            );
+            if (addr == 0) {
+                // No readable _pm: nothing published a parquet-form index, so
+                // the native chain is what this partition carries.
+                return;
+            }
+            fileSize = reader.getFileSize();
+            if (!reader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
+                return;
+            }
+            for (int i = 0, n = reader.getCoveringIndexCount(); i < n; i++) {
+                if (reader.getCoveringIndexColumnId(i) == writerIndex) {
+                    indexTxn = reader.getCoveringIndexTxn(i);
+                    break;
+                }
+            }
+        } finally {
+            reader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(plen);
+        }
+        if (indexTxn < 0) {
             return;
         }
         throw CairoException.nonCritical()
@@ -898,6 +946,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 .put(", set cairo.posting.index.parquet.partition.format=native and rebuild the index [table=")
                 .put(tableToken.getTableName())
                 .put(", column=").put(metadata.getColumnName(columnIndex))
+                .put(", indexTxn=").put(indexTxn)
                 .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
                 .put(']');
     }

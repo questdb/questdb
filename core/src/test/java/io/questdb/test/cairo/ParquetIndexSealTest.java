@@ -292,6 +292,22 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostingIndexReadIsRefusedAfterTheFormatIsFlippedBackToNative() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            // The hole a format-keyed refusal leaves open. The partition is
+            // already sealed as parquet and its token is published; flipping the
+            // property back says nothing about what is on disk. A check keyed on
+            // the configured format would wave this read through and answer it
+            // with an empty cursor.
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            engine.releaseInactive();
+            assertQuery(COVERED_QUERY).failsWith("has no reader yet");
+        });
+    }
+
+    @Test
     public void testPostingIndexReadIsServedWhileTheNativeFormatIsSelected() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedSparseKeyTable();
