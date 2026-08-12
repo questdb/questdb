@@ -1748,6 +1748,25 @@ mod tests {
         w.finish().unwrap()
     }
 
+    /// A row-per-key index: one index row per key, so there is no `row_id`
+    /// column at all and `ROW_ID_COLUMN` is the `-1` sentinel. The row-id zone
+    /// maps are still written - this payload has no other source for them.
+    fn build_row_per_key_sample() -> Vec<u8> {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_KEY, 100, 0, -1, 1);
+        w.set_pidx_footer(2_048, 96);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        for (i, first_key) in [0u32, 40].iter().enumerate() {
+            let mut block = RowGroupBlockBuilder::new(1);
+            block.set_num_rows(8);
+            block
+                .set_column_chunk(0, key_id_chunk(*first_key, *first_key, 8))
+                .unwrap();
+            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, block);
+        }
+        w.set_data_row_group_boundaries(&[0, 2_000]);
+        w.finish().unwrap()
+    }
+
     /// A minimal valid writer used by the validation tests, which then break
     /// exactly one invariant each. Two synthetic columns and no covered ones,
     /// so cover slot 0 would be out of range.
@@ -2337,6 +2356,55 @@ mod tests {
         assert_eq!(r.row_group_range_for_key(50), Some((1, 1)));
     }
 
+    /// Both bounds of the key search stop at `INDEX_RG_COUNT`, so the
+    /// `RG_FIRST_KEY` sentinel is never one of the entries compared. It exists
+    /// only so a consumer can read the last row group's key range as
+    /// `[RG_FIRST_KEY[n - 1], sentinel)`.
+    ///
+    /// A search that read it would resolve an exact match against it to
+    /// `rg_lo = INDEX_RG_COUNT` - a row group that does not exist, and one no
+    /// bound afterwards rejects, since the pair is returned unchecked. The
+    /// writer emits the sentinel as `KEY_SPACE_SIZE`, which no searchable key
+    /// can equal, so the entry has to be crafted for the difference to show:
+    /// a reader may not lean on a value nothing at open time validates.
+    #[test]
+    fn test_key_search_never_reads_the_first_key_sentinel() {
+        let mut w = minimal_writer();
+        w.add_row_group(5, 0, 99, minimal_block(5, 10));
+        w.add_row_group(9, 0, 99, minimal_block(9, 10));
+        let mut bytes = w.finish().unwrap();
+
+        // RG_FIRST_KEY follows RG_BLOCK_OFFSET, whose footprint is padded up
+        // to the 8-byte boundary the next section starts on; the sentinel is
+        // its last entry.
+        let sections_off = IndexMetaReader::new(&bytes)
+            .unwrap()
+            .index_sections_offset() as usize;
+        let sentinel_off = sections_off + aligned_footprint(2 * 4).unwrap() + 2 * 4;
+        // Pinned rather than assumed: a layout change that moved the sections
+        // would otherwise leave this test patching an unrelated field and
+        // passing for the wrong reason.
+        assert_eq!(read_u32(&bytes, sentinel_off), 100);
+        assert_eq!(
+            IndexMetaReader::new(&bytes)
+                .unwrap()
+                .row_group_first_key(2)
+                .unwrap(),
+            100
+        );
+
+        // 50 is above every real first key, so the lower bound lands on the
+        // sentinel's index and the exact-match branch is the one that reads it.
+        patch_u32(&mut bytes, sentinel_off, 50);
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        assert_eq!(r.row_group_range_for_key(50), Some((1, 1)));
+        // And the entries that are searched still answer as they did, so the
+        // crafted sentinel has not simply broken the directory.
+        assert_eq!(r.row_group_range_for_key(5), Some((0, 0)));
+        assert_eq!(r.row_group_range_for_key(9), Some((1, 1)));
+        assert_eq!(r.row_group_range_for_key(4), None);
+    }
+
     #[test]
     fn test_zero_row_groups_is_absent() {
         let bytes = minimal_writer().finish().unwrap();
@@ -2643,6 +2711,48 @@ mod tests {
         assert!(r.out_of_line_stat(1, 2, false).is_err());
     }
 
+    /// The offset bound is on the offset alone, one step at a time: an offset
+    /// of exactly `region_size + 1` with a zero length. The length clause
+    /// cannot stand in for it - `region_size - stat_offset` underflows for
+    /// that offset, so a bound written `stat_offset > region_size + 1` reaches
+    /// a wrapping subtraction rather than an error. Zero length, because any
+    /// non-zero one would be caught by the length clause on a healthy build
+    /// and hide the offset bound behind it.
+    #[test]
+    fn test_out_of_line_stat_one_byte_past_the_region_start_is_rejected() {
+        for offset in [TWO_BLOCK_OOL_SIZE + 1, TWO_BLOCK_OOL_SIZE + 8] {
+            let mut bytes = build_two_block_out_of_line_sample();
+            patch_u64(
+                &mut bytes,
+                TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT,
+                ool_ref(offset, 0),
+            );
+            let r = IndexMetaReader::new(&bytes).unwrap();
+            let err = r.out_of_line_stat(0, 2, false).unwrap_err();
+            assert!(
+                matches!(err.kind, ParquetMetaErrorKind::Truncated),
+                "offset {offset}: {err}"
+            );
+            assert!(
+                err.msg.contains("out of line stat out of bounds"),
+                "{}",
+                err.msg
+            );
+        }
+
+        // The accepting side of the same bound: an offset of exactly
+        // `region_size` with a zero length addresses the end of the region and
+        // is legal, so the comparison is `>` and not `>=`.
+        let mut bytes = build_two_block_out_of_line_sample();
+        patch_u64(
+            &mut bytes,
+            TWO_BLOCK_0_OFF + TWO_BLOCK_UID_MAX_STAT,
+            ool_ref(TWO_BLOCK_OOL_SIZE, 0),
+        );
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        assert!(r.out_of_line_stat(0, 2, false).unwrap().is_empty());
+    }
+
     #[test]
     fn test_out_of_line_stat_without_a_row_group_is_rejected() {
         let mut w = minimal_writer();
@@ -2746,6 +2856,41 @@ mod tests {
         assert_eq!(r.row_group_range_for_key(40), Some((1, 2)));
         assert_eq!(r.row_group_range_for_key(5), Some((0, 0)));
         assert_eq!(r.row_group_range_for_key(70), Some((3, 3)));
+    }
+
+    /// The other half of the key-alignment invariant, and the half the strict
+    /// bound cannot express: a repeated `RG_FIRST_KEY` entry *claims* the row
+    /// group is dedicated to that key, so it must hold no other. Here row
+    /// group 1 shares its first key with row group 2 and yet runs on to key
+    /// 45, which is exactly the split the invariant forbids - key 45's
+    /// postings begin in a group whose first key is 40, so the lookup's
+    /// exact-match branch resolves 45 to row group 3 and drops them.
+    ///
+    /// The strict branch cannot catch it: inside a run `RG_FIRST_KEY[i]` and
+    /// `RG_FIRST_KEY[i + 1]` are equal, so `MAX_STAT[i] < RG_FIRST_KEY[i + 1]`
+    /// is unsatisfiable and applying it there would reject the legal hot-key
+    /// layout above instead. Two branches, two fixtures.
+    #[test]
+    fn test_shared_first_key_over_a_packed_row_group_is_rejected() {
+        let mut w = minimal_writer();
+        w.add_row_group(5, 0, 99, minimal_block(5, 10));
+        // Row group 1 claims a dedicated run on key 40 and then holds 45 too.
+        let mut packed = minimal_block(40, 10);
+        packed
+            .set_column_chunk(0, key_id_chunk(40, 45, 10))
+            .unwrap();
+        w.add_row_group(40, 0, 99, packed);
+        w.add_row_group(40, 0, 99, minimal_block(40, 10));
+        w.add_row_group(45, 0, 99, minimal_block(45, 10));
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains(
+                "row group 1 shares first key 40 with row group 2 but holds keys up to 45"
+            ),
+            "{}",
+            err.msg
+        );
     }
 
     /// The last row group is bounded by the sentinel, which is
@@ -3109,6 +3254,122 @@ mod tests {
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("key id column 5"), "{}", err.msg);
+
+        // The exact boundary, and the message rather than merely the failure:
+        // the column count is one past the last descriptor, and a range bound
+        // written `<=` hands it on to the cover-slot check below, which
+        // refuses it for a different reason. Two different author errors -
+        // an index off the end, and a synthetic column sitting among the
+        // covered ones - and the diagnostic has to name the one that happened.
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 2, 1, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.set_data_row_group_boundaries(&[0, 20]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("key id column 2 out of range [0, 2)"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// `ROW_ID_COLUMN`'s upper bound, held to the same standard as
+    /// `KEY_ID_COLUMN`'s for the same reason: the column count is one past the
+    /// last descriptor, and a bound written `>` rather than `>=` passes it to
+    /// the cover-slot check, which refuses it while naming the wrong defect.
+    #[test]
+    fn test_row_id_column_must_be_in_range() {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 0, 9, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.set_data_row_group_boundaries(&[0, 20]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("row id column 9 out of range [0, 2)"),
+            "{}",
+            err.msg
+        );
+
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 0, 2, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.set_data_row_group_boundaries(&[0, 20]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("row id column 2 out of range [0, 2)"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// An index schema with no columns at all. Every later check indexes the
+    /// descriptors - the key id selector's range is `[0, 0)`, so nothing can
+    /// satisfy it - and each would refuse the writer while naming a selector
+    /// rather than the empty schema. The count is checked first so the caller
+    /// is told what it actually did.
+    #[test]
+    fn test_writer_rejects_a_schema_with_no_columns() {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 0, -1, 0);
+        w.set_pidx_footer(1_024, 128);
+        w.set_data_row_group_boundaries(&[0, 20]);
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("no columns"), "{}", err.msg);
+    }
+
+    /// A payload kind neither implementation knows leaves the `ROW_ID_COLUMN`
+    /// rule undecidable, so the writer refuses rather than emitting a file
+    /// only the readers would reject. Nothing else catches it here: the
+    /// fixture names a real row id column, so the `-1` rule never fires, and
+    /// an unknown kind skips the row-id cross-checks entirely.
+    #[test]
+    fn test_writer_rejects_an_unknown_payload_kind() {
+        for kind in [2u32, 3, u32::MAX] {
+            let mut w = IndexMetaWriter::new(kind, 100, 0, 1, 2);
+            w.set_pidx_footer(1_024, 128);
+            w.add_column("key_id", descriptor(-1, TYPE_INT));
+            w.add_column("row_id", descriptor(-1, TYPE_LONG));
+            w.add_row_group(0, 0, 99, minimal_block(0, 5));
+            w.set_data_row_group_boundaries(&[0, 20]);
+            let err = w.finish().unwrap_err();
+            assert!(
+                matches!(err.kind, ParquetMetaErrorKind::InvalidValue),
+                "payload kind {kind}: {err}"
+            );
+            assert!(
+                err.msg.contains("unknown payload kind"),
+                "payload kind {kind}: {}",
+                err.msg
+            );
+        }
+
+        // The negative control: the same fixture under a known kind is written.
+        let mut w = minimal_writer();
+        w.add_row_group(0, 0, 99, minimal_block(0, 5));
+        assert!(w.finish().is_ok());
+    }
+
+    /// `DATA_RG_BOUNDARY` is mandatory: it is the only record of
+    /// `data.parquet`'s row group boundaries, and an index hit names the data
+    /// row groups a non-covering query must read through it. A writer that
+    /// never received them has no `[0]` to test for zero and no
+    /// `len() - 1` to write as `DATA_RG_COUNT`.
+    #[test]
+    fn test_writer_rejects_missing_data_row_group_boundaries() {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 100, 0, 1, 2);
+        w.set_pidx_footer(1_024, 128);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.add_row_group(0, 0, 99, minimal_block(0, 5));
+        let err = w.finish().unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("boundaries not set"), "{}", err.msg);
     }
 
     #[test]
@@ -3222,6 +3483,37 @@ mod tests {
         assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
     }
 
+    /// `IM_FILE_SIZE` must clear the 128-byte header plus the 4-byte CRC
+    /// trailer, and the floor is checked on the committed size itself rather
+    /// than on the caller's buffer: the two differ exactly when a long buffer
+    /// carries a short commitment, which is the case the buffer-length check
+    /// above cannot reach. 131 is one below the floor, so an `IM_FILE_SIZE + 1
+    /// < 132` spelling admits a commitment with no room for both.
+    ///
+    /// The error must be the size bound's rather than a later one's: the
+    /// header floor is what proves the fields below it exist at all, so it has
+    /// to fire before any of them is read.
+    #[test]
+    fn test_committed_size_below_the_header_floor_is_rejected() {
+        for size in [0u64, 1, 8, 128, 131] {
+            let mut bytes = build_sample();
+            // Not `patch_u64`: the CRC is deliberately left where the whole
+            // file keeps it, since a commitment this short has no trailer of
+            // its own and the size bound must fire before the checksum.
+            bytes[OFF_IM_FILE_SIZE..OFF_IM_FILE_SIZE + 8].copy_from_slice(&size.to_le_bytes());
+            let err = IndexMetaReader::new(&bytes).unwrap_err();
+            assert!(
+                matches!(err.kind, ParquetMetaErrorKind::Truncated),
+                "IM_FILE_SIZE {size}: {err}"
+            );
+            assert!(
+                err.msg.contains("IM_FILE_SIZE"),
+                "IM_FILE_SIZE {size}: {}",
+                err.msg
+            );
+        }
+    }
+
     /// A file cut short and re-committed at its new length, with the header's
     /// counts and `INDEX_SECTIONS_OFFSET` untouched - what a torn write leaves
     /// behind. Every one of these must be rejected, and rejected cleanly: v2
@@ -3260,6 +3552,14 @@ mod tests {
             SAMPLE_SECTIONS_OFF,
             SAMPLE_SECTIONS_OFF + 8,
             SAMPLE_FILE_LEN - 8,
+            // Four bytes short, so the sections end exactly where the CRC now
+            // begins. The fit bound is against the CRC offset and not against
+            // IM_FILE_SIZE, and this is the only length that tells the two
+            // apart: every section is 8-byte aligned, so a whole-file image
+            // puts `sections_end` and `crc_off` on the same byte and any
+            // shorter cut clears both bounds at once. Bounded by IM_FILE_SIZE
+            // instead, DATA_RG_BOUNDARY's last entry is the checksum.
+            SAMPLE_FILE_LEN - IM_TRAILER_SIZE,
         ] {
             let cut = truncate_to(&bytes, len);
             let err = IndexMetaReader::new(&cut)
@@ -3378,6 +3678,21 @@ mod tests {
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::Alignment));
         assert!(err.msg.contains("not 8-byte aligned"), "{}", err.msg);
+
+        // 4 rather than 1: an offset off by a whole 4-byte word is what a
+        // bound written against RG_BLOCK_OFFSET's own entry width would admit,
+        // and an odd byte would not. It still misaligns RG_ROW_ID_MIN and the
+        // 8-byte NUM_ROWS every block it addresses starts with, so the
+        // boundary is 8 and not 4.
+        let mut bytes = build_sample();
+        patch_u64(
+            &mut bytes,
+            OFF_INDEX_SECTIONS_OFFSET,
+            SAMPLE_SECTIONS_OFF as u64 + 4,
+        );
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Alignment));
+        assert!(err.msg.contains("not 8-byte aligned"), "{}", err.msg);
     }
 
     /// The names run 224..241 in the fixture, so 232 is 8-aligned and past the
@@ -3457,6 +3772,17 @@ mod tests {
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("key id column"), "{}", err.msg);
 
+        // The exact boundary: COLUMN_COUNT itself is one past the last
+        // descriptor, and a bound written `>` rather than `>=` admits it. The
+        // chunk it names begins where the block's out-of-line stat region
+        // does, so nothing later fails - the caller reads stat bytes as a key
+        // id chunk.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_KEY_ID_COLUMN, 3);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("key id column"), "{}", err.msg);
+
         // The fixture has 3 columns, so the last valid index is accepted.
         let mut bytes = build_sample();
         patch_u32(&mut bytes, OFF_KEY_ID_COLUMN, 2);
@@ -3499,6 +3825,45 @@ mod tests {
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("row id column"), "{}", err.msg);
+
+        // The exact boundary: COLUMN_COUNT is one past the last descriptor,
+        // and a bound written `>` rather than `>=` admits it. Time pruning
+        // then reads the block's out-of-line stat region as a row id chunk.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_ROW_ID_COLUMN, 3);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(err.msg.contains("row id column"), "{}", err.msg);
+
+        // The fixture has 3 columns, so the last valid index is accepted.
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_ROW_ID_COLUMN, 2);
+        assert_eq!(IndexMetaReader::new(&bytes).unwrap().row_id_column(), 2);
+    }
+
+    /// `-1` is the row-per-key sentinel, and it is the *only* negative value
+    /// that payload may carry. A reader testing `row_id_column < 0` instead of
+    /// `== -1` accepts any of them, and every one is handed straight to a
+    /// column chunk accessor as an index the moment a caller trusts
+    /// `ROW_ID_COLUMN`: the sentinel says "there is no row id column", and any
+    /// other negative says nothing at all.
+    #[test]
+    fn test_row_per_key_row_id_column_sentinel_is_exactly_minus_one() {
+        let bytes = build_row_per_key_sample();
+        // The negative control: the untouched fixture binds and reports the
+        // sentinel, so the rejections below are the crafted value talking.
+        assert_eq!(IndexMetaReader::new(&bytes).unwrap().row_id_column(), -1);
+
+        for value in [-2i32, -1_000, i32::MIN] {
+            let mut bytes = build_row_per_key_sample();
+            patch_u32(&mut bytes, OFF_ROW_ID_COLUMN, value as u32);
+            let err = IndexMetaReader::new(&bytes).unwrap_err();
+            assert!(
+                matches!(err.kind, ParquetMetaErrorKind::InvalidValue),
+                "row id column {value}: {err}"
+            );
+            assert!(err.msg.contains("row id column"), "{}", err.msg);
+        }
     }
 
     /// `PIDX_FOOTER_OFFSET` is a u64 the reader takes as given, so the bound
@@ -3695,6 +4060,64 @@ mod tests {
         );
         let r = IndexMetaReader::new(&bytes).unwrap();
         assert_eq!(r.row_group_block(0).unwrap().num_rows(), 100_000);
+
+        // And the index bound the accessor applies before any of that: one
+        // past the last row group reads an RG_FIRST_KEY entry as a block
+        // offset, so it must be refused for being out of range rather than
+        // resolved and then found to be out of bounds.
+        // `unwrap_err` would require RowGroupBlockReader to be Debug, so match.
+        let err = match r.row_group_block(4) {
+            Ok(_) => panic!("row group 4 of a 4 row group file must be refused"),
+            Err(err) => err,
+        };
+        assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
+        assert!(
+            err.msg.contains("row group index 4 out of range"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// The inverted-extent predicate, which is reachable only for the last
+    /// block: every other block's end is the next entry, and the ascent check
+    /// has already put that above its start. The last block's end is
+    /// `INDEX_SECTIONS_OFFSET`, so an entry beyond the sections leaves
+    /// `start > end` with nothing else to catch it - the extent subtraction
+    /// then wraps and sails through the minimum-size bound.
+    ///
+    /// One row group, because with more than one the entry would have to be
+    /// the last and the preceding block's *end* would fail the sections bound
+    /// first, naming the wrong row group.
+    #[test]
+    fn test_last_block_starting_past_the_index_sections_is_rejected() {
+        let mut bytes = build_sample();
+        patch_u32(&mut bytes, OFF_INDEX_RG_COUNT, 1);
+        // The negative control: one row group alone is a file the reader
+        // accepts, so the rejection below is the crafted entry and not the
+        // recount.
+        assert_eq!(
+            IndexMetaReader::new(&bytes)
+                .unwrap()
+                .index_row_group_count(),
+            1
+        );
+
+        patch_u32(
+            &mut bytes,
+            SAMPLE_SECTIONS_OFF,
+            (SAMPLE_SECTIONS_OFF >> BLOCK_ALIGNMENT_SHIFT) as u32 + 1,
+        );
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(matches!(err.kind, ParquetMetaErrorKind::Truncated));
+        assert!(
+            err.msg.contains(&format!(
+                "row group 0 block extent [{}, {})",
+                SAMPLE_SECTIONS_OFF + BLOCK_ALIGNMENT,
+                SAMPLE_SECTIONS_OFF
+            )),
+            "{}",
+            err.msg
+        );
     }
 
     #[test]
