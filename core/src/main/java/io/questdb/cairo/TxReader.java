@@ -31,6 +31,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -38,7 +39,9 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -50,6 +53,20 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // Slot 3 of a NATIVE partition record is a pointer into that partition's own _geometry file:
+    //
+    // | composite | generation | byte offset |
+    // +-----------+------------+-------------+
+    // |   1 bit   |   19 bits  |   44 bits   |
+    //
+    // Bit 63 says the partition is COMPOSITE and the rest of the word locates its geometry record. The
+    // whole word is the parquet FILE SIZE instead when either parquet bit of slot 1 is set, which is why
+    // every read of it goes through hasParquetFileSize first - a parquet partition is materialized whole
+    // and is never composite.
+    protected static final long PARTITION_COMPOSITE_FLAG = 0x8000000000000000L; // bit 63 (== Long.MIN_VALUE)
+    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 44;
+    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x7FFFF00000000000L; // bits 44-62
+    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00000FFFFFFFFFFFL; // bits 0-43
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
@@ -95,11 +112,19 @@ public class TxReader implements Closeable, Mutable {
     protected long transientRowCount;
     protected long truncateVersion;
     protected long txn;
+    // The table root - the parent of the _txn file - so a COMPOSITE partition's _geometry file can be
+    // reached. Kept on the heap rather than in a Path: readers of this class are long-lived and mostly see
+    // no composite partition at all, and a native buffer held for a table that never needs one reads as a
+    // leak against a job-scoped reader.
+    protected final StringSink tableRootSink = new StringSink();
     private int baseOffset;
     private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;
+    // Materialised from tableRootSink the first time a composite partition has to be resolved, so a table
+    // with no composite partition never allocates it.
+    private Path tableRoot;
     private long size;
     private int symbolsSize;
     private long version;
@@ -121,6 +146,7 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public void close() {
         roTxMemBase = Misc.free(roTxMemBase);
+        tableRoot = Misc.free(tableRoot);
         clear();
     }
 
@@ -462,6 +488,47 @@ public class TxReader implements Closeable, Mutable {
         return lagOrdered;
     }
 
+    /**
+     * The {@code _geometry.<generation>} file a slot-3 geometry pointer names.
+     */
+    public static int geometryGeneration(long geometryRef) {
+        return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
+    }
+
+    /**
+     * The byte offset inside that file at which the partition's committed geometry record starts.
+     */
+    public static long geometryOffset(long geometryRef) {
+        return geometryRef & PARTITION_GEOMETRY_OFFSET_MASK;
+    }
+
+    /**
+     * Slot 3 of the partition's record, verbatim, when it is a geometry pointer. Meaningless - and never
+     * to be read - for a parquet partition, where the same word is the file size.
+     */
+    public long getGeometryRef(int partitionIndex) {
+        return attachedPartitions.getQuick(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_PARQUET_FILE_SIZE_OFFSET);
+    }
+
+    /**
+     * Whether the partition has a {@code _geometry} record to resolve. Resident, ZERO I/O - it reads one
+     * long of the record that is already in memory, exactly as {@link #isPartitionParquet(int)} does. This
+     * is what keeps a table with no composite partition off {@code _geometry} entirely, and what makes the
+     * resolve lazy: nothing opens the file until a query or a commit lands on that partition.
+     * <p>
+     * Deliberately an over-approximation in one direction: a partition keeps its chain after folding back
+     * to a single piece, so this can be true for a partition whose geometry says one piece at file row 0.
+     * That costs one read, never a wrong answer.
+     */
+    public boolean hasGeometryChain(int partitionIndex) {
+        final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
+            return false;
+        }
+        final long slot3 = attachedPartitions.getQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET);
+        return slot3 != -1L && (slot3 & PARTITION_COMPOSITE_FLAG) != 0;
+    }
+
     public boolean isPartitionParquet(int i) {
         return isPartitionParquetByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -544,6 +611,7 @@ public class TxReader implements Closeable, Mutable {
     public TxReader ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         clear();
         try {
+            setTableRootFromTxnPath(path);
             openTxnFile(ff, path);
             initPartitionBy(timestampType, partitionBy);
         } catch (Throwable e) {
@@ -835,6 +903,40 @@ public class TxReader implements Closeable, Mutable {
         version = -1;
         txn = -1;
         seqTxn = -1;
+    }
+
+    /**
+     * The path of a partition's DIRECTORY, on a buffer this reader owns. Materialised from the heap-held
+     * table root on first use, so a table with no composite partition never allocates it. The returned
+     * buffer is reused by the next call.
+     */
+    protected Path partitionDirPath(long partitionTimestamp, long nameTxn) {
+        if (tableRootSink.length() == 0) {
+            throw CairoException.critical(0)
+                    .put("cannot resolve a partition directory without a table path [ts=").put(partitionTimestamp)
+                    .put(", nameTxn=").put(nameTxn)
+                    .put(']');
+        }
+        if (tableRoot == null) {
+            tableRoot = new Path();
+        }
+        tableRoot.of(tableRootSink);
+        TableUtils.setPathForNativePartition(tableRoot, timestampType, partitionBy, partitionTimestamp, nameTxn);
+        return tableRoot;
+    }
+
+    /**
+     * Remembers the table root - the parent of the {@code _txn} file - so a COMPOSITE partition's
+     * {@code _geometry} file can be reached. Every caller passes {@code <tableDir>/_txn}, so the parent is
+     * everything before the last separator.
+     */
+    protected void setTableRootFromTxnPath(@Transient LPSZ path) {
+        int n = path.size();
+        while (n > 0 && path.byteAt(n - 1) != (byte) Files.SEPARATOR) {
+            n--;
+        }
+        tableRootSink.clear();
+        Utf8s.utf8ToUtf16(path, 0, Math.max(n - 1, 0), tableRootSink);
     }
 
     protected int findAttachedPartitionRawIndex(long timestamp) {
