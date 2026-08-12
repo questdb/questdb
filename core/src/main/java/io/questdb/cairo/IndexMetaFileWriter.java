@@ -135,6 +135,58 @@ public class IndexMetaFileWriter {
 
     public static native long finish(long writerPtr) throws CairoException;
 
+    /**
+     * Builds the complete {@code _im} for the covering index parquet the given
+     * finished streaming parquet writer produced, and returns a result pointer
+     * whose bytes are that file. The caller must release it with
+     * {@link #destroyResult}.
+     * <p>
+     * This, not the create / {@link #addColumn} / {@link #addRowGroup} /
+     * {@link #finish} surface above, is how production writes an {@code _im}:
+     * the per-chunk codec, encodings, byte ranges, null counts and statistics
+     * exist only inside the writer's own thrift metadata, and Java has none of
+     * them. Java supplies only what it alone knows - the per-row-group first
+     * key, the row-id zone maps, {@code data.parquet}'s row group boundaries
+     * and the header scalars.
+     * <p>
+     * Valid only after {@code finishStreamingParquetWrite}: before that the
+     * parquet footer has not been written, and the zero footer offset is
+     * rejected rather than recorded.
+     * <p>
+     * {@code keySpaceSize} is the exclusive upper bound on key ids - the native
+     * reader's {@code keyCountIncludingNulls} - and not a count of distinct
+     * keys present. {@code count} is the number of index row groups, and each
+     * of {@code firstKeysLen}, {@code rowIdMinLen} and {@code rowIdMaxLen} is
+     * its buffer's own byte length. Pass the size the buffer was allocated
+     * with, never {@code count} multiplied by the element width: the native
+     * side can reject a length that disagrees with the count, but a consistent
+     * pair of wrong values is indistinguishable from a correct one and reads
+     * out of bounds. {@code dataBoundariesLen} carries the boundary count on
+     * its own, so there is no second count for it to disagree with.
+     * <p>
+     * Every {@code _im} writer validation stays in force, including the
+     * key-alignment invariant: an index whose row groups split a key across a
+     * group it shares with another key is refused here rather than written and
+     * discovered later. Nothing at read time can detect that violation.
+     */
+    public static native long generateIndexMetadata(
+            long writerPtr,
+            long firstKeysPtr,
+            long firstKeysLen,
+            long rowIdMinPtr,
+            long rowIdMinLen,
+            long rowIdMaxPtr,
+            long rowIdMaxLen,
+            long dataBoundariesPtr,
+            long dataBoundariesLen,
+            int count,
+            int keySpaceSize,
+            int keyIdColumn,
+            int rowIdColumn,
+            int firstCoverColumn,
+            int payloadKind
+    ) throws CairoException;
+
     public static native long resultDataLen(long resultPtr);
 
     public static native long resultDataPtr(long resultPtr);

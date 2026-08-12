@@ -21,6 +21,12 @@ use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLeve
 use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::write::Version;
 
+/// Field id a column carries when it belongs to no QuestDB column: the covering
+/// index parquet's synthetic `key_id` and `row_id` columns. `_im` requires
+/// exactly `-1` in their descriptors, which is how its writer tells them from
+/// the covered columns that follow `FIRST_COVER_COLUMN`.
+const SYNTHETIC_COLUMN_ID: i32 = -1;
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
     mut env: JNIEnv,
@@ -1663,7 +1669,12 @@ fn create_partition_template(
             parquet_encoding_config,
         )?;
 
-        if col_id < 0 {
+        // `-1` is the synthetic-column marker, not a writer index: the covering
+        // index parquet's `key_id` and `row_id` columns belong to no QuestDB
+        // column, and `_im` requires exactly `-1` in their descriptors to tell
+        // them apart from the covered columns that follow. Every other negative
+        // value is still a caller error.
+        if col_id < SYNTHETIC_COLUMN_ID {
             return Err(fmt_err!(
                 InvalidLayout,
                 "column '{}' (index {}) has invalid field_id {}",
@@ -1680,9 +1691,14 @@ fn create_partition_template(
         columns.push(column);
     }
 
-    // Check for duplicate field_ids (ids are dense non-negative).
+    // Check for duplicate field_ids (real ids are dense non-negative). Synthetic
+    // columns are exempt: they all carry `-1`, so a duplicate among them is the
+    // expected state rather than a collision.
     let mut seen = vec![false; (max_id + 1) as usize];
     for (i, c) in columns.iter().enumerate() {
+        if c.id == SYNTHETIC_COLUMN_ID {
+            continue;
+        }
         let id = c.id as usize;
         if seen[id] {
             return Err(fmt_err!(
