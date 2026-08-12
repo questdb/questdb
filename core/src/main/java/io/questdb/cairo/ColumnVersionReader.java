@@ -503,6 +503,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * <p>
      * Race-free with concurrent writers: the whole area is commit-immutable, and the caller re-checks the
      * version after this returns.
+     * <p>
+     * The verdict itself is delegated to {@link ChecksumTrailer#classify}, the single shared
+     * present/absent/torn classifier ({@code _cv} is the reference implementation it was generalised
+     * from). This method still owns the EOF/length guard above -- {@code classify} takes a bare address
+     * and does no bounds checking -- and still owns reading the two trailer longs off the mapping.
+     * {@code PRESENT_OK} and {@code ABSENT} both mean "nothing wrong here" (true); only {@code MISMATCH}
+     * means torn (false), exactly as this method returned before the delegation.
      */
     private boolean unsafeVerifyAreaChecksum(long offset, long size) {
         final FilesFacade ff = mem.getFilesFacade();
@@ -514,14 +521,16 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
         // Safe to map the 16-byte trailer now that the real file is known to cover it.
         mem.resize(offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
-        if (mem.getLong(offset + size) != TableUtils.CV_CHECKSUM_MAGIC) {
-            // No MAGIC at offset+size => no real trailer here. This is the legacy page-rounded case: the
-            // bytes are adjacent-area data (or zero), NOT a checksum. Skip the verify (back-compatible).
-            return true;
-        }
-        long stored = mem.getLong(offset + size + Long.BYTES);
-        long computed = TableUtils.calculateCvAreaChecksum(mem.addressOf(offset), size);
-        return stored == computed;
+        long storedMagic = mem.getLong(offset + size);
+        long storedChecksum = mem.getLong(offset + size + Long.BYTES);
+        int classification = ChecksumTrailer.classify(
+                storedMagic,
+                storedChecksum,
+                mem.addressOf(offset),
+                size,
+                TableUtils.CV_CHECKSUM_MAGIC
+        );
+        return classification != ChecksumTrailer.MISMATCH;
     }
 
     private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
