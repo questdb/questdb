@@ -2112,7 +2112,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
-        if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
+        // The fast path below refreshes the size of ONLY the last open partition (see its own
+        // comment: "will only update row count of last partition and append new partitions") and
+        // then appends any brand-new ones. That is sound for a plain table, where only the active
+        // partition can grow without a partitionTableVersion bump.
+        //
+        // A composite table can grow SEVERAL cells in one commit, and a grown cell that is not the
+        // last (ts ASC, cellKey ASC) entry would keep its stale open size here -- the reader-side
+        // half of the same silent short read fixed in TxReader#unsafeLoadPartitions. Send composite
+        // tables down the full reconcile instead; plain tables keep the fast path unchanged.
+        final boolean composite = getLongsPerAttachedPartition() > TableUtils.LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!composite && txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
             if (partitionIndex < txPartitionCount) {

@@ -1070,6 +1070,29 @@ public class TxReader implements Closeable, Mutable {
                 if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {
                     attachedPartitions.clear();
                     unsafeLoadPartitions0(0, txAttachedPartitionsSize);
+                } else if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+                    // COMPOSITE breaks the premise the plain branch below rests on.
+                    //
+                    // That premise: the only attached partition whose SIZE can change without a
+                    // partitionTableVersion bump is the LAST one -- so loading newly appended
+                    // entries and then patching the last entry's size from transientRowCount
+                    // (below) is sufficient. True for a plain table: appends land in the active
+                    // (last) partition, and growing an older one goes through O3, which bumps the
+                    // version.
+                    //
+                    // False for composite. One WAL commit routes rows to MANY cells, and growing
+                    // an existing cell is an ordinary in-order append -- no version bump. Any grown
+                    // cell that is not the array's last (ts ASC, cellKey ASC) entry would keep
+                    // serving its PRE-COMMIT row count: a silent short read, while count() (served
+                    // from _txn totals) still reports the true number. Adding a cell or a day is
+                    // unaffected, because that grows the array and is picked up by the append
+                    // branch -- which is exactly the observed signature: adds fine, non-last growth
+                    // wrong, one row lost per grown non-last cell.
+                    //
+                    // Reload every entry. Plain tables never reach this branch, so their fast path
+                    // and their _txn bytes are untouched.
+                    attachedPartitions.clear();
+                    unsafeLoadPartitions0(0, txAttachedPartitionsSize);
                 } else {
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
                         unsafeLoadPartitions0(
