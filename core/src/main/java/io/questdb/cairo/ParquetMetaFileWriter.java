@@ -61,15 +61,18 @@ public class ParquetMetaFileWriter {
      * the {@code _pm} header at offset 0; the two differ only inside the crash
      * window a rolled-back update leaves behind.
      * <p>
-     * {@code entriesAddr} addresses {@code entryCount} entries of three longs
-     * each: {@code column_id}, {@code index_txn} and {@code im_file_size}. That
-     * is the complete set, not a delta; zero entries drops the section.
+     * {@code entriesAddr} addresses {@code entriesSize} bytes holding
+     * {@code entryCount} entries of three longs each: {@code column_id},
+     * {@code index_txn} and {@code im_file_size}. The byte length travels with
+     * the count and the native side rejects the call unless the two agree, so a
+     * miscounted buffer errors rather than being read past. That is the
+     * complete set, not a delta; zero entries drops the section.
      * <p>
      * The result's {@link #resultDataPtr} bytes go at {@code appendBase}, not at
      * offset 0, and {@link #resultParquetMetaFileSize} is what the caller
      * patches into the header as the last write of the sequence.
      */
-    public static native long buildCoveringIndexAppend(long existingAddr, long parseAnchor, long appendBase, long entriesAddr, int entryCount) throws CairoException;
+    public static native long buildCoveringIndexAppend(long existingAddr, long parseAnchor, long appendBase, long entriesAddr, long entriesSize, int entryCount) throws CairoException;
 
     public static native long create();
 

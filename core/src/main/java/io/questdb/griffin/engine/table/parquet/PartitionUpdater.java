@@ -74,7 +74,7 @@ public class PartitionUpdater implements QuietCloseable {
      * fsyncs the header before the matching {@code _txn} commit. Full creates and
      * rewrites target a non-authoritative file and need only the final fsync.
      * NOSYNC skips both barriers. The caller MUST invoke this after
-     * {@link #updateFileMetadata(long, int)} and the index build, and before the matching
+     * {@link #updateFileMetadata(long, long, int)} and the index build, and before the matching
      * {@code _txn} commit.
      */
     public void commitParquetMeta(boolean sync) {
@@ -224,11 +224,12 @@ public class PartitionUpdater implements QuietCloseable {
      * row group has been updated, and before
      * {@link #commitParquetMeta(boolean)}.
      * <p>
-     * {@code coveringIndexAddr} points at {@code coveringIndexCount} entries of
-     * three longs each: {@code column_id}, {@code index_txn} and
-     * {@code im_file_size}. That is the complete set the new footer must carry,
-     * never a delta, and {@code (0, 0)} is the explicit "drop the section"
-     * answer. There is deliberately no way to spell "inherit whatever the prior
+     * {@code coveringIndexAddr} points at {@code coveringIndexSize} bytes
+     * holding {@code coveringIndexCount} entries of three longs each:
+     * {@code column_id}, {@code index_txn} and {@code im_file_size}. The byte
+     * length travels with the count and the native side rejects the call unless
+     * the two agree. That is the complete set the new footer must carry, never a
+     * delta, and {@code (0, 0, 0)} is the explicit "drop the section" answer. There is deliberately no way to spell "inherit whatever the prior
      * footer had": an in-place update may have replaced the very row group
      * blocks the prior token's index was built over, so an inherited token
      * would name row ids that no longer mean what they meant. A caller that
@@ -241,9 +242,9 @@ public class PartitionUpdater implements QuietCloseable {
      * The caller must hand the superseded artifacts to the reader-gated posting
      * seal purge instead of removing them at the drop point.
      */
-    public long updateFileMetadata(long coveringIndexAddr, int coveringIndexCount) {
+    public long updateFileMetadata(long coveringIndexAddr, long coveringIndexSize, int coveringIndexCount) {
         assert ptr != 0;
-        return updateFileMetadata(ptr, coveringIndexAddr, coveringIndexCount);
+        return updateFileMetadata(ptr, coveringIndexAddr, coveringIndexSize, coveringIndexCount);
     }
 
     public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
@@ -354,7 +355,7 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     // throws CairoException on error, returns file size
-    private static native long updateFileMetadata(long impl, long coveringIndexAddr, int coveringIndexCount);
+    private static native long updateFileMetadata(long impl, long coveringIndexAddr, long coveringIndexSize, int coveringIndexCount);
 
     private static native void updateRowGroup(
             long impl,

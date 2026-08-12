@@ -586,7 +586,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // dropped token named are handed to the reader-gated posting seal
                 // purge by TableWriter, not unlinked here -- a reader pinned to
                 // the prior parquet size still resolves the prior footer.
-                newParquetSize = partitionUpdater.updateFileMetadata(0, 0);
+                newParquetSize = partitionUpdater.updateFileMetadata(0, 0, 0);
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()

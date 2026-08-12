@@ -2304,7 +2304,7 @@ public final class TableUtils {
             // publishes afterwards. Stated explicitly rather than left to a
             // default, because inheriting here would name row ids from the file
             // this one replaces.
-            final long resultParquetSize = partitionUpdater.updateFileMetadata(0, 0);
+            final long resultParquetSize = partitionUpdater.updateFileMetadata(0, 0, 0);
             partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
             return resultParquetSize;
         } catch (Throwable th) {

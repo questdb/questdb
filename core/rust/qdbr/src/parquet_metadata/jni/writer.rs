@@ -31,12 +31,13 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use crate::parquet::error::{fmt_err, parquet_meta_err};
+use crate::parquet_metadata::covering_index_entries;
 use crate::parquet_metadata::error::ParquetMetaErrorKind;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::ColumnFlags;
 use crate::parquet_metadata::writer::ParquetMetaWriter;
 use jni::objects::JClass;
-use jni::sys::jint;
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 use std::slice;
 
@@ -395,9 +396,12 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_destroyResult
 /// resolves to, and `append_base` is the `_pm` header at offset 0; they differ
 /// only inside the crash window a rolled-back update leaves behind.
 ///
-/// `entries_ptr` addresses `entry_count` entries of three `i64` each:
-/// `column_id`, `index_txn`, `im_file_size`. The set is complete, not a delta;
-/// zero entries drops the section.
+/// `entries_ptr` addresses `entries_size` bytes holding `entry_count` entries of
+/// three `i64` each: `column_id`, `index_txn`, `im_file_size`. The byte length
+/// is passed alongside the count and validated against it before any
+/// dereference, so a count that disagrees with the allocation errors instead of
+/// over-reading. The set is complete, not a delta; zero entries drops the
+/// section.
 ///
 /// Returns a `ParquetMetaBuiltFile` whose `data` the caller writes **at
 /// `append_base`**, not at offset 0, and whose `parquet_meta_file_size` the
@@ -410,6 +414,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_buildCovering
     parse_anchor: i64,
     append_base: i64,
     entries_ptr: *const i64,
+    entries_size: jlong,
     entry_count: jint,
 ) -> *mut ParquetMetaBuiltFile {
     let env = &mut env;
@@ -421,37 +426,16 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_buildCovering
         );
         return err.into_cairo_exception().throw(env);
     }
-    if entry_count < 0 || (entry_count > 0 && entries_ptr.is_null()) {
-        let err = fmt_err!(
-            InvalidType,
-            "covering index buffer is null for {entry_count} entries"
-        );
-        return err.into_cairo_exception().throw(env);
-    }
-
-    let mut entries: Vec<(u32, u64, u64)> = Vec::with_capacity(entry_count as usize);
-    for i in 0..entry_count as usize {
-        // SAFETY: Java guarantees `entry_count` entries of three i64 each at
-        // `entries_ptr`, valid for the duration of the call. Read unaligned:
-        // nothing in the JNI contract guarantees the allocation's alignment,
-        // and an unaligned `&[i64]` is undefined behaviour the moment it is
-        // constructed.
-        let entry = unsafe { entries_ptr.add(i * 3) };
-        let column_id = unsafe { entry.read_unaligned() };
-        let index_txn = unsafe { entry.add(1).read_unaligned() };
-        let im_file_size = unsafe { entry.add(2).read_unaligned() };
-        let column_id = match u32::try_from(column_id) {
-            Ok(id) => id,
-            Err(_) => {
-                let err = fmt_err!(
-                    InvalidType,
-                    "covering index entry {i} has out of range column id {column_id}"
-                );
-                return err.into_cairo_exception().throw(env);
-            }
-        };
-        entries.push((column_id, index_txn as u64, im_file_size as u64));
-    }
+    // SAFETY: the JNI caller guarantees `entries_size` readable bytes at
+    // `entries_ptr` for the duration of the call; the helper validates the
+    // count against that length before it dereferences anything.
+    let entries = match unsafe { covering_index_entries(entries_ptr, entries_size, entry_count) } {
+        Ok(entries) => entries,
+        Err(msg) => {
+            let err = fmt_err!(InvalidType, "{msg}");
+            return err.into_cairo_exception().throw(env);
+        }
+    };
 
     // SAFETY: the caller guarantees `append_base` readable bytes at
     // `existing_ptr` for the duration of the call.

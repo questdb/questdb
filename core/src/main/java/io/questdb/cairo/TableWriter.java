@@ -12327,6 +12327,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     parseAnchor,
                     parquetMetaSize,
                     entriesAddr,
+                    entriesSize,
                     merged.size() / 3
             );
             final long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
