@@ -24,7 +24,11 @@
 
 package io.questdb.test.cairo.sql.async;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -42,6 +46,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
@@ -2732,6 +2737,39 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             final FiberRuntime ownerRuntime = new FiberRuntime(1);
             final FiberWalWaitQueue dispatcherWaitQueue = new FiberWalWaitQueue();
             final FiberWalWaitQueue reducerWaitQueue = new FiberWalWaitQueue();
+            final AtomicInteger directStealCount = new AtomicInteger();
+            final WorkStealingStrategy countingStrategy = new WorkStealingStrategy() {
+                @Override
+                public WorkStealingStrategy of(AtomicInteger startedCounter) {
+                    return this;
+                }
+
+                @Override
+                public void onBeforeDirectSteal() {
+                    directStealCount.incrementAndGet();
+                }
+
+                @Override
+                public boolean shouldSteal(int finishedCount) {
+                    return true;
+                }
+            };
+            final FactoryProvider countingStrategyProvider = new DefaultFactoryProvider() {
+                @Override
+                public WorkStealingStrategy getWorkStealingStrategy(
+                        CairoConfiguration configuration,
+                        int workerCount,
+                        StatefulAtom atom
+                ) {
+                    return countingStrategy;
+                }
+            };
+            final CairoConfiguration sequenceConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return countingStrategyProvider;
+                }
+            };
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                     engine,
                     engine.getMessageBus(),
@@ -2740,7 +2778,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
             final UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
                     engine,
-                    configuration,
+                    sequenceConfiguration,
                     engine.getMessageBus(),
                     new StatefulAtom() {
                     },
@@ -2781,6 +2819,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertEquals(1, ownerRuntime.getParkedFiberCount());
                 Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
                 Assert.assertEquals(0, frameSequence.getDoneLatch().getCount());
+                Assert.assertEquals(1, directStealCount.get());
 
                 Assert.assertTrue(dispatcher.tryAcquirePublication());
                 dispatcher.releasePublication();
@@ -2790,6 +2829,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertFalse(ownerTask.isDone());
                 Assert.assertEquals(1, ownerRuntime.getParkedFiberCount());
                 Assert.assertEquals(-1, frameSequence.getDoneLatch().getCount());
+                Assert.assertEquals(2, directStealCount.get());
 
                 reducerWaitQueue.fire(1, false);
                 Assert.assertEquals(1, ownerRuntime.drain(1));

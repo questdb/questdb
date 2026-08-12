@@ -556,7 +556,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     @Test
     public void testStaleCancellerCannotTouchRecycledEntry() throws Exception {
         assertMemoryLeak(() -> {
-            final QueryRegistry registry = engine.getQueryRegistry();
+            final QueryRegistry registry = newSingleEntryRegistry();
             final CountDownLatch entryLookedUp = new CountDownLatch(1);
             final CountDownLatch releaseCanceller = new CountDownLatch(1);
             final AtomicBoolean cancelResult = new AtomicBoolean(true);

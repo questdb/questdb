@@ -245,6 +245,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                             if (dispatcher != null) {
                                 dispatcher.releasePublication();
                                 hasPublication = false;
+                                workStealingStrategy.onBeforeDirectSteal();
                                 if (!stealWork()) {
                                     if (hasCircuitBreakerInterruptionBeenSuperseded(
                                             workStealCircuitBreaker,
@@ -305,6 +306,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                     && hasCircuitBreakerInterruptionBeenSuperseded(circuitBreaker, true)) {
                 break;
             }
+            workStealingStrategy.onBeforeDirectSteal();
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
             } else if (canPark) {
