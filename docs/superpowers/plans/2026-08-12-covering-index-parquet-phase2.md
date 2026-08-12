@@ -580,9 +580,22 @@ git commit -m "feat(idx): seal a covering index as key-aligned parquet"
 
 The artifacts exist but nothing references them, `linkPartitionIndexFiles` still hard-links native sidecars unconditionally, and `parquet → native` has no path back.
 
-**Files:**
+**Files:** publishing the token is a signature change across a JNI boundary, not a setter call. `update_parquet_metadata` takes `seq_txn` as an explicit parameter and constructs the `ParquetMetaUpdateWriter` internally, so no Java caller can reach `set_covering_index` today. The entries (or an explicit clear) must be threaded through every layer:
+
 - Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java:2823,3733` (`linkPartitionIndexFiles` call sites), `:3717` (`_pm` hard-link), `restoreIndexFilesAfterParquetToNative`
+- Modify: `core/src/main/java/io/questdb/griffin/engine/table/parquet/PartitionUpdater.java` — carry the entries to the JNI call
+- Modify: `core/rust/qdbr/src/parquet_write/jni.rs` — accept them at the updater entry point
+- Modify: `core/rust/qdbr/src/parquet_write/update.rs` — hold them on `ParquetUpdater`, mirroring how `self.seq_txn` is held around `:1536`
+- Modify: `core/rust/qdbr/src/parquet_metadata/convert.rs:148-158,219` — widen `update_parquet_metadata`'s signature and call the setter
 - Test: `core/src/test/java/io/questdb/test/cairo/ParquetIndexSealTest.java`
+
+**There are TWO Java call sites reaching `updateFileMetadata()`**, not one: `O3PartitionJob.java:581` and `TableUtils.java:2301`. A change that reasons only about the O3 path leaves the other panicking in debug builds, because Task 3's `debug_assert!` fires on any in-place `_pm` update whose prior footer carried the covering-index bit.
+
+**Dropping the token is not retiring the artifact.** `clear_covering_index()` — and the release-mode fallback — removes the *pointer* while leaving `<col>.pidx.<txn>.parquet` and `<col>.pidx.<txn>._im` on disk. The drop decision and the unlink decision must be the same decision point, or every O3 update over an indexed Parquet partition leaks two files.
+
+**Superseded is not sufficient grounds to delete.** The `_pm` MVCC chain deliberately preserves the prior footer's entry, reachable via `find_footer_for_parquet_size`, so a reader pinned to the prior snapshot still resolves the *old* `index_txn`. Purging must be gated on no reader being able to resolve a footer naming the artifact — not on the token having been superseded. This is also why Step 3 copies `_pm` rather than hard-linking it: copying keeps the two directories' MVCC chains independent enough for the purge to be decidable per-directory.
+
+Expect test churn as well: existing tests that build a `_pm` carrying a covering index and then run an in-place update will start panicking in debug once this task writes the bit.
 
 **Interfaces:**
 - Consumes: `ParquetIndexSeal.seal(...)` from Task 5; the `_pm` covering-index section from Task 3.
@@ -649,12 +662,18 @@ cd ~/claude/wt/pidx-parquet/core/rust/qdbr
 cargo fmt -- --check && cargo clippy --all-targets && cargo test --lib
 cd ~/claude/wt/pidx-parquet/core/rust/qdb-parquet-meta
 cargo fmt -- --check && cargo clippy --all-targets && cargo test --lib
+cargo test --lib --release
 export QDB_TEST_TMPDIR=/dev/shm/qdb-test && mkdir -p $QDB_TEST_TMPDIR
 cd ~/claude/wt/pidx-parquet
 mvn -pl core -Pbuild-rust-library -Dtest='PostingIndex*Test,Covering*Test,IndexMetaFileReaderTest,ParquetIndexSealTest,IndexReaderDefaultsTest,ParquetMetaFileReaderTest,ParquetRowGroupFlushTest,PropServerConfigurationTest,ServerMainTest#testShowParameters,CopyExportTest,PartitionEncoderTest,PartitionUpdaterTest' -DfailIfNoSpecifiedTests=false test
 ```
 
-Both crate directories must be gated separately. Read the surefire reports for real counts and confirm the expected classes actually ran — `-DfailIfNoSpecifiedTests=false` makes a pattern matching nothing report BUILD SUCCESS.
+Both crate directories must be gated separately, and `qdb-parquet-meta` is additionally run in
+**release**. Several guards in that crate are `debug_assert!` with a release fallback, and their
+tests are split by `cfg(debug_assertions)` — the guard test compiles only in debug, the
+fallback-behaviour test only in release. A debug-only run reports the fallback test as `ok` while
+it early-returns and asserts nothing: a vacuous green. The release run takes 0.01s and exercises
+both halves of every such guard, `seq_txn` as well as covering-index. Read the surefire reports for real counts and confirm the expected classes actually ran — `-DfailIfNoSpecifiedTests=false` makes a pattern matching nothing report BUILD SUCCESS.
 
 ## Phase 2C — mapped, not detailed
 
