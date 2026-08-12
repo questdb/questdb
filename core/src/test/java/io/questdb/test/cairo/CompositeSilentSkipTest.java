@@ -24,20 +24,28 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * SP8 Task 10 — the two operations composite SKIPS silently.
  * <p>
- * Composite tables skip split-fragment squash ({@code TableWriter:18229}) and symbol-capacity
- * autoscale ({@code TableWriter:17567}), logging each rather than failing. Everywhere else this
+ * Composite tables skip the INTERNAL split-fragment squash ({@code TableWriter:18229}) and the
+ * INTERNAL symbol-capacity autoscale ({@code TableWriter:17567}), logging each rather than failing.
+ * Note the scope: it is the internal, commit-time work that is skipped. The user-issued
+ * {@code ALTER TABLE ... SQUASH PARTITIONS} is GATED instead, and its gate fires asynchronously via WAL
+ * suspension -- see this file's own test for why that distinction matters. Everywhere else this
  * feature either matches its plain twin or fails loudly, so a silent skip is a deliberate exception
  * — and it is acceptable ONLY if it is provably harmless.
  * <p>
- * These tests assert exactly that: the operation is accepted (it does not throw, unlike a gated
- * operation), and the table remains correct and twin-equal afterwards. What is NOT asserted is that
+ * These tests assert exactly that: the internal skip leaves the table correct and twin-equal
+ * afterwards. Note that "accepted" must be checked as NOT-SUSPENDED, not merely as "execute() did not
+ * throw" -- composite gates on a WAL table fire from the WAL-apply job, long after execute() returns. What is NOT asserted is that
  * the underlying work happened — that is the whole point of a skip. Asserting the skip's internal
  * bookkeeping would pin an implementation detail; asserting the table is still right is the contract.
  * <p>
@@ -96,20 +104,41 @@ public class CompositeSilentSkipTest extends AbstractCairoTest {
 
             assertNotSuspended();
 
-            // An explicit squash request must be ACCEPTED, not merely survivable. Verified against a
-            // plain twin: ALTER TABLE ... SQUASH PARTITIONS is valid syntax and throws on neither table.
-            // This was previously wrapped in a catch that tolerated a throw as "also acceptable"; since
-            // the statement demonstrably does not throw, that catch could only ever have hidden a
-            // regression -- composite starting to refuse a statement plain accepts is exactly the
-            // divergence this suite exists to catch.
+            // The INTERNAL split-fragment squash above is silently skipped. An EXPLICIT
+            // ALTER TABLE ... SQUASH PARTITIONS is a different thing entirely: it is GATED, and the gate
+            // fires ASYNCHRONOUSLY -- execute() returns normally for a WAL table and the refusal lands
+            // when the WAL-apply job runs, suspending the table.
+            //
+            // That distinction is easy to get wrong in exactly one direction, and this comment is here
+            // because it WAS got wrong: an earlier revision asserted the statement was "accepted" on the
+            // strength of execute() not throwing. execute() not throwing says nothing about an async
+            // gate, and the assertions that followed still passed because a refused squash leaves the
+            // data untouched -- a green test over a suspended table.
             execute("alter table c squash partitions");
             drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("c");
+            Assert.assertTrue("explicit SQUASH PARTITIONS must be refused by a composite gate",
+                    engine.getTableSequencerAPI().isSuspended(token));
+            final StringSink error = new StringSink();
+            printSql("select errorMessage from wal_tables() where name = 'c'", error);
+            TestUtils.assertContains(error, "composite");
+            TestUtils.assertContains(error, "SQUASH PARTITIONS");
+
+            // The refusal must also be CLEAN: the table is still fully readable and still twin-equal,
+            // i.e. the gate rejected before mutating anything. Reads are unaffected by suspension --
+            // only WAL application is halted.
+            //
+            // Note what is NOT done here: "ALTER TABLE c RESUME WAL" does not undo this. Resuming
+            // replays the very transaction that was refused, the gate refuses it again, and the table
+            // suspends again. Recovering means skipping that transaction explicitly, which is an
+            // operator decision, not something this test should assert.
             assertTwinEquivalence(5);
         });
     }
 
     private void assertNotSuspended() {
-        org.junit.Assert.assertFalse(
+        Assert.assertFalse(
                 "composite table must not be suspended by a skipped operation",
                 engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
     }
