@@ -3396,7 +3396,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                // An executor that leaves compiledQuery at NONE gave up and fell back to the
+                // execution model below (e.g. compileCreate() bails out for every CREATE
+                // TABLE/VIEW/MATERIALIZED VIEW that isn't CREATE OR REPLACE VIEW). That fallback
+                // path owns completion logging for the statement -- either directly in
+                // compileUsingModel(), or later when the built Operation actually executes (e.g.
+                // executeCreateTable()). Logging "fin" here too would double-log completion.
+                if (compiledQuery.getType() != CompiledQuery.NONE) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
             } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if

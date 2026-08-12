@@ -58,6 +58,12 @@ public class SqlLoggingTest extends AbstractCairoTest {
                 }
             }
             assertOnlyOnce("fin.*?create table x");
+            // CREATE TABLE used to log "fin" twice: once from the keyword-executor's premature
+            // completion log at compile time (id=-1, before the table exists), and once from
+            // executeCreateTable() with the real query-registry id once the table is actually
+            // created. Pin that the surviving line is the real one, not the sentinel -- a fix
+            // that dropped the wrong line would also satisfy assertOnlyOnce above.
+            assertOnlyOnce("fin \\[id=\\d+, sql=`create table x");
             assertOnlyOnce("fin.*?insert into x values");
             assertOnlyOnce("fin.*?select count\\(\\) from x");
             assertOnlyOnce("fin.*?alter table x add");
