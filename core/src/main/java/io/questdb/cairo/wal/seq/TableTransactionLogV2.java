@@ -558,26 +558,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         // record) rather than reading garbage. A legitimate legacy record keeps its historical unverified read.
         // A non-zero stored slot that does not match the body checksum means a torn/partially-written record.
         private void verifyRecordChecksum() {
+            // The rules live in TxnLogRecordVerifier so V1 -- whose CRC sits in the additive
+            // _txnlog.c sidecar rather than a reserved slot -- reaches the same verdict from the
+            // same code. Divergence would make one format fatal and the other blind on the same
+            // torn record.
             final long recordBase = address + txnOffset;
-            final long stored = Unsafe.getLong(recordBase + RESERVED_OFFSET);
-            if (stored == 0L) {
-                if (txn >= checksumFromTxn || Unsafe.getInt(recordBase + TX_LOG_WAL_ID_OFFSET) == 0) {
-                    throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                            .put("absent/torn sequencer txnlog record beyond the durable frontier [txn=").put(txn)
-                            .put(", txnOffset=").put(txnOffset)
-                            .put(']');
-                }
-                return; // legacy record without CRC — read unverified for backward compatibility
-            }
-            final long actual = TableUtils.calculateCvAreaChecksum(recordBase, RESERVED_OFFSET);
-            if (actual != stored) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                        .put("torn sequencer txnlog record [txn=").put(txn)
-                        .put(", txnOffset=").put(txnOffset)
-                        .put(", expected=").put(stored)
-                        .put(", actual=").put(actual)
-                        .put(']');
-            }
+            TxnLogRecordVerifier.verify(
+                    txn,
+                    recordBase,
+                    RESERVED_OFFSET,
+                    Unsafe.getLong(recordBase + RESERVED_OFFSET),
+                    checksumFromTxn,
+                    txnOffset
+            );
         }
 
         @Override

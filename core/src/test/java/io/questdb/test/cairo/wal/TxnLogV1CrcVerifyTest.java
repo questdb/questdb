@@ -1,0 +1,159 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.wal;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * V1 keeps its per-record CRC in the additive {@code _txnlog.c} sidecar. These pin the two verdicts
+ * that matter: a record whose bytes no longer match its CRC is torn and fatal, and a table written
+ * before the sidecar existed still replays unverified.
+ */
+public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
+
+    @Test
+    public void testCorruptedV1RecordIsTorn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table v1_rot (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into v1_rot values ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("insert into v1_rot values ('2024-01-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("v1_rot");
+            // Flip a byte INSIDE the record body so the stored CRC no longer describes it. The
+            // sidecar is left alone: this is bit-rot in _txnlog, which is exactly what the CRC exists
+            // to catch.
+            flipByteInRecord(token, lastTxn(token));
+
+            try {
+                replayFromScratch(token);
+                Assert.fail("expected a torn V1 txnlog record to be rejected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "torn sequencer txnlog record");
+            }
+        });
+    }
+
+    @Test
+    public void testPreSidecarV1RecordsStillReplay() throws Exception {
+        // The false-positive control: records written before the sidecar existed carry no CRC and MUST
+        // still replay. Without the capability watermark this is the case that would throw on every
+        // healthy pre-upgrade table.
+        assertMemoryLeak(() -> {
+            execute("create table v1_legacy (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into v1_legacy values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("v1_legacy");
+            deleteSidecar(token);
+
+            replayFromScratch(token); // must not throw
+            assertQuery("select count() from v1_legacy").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    private long lastTxn(TableToken token) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(token)
+                    .concat(WalUtils.SEQ_DIR)
+                    .concat(WalUtils.TXNLOG_FILE_NAME);
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                return ff.readNonNegativeLong(fd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    private void deleteSidecar(TableToken token) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(token)
+                    .concat(WalUtils.SEQ_DIR)
+                    .concat(WalUtils.TXNLOG_CRC_FILE_NAME);
+            Assert.assertTrue("sidecar should exist before deletion", ff.exists(path.$()));
+            ff.remove(path.$());
+        }
+    }
+
+    private void flipByteInRecord(TableToken token, long txn) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(token)
+                    .concat(WalUtils.SEQ_DIR)
+                    .concat(WalUtils.TXNLOG_FILE_NAME);
+            // Flip the LAST byte of the record (the tail of the commit timestamp), never byte 0 --
+            // byte 0 is structureVersion, and corrupting it makes the sequencer fail to open before
+            // the CRC check ever runs, which would test the wrong thing.
+            final long offset = TableTransactionLogFile.HEADER_SIZE
+                    + (txn - 1) * io.questdb.cairo.wal.seq.TableTransactionLogV1.RECORD_SIZE
+                    + io.questdb.cairo.wal.seq.TableTransactionLogV1.RECORD_SIZE - 1;
+            final long fd = ff.openRW(path.$(), io.questdb.cairo.CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            try {
+                final long buf = io.questdb.std.Unsafe.malloc(1, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Assert.assertEquals(1, ff.read(fd, buf, 1, offset));
+                    final byte b = io.questdb.std.Unsafe.getUnsafe().getByte(buf);
+                    io.questdb.std.Unsafe.getUnsafe().putByte(buf, (byte) (b ^ 0x01));
+                    Assert.assertEquals(1, ff.write(fd, buf, 1, offset));
+                } finally {
+                    io.questdb.std.Unsafe.free(buf, 1, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Walks the sequencer log from txn 0 with a fresh cursor, so the verification runs against what is
+     * actually on disk rather than anything cached.
+     */
+    private void replayFromScratch(TableToken token) {
+        engine.releaseInactive();
+        try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, 1)) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+            }
+        }
+    }
+}

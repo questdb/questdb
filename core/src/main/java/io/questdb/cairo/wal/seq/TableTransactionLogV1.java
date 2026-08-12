@@ -277,6 +277,12 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private long address;
+        // Read-only view of the _txnlog.c CRC sidecar. Absent (fd <= -1) on a table written before the
+        // sidecar existed, in which case crcFirstCoveredTxn stays Long.MAX_VALUE and every record is
+        // classified legacy -- exactly the pre-sidecar behaviour.
+        private long crcBuf;
+        private long crcFd = -1;
+        private long crcFirstCoveredTxn = Long.MAX_VALUE;
         private long fd;
         private FilesFacade ff;
         private long txn;
@@ -295,6 +301,15 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public void close() {
+            if (crcFd > -1) {
+                ff.close(crcFd);
+                crcFd = -1;
+            }
+            crcFirstCoveredTxn = Long.MAX_VALUE;
+            if (crcBuf != 0) {
+                Unsafe.free(crcBuf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                crcBuf = 0;
+            }
             if (fd > 0) {
                 ff.close(fd);
                 fd = 0;
@@ -426,9 +441,63 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             if (txnOffset + 2 * RECORD_SIZE <= mappedLen) {
                 txnOffset += RECORD_SIZE;
                 txn++;
+                verifyRecordChecksum();
                 return true;
             }
             return false;
+        }
+
+        /**
+         * V1's CRC lives in the _txnlog.c sidecar rather than a reserved slot, but the verdict comes
+         * from the same place V2's does, so a torn record cannot be fatal on one format and invisible
+         * on the other.
+         */
+        private void verifyRecordChecksum() {
+            TxnLogRecordVerifier.verify(
+                    txn,
+                    address + txnOffset,
+                    RECORD_SIZE,
+                    readStoredCrc(txn),
+                    crcFirstCoveredTxn,
+                    txnOffset
+            );
+        }
+
+        private long readStoredCrc(long txn) {
+            if (crcFd <= -1 || txn < crcFirstCoveredTxn) {
+                return 0;
+            }
+            final long offset = TxnLogCrcSidecar.BODY_OFFSET + (txn - crcFirstCoveredTxn) * TxnLogCrcSidecar.ENTRY_SIZE;
+            // Raw 8-byte read, NOT readNonNegativeLong: a checksum uses the full 64-bit range, so a
+            // legitimately negative CRC would come back as -1 and read as absent.
+            if (ff.read(crcFd, crcBuf, Long.BYTES, offset) != Long.BYTES) {
+                return 0;
+            }
+            return Unsafe.getUnsafe().getLong(crcBuf);
+        }
+
+        private void openCrcSidecar(FilesFacade ff, boolean bypassFdCache, Path path) {
+            final int len = path.size();
+            try {
+                // Same fd-cache policy as the txnlog itself: the sidecar is a sequencer file and must
+                // not be the one thing that quietly stays cached when the rest does not.
+                path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
+                crcFd = bypassFdCache ? ff.openRONoCache(path.$()) : ff.openRO(path.$());
+                if (crcFd > -1) {
+                    if (ff.read(crcFd, crcBuf, Long.BYTES, 0) == Long.BYTES
+                            && Unsafe.getUnsafe().getLong(crcBuf) == TxnLogCrcSidecar.MAGIC
+                            && ff.read(crcFd, crcBuf, Long.BYTES, 16) == Long.BYTES) {
+                        crcFirstCoveredTxn = Unsafe.getUnsafe().getLong(crcBuf);
+                    } else {
+                        // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
+                        // durability claim, so the cost is lost detection, never a failed read.
+                        ff.close(crcFd);
+                        crcFd = -1;
+                    }
+                }
+            } finally {
+                path.trimTo(len);
+            }
         }
 
         @NotNull
@@ -450,6 +519,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
             this.txnLo = txnLo;
             txn = txnLo;
+            if (crcBuf == 0) {
+                crcBuf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            openCrcSidecar(ff, bypassFdCache, path);
             return this;
         }
 
