@@ -886,10 +886,25 @@ public class TableReader implements Closeable, SymbolTableSource {
      * format-keyed check waves through exactly the silent-empty-result this
      * exists to prevent.
      * <p>
-     * The footer is resolved through this reader's own committed
-     * {@code data.parquet} size, so a reader pinned to an older snapshot asks
-     * the footer that snapshot resolves and gets the answer for the artifacts
-     * that snapshot can still reach.
+     * Read through <b>this reader's own {@code _pm} mapping</b>, the one
+     * {@link #openParquetMetadata} took at partition-open time and sized from
+     * the header this snapshot saw. That is what makes the answer this
+     * snapshot's answer. A fresh open would not: the token publish restates the
+     * same {@code data.parquet} size, so its footer shadows the prior one, and
+     * {@code resolveFooter} -- which walks back from the mapped tail and returns
+     * the newest match -- would hand a pinned reader the writer's latest
+     * {@code index_txn} rather than the one its own snapshot names. Both
+     * footers stay in the file; only a mapping taken before the header patch
+     * can still select the older, and this reader holds exactly such a mapping.
+     * Reusing it also removes the open + mmap + munmap this probe used to pay
+     * on every call.
+     * <p>
+     * Fails closed. On a partition the {@code _txn} says is parquet, an
+     * unreadable {@code _pm} or a footer that does not resolve for the
+     * committed {@code data.parquet} size is corruption, and serving through it
+     * lands on the same silent-empty-result this guard exists to close, so both
+     * throw. Only an unopenable (row-less) partition returns without deciding:
+     * it has no index files to read either way.
      * <p>
      * Reachable only for a POSTING-indexed column of a parquet partition, so
      * the common path costs two comparisons. Remove this when the parquet-form
@@ -903,40 +918,46 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (getPartitionFormatFromMetadata(partitionIndex) != PartitionFormat.PARQUET) {
             return;
         }
+        long addr = getParquetMetadataAddr(partitionIndex);
+        if (addr == 0) {
+            // Not mapped on this reader yet. Open the partition rather than map
+            // a fresh copy: the mapping this probe must read is the snapshot's
+            // own, and every caller needs the partition open anyway.
+            if (openPartition(partitionIndex) < 0) {
+                return;
+            }
+            addr = getParquetMetadataAddr(partitionIndex);
+        }
+        final long fileSize = getParquetMetadataSize(partitionIndex);
+        if (addr == 0 || fileSize == 0) {
+            throw CairoException.critical(0)
+                    .put("could not read the parquet metadata of a partition carrying a posting index [table=")
+                    .put(tableToken.getTableName())
+                    .put(", column=").put(metadata.getColumnName(columnIndex))
+                    .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
+                    .put(']');
+        }
         final int writerIndex = metadata.getWriterIndex(columnIndex);
-        final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-        final int plen = path.size();
         long indexTxn = -1;
-        long addr = 0;
-        long fileSize = 0;
-        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
         try {
-            addr = ParquetMetaFileReader.openAndMapRO(
-                    ff,
-                    pathGenNativePartition(partitionIndex, partitionNameTxn).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
-                    reader
-            );
-            if (addr == 0) {
-                // No readable _pm: nothing published a parquet-form index, so
-                // the native chain is what this partition carries.
-                return;
+            parquetMetaReader.of(addr, fileSize);
+            if (!parquetMetaReader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
+                throw CairoException.critical(0)
+                        .put("could not resolve the parquet metadata footer of a partition carrying a posting index [table=")
+                        .put(tableToken.getTableName())
+                        .put(", column=").put(metadata.getColumnName(columnIndex))
+                        .put(", parquetFileSize=").put(txFile.getPartitionParquetFileSize(partitionIndex))
+                        .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
+                        .put(']');
             }
-            fileSize = reader.getFileSize();
-            if (!reader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
-                return;
-            }
-            for (int i = 0, n = reader.getCoveringIndexCount(); i < n; i++) {
-                if (reader.getCoveringIndexColumnId(i) == writerIndex) {
-                    indexTxn = reader.getCoveringIndexTxn(i);
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                if (parquetMetaReader.getCoveringIndexColumnId(i) == writerIndex) {
+                    indexTxn = parquetMetaReader.getCoveringIndexTxn(i);
                     break;
                 }
             }
         } finally {
-            reader.clear();
-            if (addr != 0) {
-                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
-            path.trimTo(plen);
+            parquetMetaReader.clear();
         }
         if (indexTxn < 0) {
             return;

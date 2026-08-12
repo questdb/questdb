@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -35,11 +36,13 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -439,6 +442,64 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
             engine.releaseInactive();
             assertQuery(COVERED_QUERY).failsWith("has no reader yet");
+        });
+    }
+
+    @Test
+    public void testTheRefusalProbeResolvesThePinnedReadersOwnIndexTxn() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            final long firstIndexTxn;
+            try (Path path = new Path()) {
+                final String firstMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                firstIndexTxn = Numbers.parseLong(
+                        firstMeta.substring("sym.pidx.".length(), firstMeta.length() - "._im".length())
+                );
+            }
+
+            try (TableReader pinned = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                // Map the partition's _pm at the size this snapshot's header
+                // names. Everything published after this point lands past that
+                // tail and is invisible to this mapping. Pinned before the
+                // reindex, so this reader's metadata still carries the POSTING
+                // index and the probe is the thing that decides.
+                Assert.assertTrue(pinned.openPartition(0) > 0);
+                final int symColumnIndex = pinned.getMetadata().getColumnIndex("sym");
+
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                drainWalQueue();
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+
+                // The second seal restated the same data.parquet size, so its
+                // footer shadows the first for anything that maps the _pm now.
+                // This reader must still get its own: the artifacts it can reach
+                // are the ones the first token names, and reporting the writer's
+                // latest index_txn would be an answer about files this snapshot
+                // has no claim on.
+                final long secondIndexTxn;
+                try (Path path = new Path()) {
+                    final String secondMeta = newestFileNamed(
+                            partitionPath(path), "sym.pidx.", "._im", "sym.pidx." + firstIndexTxn + "._im");
+                    secondIndexTxn = Numbers.parseLong(
+                            secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length())
+                    );
+                }
+                Assert.assertTrue(
+                        "the fixture must actually supersede the first token, or the two answers coincide"
+                                + " and this test cannot fail [first=" + firstIndexTxn + ", second=" + secondIndexTxn + ']',
+                        secondIndexTxn > firstIndexTxn
+                );
+
+                try {
+                    pinned.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                    Assert.fail("the parquet-form posting index must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + firstIndexTxn);
+                }
+            }
         });
     }
 
