@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -84,6 +85,9 @@ public class CompositeSymbolCapacityAlterTest extends AbstractCairoTest {
             drainWalQueue();
             assertNotSuspended();
             assertTwinEqual(7);
+            assertSymbolCapacity("c", 1024);
+            assertSymbolCapacity("p", 1024);
+            assertNoStrayDayLevelData();
 
             // A further pass, in case a bad handle only surfaces on the commit after the one that set it.
             insertIntoBoth("('2023-01-02T08:00:00.000000Z','A',8.0),"
@@ -91,6 +95,9 @@ public class CompositeSymbolCapacityAlterTest extends AbstractCairoTest {
             drainWalQueue();
             assertNotSuspended();
             assertTwinEqual(9);
+            assertSymbolCapacity("c", 1024);
+            assertSymbolCapacity("p", 1024);
+            assertNoStrayDayLevelData();
         });
     }
 
@@ -122,7 +129,55 @@ public class CompositeSymbolCapacityAlterTest extends AbstractCairoTest {
             drainWalQueue();
             assertNotSuspended();
             assertTwinEqual(15);
+            assertSymbolCapacity("c", 2048);
+            assertSymbolCapacity("p", 2048);
+            assertNoStrayDayLevelData();
         });
+    }
+
+    /**
+     * The ALTER must actually TAKE EFFECT. Without this, the fix that skips the cell-blind reopen could
+     * be "achieved" by turning the statement into a no-op.
+     * <p>
+     * Read from the symbol map reader rather than {@code SHOW CREATE TABLE}: that renderer omits the
+     * capacity clause entirely in this build, for a PLAIN table just as much as a composite one, so it
+     * cannot witness this at all.
+     */
+    private void assertSymbolCapacity(String table, int expected) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
+            Assert.assertEquals("ALTER must have changed the symbol capacity of " + table,
+                    expected, reader.getSymbolMapReader(1).getSymbolCapacity());
+        }
+    }
+
+    /**
+     * The day-level column files that sit beside a composite day's cell directories must stay EMPTY.
+     * They are a normal artefact of partition creation, but nothing should ever write to them: a
+     * composite table's data lives under {@code <day>/<cell>}. A non-zero size here means cell-blind
+     * code opened one and set an append position on it -- which is exactly what changeSymbolCapacity's
+     * reopen did before it was gated (0 bytes -> 2 MiB per ALTER).
+     */
+    private void assertNoStrayDayLevelData() throws Exception {
+        final java.nio.file.Path root = java.nio.file.Paths.get(configuration.getDbRoot());
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(root, 4)) {
+            walk.filter(p -> !java.nio.file.Files.isDirectory(p))
+                    .filter(p -> p.toString().contains("/c~"))
+                    .filter(p -> {
+                        // a DAY-level column file: <table>/<day>/<name>.d, i.e. its parent is the day
+                        // directory itself rather than a cell directory inside it
+                        final java.nio.file.Path parent = p.getParent();
+                        return p.getFileName().toString().endsWith(".d")
+                                && parent != null && parent.getFileName().toString().startsWith("2023-");
+                    })
+                    .forEach(p -> {
+                        try {
+                            Assert.assertEquals("day-level column file must stay empty on a composite table: "
+                                    + root.relativize(p), 0L, java.nio.file.Files.size(p));
+                        } catch (java.io.IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
+        }
     }
 
     private void assertNotSuspended() {

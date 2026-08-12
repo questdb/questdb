@@ -1740,7 +1740,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                 boolean skipForPosting = metadata.isIndexed(columnIndex)
                         && IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
-                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
+                // This reopen is CELL-BLIND and must not run on a routed composite table: it builds a
+                // DAY path via setStateForTimestamp, while a composite table's column files live under
+                // <day>/<cell>. It therefore opens the day-level <day>/exch.d -- a 0-byte stray that
+                // exists beside the cell directories -- and setColumnAppendPosition then maps and
+                // extends it. MEASURED: one ALTER ... SYMBOL CAPACITY grew that file from 0 bytes to
+                // 2 MiB of pure waste, and left the writer's active handle for the column pointing
+                // outside every cell.
+                //
+                // Data survived only because the composite write path re-resolves its own per-cell
+                // handles and never consults this one -- an unstated invariant of another code path,
+                // which is not something a correctness argument should rest on.
+                //
+                // Skipping the reopen is the repair; the ALTER itself is deliberately NOT gated. Symbol
+                // capacity is a TABLE-GLOBAL property of the column's symbol map with no per-cell
+                // component, so refusing it would be a functional limitation with no safety benefit.
+                // Everything the statement promises -- metadata rewrite, symbol file hard-link/purge,
+                // rebuildCapacity -- has already happened above; this trailing block only restores the
+                // PLAIN append path's handle, which a routed composite table does not use. Precedent:
+                // the sibling scaleSymbolCapacities() skips this same reposition for isRoutedComposite()
+                // tables and they append correctly afterwards. The block is housekeeping (its own catch
+                // calls handleHousekeepingException), not part of the ALTER's contract.
+                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0
+                        && !txWriter.isPartitionParquet(lastPartitionIndex) && !isRoutedComposite()) {
                     long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                     long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
