@@ -682,7 +682,12 @@ public class Bootstrap {
     }
 
     private void verifyWriteBarriers(CairoConfiguration cairoConfig) {
-        if (cairoConfig.getCommitMode() != CommitMode.SYNC) {
+        // ADAPTIVE as well as SYNC: a nobarrier mount means fsync does not flush the device cache, which
+        // breaks the adaptive WAL commit point and the durable epoch for exactly the same reason it breaks
+        // SYNC -- and ADAPTIVE is now the default, so gating on SYNC alone left the warning unreachable for
+        // most installs. NOSYNC/ASYNC make no power-loss promise, so they stay silent.
+        final int commitMode = cairoConfig.getCommitMode();
+        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
             return;
         }
         final CharSequence dbRoot = cairoConfig.getDbRoot();
@@ -692,7 +697,8 @@ public class Bootstrap {
         final int result = WriteBarrierCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
         if (result == WriteBarrierCheck.BARRIERS_DISABLED) {
             log.advisoryW().$("WARNING: db root filesystem is mounted WITHOUT write barriers (nobarrier/barrier=0)")
-                    .$(": with cairo.commit.mode=sync this does NOT provide power-loss durability")
+                    .$(": commit mode ").$(CommitMode.toString(commitMode))
+                    .$(" does NOT provide power-loss durability on this mount")
                     .$((" -- committed data may be LOST on power failure;"))
                     .$(" remount the filesystem with write barriers enabled (the default)")
                     .$(" [dbRoot=").$(dbRoot).$(']').$();

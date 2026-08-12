@@ -177,7 +177,7 @@ public final class FastCommitCheck {
             return UNKNOWN;
         }
         try {
-            final String mounts = readSmallFile(ff, PROC_MOUNTS, PROC_MOUNTS_MAX_BYTES);
+            final String mounts = ProcFs.read(ff, PROC_MOUNTS, PROC_MOUNTS_MAX_BYTES);
             if (mounts == null) {
                 return UNKNOWN;
             }
@@ -381,7 +381,7 @@ public final class FastCommitCheck {
         if (devName == null) {
             return null;
         }
-        return readSmallFile(ff, PROC_FS_EXT4 + devName + "/options", PROC_OPTIONS_MAX_BYTES);
+        return ProcFs.read(ff, PROC_FS_EXT4 + devName + "/options", PROC_OPTIONS_MAX_BYTES);
     }
 
     /**
@@ -389,51 +389,6 @@ public final class FastCommitCheck {
      * Returns {@code null} if the file cannot be opened, has unknown length, or exceeds {@code maxBytes}.
      * (Mirrors the equivalent reader in {@link WriteBarrierCheck}.)
      */
-    /**
-     * Read a {@code /proc} or {@code /sys} pseudo-file in full. Public so the pseudo-file sizing rule can be
-     * asserted directly: {@code classifyDbRoot} early-returns off Linux, so a test that goes through it
-     * cannot exercise this on any other platform -- which is how the fstat-sizing bug survived.
-     */
-    public static String readSmallFile(FilesFacade ff, String path, int maxBytes) {
-        long fd = -1;
-        long mem = 0;
-        long allocSize = 0;
-        try (Path p = new Path()) {
-            p.of(path);
-            fd = ff.openRONoCache(p.$());
-            if (fd < 0) {
-                return null;
-            }
-            // Size the read from maxBytes, NOT from ff.length(fd): every file this reader targets lives in
-            // /proc or /sys, and pseudo-files do not report a usable size. Measured on Linux 6.8:
-            //   /proc/mounts                 fstat=0     readable=2007
-            //   /proc/fs/ext4/<dev>/options  fstat=0     readable=305
-            //   /sys/... (sysfs)             fstat=4096  readable=11
-            // Trusting fstat therefore read ZERO bytes and returned an empty string, which
-            // findLongestPrefixMount reads as "no mounts" -> classifyDbRoot returns UNKNOWN -> the caller
-            // treats fast_commit as absent and LEAVES BATCHED syncfs ENABLED. That is the exact
-            // configuration this class exists to rule out, so the guard never fired on a real Linux host.
-            // A single pread of up to maxBytes gets the whole content for every file of interest.
-            allocSize = maxBytes + 1L;
-            mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-            final long bytesRead = ff.read(fd, mem, maxBytes, 0);
-            if (bytesRead < 0) {
-                return null;
-            }
-            Unsafe.getUnsafe().putByte(mem + bytesRead, (byte) 0);
-            final Utf8StringSink sink = new Utf8StringSink();
-            Utf8s.strCpy(mem, mem + bytesRead, sink);
-            return sink.toString();
-        } finally {
-            if (fd >= 0) {
-                ff.close(fd);
-            }
-            if (mem != 0) {
-                Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-    }
-
     private static boolean regionEqualsAscii(CharSequence s, int from, int to, String ascii) {
         if (to - from != ascii.length()) {
             return false;

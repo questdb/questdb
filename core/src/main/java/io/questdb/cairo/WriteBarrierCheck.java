@@ -176,7 +176,7 @@ public final class WriteBarrierCheck {
             return UNKNOWN;
         }
         try {
-            String content = readSmallFile(ff, PROC_MOUNTS, PROC_MOUNTS_MAX_BYTES);
+            String content = ProcFs.read(ff, PROC_MOUNTS, PROC_MOUNTS_MAX_BYTES);
             if (content == null) {
                 return UNKNOWN;
             }
@@ -265,42 +265,6 @@ public final class WriteBarrierCheck {
      * Java {@link String} using native memory.  Returns {@code null} if the file cannot
      * be opened or is larger than {@code maxBytes}.
      */
-    private static String readSmallFile(FilesFacade ff, String path, int maxBytes) {
-        long fd = -1;
-        long mem = 0;
-        long allocSize = 0;
-        try (Path p = new Path()) {
-            p.of(path);
-            fd = ff.openRONoCache(p.$());
-            if (fd < 0) {
-                return null;
-            }
-            long size = ff.length(fd);
-            if (size < 0 || size > maxBytes) {
-                return null;
-            }
-            allocSize = size + 1;
-            mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-            long bytesRead = ff.read(fd, mem, size, 0);
-            if (bytesRead != size) {
-                return null;
-            }
-            // Null-terminate for safety, though we use explicit length below.
-            Unsafe.getUnsafe().putByte(mem + size, (byte) 0);
-
-            // Copy native memory to a Java String via Utf8s.
-            Utf8StringSink sink = new Utf8StringSink();
-            Utf8s.strCpy(mem, mem + size, sink);
-            return sink.toString();
-        } finally {
-            if (fd >= 0) {
-                ff.close(fd);
-            }
-            if (mem != 0) {
-                Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-    }
 
     /**
      * Split a single line (from {@code lineStart} inclusive to {@code lineEnd} exclusive)
