@@ -72,6 +72,12 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             runner.createTables("exercised");
             runner.applyGeneratedTransactions(800, 40);
             runner.assertTwinEqual();
+            // Task 5 added a fifth floor ("gated operations attempted >= 1") to assertExercised() --
+            // a run must also prove a composite gate actually rejects something on this run's shape,
+            // not just that it routed cells. applyGeneratedTransactions() never generates a gated op
+            // (every structural-DDL probability is 0.0 through Task 4), so this run must exercise one
+            // explicitly before the floor can pass.
+            runner.applyGatedOperation("ALTER TABLE " + runner.compositeName() + " DROP COLUMN qty");
             runner.assertExercised();   // must throw if the run was vacuous
         });
     }
@@ -88,6 +94,22 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             } catch (AssertionError expected) {
                 io.questdb.test.tools.TestUtils.assertContains(expected.getMessage(), "distinct cellKeys");
             }
+        });
+    }
+
+    @Test
+    public void testGatedOperationThrowsAndLeavesNoDamage() throws Exception {
+        assertMemoryLeak(() -> {
+            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(11L, 13L));
+            runner.createTables("gated");
+            runner.applyGeneratedTransactions(400, 20);
+            runner.assertTwinEqual();
+
+            long before = runner.compositeRowCount();
+            runner.applyGatedOperation("ALTER TABLE " + runner.compositeName() + " DROP COLUMN qty");
+            org.junit.Assert.assertEquals("a rejected op must not change row count",
+                    before, runner.compositeRowCount());
+            runner.assertTwinEqual();   // and must leave the table twin-equal
         });
     }
 }

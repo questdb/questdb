@@ -26,6 +26,7 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
@@ -42,13 +43,35 @@ import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.fuzz.FuzzAddColumnOperation;
+import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
+import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
+import io.questdb.test.fuzz.FuzzChangeSymbolCapacityOperation;
+import io.questdb.test.fuzz.FuzzConvertPartitionToNativeOperation;
+import io.questdb.test.fuzz.FuzzConvertPartitionToParquetOperation;
+import io.questdb.test.fuzz.FuzzDropColumnOperation;
+import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
+import io.questdb.test.fuzz.FuzzDropPartitionOperation;
+import io.questdb.test.fuzz.FuzzInsertOperation;
+import io.questdb.test.fuzz.FuzzQueryOperation;
+import io.questdb.test.fuzz.FuzzRenameColumnOperation;
+import io.questdb.test.fuzz.FuzzSetParquetEncodingOperation;
+import io.questdb.test.fuzz.FuzzSetTableFormatOperation;
+import io.questdb.test.fuzz.FuzzSetTtlOperation;
+import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.fuzz.FuzzTruncateTableOperation;
+import io.questdb.test.fuzz.FuzzValidateSymbolFilterOperation;
 import io.questdb.test.tools.TestUtils;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 /**
  * Differential fuzz harness: builds a composite (subject) table and a plain (reference) table
@@ -72,7 +95,22 @@ public class CompositeFuzzRunner {
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
     private String compositeName;
+    private int gatedAttempted;
     private String plainName;
+
+    /**
+     * Whether a given {@code Fuzz*Operation} class is safe to apply, unchanged, to BOTH twins
+     * ({@link Support#SUPPORTED}) or must instead be exercised only via {@link #applyGatedOperation}
+     * against the composite subject, expecting a throw and asserting no damage ({@link
+     * Support#GATED}). Per spec §5.1: every concrete {@code FuzzTransactionOperation} implementation
+     * in {@code io.questdb.test.fuzz} must appear here -- enforced by {@code
+     * CompositeFuzzOpCoverageTest} (Task 6), which scans the package rather than trusting this list to
+     * stay complete on its own.
+     */
+    public enum Support {
+        GATED,
+        SUPPORTED
+    }
 
     private CompositeFuzzRunner(CairoEngine engine, Rnd rnd) {
         this.engine = engine;
@@ -151,8 +189,122 @@ public class CompositeFuzzRunner {
         }
     }
 
+    /**
+     * Classifies every concrete {@code Fuzz*Operation} implementation in {@code io.questdb.test.fuzz}
+     * as {@link Support#SUPPORTED} (safe to apply, unchanged, to both twins) or {@link Support#GATED}
+     * (must not be applied to the composite subject in the ordinary twin-apply flow -- either because
+     * the product itself throws a "composite partitioning does not yet support ..." {@link
+     * CairoException} for it, or because applying it would silently break the twin-equality invariant
+     * some other way). Keyed by class identity ({@link IdentityHashMap}), not equality, since these
+     * are all distinct concrete classes.
+     * <p>
+     * Evidence per entry (verified against {@code CompositeUnsupportedOpsTest} and the production
+     * gate sites in {@code TableWriter}/{@code SqlCompilerImpl}, not against design-doc prose):
+     * <ul>
+     *     <li>{@link FuzzDropColumnOperation}, {@link FuzzRenameColumnOperation}, {@link
+     *     FuzzChangeColumnTypeOperation}, {@link FuzzDropPartitionOperation}, {@link
+     *     FuzzConvertPartitionToParquetOperation}, {@link FuzzConvertPartitionToNativeOperation},
+     *     {@link FuzzSetTtlOperation}, {@link FuzzAddCoveringIndexOperation} -- GATED. Each has a
+     *     dedicated {@code CompositeUnsupportedOpsTest} case confirming a synchronous- or
+     *     suspension-path {@link CairoException} containing "composite partitioning does not yet
+     *     support ...".</li>
+     *     <li>{@link FuzzAddColumnOperation} -- SUPPORTED. {@code TableWriter#addColumn} has dedicated
+     *     composite-aware handling ({@code writeCompositeAddColumnColumnVersions}) for every column
+     *     type EXCEPT a newly-added SYMBOL column, which hits its own, narrower, orthogonal gate ("ADD
+     *     COLUMN of type SYMBOL is not yet supported on composite-partitioned tables") independent of
+     *     this classification -- a caller generating a SYMBOL-typed add must expect that gate
+     *     separately.</li>
+     *     <li>{@link FuzzSetTableFormatOperation}, {@link FuzzSetParquetEncodingOperation} --
+     *     SUPPORTED. Both {@code TableWriter#setMetaTableFormat} and {@code
+     *     #setColumnParquetEncoding} are pure metadata writes (a default-format flag / a per-column
+     *     encoding config used only if a partition is LATER converted to parquet, itself already
+     *     gated) with no per-cell or per-partition file interaction at all.</li>
+     *     <li>{@link FuzzInsertOperation}, {@link FuzzStableInsertOperation}, {@link
+     *     FuzzTruncateTableOperation}, {@link FuzzQueryOperation}, {@link
+     *     FuzzValidateSymbolFilterOperation} -- SUPPORTED. The well-established composite-safe core
+     *     (insert/truncate/read), per {@code CompositeUnsupportedOpsTest}'s own SUPPORTED half.</li>
+     *     <li>{@link FuzzChangeSymbolCapacityOperation} -- GATED, but NOT because the product rejects
+     *     it: {@code TableWriter#changeSymbolCapacity} (reached directly from {@code ALTER TABLE ...
+     *     ALTER COLUMN ... SYMBOL CAPACITY n}) has NO {@code isRoutedComposite()} check, unlike its
+     *     sibling {@code changeColumnType}. Its own reopen step resolves the last partition via the
+     *     cellKey-0-only path -- {@code TableWriter#scaleSymbolCapacities()}'s doc, guarding the ONLY
+     *     OTHER call site of the same method, calls this "a genuine correctness risk, not merely a
+     *     missed optimization" for a routed composite table. A minimal SQL repro against a routed
+     *     2-cell table did not reproduce visible corruption (the risky reopen branch requires
+     *     transientRowCount &gt; 0 at ALTER time, a narrower timing window this repro did not hit), so
+     *     this is reported as a SUSPECTED, unconfirmed defect, not a proven one -- classified GATED
+     *     here purely for harness safety (never apply it to the twin) pending a proper audit.</li>
+     *     <li>{@link FuzzDropCreateTableOperation} -- GATED, also not a product rejection: it drops
+     *     and recreates the table via {@code TableStructMetadataAdapter}, which carries no partition-
+     *     spec/dimension information at all, so replaying it against the composite subject would
+     *     silently strip compositeness rather than throw. GATED here purely to keep the harness from
+     *     ever doing that, not because any composite gate fires.</li>
+     * </ul>
+     */
+    private static final Map<Class<? extends FuzzTransactionOperation>, Support> OPERATION_SUPPORT = buildOperationSupportMap();
+
     public Axes axes() {
         return axes;
+    }
+
+    /**
+     * Executes {@code sql}, expecting it to be REFUSED by a composite gate, and asserts the refusal
+     * left no damage: the composite subject is still readable, its row count is unchanged, and it
+     * remains twin-equal with the plain reference. See the class javadoc on {@link Support#GATED} for
+     * why this matters -- a gate that throws after partially mutating {@code _txn} or the directory
+     * tree would pass every pre-existing test and fail only here.
+     */
+    public void applyGatedOperation(String sql) throws Exception {
+        gatedAttempted++;
+        // CompositeFuzzRunner is not an AbstractCairoTest subclass (it is a plain helper used BY test
+        // classes, in a different package), so it cannot reach that class's protected static
+        // execute(CharSequence) -- engine.execute(...) against this runner's own sqlExecutionContext
+        // is the equivalent direct-engine call every other method in this class already uses (see
+        // createTables()).
+        boolean threwSynchronously;
+        try {
+            engine.execute(sql, sqlExecutionContext);
+            threwSynchronously = false;
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "composite");
+            threwSynchronously = true;
+        }
+        if (!threwSynchronously) {
+            // Most composite DDL gates fire asynchronously, from the WAL-apply job, not from
+            // execute() itself -- execute() only enqueues a structural change for a WAL table.
+            // Confirmed empirically: "ALTER TABLE ... DROP COLUMN" against this runner's WAL
+            // composite table returns normally from execute() and instead suspends the table once
+            // drained. CompositeUnsupportedOpsTest's own assertCompositeGateFires established this
+            // exact dual-path idiom; mirrored here rather than assuming every gate throws
+            // synchronously, which would make this method a false green for the common case.
+            TestUtils.drainWalQueue(engine);
+            TableToken token = engine.verifyTableName(compositeName);
+            if (!engine.getTableSequencerAPI().isSuspended(token)) {
+                throw new AssertionError("expected a composite gate to reject: " + sql);
+            }
+            StringSink errSink = new StringSink();
+            TestUtils.printSql(engine, sqlExecutionContext,
+                    "select errorMessage from wal_tables() where name = '" + compositeName + "'", errSink);
+            TestUtils.assertContains(errSink, "composite");
+        }
+    }
+
+    /**
+     * Looks up a {@code Fuzz*Operation} class's {@link Support} classification. Returns {@code null}
+     * for a class absent from {@link #OPERATION_SUPPORT} -- {@code CompositeFuzzOpCoverageTest} (Task
+     * 6) is what turns that into a loud test failure naming the class; this method itself stays a
+     * plain lookup so it is usable from ordinary (non-test-failure) call sites too.
+     */
+    public static Support classify(Class<? extends FuzzTransactionOperation> opClass) {
+        return OPERATION_SUPPORT.get(opClass);
+    }
+
+    /**
+     * Read-only view of the full classification map, for {@code CompositeFuzzOpCoverageTest} (Task 6)
+     * to diff against its own package scan.
+     */
+    public static Map<Class<? extends FuzzTransactionOperation>, Support> operationSupportMap() {
+        return Collections.unmodifiableMap(OPERATION_SUPPORT);
     }
 
     /**
@@ -266,8 +418,10 @@ public class CompositeFuzzRunner {
      * the first unmet floor, naming the seed and {@link Axes#toString()} so an under-exercising run
      * is a loud, diagnosable failure rather than a silently-vacuous green.
      * <p>
-     * Per the brief, the "gated operations attempted" floor (spec Sec 4.5's fifth row) is wired in
-     * Task 5, once gate classification exists -- not checked here.
+     * The fifth floor, "gated operations attempted" (spec Sec 4.5's fifth row), is checked last, via
+     * {@link #gatedAttempted}: a run that never called {@link #applyGatedOperation} never proved a
+     * gate actually rejects anything on THIS run's shape. Wired in Task 5, once gate classification
+     * existed.
      * <p>
      * The cellKey floor is normally &ge;2; it relaxes to &ge;1 only when the generated data itself
      * cannot possibly have produced a second cell -- i.e. every row shares one {@code (exch, sym)}
@@ -313,6 +467,12 @@ public class CompositeFuzzRunner {
                     "rows landing in a non-last (already-populated) partition=" + existingCellRows + " floor=1"
             ));
         }
+
+        if (gatedAttempted < 1) {
+            throw new AssertionError(exercisedFailureMessage(
+                    "gated operations attempted=" + gatedAttempted + " floor=1"
+            ));
+        }
     }
 
     public int comparedShapeCount() {
@@ -321,6 +481,14 @@ public class CompositeFuzzRunner {
 
     public String compositeName() {
         return compositeName;
+    }
+
+    /**
+     * {@code count(*)} on the composite subject -- used by {@link #applyGatedOperation}'s callers to
+     * assert a rejected gate left row count unchanged.
+     */
+    public long compositeRowCount() throws SqlException {
+        return queryLong("SELECT count() FROM " + compositeName);
     }
 
     /**
@@ -375,6 +543,37 @@ public class CompositeFuzzRunner {
 
     public String plainName() {
         return plainName;
+    }
+
+    /**
+     * Builds {@link #OPERATION_SUPPORT}. A plain method (not an inline initializer) so the 18-entry
+     * table reads as a table, and so a missing/extra entry is easy to spot in review against {@link
+     * #OPERATION_SUPPORT}'s own javadoc, which documents the evidence for every row.
+     */
+    private static Map<Class<? extends FuzzTransactionOperation>, Support> buildOperationSupportMap() {
+        Map<Class<? extends FuzzTransactionOperation>, Support> m = new IdentityHashMap<>();
+        // SUPPORTED -- safe to apply, unchanged, to both twins.
+        m.put(FuzzInsertOperation.class, Support.SUPPORTED);
+        m.put(FuzzStableInsertOperation.class, Support.SUPPORTED);
+        m.put(FuzzTruncateTableOperation.class, Support.SUPPORTED);
+        m.put(FuzzQueryOperation.class, Support.SUPPORTED);
+        m.put(FuzzValidateSymbolFilterOperation.class, Support.SUPPORTED);
+        m.put(FuzzAddColumnOperation.class, Support.SUPPORTED);
+        m.put(FuzzSetTableFormatOperation.class, Support.SUPPORTED);
+        m.put(FuzzSetParquetEncodingOperation.class, Support.SUPPORTED);
+        // GATED -- product throws a "composite partitioning does not yet support ..." CairoException.
+        m.put(FuzzDropColumnOperation.class, Support.GATED);
+        m.put(FuzzRenameColumnOperation.class, Support.GATED);
+        m.put(FuzzChangeColumnTypeOperation.class, Support.GATED);
+        m.put(FuzzDropPartitionOperation.class, Support.GATED);
+        m.put(FuzzConvertPartitionToParquetOperation.class, Support.GATED);
+        m.put(FuzzConvertPartitionToNativeOperation.class, Support.GATED);
+        m.put(FuzzSetTtlOperation.class, Support.GATED);
+        m.put(FuzzAddCoveringIndexOperation.class, Support.GATED);
+        // GATED -- harness-safety only; the product itself does not throw for these (see javadoc).
+        m.put(FuzzChangeSymbolCapacityOperation.class, Support.GATED);
+        m.put(FuzzDropCreateTableOperation.class, Support.GATED);
+        return m;
     }
 
     /**
