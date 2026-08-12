@@ -211,46 +211,76 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
 
             execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
             drainWalQueue();
-            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
-            drainWalQueue();
-            engine.releaseInactive();
 
             try (Path path = new Path()) {
                 final FilesFacade ff = configuration.getFilesFacade();
-                final String secondMeta = newestFileNamed(partitionPath(path), "sym.pidx.", "._im", firstMeta);
-                final long secondIndexTxn = Numbers.parseLong(
-                        secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length())
-                );
-                Assert.assertTrue(
-                        "the second seal must publish a later index txn [first=" + firstIndexTxn
-                                + ", second=" + secondIndexTxn + ']',
-                        secondIndexTxn > firstIndexTxn
-                );
-                final long imFileSize = ff.length(partitionPath(path).concat(secondMeta).$());
-                assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, secondIndexTxn, imFileSize);
+                // The reader the purge window is about, opened before the second
+                // seal and held across it. Its _pm mapping is the pre-publish
+                // one, so it still resolves the first seal's index_txn, and the
+                // files that token names must outlive the supersession for as
+                // long as it lives. isRangeAvailable(from, to) blocks only on
+                // readers inside the half-open [from, to), so a window that stops
+                // at the writer's committed txn does not see this reader at all.
+                try (TableReader pinned = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                    final long pinnedTxn = pinned.getTxn();
 
-                // Superseded is not grounds to delete. The prior footer is still
-                // in the _pm MVCC chain and a reader pinned to the older
-                // committed data.parquet size resolves it, and with it the old
-                // index_txn, so the pair must survive the supersession itself.
-                Assert.assertTrue(
-                        "the superseded _im must outlive the supersession",
-                        ff.exists(partitionPath(path).concat(firstMeta).$())
-                );
-                Assert.assertTrue(
-                        "the superseded index parquet must outlive the supersession",
-                        ff.exists(partitionPath(path).concat(firstParquet).$())
-                );
+                    execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                    drainWalQueue();
+                    engine.releaseInactive();
 
-                // It is the reader-gated purge that retires them, from the entry
-                // the drop point handed it: same decision point, so the pointer
-                // and the files it named cannot part company.
-                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
-                    for (int i = 0; i < 8; i++) {
-                        setCurrentMicros(Math.max(currentMicros, 0) + 10_000_000L);
-                        job.run();
-                    }
+                    final String secondMeta = newestFileNamed(partitionPath(path), "sym.pidx.", "._im", firstMeta);
+                    final long secondIndexTxn = Numbers.parseLong(
+                            secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length())
+                    );
+                    Assert.assertTrue(
+                            "the second seal must publish a later index txn [first=" + firstIndexTxn
+                                    + ", second=" + secondIndexTxn + ']',
+                            secondIndexTxn > firstIndexTxn
+                    );
+                    // Without this the test is vacuous: a reader pinned two or
+                    // more txns below the seal lies inside the too-narrow window
+                    // as well, so it would block the purge under either bound and
+                    // could not tell them apart. The seal names its artifacts with
+                    // txWriter.getTxn() + 1, so the reader has to sit at exactly
+                    // secondIndexTxn - 1, the boundary txn the narrow window
+                    // excludes.
+                    Assert.assertEquals(
+                            "the pinned reader must sit exactly one txn below the seal, or this test cannot"
+                                    + " tell the correct purge window from one that is a txn too narrow",
+                            secondIndexTxn - 1,
+                            pinnedTxn
+                    );
+                    final long imFileSize = ff.length(partitionPath(path).concat(secondMeta).$());
+                    assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, secondIndexTxn, imFileSize);
+
+                    // Supersession alone unlinks nothing.
+                    Assert.assertTrue(
+                            "the superseded _im must outlive the supersession",
+                            ff.exists(partitionPath(path).concat(firstMeta).$())
+                    );
+                    Assert.assertTrue(
+                            "the superseded index parquet must outlive the supersession",
+                            ff.exists(partitionPath(path).concat(firstParquet).$())
+                    );
+
+                    // Nor does the purge job, while that reader is alive.
+                    runPostingSealPurgeJob();
+                    Assert.assertTrue(
+                            "the purge must not unlink the superseded _im while a reader pinned at the"
+                                    + " pre-seal txn still resolves the token that names it",
+                            ff.exists(partitionPath(path).concat(firstMeta).$())
+                    );
+                    Assert.assertTrue(
+                            "the purge must not unlink the superseded index parquet while a reader pinned"
+                                    + " at the pre-seal txn still resolves the token that names it",
+                            ff.exists(partitionPath(path).concat(firstParquet).$())
+                    );
                 }
+
+                // Reader gone: the same job now retires the pair, from the entry
+                // the drop point handed it -- same decision point, so the pointer
+                // and the files it named cannot part company.
+                runPostingSealPurgeJob();
                 Assert.assertFalse(
                         "the purge must unlink the superseded _im",
                         ff.exists(partitionPath(path).concat(firstMeta).$())
@@ -778,6 +808,21 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         } finally {
             reader.clear();
             ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        }
+    }
+
+    /**
+     * Drives the reader-gated purge to quiescence. The operator returns false
+     * and re-queues while the scoreboard says a reader can still be inside the
+     * retired version's window, and the job backs off between attempts, so a
+     * single {@code run()} proves nothing either way.
+     */
+    private void runPostingSealPurgeJob() throws Exception {
+        try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+            for (int i = 0; i < 8; i++) {
+                setCurrentMicros(Math.max(currentMicros, 0) + 10_000_000L);
+                job.run();
+            }
         }
     }
 

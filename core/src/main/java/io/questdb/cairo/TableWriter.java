@@ -12068,6 +12068,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long currentTableTxn,
             LongList orphanSealTxns
     ) {
+        publishAbandonedPostingSealPurges(
+                columnName,
+                columnNameTxn,
+                partitionTimestamp,
+                partitionNameTxn,
+                currentTableTxn,
+                currentTableTxn,
+                orphanSealTxns
+        );
+    }
+
+    /**
+     * {@code toTableTxn} is the task's scoreboard upper bound: the txn at which
+     * the version being retired stopped being the committed view. It is kept
+     * separate from {@code currentTableTxn}, which is only the writer's
+     * committed txn used to decide whether the task may be published now or
+     * must stay deferred. They coincide for an abandoned seal (already invisible
+     * at the current txn) but not for one superseded inside the writer's
+     * uncommitted window, whose bound is a txn that has not committed yet and
+     * which therefore must stay deferred until it does.
+     */
+    private void publishAbandonedPostingSealPurges(
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTableTxn,
+            long toTableTxn,
+            LongList orphanSealTxns
+    ) {
         synchronized (parquetSealPurgeLock) {
             publishAbandonedPostingSealPurges0(
                     columnName,
@@ -12075,6 +12105,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionTimestamp,
                     partitionNameTxn,
                     currentTableTxn,
+                    toTableTxn,
                     orphanSealTxns
             );
         }
@@ -12086,6 +12117,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp,
             long partitionNameTxn,
             long currentTableTxn,
+            long toTableTxn,
             LongList orphanSealTxns
     ) {
         if (orphanSealTxns.size() == 0) {
@@ -12103,7 +12135,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionBy,
                     timestampType,
                     0L,
-                    currentTableTxn
+                    toTableTxn
             );
             deferredPostingSealPurges.add(task);
         }
@@ -12213,10 +12245,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * The footer carries the complete set, never a delta, so any entry the
      * prior footer held for a column this pass did not reseal is copied
      * forward. An entry this pass did reseal is replaced, and its previous
-     * {@code index_txn} is handed to the reader-gated posting seal purge: the
-     * prior footer stays reachable through {@code resolveFooter} for as long as
-     * a reader is pinned to the older {@code data.parquet} size, so the
-     * artifacts it names must outlive the supersession.
+     * {@code index_txn} is handed to the reader-gated posting seal purge.
+     * <p>
+     * <b>The appended footer shadows the prior one; it does not leave it
+     * selectable.</b> This publish restates the same
+     * {@code parquet_footer_offset} / {@code parquet_footer_length}, so the new
+     * footer derives the same {@code data.parquet} size as the one it replaces,
+     * and {@code resolveFooter(parquetFileSize)} walks back from the mapped
+     * tail and returns the <i>newest</i> match. Both footers remain physically
+     * in the file, but no map made after the header patch can select the older
+     * one for that parquet size. What preserves a pinned reader's own view is
+     * not the chain, it is the mapping: {@code TableReader} maps the
+     * {@code _pm} at the size its own snapshot's header named and resolves from
+     * that tail, so a reader that mapped before the header patch never sees
+     * this footer at all. That is exactly the population the superseded
+     * artifacts must outlive, and it is what the purge's scoreboard window has
+     * to cover -- see {@link #purgeSupersededParquetIndexArtifacts}.
      */
     private void publishParquetIndexTokens(long partitionTimestamp, long partitionNameTxn, long parquetFileSize) {
         if (parquetIndexTokens.size() == 0) {
@@ -12231,6 +12275,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final LongList merged = new LongList();
         final LongList supersededColumnIds = new LongList();
         final LongList supersededIndexTxns = new LongList();
+        // Per superseded entry, the index txn of the seal that replaced it --
+        // the txn at which the supersession becomes visible, and therefore the
+        // purge window's upper bound. Carried rather than recomputed so the
+        // bound and the artifact names come from one value.
+        final LongList supersededVisibleAtTxns = new LongList();
         long entriesAddr = 0;
         long entriesSize = 0;
         long parquetMetaAddr = 0;
@@ -12261,6 +12310,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (parquetIndexTokens.getQuick(resealedAt + 1) != existingIndexTxn) {
                     supersededColumnIds.add(existingColumnId);
                     supersededIndexTxns.add(existingIndexTxn);
+                    supersededVisibleAtTxns.add(parquetIndexTokens.getQuick(resealedAt + 1));
                 }
             }
             for (int i = 0, n = parquetIndexTokens.size(); i < n; i++) {
@@ -12324,12 +12374,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetIndexTokens.clear();
             path.trimTo(pathSize);
         }
+        // The _pm changed under a partition whose name txn, row count and
+        // data.parquet size are all unchanged, so nothing else in the _txn tells
+        // a reader to drop the mapping it took at open time. Without this bump
+        // reconcileOpenPartitions takes its fast path, a reader can advance past
+        // the seal's txn still holding the pre-publish mapping, and the purge
+        // window below -- which is expressed in table txns -- would no longer
+        // cover it. Bumping makes reconcileOpenPartitions0 close the parquet
+        // partition, so a reader either still holds the old mapping and is still
+        // pinned below visibleAtTxn, or re-maps and reads the new footer.
+        txWriter.bumpPartitionTableVersion();
         for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
             purgeSupersededParquetIndexArtifacts(
                     supersededColumnIds.getQuick(i),
                     partitionTimestamp,
                     partitionNameTxn,
-                    supersededIndexTxns.getQuick(i)
+                    supersededIndexTxns.getQuick(i),
+                    supersededVisibleAtTxns.getQuick(i)
             );
         }
     }
@@ -12509,15 +12570,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * reader-gated posting seal purge, which unlinks it only once the table's
      * scoreboard says no reader can still be inside its visibility window.
      * <p>
-     * Supersession alone is not grounds to delete. The {@code _pm} MVCC chain
-     * deliberately keeps the prior footer, and a reader pinned to the older
-     * committed {@code data.parquet} size resolves it through
-     * {@code resolveFooter} and so still resolves the old {@code index_txn}.
-     * The window is bounded conservatively at {@code [0, currentTableTxn)}:
-     * wider than the true one, so the purge waits longer than it must, never
-     * less.
+     * Supersession alone is not grounds to delete. A reader that mapped the
+     * partition's {@code _pm} before the replacing footer's header patch landed
+     * resolves from the tail its own snapshot named, so it still resolves the
+     * old {@code index_txn} and must still find the files it names. Every such
+     * reader is pinned at a table txn strictly below
+     * {@code visibleAtTxn} -- the index txn the replacing seal named its
+     * artifacts with, which is {@code txWriter.getTxn() + 1} because the
+     * publish runs inside the seal's own uncommitted window.
+     * <p>
+     * The window is therefore {@code [0, visibleAtTxn)}.
+     * {@code TxnScoreboardV2.isRangeAvailable(from, to)} blocks only on readers
+     * whose pinned txn lies in the half-open {@code [from, to)}, so a bound of
+     * {@code txWriter.getTxn()} would exclude readers pinned at exactly
+     * {@code getTxn()} -- that is, every reader that opened before the seal,
+     * which is precisely the population at risk. Narrowing this bound frees
+     * artifacts a live reader can still reach; widening it only delays the
+     * unlink. Never clamp it down to the committed txn: until that txn is
+     * durable, the superseded pair is still the committed reader and recovery
+     * view. This matches the native chain's bound
+     * ({@code PostingIndexWriter}'s {@code chain.getCurrentTxnAtSeal()}), and,
+     * because {@code visibleAtTxn > txWriter.getTxn()}, it also defers the task
+     * past the {@code _txn} commit instead of publishing it inside the writer's
+     * uncommitted window.
      */
-    private void purgeSupersededParquetIndexArtifacts(long columnId, long partitionTimestamp, long partitionNameTxn, long indexTxn) {
+    private void purgeSupersededParquetIndexArtifacts(
+            long columnId,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long indexTxn,
+            long visibleAtTxn
+    ) {
         for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
             if (metadata.getColumnType(columnIndex) <= 0
                     || metadata.getColumnMetadata(columnIndex).getWriterIndex() != columnId) {
@@ -12531,6 +12614,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionTimestamp,
                     partitionNameTxn,
                     txWriter.getTxn(),
+                    visibleAtTxn,
                     sealTxns
             );
             return;
