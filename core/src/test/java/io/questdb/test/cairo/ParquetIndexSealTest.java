@@ -68,6 +68,8 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // Row group first keys and row counts the packed fixture must produce. Read
     // the createPackedKeyTable javadoc for how each boundary arises; between them
     // the five groups exercise every branch of planRowGroups.
+    private static final int NULLS_ROW_COUNT = 20_000;
+    private static final String NULLS_TABLE_NAME = "t_pidx_nulls";
     private static final int[] PACKED_GROUP_FIRST_KEYS = {1, 201, 343, 344, 344};
     private static final long[] PACKED_GROUP_ROW_COUNTS = {100_000, 99_400, 700, 100_000, 50_000};
     // Key id of the packed fixture's row id, as SQL. Symbol ids are handed out in
@@ -82,6 +84,56 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private static final int[] PRESENT_KEYS = {1, 8, 16};
     private static final int SKEWED_ROW_COUNT = 300_000;
     private static final String TABLE_NAME = "t_pidx";
+
+    @Test
+    public void testCoveredColumnAddedAfterThePartitionIsSealedAsNulls() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE " + NULLS_TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + NULLS_TABLE_NAME + " SELECT" +
+                    " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " 'n' || (x % 2)," +
+                    " x::DOUBLE" +
+                    " FROM long_sequence(" + NULLS_ROW_COUNT + ")");
+            drainWalQueue();
+            execute("INSERT INTO " + NULLS_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 'n0', 1.0)");
+            drainWalQueue();
+            execute("ALTER TABLE " + NULLS_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            // Added after the partition became parquet, so it is not in the
+            // parquet at all and its top in that partition is the partition size.
+            // The native seal covers this by emitting nulls; so must this one.
+            execute("ALTER TABLE " + NULLS_TABLE_NAME + " ADD COLUMN qty LONG");
+            drainWalQueue();
+            execute("ALTER TABLE " + NULLS_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String indexParquetPath;
+            try (Path path = new Path()) {
+                final String indexParquet = onlyFileNamed(partitionPath(path, NULLS_TABLE_NAME), "sym.pidx.", ".parquet");
+                indexParquetPath = partitionPath(path, NULLS_TABLE_NAME).concat(indexParquet).toString();
+            }
+
+            assertPostingsCoverEveryRow(indexParquetPath, NULLS_ROW_COUNT);
+            assertPostingKeysAgree(indexParquetPath, "case when (row_id + 1) % 2 = 1 then 1 else 2 end");
+            assertIndexParquetQuery(
+                    "select count() from read_parquet('" + indexParquetPath + "')" +
+                            " where qty is not null",
+                    "count\n0\n"
+            );
+            // The covered columns that do exist are unaffected by the all-null one.
+            assertIndexParquetQuery(
+                    "select count() from read_parquet('" + indexParquetPath + "')" +
+                            " where price is null or price <> row_id + 1" +
+                            " or ts <> dateadd('u', (row_id + 1)::int, '" + INDEXED_PARTITION + "T00:00:00Z'::timestamp)",
+                    "count\n0\n"
+            );
+        });
+    }
 
     @Test
     public void testPostingIndexReadIsRefusedWhileTheParquetFormatIsSelected() throws Exception {

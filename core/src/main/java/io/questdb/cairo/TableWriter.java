@@ -8088,6 +8088,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (isParquetIndexFormat) {
                     sealParquetIndexColumn(
                             columnName, plen, timestamp, columnTop,
+                            partitionSize, normalizeColumnTops,
                             indexWriter.getKeyCount(), txWriter.getTxn() + 1,
                             coveringColumnIndices, covMmaps, parquetMetadata, sealRowKeys
                     );
@@ -13816,12 +13817,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * SYMBOL's columnTop on a parquet partition is 0 whenever the decode runs
      * at all, and {@code zeroColumnTopsAfterParquetRewrite} has already
      * collapsed every covered column's top to 0.
+     * <p>
+     * A slot {@link #prepareCoveredColumnMmaps} opened no mapping for arrives
+     * here with a 0 address. Its column top says why: at or above the partition
+     * size, or {@code getColumnTop}'s -1 sentinel for no record at all, the
+     * column has no rows in this partition and the seal emits nulls for it, as
+     * the native seal does; anywhere in between the column has rows the parquet
+     * does not carry, which {@code ParquetIndexSeal.validateCoveredColumns}
+     * refuses along with every other case it cannot gather.
      */
     private void sealParquetIndexColumn(
             CharSequence columnName,
             int plen,
             long partitionTimestamp,
             long columnTop,
+            long partitionSize,
+            boolean normalizeColumnTops,
             int keySpaceSize,
             long indexTxn,
             IntList coveringColumnIndices,
@@ -13833,22 +13844,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final IntList coveredTypes = new IntList();
         final IntList coveredWriterIndices = new IntList();
         final LongList coveredAddrs = new LongList();
+        final LongList coveredColumnTops = new LongList();
         final int coverCount = coveringColumnIndices != null ? coveringColumnIndices.size() : 0;
         for (int slot = 0; slot < coverCount; slot++) {
             final int covCol = coveringColumnIndices.getQuick(slot);
-            final MemoryMARW dataMem = covMmaps != null ? covMmaps.getQuick(2 * slot + 1) : null;
-            if (covCol < 0 || dataMem == null || !dataMem.isOpen()) {
-                throw CairoException.nonCritical()
-                        .put("parquet covering index requires every covered column in the partition [table=")
-                        .put(tableToken.getTableName())
-                        .put(", column=").put(columnName)
-                        .put(", coverSlot=").put(slot)
-                        .put(']');
+            if (covCol < 0 || metadata.getColumnType(covCol) <= ColumnType.UNDEFINED) {
+                // Dropped covered column: no name and no type to describe it
+                // with, so it is passed through as undefined and refused with
+                // the rest.
+                coveredNames.add(null);
+                coveredTypes.add(ColumnType.UNDEFINED);
+                coveredWriterIndices.add(-1);
+                coveredAddrs.add(0);
+                coveredColumnTops.add(0);
+                continue;
             }
+            final MemoryMARW dataMem = covMmaps != null ? covMmaps.getQuick(2 * slot + 1) : null;
             coveredNames.add(metadata.getColumnName(covCol));
             coveredTypes.add(metadata.getColumnType(covCol));
             coveredWriterIndices.add(metadata.getColumnMetadata(covCol).getWriterIndex());
-            coveredAddrs.add(dataMem.addressOf(0));
+            coveredAddrs.add(dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
+            // The same top prepareCoveredColumnMmaps decided on, so the two
+            // cannot disagree about which slots are all null.
+            coveredColumnTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(partitionTimestamp, covCol));
         }
 
         // data.parquet's cumulative row counts: one more entry than it has row
@@ -13871,10 +13889,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 keySpaceSize,
                 sealRowKeys,
                 columnTop,
+                partitionSize,
                 coveredNames,
                 coveredTypes,
                 coveredWriterIndices,
                 coveredAddrs,
+                coveredColumnTops,
                 dataRowGroupBoundaries
         );
         path.trimTo(plen);

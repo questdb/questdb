@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileWriter;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -133,11 +134,19 @@ public final class ParquetIndexSeal {
      * @param rowKeys                one index key per indexed row, in row order, the first
      *                               of them belonging to row {@code firstRowId}
      * @param firstRowId             row id of {@code rowKeys} entry 0
-     * @param coveredNames           covered column names in cover-slot order
-     * @param coveredTypes           covered column types in cover-slot order
+     * @param partitionSize           the partition's row count, against which a covered
+     *                                column's top decides whether it is all null here
+     * @param coveredNames           covered column names in cover-slot order, null for a
+     *                               slot whose column has been dropped
+     * @param coveredTypes           covered column types in cover-slot order,
+     *                               {@link ColumnType#UNDEFINED} for a dropped column
      * @param coveredWriterIndices   covered column writer indices in cover-slot order
      * @param coveredAddrs           base address of each covered column's row-ordered
-     *                               values, addressed by absolute row id
+     *                               values, addressed by absolute row id, or 0 where the
+     *                               caller opened no mapping for the slot
+     * @param coveredColumnTops      each covered column's top in this partition; a top at or
+     *                               above {@code partitionSize} means the column is all null
+     *                               here, which is the one case a 0 address is legal for
      * @param dataRowGroupBoundaries {@code data.parquet}'s cumulative row counts, one more
      *                               entry than it has row groups, starting at 0
      * @return the index txn the artifacts were written under
@@ -151,10 +160,12 @@ public final class ParquetIndexSeal {
             int keySpaceSize,
             DirectIntList rowKeys,
             long firstRowId,
+            long partitionSize,
             ObjList<CharSequence> coveredNames,
             IntList coveredTypes,
             IntList coveredWriterIndices,
             LongList coveredAddrs,
+            LongList coveredColumnTops,
             LongList dataRowGroupBoundaries
     ) {
         final int plen = path.size();
@@ -162,7 +173,7 @@ public final class ParquetIndexSeal {
         if (rowCount == 0) {
             return indexTxn;
         }
-        validateCoveredColumnTypes(coveredNames, coveredTypes);
+        validateCoveredColumns(coveredNames, coveredTypes, coveredAddrs, coveredColumnTops, partitionSize);
 
         final int coverCount = coveredNames.size();
         final IntList groupFirstKeys = new IntList();
@@ -180,9 +191,18 @@ public final class ParquetIndexSeal {
             keyIdsAddr = Unsafe.malloc(keyIdsSize, MemoryTag.NATIVE_TABLE_WRITER);
             rowIdsAddr = Unsafe.malloc(rowIdsSize, MemoryTag.NATIVE_TABLE_WRITER);
             for (int slot = 0; slot < coverCount; slot++) {
-                final long size = rowCount * ColumnType.sizeOf(coveredTypes.getQuick(slot));
+                final int type = coveredTypes.getQuick(slot);
+                final long size = rowCount * ColumnType.sizeOf(type);
                 sortedCoverSizes.add(size);
-                sortedCoverAddrs.add(Unsafe.malloc(size, MemoryTag.NATIVE_TABLE_WRITER));
+                final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_TABLE_WRITER);
+                sortedCoverAddrs.add(addr);
+                if (coveredAddrs.getQuick(slot) == 0) {
+                    // The column is all null in this partition, so there is
+                    // nothing to gather: fill the whole chunk with the type's
+                    // null and let the gather pass skip it. This is what the
+                    // native seal emits for the same partition.
+                    TableUtils.setNull(type, addr, rowCount);
+                }
             }
 
             sortPostingsByKey(
@@ -389,10 +409,15 @@ public final class ParquetIndexSeal {
                 Unsafe.putInt(keyIdsAddr + pos * Integer.BYTES, key);
                 Unsafe.putLong(rowIdsAddr + pos * Long.BYTES, firstRowId + r);
                 for (int c = 0; c < coverCount; c++) {
+                    final long coveredAddr = coveredAddrs.getQuick(c);
+                    if (coveredAddr == 0) {
+                        // All-null slot, pre-filled by the caller.
+                        continue;
+                    }
                     final long entrySize = ColumnType.sizeOf(coveredTypes.getQuick(c));
                     Vect.memcpy(
                             sortedCoverAddrs.getQuick(c) + pos * entrySize,
-                            coveredAddrs.getQuick(c) + (firstRowId + r) * entrySize,
+                            coveredAddr + (firstRowId + r) * entrySize,
                             entrySize
                     );
                 }
@@ -403,18 +428,59 @@ public final class ParquetIndexSeal {
     }
 
     /**
-     * Rejects covered column types this seal cannot yet gather in key order.
+     * The one place that decides which covered columns this seal accepts.
      * Rejecting is deliberate: a column whose values did not match its
      * descriptor would be undetectable at read time.
+     * <p>
+     * Refused, each with its own message:
+     * <ol>
+     *     <li>a covered column that has been dropped from the table, which has
+     *     no type left to write it under;</li>
+     *     <li>a var-size covered column, whose key-ordered gather needs an aux
+     *     vector rebuild this seal does not do;</li>
+     *     <li>a SYMBOL covered column, whose gather needs the symbol table;</li>
+     *     <li>a covered column with rows in this partition but no mapping,
+     *     which is a column absent from {@code data.parquet}.</li>
+     * </ol>
+     * Accepted with nulls, matching the native seal: a covered column with no
+     * rows in this partition, that is one added after the partition was created.
+     * That case also arrives with no mapping, which is why it is told apart by
+     * the column top rather than by the address alone. The top has two spellings
+     * for it and both must be honoured: an explicit record at the partition size
+     * when the column existed by the time the partition was written, and
+     * {@code getColumnTop}'s -1 sentinel when there is no record at all because
+     * the column was added later. Checking only the first reads a column that is
+     * entirely absent as one that has rows, and refuses it.
      */
-    private static void validateCoveredColumnTypes(ObjList<CharSequence> coveredNames, IntList coveredTypes) {
+    private static void validateCoveredColumns(
+            ObjList<CharSequence> coveredNames,
+            IntList coveredTypes,
+            LongList coveredAddrs,
+            LongList coveredColumnTops,
+            long partitionSize
+    ) {
         for (int slot = 0, n = coveredTypes.size(); slot < n; slot++) {
             final int type = coveredTypes.getQuick(slot);
+            if (type <= ColumnType.UNDEFINED) {
+                throw CairoException.nonCritical()
+                        .put("parquet covering index cannot cover a dropped column [coverSlot=")
+                        .put(slot).put(']');
+            }
             if (ColumnType.isVarSize(type) || ColumnType.isSymbol(type)) {
                 throw CairoException.nonCritical()
                         .put("parquet covering index does not support this covered column type [column=")
                         .put(coveredNames.getQuick(slot))
                         .put(", type=").put(ColumnType.nameOf(type))
+                        .put(']');
+            }
+            final long columnTop = coveredColumnTops.getQuick(slot);
+            final boolean isAllNullInPartition = columnTop < 0 || columnTop >= partitionSize;
+            if (coveredAddrs.getQuick(slot) == 0 && !isAllNullInPartition) {
+                throw CairoException.nonCritical()
+                        .put("parquet covering index requires every covered column that has rows in the partition [column=")
+                        .put(coveredNames.getQuick(slot))
+                        .put(", columnTop=").put(columnTop)
+                        .put(", partitionSize=").put(partitionSize)
                         .put(']');
             }
         }
