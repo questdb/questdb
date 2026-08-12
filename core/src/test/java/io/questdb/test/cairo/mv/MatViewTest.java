@@ -710,6 +710,156 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshImmediateToPeriod() throws Exception {
+        // Same defect as testAlterRefreshImmediateToTimer, reached through the period timer:
+        // an immediate, non-period view has no timers, so adding a period to it has to register
+        // the period timer from scratch.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (" +
+                            "sym VARCHAR, price DOUBLE, ts #TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "CREATE MATERIALIZED VIEW price_1h REFRESH IMMEDIATE AS " +
+                            "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h"
+            );
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            execute("INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.320, '2000-01-01T02:01')");
+            drainQueues();
+
+            assertQuery("price_1h ORDER BY sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2000-01-01T02:00:00.000000Z
+                            """));
+
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH IMMEDIATE PERIOD (LENGTH 4h);");
+            drainQueues();
+
+            // the view is a period view now, so a row in the incomplete period must not show up yet
+            execute("INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.323, '2000-01-01T05:01')");
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T07:59:59.999999Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h ORDER BY sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2000-01-01T02:00:00.000000Z
+                            """));
+
+            // the period timer registered by the ALTER must fire once the period completes
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T08:00:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h ORDER BY sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2000-01-01T02:00:00.000000Z
+                            gbpusd\t1.323\t2000-01-01T05:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testAlterRefreshImmediateToTimer() throws Exception {
+        // An immediate, non-period view has no timers registered with MatViewTimerJob, so switching
+        // it to timer refresh has to register them from scratch. Anything less leaves the view with
+        // correct-looking metadata and no refresh mechanism at all: immediate refresh no longer
+        // applies and no timer ever fires.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (" +
+                            "sym VARCHAR, price DOUBLE, ts #TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute(
+                    "CREATE MATERIALIZED VIEW price_1h REFRESH IMMEDIATE AS (" +
+                            "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h" +
+                            ") PARTITION BY DAY"
+            );
+
+            final String start = "1999-01-01T01:01:01.842574Z";
+            currentMicros = parseFloorPartialTimestamp(start);
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            execute(
+                    "INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')"
+            );
+            drainQueues();
+
+            // immediate refresh drives the view while it is still immediate
+            assertQuery("price_1h ORDER BY sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                            """));
+
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH EVERY 1m START '" + start + "';");
+            drainQueues();
+
+            final String matViewsSql = "SELECT view_name, refresh_type, view_status, " +
+                    "timer_start, timer_interval, timer_interval_unit " +
+                    "FROM materialized_views";
+            assertQuery(matViewsSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimer_start\ttimer_interval\ttimer_interval_unit
+                            price_1h\ttimer\tvalid\t1999-01-01T01:01:01.842574Z\t1\tMINUTE
+                            """);
+
+            // the view is no longer immediate, so this insert must not refresh it on its own
+            execute("INSERT INTO base_price(sym, price, ts) VALUES('gbpusd', 1.321, '2024-09-10T13:02')");
+            drainQueues();
+
+            assertQuery("price_1h ORDER BY sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                            """));
+
+            // the timer registered by the ALTER must now fire and pick the new row up
+            currentMicros += Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h ORDER BY sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
     public void testAlterRefreshLimit() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

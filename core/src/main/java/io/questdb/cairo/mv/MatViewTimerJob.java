@@ -379,9 +379,14 @@ public class MatViewTimerJob extends SynchronizedJob {
                     removeTimers(viewToken);
                     break;
                 case MatViewTimerTask.UPDATE:
-                    if (removeTimers(viewToken)) {
-                        addTimers(viewToken, nowUs);
-                    }
+                    // Register the new timers even when the view had none. An immediate,
+                    // non-period view registers no timers at all, so gating addTimers() on
+                    // removeTimers() finding something would drop the timers of a view that
+                    // ALTER ... SET REFRESH has just switched to timer or period refresh, and
+                    // that view would never refresh again. addTimers() itself decides what the
+                    // new definition needs, so it is a no-op when the view stays immediate.
+                    removeTimers(viewToken);
+                    addTimers(viewToken, nowUs);
                     break;
                 case MatViewTimerTask.RETRY:
                     // A refresh was deferred after a transient "table busy" error. Queue a
