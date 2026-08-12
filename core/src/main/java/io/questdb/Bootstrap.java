@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurabilityEnvironmentCheck;
 import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
@@ -589,6 +590,7 @@ public class Bootstrap {
                 verifyFileOpts(path, cairoConfig);
                 verifyWriteBarriers(cairoConfig);
                 verifyFastCommit(cairoConfig);
+                verifyDurabilityEnvironment(path, cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }
             if (JitUtil.isJitSupported()) {
@@ -678,6 +680,58 @@ public class Bootstrap {
         } catch (Throwable t) {
             // Detection must never break startup.
             log.debug().$("fast_commit verify failed [reason=").$(t.getMessage()).$(']').$();
+        }
+    }
+
+    /**
+     * Report environments where SYNC/ADAPTIVE cannot deliver the power-loss durability they promise. Purely
+     * advisory: nothing here changes behaviour, because in two of the three cases there is nothing the
+     * operator can change.
+     */
+    private void verifyDurabilityEnvironment(Path path, CairoConfiguration cairoConfig) {
+        final int commitMode = cairoConfig.getCommitMode();
+        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
+            return;
+        }
+        final CharSequence dbRoot = cairoConfig.getDbRoot();
+        if (dbRoot == null) {
+            return;
+        }
+        // On macOS the decision needs the db root's filesystem NAME, which getFileSystemStatus writes into
+        // the path buffer (the same call verifyFileSystem above uses for its SUPPORTED/UNSUPPORTED line).
+        String fsName = null;
+        if (Os.isOSX()) {
+            path.of(dbRoot);
+            if (Files.exists(path.$())) {
+                Files.getFileSystemStatus(path.$());
+                path.seekZ();
+                fsName = path.toString();
+            }
+        }
+        final int flags = DurabilityEnvironmentCheck.probe(cairoConfig.getFilesFacade(), fsName);
+        final String mode = CommitMode.toString(commitMode);
+
+        if ((flags & DurabilityEnvironmentCheck.GUEST_DISCARDS_FLUSH) != 0) {
+            // The only one the operator can undo, so the only one logged as an error.
+            log.errorW().$("WARNING: a virtio block device reports write_cache=write through")
+                    .$(": the guest kernel treats the device as having NO volatile cache and issues NO flushes")
+                    .$(" -- commit mode ").$(mode).$(" cannot make anything durable;")
+                    .$(" undo with: echo 'write back' > /sys/block/<dev>/queue/write_cache")
+                    .$(" [dbRoot=").$(dbRoot).$(']').$();
+        }
+        if ((flags & DurabilityEnvironmentCheck.HOST_DOWNGRADES_FLUSH) != 0) {
+            log.advisoryW().$("NOTE: running under Apple Virtualization, so the macOS host implements this")
+                    .$(" guest's device flush as fsync() rather than F_FULLFSYNC")
+                    .$(" -- commit mode ").$(mode).$(" survives process failure but NOT host power loss.")
+                    .$(" No guest-side or container-side setting changes this")
+                    .$(" [dbRoot=").$(dbRoot).$(']').$();
+        }
+        if ((flags & DurabilityEnvironmentCheck.FLUSH_NOT_A_BARRIER_FS) != 0) {
+            log.advisoryW().$("NOTE: db root filesystem does not implement F_FULLFSYNC")
+                    .$(" (macOS implements it on apfs/hfs/msdos/udf only)")
+                    .$(" -- flushes degrade to fsync(), which does not flush the drive cache, so commit mode ")
+                    .$(mode).$(" does NOT survive power loss; relocate the db root to an APFS volume")
+                    .$(" [dbRoot=").$(dbRoot).$(", fs=").$(fsName).$(']').$();
         }
     }
 
