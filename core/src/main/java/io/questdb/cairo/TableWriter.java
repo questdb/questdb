@@ -3725,9 +3725,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
             if (ff.exists(path.$())) {
-                if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                // Copy, not hard link. data.parquet is hard-linked above and is
+                // immutable, but the _pm grows: a covering-index publish appends
+                // a footer and patches the header. A shared inode would make that
+                // append mutate the file the old partition directory also names,
+                // and with data.parquet byte-identical both directories' footers
+                // resolve for the same parquet size -- so a reader pinned to the
+                // old directory would resolve the new index_txn and name an _im
+                // that does not exist beside it. The _pm is kilobytes.
+                if (ff.copy(path.$(), other.$()) < 0) {
                     throw CairoException.critical(ff.errno())
-                            .put("could not hard link parquet metadata sidecar [table=")
+                            .put("could not copy parquet metadata sidecar [table=")
                             .put(tableToken.getTableName())
                             .put(", from=").put(path)
                             .put(", to=").put(other)
@@ -3742,6 +3750,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
+            // The native sidecars were not linked under the parquet index
+            // format, so the new directory has no index at all until the seal
+            // rebuilds one from the parquet it now holds.
+            resealParquetIndexesAfterSwitch(partitionTimestamp, getTxn(), parquetFileSize);
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
@@ -7997,8 +8009,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // index writer's on-disk generations are not, so the key of each
             // indexed row is collected here as it is fed to the writer: one int
             // per row, indexed by rowId - columnTop.
-            final boolean isParquetIndexFormat =
-                    configuration.getPostingIndexParquetPartitionFormat() == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+            final boolean isParquetIndexFormat = isParquetIndexFormat();
             final DirectIntList sealRowKeys = isParquetIndexFormat
                     ? new DirectIntList(partitionSize - columnTop, MemoryTag.NATIVE_TABLE_WRITER)
                     : null;
@@ -8229,6 +8240,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the posting index key file exists with a non-empty
      * v2 chain (at least one published seal entry).
      */
+    /**
+     * True when {@code cairo.posting.index.parquet.partition.format} selects
+     * {@code parquet}, that is when a covering index over a parquet partition is
+     * sealed as {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im}
+     * instead of the native {@code .pv} / {@code .pc*} sidecars.
+     */
+    private boolean isParquetIndexFormat() {
+        return configuration.getPostingIndexParquetPartitionFormat() == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+    }
+
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
         LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
                 path.trimTo(plen), columnName, columnNameTxn);
@@ -8284,6 +8305,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
+        // Under the parquet index format a POSTING index over a parquet
+        // partition is <col>.pidx.<indexTxn>.parquet plus its _im, not the
+        // native .pk/.pv/.pci/.pc* set, so linking those would publish sidecars
+        // no reader of that partition consults and leave a chain the seal has to
+        // discard. The caller rebuilds from the destination parquet instead.
+        // BITMAP indexes are unaffected -- the format selects nothing for them --
+        // so the skip is per column, not for the whole partition. Decided here,
+        // in the one method both call sites funnel through, so a third call site
+        // cannot reintroduce the link.
+        final boolean isParquetIndexFormat = isParquetIndexFormat();
         try {
             final int columnCount = metadata.getColumnCount();
             final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
@@ -8297,12 +8328,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (isParquetIndexFormat && IndexType.isPosting(indexType)) {
+                    continue;
+                }
                 linkColumnIndexFiles(
                         partitionDirLen,
                         newPartitionDirLen,
                         metadata.getColumnName(columnIndex),
                         getColumnNameTxn(partitionTimestamp, columnIndex),
-                        metadata.getColumnIndexType(columnIndex),
+                        indexType,
                         partitionTimestamp,
                         partitionNameTxn
                 );
@@ -10938,6 +10973,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             path.trimTo(pathSize);
+        }
+        if (processed) {
+            // The seals above staged their tokens; nothing references the
+            // artifacts until the _pm footer names them.
+            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, txWriter.getPartitionParquetFileSize(partitionIndex));
         }
         return processed;
     }
@@ -13651,6 +13691,93 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setLagMaxTimestamp(segmentCopyInfo.getMaxTimestamp());
         }
         return overflowLo;
+    }
+
+    /**
+     * Rebuilds every POSTING index of a partition that has just been switched
+     * to parquet, into the new txn-named directory.
+     * <p>
+     * {@link #linkPartitionIndexFiles} skipped those columns because under the
+     * parquet index format the native sidecars are not what an indexed parquet
+     * partition carries, so without this the new directory would hold no index
+     * at all. The rebuild reads the parquet the switch just linked in and seals
+     * a {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im}, then
+     * publishes the tokens into the directory's own {@code _pm}.
+     * <p>
+     * Runs before the {@code _txn} commit, so the partition is never committed
+     * as parquet without its index, and against the new directory's name txn
+     * rather than the one {@code txWriter} still holds.
+     */
+    private void resealParquetIndexesAfterSwitch(long partitionTimestamp, long partitionNameTxn, long parquetFileSize) {
+        if (!isParquetIndexFormat()) {
+            return;
+        }
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int plen = path.size();
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        boolean opened = false;
+        try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                        || !IndexType.isIndexed(indexType)
+                        || !IndexType.isPosting(indexType)) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
+                    continue;
+                }
+                if (!opened) {
+                    LOG.info().$("resealing posting indexes as parquet after switch [path=").$substr(pathRootSize, path).I$();
+                    openParquetMetadataOrThrow(path, plen, parquetFileSize);
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                    path.trimTo(plen).concat(PARQUET_PARTITION_NAME).$();
+                    parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    opened = true;
+                }
+                final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+                try {
+                    // The destination directory is fresh, so there is no
+                    // committed .pk a reader could hold: destructive recovery is
+                    // permitted, and the column tops are the source partition's
+                    // own and are not normalized by this switch.
+                    indexParquetColumn(
+                            indexer,
+                            metadata.getColumnName(columnIndex),
+                            columnIndex,
+                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            metadata.getIndexValueBlockCapacity(columnIndex),
+                            indexType,
+                            plen,
+                            partitionTimestamp,
+                            rowGroupBuffers,
+                            true,
+                            false,
+                            partitionNameTxn
+                    );
+                } finally {
+                    Misc.free(indexer);
+                    path.trimTo(plen);
+                }
+            }
+        } finally {
+            Misc.free(parquetDecoder);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+        }
+        publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
     }
 
     private void resizePartitionUpdateSink() {
