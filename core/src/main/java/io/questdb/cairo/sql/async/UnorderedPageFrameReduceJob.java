@@ -208,7 +208,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                                     previousCancellationSignal,
                                     previousCancellationSignalGeneration
                             );
-                            SuspensionScope.restoreSupplementalCancellationSignal(
+                            SuspensionScope.enterSupplementalCancellationSignal(
                                     previousSupplementalCancellationSignal,
                                     previousSupplementalCancellationSignalGeneration
                             );

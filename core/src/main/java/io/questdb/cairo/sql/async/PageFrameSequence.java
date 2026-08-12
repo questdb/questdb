@@ -842,7 +842,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         previousCancellationSignal,
                         previousCancellationSignalGeneration
                 );
-                SuspensionScope.restoreSupplementalCancellationSignal(
+                SuspensionScope.enterSupplementalCancellationSignal(
                         previousSupplementalCancellationSignal,
                         previousSupplementalCancellationSignalGeneration
                 );

@@ -29,10 +29,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Worker;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.LongList;
@@ -58,6 +60,7 @@ public class QueryRegistry {
     private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
     private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();
+    private final CarrierLocal<EntryHolder> localQueryPool = new CarrierLocal<>(EntryHolder::new);
     private final ConcurrentPool<Entry> queryPool = new ConcurrentPool<>();
     private final int queryPoolCapacity;
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
@@ -186,10 +189,7 @@ public class QueryRegistry {
      */
     public long register(CharSequence query, SqlExecutionContext executionContext) {
         final long queryId = idSeq.getAndIncrement();
-        Entry e = queryPool.pop();
-        if (e == null) {
-            e = new Entry();
-        }
+        final Entry e = acquireEntry();
         // Just in case something messed the cached Entry
         // while it was in the pool, like late query cancel()
         // clean the object before using.
@@ -339,8 +339,28 @@ public class QueryRegistry {
         }
     }
 
+    private Entry acquireEntry() {
+        if (CarrierIdentity.current() >= 0) {
+            final EntryHolder localPool = localQueryPool.get();
+            final Entry entry = localPool.entry;
+            if (entry != null) {
+                localPool.entry = null;
+                return entry;
+            }
+        }
+        final Entry entry = queryPool.pop();
+        return entry != null ? entry : new Entry();
+    }
+
     private void recycle(Entry entry) {
         entry.clear();
+        if (CarrierIdentity.current() >= 0) {
+            final EntryHolder localPool = localQueryPool.get();
+            if (localPool.entry == null) {
+                localPool.entry = entry;
+                return;
+            }
+        }
         queryPool.tryPush(entry, queryPoolCapacity);
     }
 
@@ -547,6 +567,13 @@ public class QueryRegistry {
                     default -> "unknown state";
                 };
             }
+        }
+    }
+
+    private static class EntryHolder {
+        private Entry entry;
+
+        private EntryHolder() {
         }
     }
 }

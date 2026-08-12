@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -313,6 +314,32 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEntryReturnsToCarrierLocalPool() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+            CarrierIdentity.bind();
+            try {
+                final QueryRegistry registry = newSingleEntryRegistry();
+                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                    final long oldId = registry.register("SELECT old", context);
+                    final QueryRegistry.Entry entry = registry.getEntry(oldId);
+                    Assert.assertNotNull(entry);
+                    Assert.assertEquals(0, registry.getPoolSize());
+
+                    registry.unregister(oldId, context);
+
+                    Assert.assertEquals(0, registry.getPoolSize());
+                    final long newId = registry.register("SELECT new", context);
+                    Assert.assertSame(entry, registry.getEntry(newId));
+                    registry.unregister(newId, context);
+                }
+            } finally {
+                CarrierIdentity.unbind();
+            }
+        });
+    }
+
+    @Test
     public void testEntryReturnsToSharedPoolAcrossThreads() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = newSingleEntryRegistry();
@@ -339,6 +366,108 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 final long newId = registry.register("SELECT new", context);
                 Assert.assertSame(entry, registry.getEntry(newId));
                 registry.unregister(newId, context);
+            }
+        });
+    }
+
+    @Test
+    public void testEntrySpillsFromCarrierLocalPoolToSharedPool() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+            CarrierIdentity.bind();
+            try {
+                final QueryRegistry registry = newSingleEntryRegistry();
+                try (
+                        SqlExecutionContextImpl contextA = new SqlExecutionContextImpl(engine, 1)
+                                .with(AllowAllSecurityContext.INSTANCE);
+                        SqlExecutionContextImpl contextB = new SqlExecutionContextImpl(engine, 1)
+                                .with(AllowAllSecurityContext.INSTANCE);
+                        SqlExecutionContextImpl contextC = new SqlExecutionContextImpl(engine, 1)
+                                .with(AllowAllSecurityContext.INSTANCE)
+                ) {
+                    final long queryIdA = registry.register("SELECT A", contextA);
+                    final QueryRegistry.Entry entryA = registry.getEntry(queryIdA);
+                    final long queryIdB = registry.register("SELECT B", contextB);
+                    final QueryRegistry.Entry entryB = registry.getEntry(queryIdB);
+                    final long queryIdC = registry.register("SELECT C", contextC);
+                    Assert.assertNotNull(entryA);
+                    Assert.assertNotNull(entryB);
+
+                    registry.unregister(queryIdA, contextA);
+                    registry.unregister(queryIdB, contextB);
+                    registry.unregister(queryIdC, contextC);
+
+                    Assert.assertEquals(1, registry.getPoolSize());
+                    final long reusedLocalId = registry.register("SELECT local", contextA);
+                    Assert.assertSame(entryA, registry.getEntry(reusedLocalId));
+                    Assert.assertEquals(1, registry.getPoolSize());
+                    final long reusedSharedId = registry.register("SELECT shared", contextB);
+                    Assert.assertSame(entryB, registry.getEntry(reusedSharedId));
+                    Assert.assertEquals(0, registry.getPoolSize());
+                    registry.unregister(reusedLocalId, contextA);
+                    registry.unregister(reusedSharedId, contextB);
+                    Assert.assertEquals(1, registry.getPoolSize());
+                }
+            } finally {
+                CarrierIdentity.unbind();
+            }
+        });
+    }
+
+    @Test
+    public void testMigratedEntryReturnsToCurrentCarrier() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+            CarrierIdentity.bind();
+            try {
+                final QueryRegistry registry = newSingleEntryRegistry();
+                final AtomicReference<Throwable> fault = new AtomicReference<>();
+                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                    final long oldId = registry.register("SELECT old", context);
+                    final QueryRegistry.Entry entry = registry.getEntry(oldId);
+                    Assert.assertNotNull(entry);
+
+                    final Thread migratedCarrier = new Thread(() -> {
+                        try {
+                            Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+                            CarrierIdentity.bind();
+                            try {
+                                registry.unregister(oldId, context);
+                                Assert.assertEquals(0, registry.getPoolSize());
+                                final long migratedId = registry.register("SELECT migrated", context);
+                                Assert.assertSame(entry, registry.getEntry(migratedId));
+                                registry.unregister(migratedId, context);
+                            } finally {
+                                CarrierIdentity.unbind();
+                            }
+                        } catch (Throwable th) {
+                            fault.set(th);
+                        }
+                    }, "query_registry_migrated_carrier");
+                    boolean isMigratedCarrierFinished = false;
+                    try {
+                        migratedCarrier.start();
+                        migratedCarrier.join(5_000);
+                        isMigratedCarrierFinished = !migratedCarrier.isAlive();
+                    } finally {
+                        if (migratedCarrier.isAlive()) {
+                            migratedCarrier.interrupt();
+                            migratedCarrier.join(5_000);
+                        }
+                    }
+                    Assert.assertTrue("migrated carrier did not finish", isMigratedCarrierFinished);
+                    Assert.assertFalse("migrated carrier survived cleanup", migratedCarrier.isAlive());
+                    if (fault.get() != null) {
+                        throw new AssertionError("migrated carrier failed", fault.get());
+                    }
+
+                    Assert.assertEquals(0, registry.getPoolSize());
+                    final long sourceId = registry.register("SELECT source", context);
+                    Assert.assertNotSame(entry, registry.getEntry(sourceId));
+                    registry.unregister(sourceId, context);
+                }
+            } finally {
+                CarrierIdentity.unbind();
             }
         });
     }
@@ -762,6 +891,28 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnboundThreadUsesOnlySharedPool() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+            final QueryRegistry registry = newSingleEntryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long oldId = registry.register("SELECT old", context);
+                final QueryRegistry.Entry entry = registry.getEntry(oldId);
+                Assert.assertNotNull(entry);
+                Assert.assertEquals(0, registry.getPoolSize());
+
+                registry.unregister(oldId, context);
+
+                Assert.assertEquals(1, registry.getPoolSize());
+                final long newId = registry.register("SELECT new", context);
+                Assert.assertSame(entry, registry.getEntry(newId));
+                registry.unregister(newId, context);
+                Assert.assertEquals(1, registry.getPoolSize());
+            }
+        });
+    }
+
+    @Test
     public void testWalCancelReactivatesEntryBeforeThrowing() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
@@ -791,6 +942,53 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testZeroSharedCapacityUsesOneCarrierLocalEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+            final QueryRegistry registry = newZeroCapacityRegistry();
+            final QueryRegistry.Entry retainedEntry;
+            try (
+                    SqlExecutionContextImpl contextA = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl contextB = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                CarrierIdentity.bind();
+                try {
+                    final long queryIdA = registry.register("SELECT A", contextA);
+                    retainedEntry = registry.getEntry(queryIdA);
+                    final long queryIdB = registry.register("SELECT B", contextB);
+                    final QueryRegistry.Entry overflowEntry = registry.getEntry(queryIdB);
+                    Assert.assertNotSame(retainedEntry, overflowEntry);
+
+                    registry.unregister(queryIdA, contextA);
+                    registry.unregister(queryIdB, contextB);
+
+                    Assert.assertEquals(0, registry.getPoolSize());
+                    final long reusedId = registry.register("SELECT reused", contextA);
+                    Assert.assertSame(retainedEntry, registry.getEntry(reusedId));
+                    final long freshId = registry.register("SELECT fresh", contextB);
+                    Assert.assertNotSame(retainedEntry, registry.getEntry(freshId));
+                    Assert.assertNotSame(overflowEntry, registry.getEntry(freshId));
+                    Assert.assertEquals(0, registry.getPoolSize());
+                    registry.unregister(reusedId, contextA);
+                    registry.unregister(freshId, contextB);
+                    Assert.assertEquals(0, registry.getPoolSize());
+                } finally {
+                    CarrierIdentity.unbind();
+                }
+
+                Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
+                final long unboundId = registry.register("SELECT unbound", contextA);
+                Assert.assertNotSame(retainedEntry, registry.getEntry(unboundId));
+                Assert.assertEquals(0, registry.getPoolSize());
+                registry.unregister(unboundId, contextA);
+                Assert.assertEquals(0, registry.getPoolSize());
+            }
+        });
+    }
+
     private static void assertActive(long queryId, QueryRegistry.Entry entry) {
         Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(queryId, entry.getLifecycle()));
         Assert.assertEquals(QueryRegistry.Entry.State.ACTIVE, entry.getState());
@@ -813,6 +1011,15 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 return true;
             }
         }.with(new PrincipalSecurityContext(principal));
+    }
+
+    private QueryRegistry newZeroCapacityRegistry() {
+        return new QueryRegistry(new CairoConfigurationWrapper(configuration) {
+            @Override
+            public int getQueryRegistryPoolSize() {
+                return 0;
+            }
+        });
     }
 
     private static class BlockingPrincipalSecurityContext extends AllowAllSecurityContext {

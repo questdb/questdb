@@ -49,16 +49,14 @@ public final class SuspensionScope {
         return previous;
     }
 
-    public static @Nullable FiberCancellationSignal enterCancellationSignal(
+    public static void enterCancellationSignal(
             @Nullable FiberCancellationSignal cancellationSignal
     ) {
         final CarrierScope scope = SCOPE.get();
-        final FiberCancellationSignal previous = scope.cancellationSignal;
         scope.cancellationSignal = cancellationSignal;
         scope.cancellationSignalGeneration = cancellationSignal != null
                 ? cancellationSignal.getGeneration()
                 : CancellationBinding.NO_GENERATION;
-        return previous;
     }
 
     public static void enterRoleSwitchReadLock(CarrierScope scope, Lock lock) {
@@ -154,10 +152,6 @@ public final class SuspensionScope {
         return scope.timerShards;
     }
 
-    public static boolean hasRoleSwitchReadLock(CarrierScope scope) {
-        return getRoleSwitchReadLockState(scope).hasAny();
-    }
-
     public static boolean hasRoleSwitchReadLock(CarrierScope scope, Lock lock) {
         return getRoleSwitchReadLockState(scope).hasLock(lock);
     }
@@ -191,15 +185,6 @@ public final class SuspensionScope {
         SCOPE.get().mode = mode;
     }
 
-    public static void restoreCancellationSignal(@Nullable FiberCancellationSignal cancellationSignal) {
-        restoreCancellationSignal(
-                cancellationSignal,
-                cancellationSignal != null
-                        ? cancellationSignal.getGeneration()
-                        : CancellationBinding.NO_GENERATION
-        );
-    }
-
     public static void restoreCancellationSignal(
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration
@@ -211,15 +196,6 @@ public final class SuspensionScope {
 
     public static void restoreMode(CarrierScope scope, @Nullable Mode mode) {
         scope.mode = mode;
-    }
-
-    public static void restoreSupplementalCancellationSignal(
-            @Nullable FiberCancellationSignal cancellationSignal,
-            long cancellationSignalGeneration
-    ) {
-        final CarrierScope scope = SCOPE.get();
-        scope.supplementalCancellationSignal = cancellationSignal;
-        scope.supplementalCancellationSignalGeneration = cancellationSignalGeneration;
     }
 
     public static CarrierScope scope() {

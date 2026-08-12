@@ -595,7 +595,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                         previousCancellationSignal,
                         previousCancellationSignalGeneration
                 );
-                SuspensionScope.restoreSupplementalCancellationSignal(
+                SuspensionScope.enterSupplementalCancellationSignal(
                         previousSupplementalCancellationSignal,
                         previousSupplementalCancellationSignalGeneration
                 );

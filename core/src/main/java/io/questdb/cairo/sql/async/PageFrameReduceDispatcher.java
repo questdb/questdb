@@ -381,13 +381,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     }
 
     public boolean tryAcquirePublication() {
-        final boolean isCurrentFiberOwned = runtime.isCurrentFiberOwned();
+        if (runtime.isCurrentFiberOwned()) {
+            return false;
+        }
         while (true) {
             final long current = publicationAdmission.get();
             if ((current & PUBLICATION_OPEN) == 0) {
-                return false;
-            }
-            if (isCurrentFiberOwned) {
                 return false;
             }
             if ((current & PUBLICATION_PERMIT_MASK) == PUBLICATION_PERMIT_MASK) {
