@@ -26,7 +26,10 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.auth.AnonymousAuthenticator;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -91,6 +94,46 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 return nSent;
             }
         });
+    }
+
+    @Test
+    public void testAuthenticatorThrowsUnexpectedError() throws Exception {
+        // an authenticator is pluggable, so it can throw anything, not just CairoException. The
+        // context has to disconnect the client itself: by the time the IO event is dispatched the
+        // connection is no longer in the dispatcher's pending list, so an exception that escapes
+        // to the worker leaves nothing to close the connection, and the fd, the receive buffer
+        // and one of the connection slots are lost for the lifetime of the process
+        authenticatorFactoryOverride = () -> new AnonymousAuthenticator() {
+            @Override
+            public int handleIO() {
+                throw new NullPointerException("cannot authenticate");
+            }
+
+            @Override
+            public boolean isAuthenticated() {
+                // route the connection through handleAuthentication() rather than the parser
+                return false;
+            }
+        };
+        final LogCapture capture = new LogCapture();
+        try {
+            capture.start();
+            runInAuthContext(() -> {
+                final HealthMetrics healthMetrics = lineTcpConfiguration.getMetrics().healthMetrics();
+                final long unhandledErrorsBefore = healthMetrics.unhandledErrorsCount();
+                recvBuffer = "anything\n";
+                handleContextIO0();
+                Assert.assertTrue(disconnected);
+                // an authenticator blowing up is a server fault, unlike the client sending
+                // something malformed, so this one keeps both the severity and the error counter
+                // that the health check reads
+                capture.waitForRegex("unhandled error while authenticating");
+                capture.assertLoggedRE("C i\\.q\\.c\\.l\\.t\\.LineTcpConnectionContext \\[\\d+] unhandled error while authenticating \\[error=");
+                Assert.assertEquals(unhandledErrorsBefore + 1, healthMetrics.unhandledErrorsCount());
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -505,6 +548,46 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             closeContext();
             drainWalQueue();
         });
+    }
+
+    @Test
+    public void testSecurityContextFactoryThrowsUnexpectedError() throws Exception {
+        // the security context factory is pluggable too and it runs on the same path, one line
+        // after the authenticator has accepted the client, so it can strand a connection the same
+        // way an authenticator can
+        authenticatorFactoryOverride = () -> new AnonymousAuthenticator() {
+            private boolean authenticated;
+
+            @Override
+            public int handleIO() {
+                authenticated = true;
+                return SocketAuthenticator.OK;
+            }
+
+            @Override
+            public boolean isAuthenticated() {
+                return authenticated;
+            }
+        };
+        securityContextFactoryOverride = (principalContext, interfaceId) -> {
+            throw new NullPointerException("cannot create security context");
+        };
+        final LogCapture capture = new LogCapture();
+        try {
+            capture.start();
+            runInAuthContext(() -> {
+                final HealthMetrics healthMetrics = lineTcpConfiguration.getMetrics().healthMetrics();
+                final long unhandledErrorsBefore = healthMetrics.unhandledErrorsCount();
+                recvBuffer = "anything\n";
+                handleContextIO0();
+                Assert.assertTrue(disconnected);
+                capture.waitForRegex("unhandled error while authenticating");
+                capture.assertLoggedRE("C i\\.q\\.c\\.l\\.t\\.LineTcpConnectionContext \\[\\d+] unhandled error while authenticating \\[error=");
+                Assert.assertEquals(unhandledErrorsBefore + 1, healthMetrics.unhandledErrorsCount());
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
