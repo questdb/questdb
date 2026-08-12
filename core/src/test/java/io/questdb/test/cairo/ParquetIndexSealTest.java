@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -37,10 +38,14 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -267,6 +272,84 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 );
                 Assert.assertFalse(
                         "DROP INDEX must retire the index parquet",
+                        ff.exists(partitionPath(path).concat(indexParquet).$())
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            // A directory carrying BOTH index forms at once, which is what makes
+            // the two numbering spaces collide: index under the native format,
+            // CONVERT PARTITION TO PARQUET (which links the native sealed
+            // sidecars in), flip the format property, then write O3 into that
+            // partition so the covering reseal writes the parquet form in place.
+            // The result is sym.pv.<generation> and sym.pidx.<indexTxn> side by
+            // side -- the first counted by PostingIndexChainWriter's per-column
+            // genCounter, the second by the table txn.
+            createSparseKeyTable();
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            engine.releaseInactive();
+            execute("INSERT INTO " + TABLE_NAME + " VALUES ('2024-01-01T00:00:00.000005Z', 's0', 1.0, 1)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                final FilesFacade ff = configuration.getFilesFacade();
+                final String indexMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                final String indexParquet = onlyFileNamed(partitionPath(path), "sym.pidx.", ".parquet");
+                final long liveIndexTxn = Numbers.parseLong(
+                        indexMeta.substring("sym.pidx.".length(), indexMeta.length() - "._im".length())
+                );
+                Assert.assertTrue(
+                        "the fixture must leave both forms in one directory, or the collision cannot arise",
+                        hasSealedValueFile(partitionPath(path))
+                );
+
+                // A routine native purge for a chain generation that happens to
+                // carry the same number. PostingSealPurgeTask has one integer for
+                // both namespaces, so the operator cannot tell this apart by the
+                // number alone -- it has to ask the _pm whether that index txn is
+                // still the published one.
+                final TableToken token = engine.verifyTableName(TABLE_NAME);
+                final long partitionTs;
+                final long partitionNameTxn;
+                try (TableReader reader = engine.getReader(token)) {
+                    partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                    partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                }
+                final MessageBus bus = engine.getMessageBus();
+                final MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
+                final RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+                long cursor;
+                while ((cursor = pubSeq.next()) == -2) {
+                    Os.pause();
+                }
+                Assert.assertTrue("purge queue must accept the task", cursor >= 0);
+                try {
+                    queue.get(cursor).of(
+                            token, "sym", TableUtils.COLUMN_NAME_TXN_NONE, liveIndexTxn,
+                            partitionTs, partitionNameTxn, PartitionBy.DAY, ColumnType.TIMESTAMP,
+                            0L, committedTxn(TABLE_NAME)
+                    );
+                } finally {
+                    pubSeq.done(cursor);
+                }
+                runPostingSealPurgeJob();
+
+                Assert.assertTrue(
+                        "a native purge numbered like a live parquet index txn must not unlink its _im",
+                        ff.exists(partitionPath(path).concat(indexMeta).$())
+                );
+                Assert.assertTrue(
+                        "a native purge numbered like a live parquet index txn must not unlink its parquet",
                         ff.exists(partitionPath(path).concat(indexParquet).$())
                 );
             }

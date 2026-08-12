@@ -51,6 +51,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path;
     private final int pathRootLen;
     private boolean scanAllCoversRemoved;
@@ -79,6 +80,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
     @Override
     public void close() {
+        parquetMetaReader.clear();
         Misc.free(path);
         txnScoreboard = Misc.free(txnScoreboard);
     }
@@ -201,7 +203,42 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // is missing or unreadable -- treat that as "cannot prove live" and fall
         // through to the scoreboard-gated delete so a genuine orphan (no live .pk)
         // stays reclaimable.
+        // The parquet form of the retired version: <col>.pidx.<sealTxn>.parquet and
+        // its ._im. Done here, ahead of the native chain's own liveness guard,
+        // because that guard is evidence about the OTHER namespace: this task's
+        // number names a .pv generation and a pidx index txn that are counted
+        // independently -- the .pv/.pc* sealTxn is PostingIndexChainWriter's
+        // per-column genCounter, the pidx index txn is the table txn -- and one
+        // directory can carry both forms at once (index natively, CONVERT PARTITION
+        // TO PARQUET, flip the format property, then write O3 into that partition:
+        // sym.pv.1 and sym.pidx.5 side by side). Abandoning the parquet retirement
+        // because the native chain head happens to equal the number would leak the
+        // pair for good.
+        //
+        // The _im goes first. It is the parquet form's commit signal -- the token in
+        // the _pm names an _im file size, and the reader resolves the parquet only
+        // through it -- so a crash between the two unlinks leaves a parquet with no
+        // _im, which the writer's orphan sweep reclaims. The other order would leave
+        // an _im naming a parquet that is gone.
+        boolean parquetFormRemoved = true;
+        if (isParquetIndexTxnLive(pathPartitionLen, task.getSealTxn())) {
+            LOG.critical().$("posting seal purge: sealTxn is a live parquet index txn in this partition's _pm, skipping the parquet-form unlink (namespace collision) [table=")
+                    .$(liveToken.getTableName())
+                    .$(", column=").$(task.getIndexColumnName())
+                    .$(", sealTxn=").$(task.getSealTxn())
+                    .I$();
+        } else {
+            path.trimTo(pathPartitionLen);
+            if (!ff.removeQuiet(ParquetIndexSeal.indexMetaFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+                parquetFormRemoved = false;
+            }
+            path.trimTo(pathPartitionLen);
+            if (!ff.removeQuiet(ParquetIndexSeal.indexParquetFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+                parquetFormRemoved = false;
+            }
+        }
         path.trimTo(pathPartitionLen);
+
         long liveHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                 ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
         path.trimTo(pathPartitionLen);
@@ -212,10 +249,11 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
                     .$(", sealTxn=").$(task.getSealTxn())
                     .I$();
-            return true;
+            // Only the native half is abandoned; the parquet half above already ran.
+            return parquetFormRemoved;
         }
 
-        boolean allRemoved = true;
+        boolean allRemoved = parquetFormRemoved;
         path.trimTo(pathPartitionLen);
         LPSZ pv = PostingIndexUtils.valueFileName(path, task.getIndexColumnName(),
                 task.getPostingColumnNameTxn(), task.getSealTxn());
@@ -309,27 +347,6 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             }
         }
 
-        // The parquet form of the same sealed version: <col>.pidx.<sealTxn>.parquet
-        // and its ._im, written in place of the .pv/.pc* the code above removes. A
-        // partition carries one form or the other, and both are keyed by the same
-        // txn, so removeQuiet's ENOENT-tolerant true answers for whichever form is
-        // absent and one task retires the version whichever way it was sealed.
-        //
-        // The _im goes first. It is the parquet form's commit signal -- the token in
-        // the _pm names an _im file size, and the reader resolves the parquet only
-        // through it -- so a crash between the two unlinks leaves a parquet with no
-        // _im, which the writer's orphan sweep reclaims. The other order would leave
-        // an _im naming a parquet that is gone.
-        path.trimTo(pathPartitionLen);
-        if (!ff.removeQuiet(ParquetIndexSeal.indexMetaFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
-            allRemoved = false;
-        }
-        path.trimTo(pathPartitionLen);
-        if (!ff.removeQuiet(ParquetIndexSeal.indexParquetFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
-            allRemoved = false;
-        }
-        path.trimTo(pathPartitionLen);
-
         boolean done = allRemoved && scanAllCoversRemoved;
         if (done) {
             LOG.info().$("purged posting sealed version [table=").$(liveToken.getTableName())
@@ -343,5 +360,57 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         scanColumnName = null;
         path.trimTo(pathTableLen);
         return done;
+    }
+
+    /**
+     * True when the partition's committed {@code _pm} footer still names
+     * {@code indexTxn} as a covering index. That makes the
+     * {@code <col>.pidx.<indexTxn>} pair live, so this task's number belongs to
+     * the native chain's namespace and the parquet-form unlink must not fire.
+     * <p>
+     * Needed because {@code PostingSealPurgeTask.sealTxn} carries two
+     * independently counted numbers -- a per-column chain generation for the
+     * {@code .pv} / {@code .pc*} form, the table txn for the {@code pidx} form --
+     * which one directory can hold at once, so equal numbers do not mean the same
+     * version. Matched on the txn alone: the task carries a column name and the
+     * footer a writer index, and the operator has no metadata to map between
+     * them, so any column's live token at that txn blocks the unlink. That errs
+     * towards leaving files behind, which is the recoverable direction.
+     * <p>
+     * A missing {@code _pm} means the partition carries no parquet form at all,
+     * so nothing is live. An unreadable one cannot prove liveness either; as with
+     * the {@code .pk} head read above, that falls through to the scoreboard-gated
+     * delete so a genuine orphan stays reclaimable.
+     */
+    private boolean isParquetIndexTxnLive(int pathPartitionLen, long indexTxn) {
+        long addr = 0;
+        long fileSize = 0;
+        try {
+            path.trimTo(pathPartitionLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0) {
+                return false;
+            }
+            fileSize = parquetMetaReader.getFileSize();
+            if (!parquetMetaReader.resolveLastFooter()) {
+                return false;
+            }
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                if (parquetMetaReader.getCoveringIndexTxn(i) == indexTxn) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (CairoException e) {
+            LOG.error().$("posting seal purge: could not read _pm to check the parquet index form, proceeding [path=")
+                    .$(path).$(", msg=").$safe(e.getFlyweightMessage()).I$();
+            return false;
+        } finally {
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathPartitionLen);
+        }
     }
 }
