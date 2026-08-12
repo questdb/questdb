@@ -45,6 +45,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.fuzz.DuplicateFuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzAddColumnOperation;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
@@ -223,6 +224,14 @@ public class CompositeFuzzRunner {
      *     FuzzTruncateTableOperation}, {@link FuzzQueryOperation}, {@link
      *     FuzzValidateSymbolFilterOperation} -- SUPPORTED. The well-established composite-safe core
      *     (insert/truncate/read), per {@code CompositeUnsupportedOpsTest}'s own SUPPORTED half.</li>
+     *     <li>{@link DuplicateFuzzInsertOperation} -- SUPPORTED. Extends {@link FuzzInsertOperation}
+     *     (found by Task 6's package scan via inheritance, not by grepping for the interface name
+     *     directly -- the scan is what caught this one) and its {@code apply()} delegates straight to
+     *     {@code super.apply(rnd, ...)}, which is where the {@code rnd.reset(s1, s0)} call actually
+     *     lives; the one extra {@code rnd.nextBoolean()} draw in its {@code appendColumnValue}
+     *     override happens strictly AFTER that reset, in the same deterministic column-iteration
+     *     order both times {@code apply()} runs, so the shared-{@code Rnd} invariant is fully
+     *     inherited, not broken.</li>
      *     <li>{@link FuzzChangeSymbolCapacityOperation} -- GATED, but NOT because the product rejects
      *     it: {@code TableWriter#changeSymbolCapacity} (reached directly from {@code ALTER TABLE ...
      *     ALTER COLUMN ... SYMBOL CAPACITY n}) has NO {@code isRoutedComposite()} check, unlike its
@@ -558,6 +567,7 @@ public class CompositeFuzzRunner {
         m.put(FuzzTruncateTableOperation.class, Support.SUPPORTED);
         m.put(FuzzQueryOperation.class, Support.SUPPORTED);
         m.put(FuzzValidateSymbolFilterOperation.class, Support.SUPPORTED);
+        m.put(DuplicateFuzzInsertOperation.class, Support.SUPPORTED);
         m.put(FuzzAddColumnOperation.class, Support.SUPPORTED);
         m.put(FuzzSetTableFormatOperation.class, Support.SUPPORTED);
         m.put(FuzzSetParquetEncodingOperation.class, Support.SUPPORTED);
