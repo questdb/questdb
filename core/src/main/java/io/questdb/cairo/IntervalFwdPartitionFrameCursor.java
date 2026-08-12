@@ -79,8 +79,9 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long intervalHi = intervals.getQuick(intervalsLo1 * 2 + 1);
 
                 final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip interval
-                if (partitionTimestampLoApprox > intervalHi) {
+                // interval is wholly below partition, skip interval -- unless a same-day sibling cell
+                // follows, in which case fall through to the exact checks (see next()'s twin comment).
+                if (partitionTimestampLoApprox > intervalHi && !hasSameDaySiblingAhead(partitionLo1, partitionHi1)) {
                     intervalsLo1++;
                     continue;
                 }
@@ -97,13 +98,22 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 timestampFinder.prepare();
 
                 final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
                 // interval is wholly above partition, skip interval
                 if (partitionTimestampLoExact > intervalHi) {
+                    if (hasSameDaySiblingAhead(partitionLo1, partitionHi1)) {
+                        if (intervalsLo1 + 1 < intervalsHi1
+                                && intervals.getQuick((intervalsLo1 + 1) * 2) <= partitionTimestampHiExact) {
+                            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                        }
+                        partitionLimit1 = -1;
+                        partitionLo1++;
+                        continue;
+                    }
                     intervalsLo1++;
                     continue;
                 }
 
-                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
                 // interval is wholly below partition, skip partition
                 if (partitionTimestampHiExact < intervalLo) {
                     partitionLimit1 = -1;
@@ -152,7 +162,17 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     }
                     continue;
                 }
-                // interval yielded empty partition frame
+                // Interval yielded an empty frame for THIS cell -- a same-day sibling cell may still
+                // hold rows inside it (see next()'s retireIntervalOrVisitSibling).
+                if (hasSameDaySiblingAhead(partitionLo1, partitionHi1)) {
+                    if (intervalsLo1 + 1 < intervalsHi1
+                            && intervals.getQuick((intervalsLo1 + 1) * 2) <= partitionTimestampHiExact) {
+                        throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                    }
+                    partitionLimit1 = -1;
+                    partitionLo1++;
+                    continue;
+                }
                 partitionLimit1 = hi;
                 intervalsLo1++;
             } else {
@@ -187,8 +207,14 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
                 final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip interval
-                if (partitionTimestampLoApprox > intervalHi) {
+                // Interval is wholly above partition, skip interval -- UNLESS a sibling cell of the same
+                // day follows (composite table). Retiring the interval here would abandon every later
+                // sibling, and a sibling is an independent cell whose rows may well fall inside this
+                // interval even though THIS cell's do not. Fall through to the exact checks below, which
+                // handle the sibling case uniformly; the cost (opening a partition this early-out would
+                // have skipped) is paid only by a composite multi-cell day. Unreachable for a plain
+                // table: its partitionLo + 1 is always the NEXT day, never a same-timestamp sibling.
+                if (partitionTimestampLoApprox > intervalHi && !hasSameDaySiblingAhead(partitionLo, partitionHi)) {
                     intervalsLo++;
                     continue;
                 }
@@ -214,13 +240,16 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 timestampFinder.prepare();
 
                 final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
                 // interval is wholly above partition, skip interval
                 if (partitionTimestampLoExact > intervalHi) {
+                    if (retireIntervalOrVisitSibling(partitionTimestampHiExact)) {
+                        continue;
+                    }
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
                 // interval is wholly below partition, skip partition
                 if (partitionTimestampHiExact < intervalLo) {
                     partitionLimit = 0;
@@ -313,7 +342,12 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     return frame;
                 }
-                // interval yielded empty partition frame
+                // Interval yielded an empty frame for THIS cell. A sibling cell of the same day is an
+                // independent cell and may well have rows inside this interval, so it must get its own
+                // chance before the interval is retired -- same reasoning as the fragment branch above.
+                if (retireIntervalOrVisitSibling(partitionTimestampHiExact)) {
+                    continue;
+                }
                 partitionLimit = hi;
                 intervalsLo++;
             } else {
@@ -322,6 +356,47 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             }
         }
         return null;
+    }
+
+    /**
+     * Shared tail for {@link #next(long)}'s two interval-retiring exits (cell wholly above the interval,
+     * and cell yielding an empty frame). Returns {@code true} when the caller should {@code continue}
+     * the scan at the next same-day sibling cell rather than retire the interval.
+     * <p>
+     * Retiring the interval at either exit is correct for a plain table, where {@code partitionLo + 1} is
+     * always the next DAY: nothing of this interval is left to find. It is wrong for a composite
+     * multi-cell day, where the following partition can be a SIBLING CELL of the same day -- a separate
+     * cell, with its own rows, which may fall squarely inside the interval this cell just failed to
+     * match. Retiring the interval there silently drops those rows.
+     * <p>
+     * Advancing to the sibling instead abandons THIS cell for any LATER interval (monotonic
+     * {@code partitionLo} can never come back to it). That is the same trade the fragment branch makes,
+     * and it carries the same guard: if a later interval reaches into this cell's own span, the rows it
+     * would have matched here are unrecoverable, so fail loudly rather than drop them silently.
+     */
+    private boolean retireIntervalOrVisitSibling(long partitionTimestampHiExact) {
+        if (!hasSameDaySiblingAhead(partitionLo, partitionHi)) {
+            return false;
+        }
+        if (intervalsLo + 1 < intervalsHi
+                && intervals.getQuick((intervalsLo + 1) * 2) <= partitionTimestampHiExact) {
+            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+        }
+        partitionLimit = 0;
+        partitionLo++;
+        return true;
+    }
+
+    /**
+     * Whether the partition after {@code partitionIndex} is a SIBLING CELL of the same day rather than
+     * the next day -- i.e. whether the two share a partition timestamp. Only a composite table's
+     * multi-cell day can produce this; for a plain table (one cell per day) it is always {@code false},
+     * which is what keeps every caller byte-identical for plain tables.
+     */
+    private boolean hasSameDaySiblingAhead(int partitionIndex, int partitionHiBound) {
+        return partitionIndex + 1 < partitionHiBound
+                && reader.getPartitionTimestampByIndex(partitionIndex + 1)
+                == reader.getPartitionTimestampByIndex(partitionIndex);
     }
 
     @Override
