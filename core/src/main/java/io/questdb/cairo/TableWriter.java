@@ -199,6 +199,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
+    /**
+     * {@code @TestOnly} fault injection for the {@code o3PartitionUpdRemaining} ownership window:
+     * when set, both partition-dispatch sites throw between {@code
+     * o3PartitionUpdRemaining.incrementAndGet()} and the {@code o3CommitPartitionAsync()} that takes
+     * ownership of the matching decrement. That window used to strand the counter above zero with
+     * nothing able to lower it, turning {@link #o3ConsumePartitionUpdates()}'s untimed {@code while
+     * (o3PartitionUpdRemaining > 0)} spin into an unkillable WAL-apply hang. Exists so a bounded test
+     * can prove the counter is now exception-safe; see {@code O3PartitionUpdRemainingLatchTest}.
+     * <p>
+     * Default false -> never set in production, so the JIT dead-code-eliminates both guards. Plain
+     * (non-volatile) boolean, matching {@code PostingIndexWriter#COVERING_FASTPATH_DISABLED}: the
+     * tests apply the WAL synchronously on the very thread that sets the flag AND that reaches the
+     * guard (the dispatch is always performed by the committing thread), so there is no cross-thread
+     * visibility hazard.
+     */
+    @TestOnly
+    public static boolean O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH = false;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
@@ -12310,6 +12327,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int inflightPartitions = 0;
             while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <= o3TimestampMax)) {
                 pressureControl.updateInflightPartitions(++inflightPartitions);
+                // Does THIS FRAME still own this iteration's o3PartitionUpdRemaining ticket? Set true the
+                // instant the counter is raised below, and cleared at every point where somebody else
+                // becomes responsible for lowering it. The counter is only ever lowered by a dispatched
+                // unit draining through o3ConsumePartitionUpdates(), so a throw while this frame still
+                // owns the ticket strands it above zero and turns the finally-block
+                // o3ConsumePartitionUpdates() into an untimed, unkillable spin -- a HANG, not a crash.
+                // Declared out here so the per-iteration finally can see it.
+                boolean partitionUpdCountOwned = false;
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp;
@@ -12471,10 +12496,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
 
                     o3PartitionUpdRemaining.incrementAndGet();
+                    partitionUpdCountOwned = true;
                     // async partition processing set this counter to the column count
                     // and then manages issues if publishing of column tasks fails
                     // mid-column-count.
                     latchCount++;
+
+                    //noinspection ConstantValue
+                    if (O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH) {
+                        throw CairoException.critical(0)
+                                .put("test-injected failure between the o3PartitionUpdRemaining increment and dispatch [table=")
+                                .put(tableToken.getTableName()).put(']');
+                    }
+
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
@@ -12500,10 +12534,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3BumpErrorCount(CairoException.isCairoOomError(e));
                             o3ClockDownPartitionUpdateCount();
                             o3CountDownDoneLatch();
+                            // Ticket already surrendered right here -- the per-iteration finally must
+                            // not lower it a second time.
+                            partitionUpdCountOwned = false;
                             throw e;
                         }
 
-                        columnCounter.set(compressColumnCount(metadata));
+                        // Same basis the compensating delta below is computed against. columnCounter is
+                        // armed from compressColumnCount (live columns only), NOT from the raw
+                        // columnCount field (which still counts dropped columns), so the two must not be
+                        // mixed -- see the catch further down.
+                        final int liveColumnCount = compressColumnCount(metadata);
+                        columnCounter.set(liveColumnCount);
                         Path pathToPartition = Path.getThreadLocal(path);
                         setPathForNativePartition(
                                 pathToPartition,
@@ -12575,13 +12617,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         partitionUpdateSinkAddr
                                 );
                             } catch (Throwable e) {
-                                if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
+                                // Ownership passes to the columnCounter protocol: reduce the expected
+                                // count to what was actually published, and if that lands on 0 every
+                                // published task has already finished, so compensate here.
+                                //
+                                // The delta is against liveColumnCount, not the raw columnCount field.
+                                // columnCounter was armed from compressColumnCount(metadata) above; on a
+                                // table with a dropped column (columnType < 0) the raw columnCount is
+                                // LARGER, so the old expression over-subtracted, drove the counter
+                                // NEGATIVE, and it could then never equal 0 -- nobody would ever lower
+                                // o3PartitionUpdRemaining and the commit would hang. Identical arithmetic
+                                // when the table has never had a column dropped.
+                                if (columnCounter.addAndGet(columnsPublished - liveColumnCount) == 0) {
                                     o3ClockDownPartitionUpdateCount();
                                     o3CountDownDoneLatch();
                                 }
+                                partitionUpdCountOwned = false;
                                 throw e;
                             }
                         }
+                        // Every live column published; the columnCounter protocol owns the ticket now.
+                        // (Reached only on a clean loop exit -- a throw anywhere in the loop body that is
+                        // NOT the publish call itself, e.g. getIndexWriter(i), leaves the flag set so the
+                        // per-iteration finally lowers the ticket. That is correct: the already-published
+                        // tasks will decrement columnCounter but can never reach 0, so they will never
+                        // lower it themselves.)
+                        partitionUpdCountOwned = false;
 
                         addPhysicallyWrittenRows(srcOooBatchRowSize);
                     } else {
@@ -12596,6 +12657,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (isParquet) {
                                 // Parquet partitions do not support replace commits feature yet
                                 o3PartitionUpdRemaining.decrementAndGet();
+                                partitionUpdCountOwned = false;
                                 latchCount--;
                                 pressureControl.updateInflightPartitions(--inflightPartitions);
                                 throw CairoException.critical(0)
@@ -12610,6 +12672,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
                         }
 
+                        // Handed over BEFORE the call, not after it, and deliberately so:
+                        // o3CommitPartitionAsync is not a pure publish -- when the O3 partition queue is
+                        // full it runs O3PartitionJob.processPartition INLINE on this thread, and that
+                        // job's own catch blocks already call o3ClockDownPartitionUpdateCount() before
+                        // rethrowing. Clearing the flag after the call would lower an already-lowered
+                        // counter, drive it negative, make o3ConsumePartitionUpdates() return without
+                        // draining the ring queue, and deadlock the following o3DoneLatch.await() --
+                        // strictly worse than the hang being fixed here.
+                        partitionUpdCountOwned = false;
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -12636,6 +12707,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.error().$((Sinkable) e).$();
                     success = false;
                     throw e;
+                } finally {
+                    // Nobody else became responsible for this iteration's ticket, so lower it here.
+                    // Without this the commit does not fail -- it HANGS. Pairs with the latchCount++
+                    // above, hence the latch countdown too (the same pair every other compensating path
+                    // in this method uses).
+                    if (partitionUpdCountOwned) {
+                        o3ClockDownPartitionUpdateCount();
+                        o3CountDownDoneLatch();
+                    }
                 }
                 if (inflightPartitions % partitionParallelism == 0) {
                     o3ConsumePartitionUpdates();
@@ -13131,39 +13211,74 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             o3PartitionUpdateSinkCellKeys.put(partitionUpdateSinkAddr, cellKey);
         }
+        // From here to the o3CommitPartitionAsync() below, THIS FRAME owns the counter ticket: nothing
+        // else can lower it, because only a dispatched unit draining through o3ConsumePartitionUpdates()
+        // ever does. A throw in that window would therefore leave the counter above zero forever and
+        // spin processO3BlockComposite's finally-block o3ConsumePartitionUpdates() -- an unkillable
+        // WAL-apply hang. The remaining throw in this window is dedupColumnCommitAddresses
+        // .allocateBlock() (a native malloc). `owned` hands the ticket over exactly once, and the
+        // finally lowers it iff it was never handed over.
+        //
+        // The hand-over happens BEFORE the call, not after it, and that is deliberate:
+        // o3CommitPartitionAsync is not a pure publish -- when the O3 partition queue is full it runs
+        // O3PartitionJob.processPartition INLINE on this thread, and that job's own catch blocks
+        // already call o3ClockDownPartitionUpdateCount() before rethrowing. Clearing `owned` after the
+        // call would therefore lower an already-lowered counter, drive it negative, make
+        // o3ConsumePartitionUpdates() return without draining the ring queue and deadlock the
+        // subsequent o3DoneLatch.await() -- strictly worse than the bug being fixed.
+        //
+        // Only o3PartitionUpdRemaining is compensated here, NOT o3DoneLatch: the caller does
+        // `latchCount += dispatchCompositeCellRange(...)`, so a throw out of this method leaves
+        // latchCount un-incremented and an extra countDown would satisfy a LATER await(latchCount)
+        // prematurely -- releasing the writer while a sibling cell's task is still in flight.
         o3PartitionUpdRemaining.incrementAndGet();
-        Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
-        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+        boolean owned = true;
+        try {
+            Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+            Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+            Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
-        final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
-        final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);
-        final long o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooHi);
+            final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
+            final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);
+            final long o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooHi);
 
-        o3CommitPartitionAsync(
-                columnCounter,
-                maxTimestamp,
-                sortedTimestampsAddrForCell,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                o3TimestampLo,
-                partitionTimestamp,
-                srcDataMax,
-                false, // last -- composite dispatch never uses the append fast path, see class docs
-                srcNameTxn,
-                o3Basket,
-                newPartitionSize,
-                srcDataMax,
-                partitionUpdateSinkAddr,
-                dedupColSinkAddr,
-                false, // isParquet -- guarded above
-                o3TimestampLo,
-                o3TimestampHi,
-                oooColumnsForCell,
-                cellSegment,
-                cellKey
-        );
+            //noinspection ConstantValue
+            if (O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH) {
+                throw CairoException.critical(0)
+                        .put("test-injected failure between the o3PartitionUpdRemaining increment and dispatch [table=")
+                        .put(tableToken.getTableName()).put(", cellKey=").put(cellKey).put(']');
+            }
+
+            owned = false;
+            o3CommitPartitionAsync(
+                    columnCounter,
+                    maxTimestamp,
+                    sortedTimestampsAddrForCell,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    o3TimestampLo,
+                    partitionTimestamp,
+                    srcDataMax,
+                    false, // last -- composite dispatch never uses the append fast path, see class docs
+                    srcNameTxn,
+                    o3Basket,
+                    newPartitionSize,
+                    srcDataMax,
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr,
+                    false, // isParquet -- guarded above
+                    o3TimestampLo,
+                    o3TimestampHi,
+                    oooColumnsForCell,
+                    cellSegment,
+                    cellKey
+            );
+        } finally {
+            if (owned) {
+                o3ClockDownPartitionUpdateCount();
+            }
+        }
         return 1;
     }
 
