@@ -39,4 +39,17 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             runner.assertTwinEqual();
         });
     }
+
+    @Test
+    public void testAxesVaryAcrossSeeds() throws Exception {
+        assertMemoryLeak(() -> {
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (int i = 0; i < 12; i++) {
+                CompositeFuzzRunner r = CompositeFuzzRunner.of(engine, new Rnd(i, i * 7L));
+                r.createTables("axes" + i);
+                seen.add(r.axes().toString());
+            }
+            org.junit.Assert.assertTrue("axes must vary across seeds, saw " + seen, seen.size() > 3);
+        });
+    }
 }

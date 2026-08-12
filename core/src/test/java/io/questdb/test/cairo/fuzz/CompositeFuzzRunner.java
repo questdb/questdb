@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
@@ -37,10 +38,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
+
+import java.util.Arrays;
 
 /**
  * Differential fuzz harness: builds a composite (subject) table and a plain (reference) table
@@ -55,6 +59,7 @@ public class CompositeFuzzRunner {
     private final CairoEngine engine;
     private final Rnd rnd;
     private final SqlExecutionContext sqlExecutionContext;
+    private Axes axes;
     private String compositeName;
     private String plainName;
 
@@ -66,6 +71,72 @@ public class CompositeFuzzRunner {
 
     public static CompositeFuzzRunner of(CairoEngine engine, Rnd rnd) {
         return new CompositeFuzzRunner(engine, rnd);
+    }
+
+    /**
+     * Resolved composite axes for one run: dimension set/count, directory-naming layout,
+     * clustering, cell cardinality and the fast-append flag. Exposed so failure messages
+     * (Task 4) and the coverage matrix (Task 7) can report exactly what shape produced a
+     * given result.
+     */
+    public static final class Axes {
+        // The brief's own example: an identity dimension plus a hash and a truncate dimension,
+        // both driven off the same SYMBOL column ("sym") with a different transform each --
+        // composite partitioning places no requirement that dimensions reference distinct
+        // columns. A shuffled prefix of this pool is used so dimCount also varies WHICH
+        // dimensions are present, not just how many.
+        private static final String[] DIM_POOL = {"exch", "hash(sym, 32)", "truncate(sym, 3)"};
+        // small, medium, at the open-cell cap (CAIRO_WAL_COMPOSITE_FASTAPPEND_MAX_OPEN_CELLS
+        // defaults to 64), above it.
+        private static final int[] CARDINALITIES = {3, 16, 64, 96};
+
+        public final int cardinality;       // distinct dimension values to generate
+        public final boolean clustered;     // ORDER BY sym
+        public final int dimCount;          // 1..3
+        public final String[] dimClauses;   // e.g. "exch", "hash(sym, 32)", "truncate(sym, 3)"
+        public final boolean fastAppend;    // cairo.wal.composite.fastappend.enabled
+        public final boolean hivelayout;    // false => LAYOUT PLAIN
+
+        private Axes(int dimCount, String[] dimClauses, boolean hivelayout, boolean clustered, int cardinality, boolean fastAppend) {
+            this.dimCount = dimCount;
+            this.dimClauses = dimClauses;
+            this.hivelayout = hivelayout;
+            this.clustered = clustered;
+            this.cardinality = cardinality;
+            this.fastAppend = fastAppend;
+        }
+
+        static Axes resolve(Rnd rnd) {
+            int dimCount = 1 + rnd.nextInt(DIM_POOL.length);
+            String[] shuffled = DIM_POOL.clone();
+            // Fisher-Yates using the SAME rnd the rest of resolve() draws from -- deterministic
+            // given the seed, so re-running with the same seed reproduces the same axes.
+            for (int i = shuffled.length - 1; i > 0; i--) {
+                int j = rnd.nextInt(i + 1);
+                String tmp = shuffled[i];
+                shuffled[i] = shuffled[j];
+                shuffled[j] = tmp;
+            }
+            String[] dimClauses = Arrays.copyOf(shuffled, dimCount);
+            boolean hivelayout = rnd.nextBoolean();
+            boolean clustered = rnd.nextBoolean();
+            int cardinality = CARDINALITIES[rnd.nextInt(CARDINALITIES.length)];
+            boolean fastAppend = rnd.nextBoolean();
+            return new Axes(dimCount, dimClauses, hivelayout, clustered, cardinality, fastAppend);
+        }
+
+        @Override
+        public String toString() {
+            return "dims=" + String.join(",", dimClauses)
+                    + " layout=" + (hivelayout ? "HIVE" : "PLAIN")
+                    + " clustered=" + clustered
+                    + " cardinality=" + cardinality
+                    + " fastAppend=" + fastAppend;
+        }
+    }
+
+    public Axes axes() {
+        return axes;
     }
 
     /**
@@ -146,15 +217,37 @@ public class CompositeFuzzRunner {
     /**
      * ONE column model, TWO DDLs. The reference differs from the subject only in the partition
      * clause, so a divergence can never come from the schema.
+     * <p>
+     * The subject's dimension set, directory-naming layout, clustering, cardinality and
+     * fast-append flag are all drawn from {@code rnd} via {@link Axes#resolve}, so successive
+     * calls against the same runner's {@code rnd} (or fresh runners seeded differently) exercise
+     * different composite shapes. The reference table is untouched by any of this -- it is always
+     * {@code PARTITION BY DAY WAL} with no dimensions, order, or layout clause.
      */
     public void createTables(String base) throws SqlException {
         this.compositeName = base + "_composite";
         this.plainName = base + "_plain";
+        this.axes = Axes.resolve(rnd);
         final String cols = "(ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE, qty LONG)";
-        engine.execute(
-                "CREATE TABLE " + compositeName + " " + cols + " TIMESTAMP(ts) PARTITION BY DAY, exch WAL",
-                sqlExecutionContext
-        );
+
+        // Must be set before the composite CREATE TABLE: CairoTestConfiguration#getDelegate
+        // re-resolves Overrides#getConfiguration() on every config access (it is a live
+        // delegating wrapper, not a value snapshot taken once at @BeforeClass), so this reaches
+        // TableWriter's eligibility check on the very next commit against this table.
+        AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_ENABLED, axes.fastAppend);
+
+        StringBuilder subjectDdl = new StringBuilder()
+                .append("CREATE TABLE ").append(compositeName).append(' ').append(cols)
+                .append(" TIMESTAMP(ts) PARTITION BY DAY, ").append(String.join(", ", axes.dimClauses));
+        if (axes.clustered) {
+            subjectDdl.append(" ORDER BY sym");
+        }
+        if (!axes.hivelayout) {
+            subjectDdl.append(" LAYOUT PLAIN");
+        }
+        subjectDdl.append(" WAL");
+        engine.execute(subjectDdl.toString(), sqlExecutionContext);
+
         engine.execute(
                 "CREATE TABLE " + plainName + " " + cols + " TIMESTAMP(ts) PARTITION BY DAY WAL",
                 sqlExecutionContext
@@ -171,16 +264,15 @@ public class CompositeFuzzRunner {
      * Task 1 keeps this to plain data inserts (no structural DDL, no O3, no replace-range) so the
      * skeleton has the fewest moving parts; later tasks randomize these axes.
      * <p>
-     * {@code probabilityOfUnassignedColumnValue} and {@code probabilityOfAssigningNull} are kept
-     * at 0.0 deliberately: {@code generateSet} applies both uniformly across every column,
-     * including {@code exch} (the identity/partitioning dimension), and there is no per-column
-     * override. A minimal repro (single WAL commit, composite table, one row with NULL exch mixed
-     * with a non-null-exch row) showed that a NULL identity-dimension value colliding with a
-     * non-null one in the same WAL commit hangs forever in
-     * {@code TableWriter.processO3BlockComposite -> o3ConsumePartitionUpdates} -- a genuine
-     * production defect, out of scope to fix here (see Task 1 report). Leaving both probabilities
-     * at 0.0 keeps every column, including exch, always explicitly assigned and avoids the hang;
-     * NULL-dimension coverage belongs in a follow-up task once the underlying defect is fixed.
+     * {@code probabilityOfUnassignedColumnValue} and {@code probabilityOfAssigningNull} were kept
+     * at 0.0 in Task 1 to dodge a hang: {@code generateSet} applies both uniformly across every
+     * column, including {@code exch} (the identity/partitioning dimension), and a NULL identity
+     * dimension value colliding with a non-null one in the same WAL commit hung forever in
+     * {@code TableWriter.processO3BlockComposite -> o3ConsumePartitionUpdates}. That defect is
+     * fixed (commits 1654f92f17, b66e2553f8), so Task 2 restores both probabilities to a modest
+     * non-zero value -- high enough that NULL/unassigned exch and sym values are reliably
+     * generated across a run, low enough that most rows still carry an assigned, non-null
+     * dimension value (there would be little left to compare otherwise).
      */
     private ObjList<FuzzTransaction> generate(int rowCount, int transactionCount) throws SqlException, NumericException {
         TableToken plainToken = engine.verifyTableName(plainName);
@@ -192,7 +284,10 @@ public class CompositeFuzzRunner {
                     .parseFloorLiteral("2023-01-01T00:00:00.000000Z");
             long maxTimestamp = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
                     .parseFloorLiteral("2023-01-03T00:00:00.000000Z");
-            String[] symbols = new String[]{"NYSE", "NASDAQ", "LSE", "XETRA", "ARCA", "BATS"};
+            String[] symbols = new String[axes.cardinality];
+            for (int i = 0; i < axes.cardinality; i++) {
+                symbols[i] = "SYM" + i;
+            }
             return FuzzTransactionGenerator.generateSet(
                     0, // initialRowCount: tables are created empty
                     sequencerMetadata,
@@ -204,8 +299,8 @@ public class CompositeFuzzRunner {
                     transactionCount,
                     false, // o3: keep Task 1 to in-order inserts
                     0.0,   // probabilityOfCancelRow
-                    0.0,   // probabilityOfUnassignedColumnValue (see note above: avoids a confirmed hang)
-                    0.0,   // probabilityOfAssigningNull (see note above: avoids a confirmed hang)
+                    0.1,   // probabilityOfUnassignedColumnValue (restored: hang fixed, see note above)
+                    0.1,   // probabilityOfAssigningNull (restored: hang fixed, see note above)
                     0.0,   // probabilityOfTransactionRollback
                     0.0,   // probabilityOfAddingNewColumn
                     0.0,   // probabilityOfRemovingColumn
