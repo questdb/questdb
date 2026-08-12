@@ -18,6 +18,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code LifecycleOrchestratorHookThrowsTest}) leave the executor idle, so a revert that reorders
  * the hook ahead of the drain stays green under them. This test parks a task on the executor and
  * asserts the hook sees it as completed, going RED under that reorder.
+ * <p>
+ * The discriminator is a {@link CountDownLatch} counted down from inside an override of
+ * {@code awaitInFlightWork()}, not a sleep: the closer thread can only reach that override after
+ * {@code close()} has called {@code executor.shutdown()}, so the latch opening is proof the closer
+ * reached the drain boundary, independent of how the JVM schedules the closer thread relative to
+ * the test thread. The moment the latch opens, the correctly-ordered tree cannot yet have run the
+ * hook (it is still blocked awaiting the parked task inside {@code super.awaitInFlightWork()}), so
+ * a hook-before-drain mutant is caught deterministically: on that mutant the hook runs (on the same
+ * closer thread, in program order) before the drain override's countDown, so it is already visible
+ * the instant the test thread's await returns.
  */
 public class LifecycleOrchestratorExecutorDrainOrderTest {
 
@@ -26,11 +36,13 @@ public class LifecycleOrchestratorExecutorDrainOrderTest {
 
     @Test
     public void closeDrainsExecutorBeforePreJoinCancelHookObservesState() throws Exception {
-        final ExecutorAccessOrchestrator orch = new ExecutorAccessOrchestrator();
-        final CountDownLatch taskStarted = new CountDownLatch(1);
+        final CountDownLatch closerAtDrain = new CountDownLatch(1);
         final CountDownLatch releaseTask = new CountDownLatch(1);
+        final CountDownLatch taskStarted = new CountDownLatch(1);
         final AtomicBoolean taskCompleted = new AtomicBoolean();
+        final AtomicBoolean hookCalled = new AtomicBoolean();
         final AtomicBoolean hookSawTaskCompleted = new AtomicBoolean();
+        final ExecutorAccessOrchestrator orch = new ExecutorAccessOrchestrator(closerAtDrain);
 
         orch.submitToExecutor(() -> {
             taskStarted.countDown();
@@ -41,7 +53,10 @@ public class LifecycleOrchestratorExecutorDrainOrderTest {
             }
             taskCompleted.set(true);
         });
-        orch.setPreJoinCancelHook(() -> hookSawTaskCompleted.set(taskCompleted.get()));
+        orch.setPreJoinCancelHook(() -> {
+            hookCalled.set(true);
+            hookSawTaskCompleted.set(taskCompleted.get());
+        });
 
         Assert.assertTrue("the executor task must be running before close()",
                 taskStarted.await(10, TimeUnit.SECONDS));
@@ -49,11 +64,18 @@ public class LifecycleOrchestratorExecutorDrainOrderTest {
         final Thread closer = new Thread(orch::close, "orch-closer");
         try {
             closer.start();
-            // Give close() a wide berth to reach the executor drain before releasing the task: on
-            // the correctly-ordered tree the hook cannot fire until awaitInFlightWork() returns, so
-            // this margin only matters for discriminating a reordered mutant (whose hook runs
-            // immediately, well before this sleep elapses).
-            Thread.sleep(300);
+            // closerAtDrain can only open after close() has called executor.shutdown() and entered
+            // awaitInFlightWork(), so this proves the closer reached the drain boundary -- no sleep
+            // margin needed, and no dependency on how promptly the closer thread gets scheduled.
+            Assert.assertTrue("the closer thread must reach the executor drain boundary",
+                    closerAtDrain.await(30, TimeUnit.SECONDS));
+            // On the correctly-ordered tree the hook cannot have run yet: awaitInFlightWork() is
+            // still blocked on the parked task. On a hook-before-drain mutant the hook already ran,
+            // on the closer thread, strictly before this countDown -- so it is visible right here.
+            Assert.assertFalse(
+                    "the pre-join cancel hook must not run before the executor drain boundary is reached",
+                    hookCalled.get());
+
             releaseTask.countDown();
             closer.join(TimeUnit.SECONDS.toMillis(10));
         } finally {
@@ -61,7 +83,9 @@ public class LifecycleOrchestratorExecutorDrainOrderTest {
             closer.join(TimeUnit.SECONDS.toMillis(10));
         }
 
+        Assert.assertFalse("the closer thread must terminate", closer.isAlive());
         Assert.assertTrue("the executor task must have completed", taskCompleted.get());
+        Assert.assertTrue("the pre-join cancel hook must run", hookCalled.get());
         Assert.assertTrue(
                 "the pre-join cancel hook must observe the executor task as already completed -- "
                         + "close() must drain the executor before running the hook",
@@ -73,12 +97,21 @@ public class LifecycleOrchestratorExecutorDrainOrderTest {
     // production io.questdb.lifecycle). Mirrors EntLifecycleOrchestrator.executeSwitchTask, which
     // exists for the same reason.
     private static final class ExecutorAccessOrchestrator extends LifecycleOrchestrator {
-        ExecutorAccessOrchestrator() {
+        private final CountDownLatch closerAtDrain;
+
+        ExecutorAccessOrchestrator(CountDownLatch closerAtDrain) {
             super(null, null, null);
+            this.closerAtDrain = closerAtDrain;
         }
 
         void submitToExecutor(Runnable task) {
             executor.execute(task);
+        }
+
+        @Override
+        protected boolean awaitInFlightWork() {
+            closerAtDrain.countDown();
+            return super.awaitInFlightWork();
         }
     }
 }
