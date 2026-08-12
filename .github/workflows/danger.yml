@@ -3,10 +3,11 @@ name: Danger
 on:
   pull_request:
     types: [ synchronize, opened, reopened, edited ]
+  merge_group:
 
 jobs:
   build:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -24,3 +25,68 @@ jobs:
         working-directory: ./ci/validate-pr-title
         env:
           DANGER_GITHUB_API_TOKEN: ${{ secrets.DANGER_GITHUB_TOKEN }}
+
+  # A merge group carries no pull request, so danger-js cannot run and the Danger
+  # status it posts never reaches the merge-group commit. GitHub requires that
+  # status there, so this job recovers the queued pull request from the branch
+  # name, applies the same validate() rule the dangerfile uses, and posts the
+  # status itself. The title is what GitHub writes into the squash commit, and a
+  # title edited after queueing is validated nowhere else.
+  merge-group:
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+      - name: Validate the rule itself
+        working-directory: ./ci/validate-pr-title
+        run: node validate.test.js
+      - name: Validate the queued pull request title
+        working-directory: ./ci/validate-pr-title
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_GROUP_REF: ${{ github.ref }}
+        run: |
+          set -uo pipefail
+          # Every exit posts a Danger status. A merge group whose required check never
+          # reports sits until the queue's status-check timeout and is then ejected with
+          # nothing naming the cause, so an internal failure reports failure instead.
+          reject() {
+            echo "::error::$1"
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              -f state=failure -f context=Danger -f description="$2" > /dev/null || true
+            exit 1
+          }
+          # GitHub builds refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>, matching the
+          # pattern ci/templates/check-changes-job.yml already uses. A group holding more
+          # than one entry carries only the last number, so this checks that one title.
+          if ! [[ $MERGE_GROUP_REF =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
+            reject "cannot read a pull request number from $MERGE_GROUP_REF" \
+                   "Could not identify the queued pull request"
+          fi
+          PR="${BASH_REMATCH[1]}"
+          if ! TITLE=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .title); then
+            reject "cannot read the title of PR #$PR from the GitHub API" \
+                   "Could not read the title of PR #$PR"
+          fi
+          echo "Validating title of PR #$PR: $TITLE"
+          if ! REASON=$(TITLE="$TITLE" node -e '
+            const { validate } = require("./validate");
+            let reason = "";
+            validate({ title: process.env.TITLE, onError: (message) => { reason = message; } });
+            process.stdout.write(reason);
+          '); then
+            reject "the title validator failed to run" "Danger could not validate PR #$PR"
+          fi
+          if [ -n "$REASON" ]; then
+            reject "$REASON" "PR #$PR title must match type(subType): description"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success -f context=Danger \
+            -f description="Title of PR #$PR validated" > /dev/null
