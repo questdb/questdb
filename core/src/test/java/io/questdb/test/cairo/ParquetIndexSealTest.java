@@ -232,6 +232,48 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropIndexRetiresTheTokenAndItsArtifacts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            final String indexMeta;
+            final String indexParquet;
+            try (Path path = new Path()) {
+                indexMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                indexParquet = onlyFileNamed(partitionPath(path), "sym.pidx.", ".parquet");
+            }
+
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                final FilesFacade ff = configuration.getFilesFacade();
+                // The token must go. It is not enough that the index is gone from
+                // the metadata: publishParquetIndexTokens copies forward every
+                // entry no pass reseals, so a surviving entry is restated into
+                // every later footer for this partition, outliving the index that
+                // produced it for good.
+                assertNoCoveringIndexToken(path, TABLE_NAME, currentPartitionNameTxn(TABLE_NAME));
+
+                // And the pair it named must be reclaimed. The orphan sweep does
+                // not cover it -- its _im is committed -- so the only route is the
+                // reader-gated purge the drop hands it to.
+                runPostingSealPurgeJob();
+                Assert.assertFalse(
+                        "DROP INDEX must retire the parquet index _im",
+                        ff.exists(partitionPath(path).concat(indexMeta).$())
+                );
+                Assert.assertFalse(
+                        "DROP INDEX must retire the index parquet",
+                        ff.exists(partitionPath(path).concat(indexParquet).$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSecondSealSupersedesTheFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
@@ -248,20 +290,35 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 );
             }
 
-            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
-            drainWalQueue();
-
             try (Path path = new Path()) {
                 final FilesFacade ff = configuration.getFilesFacade();
-                // The reader the purge window is about, opened before the second
-                // seal and held across it. Its _pm mapping is the pre-publish
-                // one, so it still resolves the first seal's index_txn, and the
-                // files that token names must outlive the supersession for as
-                // long as it lives. isRangeAvailable(from, to) blocks only on
+                // The reader the purge window is about, opened before the token
+                // that names the first pair stops being the committed one and
+                // held across the whole reindex. Its _pm mapping is the
+                // pre-retirement one, so it still resolves the first index_txn
+                // and the files that token names must outlive the retirement for
+                // as long as it lives. isRangeAvailable(from, to) blocks only on
                 // readers inside the half-open [from, to), so a window that stops
                 // at the writer's committed txn does not see this reader at all.
                 try (TableReader pinned = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
                     final long pinnedTxn = pinned.getTxn();
+
+                    execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                    drainWalQueue();
+
+                    // Without this the test is vacuous: a reader pinned two or
+                    // more txns below the retirement lies inside the too-narrow
+                    // window as well, so it would block the purge under either
+                    // bound and could not tell them apart. The window opens at
+                    // the txn that retires the token, so the reader has to sit at
+                    // exactly one below it -- the boundary the narrow window
+                    // excludes.
+                    Assert.assertEquals(
+                            "the pinned reader must sit exactly one txn below the retirement, or this test"
+                                    + " cannot tell the correct purge window from one that is a txn too narrow",
+                            pinnedTxn + 1,
+                            committedTxn(TABLE_NAME)
+                    );
 
                     execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
                     drainWalQueue();
@@ -276,23 +333,10 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                                     + ", second=" + secondIndexTxn + ']',
                             secondIndexTxn > firstIndexTxn
                     );
-                    // Without this the test is vacuous: a reader pinned two or
-                    // more txns below the seal lies inside the too-narrow window
-                    // as well, so it would block the purge under either bound and
-                    // could not tell them apart. The seal names its artifacts with
-                    // txWriter.getTxn() + 1, so the reader has to sit at exactly
-                    // secondIndexTxn - 1, the boundary txn the narrow window
-                    // excludes.
-                    Assert.assertEquals(
-                            "the pinned reader must sit exactly one txn below the seal, or this test cannot"
-                                    + " tell the correct purge window from one that is a txn too narrow",
-                            secondIndexTxn - 1,
-                            pinnedTxn
-                    );
                     final long imFileSize = ff.length(partitionPath(path).concat(secondMeta).$());
                     assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, secondIndexTxn, imFileSize);
 
-                    // Supersession alone unlinks nothing.
+                    // Replacing the token unlinks nothing by itself.
                     Assert.assertTrue(
                             "the superseded _im must outlive the supersession",
                             ff.exists(partitionPath(path).concat(firstMeta).$())
@@ -306,12 +350,12 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     runPostingSealPurgeJob();
                     Assert.assertTrue(
                             "the purge must not unlink the superseded _im while a reader pinned at the"
-                                    + " pre-seal txn still resolves the token that names it",
+                                    + " pre-retirement txn still resolves the token that names it",
                             ff.exists(partitionPath(path).concat(firstMeta).$())
                     );
                     Assert.assertTrue(
                             "the purge must not unlink the superseded index parquet while a reader pinned"
-                                    + " at the pre-seal txn still resolves the token that names it",
+                                    + " at the pre-retirement txn still resolves the token that names it",
                             ff.exists(partitionPath(path).concat(firstParquet).$())
                     );
                 }
@@ -920,6 +964,15 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 setCurrentMicros(Math.max(currentMicros, 0) + 10_000_000L);
                 job.run();
             }
+        }
+    }
+
+    /**
+     * The table's committed txn, read the way a reader pins it.
+     */
+    private long committedTxn(String tableName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            return reader.getTxn();
         }
     }
 

@@ -290,6 +290,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // afterwards, because a footer carries the complete set and a per-column
     // append would drop the columns sealed before it.
     private final LongList parquetIndexTokens = new LongList();
+    // Column ids (writer indices) whose covering-index token this batch must
+    // retire from the partition's _pm. DROP INDEX is the producer: the entry
+    // must stop being copied forward and the pair it names must be handed to the
+    // reader-gated purge, or the token outlives the index that produced it and
+    // the artifacts are never reclaimed.
+    private final LongList parquetIndexRetiredColumnIds = new LongList();
+    // Scratch for retireParquetIndexTokens' pre-read of a partition's published
+    // column ids.
+    private final IntList parquetRetireScratchColumnIds = new IntList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -2215,6 +2224,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
+            // The parquet form is not the purging operator's to remove: retire
+            // the published token and hand its artifacts to the reader-gated
+            // purge while the column is still indexed in metadata.
+            retireParquetIndexTokens(columnIndex);
             // swap meta commit
 
             // refresh metadata
@@ -8172,6 +8185,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * a publish, which is the only place the set is allowed to start non-empty.
      */
     private void beginParquetIndexTokenBatch() {
+        parquetIndexRetiredColumnIds.clear();
         if (parquetIndexTokens.size() > 0) {
             LOG.error().$("discarding covering index tokens staged by a seal that never published [table=").$(tableToken)
                     .$(", entries=").$(parquetIndexTokens.size() / 3)
@@ -12289,7 +12303,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * to cover -- see {@link #purgeSupersededParquetIndexArtifacts}.
      */
     private void publishParquetIndexTokens(long partitionTimestamp, long partitionNameTxn, long parquetFileSize) {
-        if (parquetIndexTokens.size() == 0) {
+        if (parquetIndexTokens.size() == 0 && parquetIndexRetiredColumnIds.size() == 0) {
             return;
         }
         // Set the partition path here rather than take a length from the
@@ -12326,6 +12340,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         resealedAt = j;
                         break;
                     }
+                }
+                if (parquetIndexRetiredColumnIds.indexOf(existingColumnId) > -1) {
+                    // Dropped, not resealed: the entry goes away and the pair it
+                    // names is retired. Visible at the txn the drop commits,
+                    // which is the same txWriter.getTxn() + 1 a seal names its
+                    // artifacts with, so the reader window is the same one.
+                    supersededColumnIds.add(existingColumnId);
+                    supersededIndexTxns.add(existingIndexTxn);
+                    supersededVisibleAtTxns.add(txWriter.getTxn() + 1);
+                    continue;
                 }
                 if (resealedAt < 0) {
                     merged.add(existingColumnId);
@@ -12399,6 +12423,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             parquetIndexTokens.clear();
+            parquetIndexRetiredColumnIds.clear();
             path.trimTo(pathSize);
         }
         // The _pm changed under a partition whose name txn, row count and
@@ -13917,6 +13942,56 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
         }
         publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
+    }
+
+    /**
+     * Retires the covering-index token of one column from every parquet
+     * partition that publishes one, and hands the {@code pidx} pair each token
+     * named to the reader-gated purge.
+     * <p>
+     * DROP INDEX removes the native {@code .pk} / {@code .pv} / {@code .pc*}
+     * through the purging operator, which knows nothing of the parquet form. Left
+     * alone the pair stays on disk with nothing naming it -- the orphan sweep does
+     * not match, its {@code _im} is committed -- and, worse, the token itself
+     * survives: {@link #publishParquetIndexTokens} copies forward every entry no
+     * pass resealed, so every later footer for that partition restates a token for
+     * an index that no longer exists.
+     * <p>
+     * Runs while the column is still indexed in metadata, before the meta swap,
+     * and before {@code clearTodoAndCommitMeta} assigns
+     * {@code txWriter.getTxn() + 1} -- the txn at which the retirement becomes
+     * visible and therefore the purge window's upper bound.
+     */
+    private void retireParquetIndexTokens(int columnIndex) {
+        if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+            return;
+        }
+        final int writerIndex = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+        for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (!txWriter.isPartitionParquet(partitionIndex)) {
+                continue;
+            }
+            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+            final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+            // Read before appending anything: most parquet partitions publish no
+            // token for this column, and a publish that changed nothing would
+            // still grow the _pm by a footer and force every reader to re-open
+            // the partition.
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            try {
+                readPublishedParquetIndexColumnIds(plen, parquetFileSize, parquetRetireScratchColumnIds);
+            } finally {
+                path.trimTo(pathSize);
+            }
+            if (!parquetRetireScratchColumnIds.contains(writerIndex)) {
+                continue;
+            }
+            beginParquetIndexTokenBatch();
+            parquetIndexRetiredColumnIds.add(writerIndex);
+            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
+        }
     }
 
     private void resizePartitionUpdateSink() {
