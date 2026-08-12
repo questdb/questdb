@@ -119,6 +119,12 @@ public interface MapWriter extends SymbolCountProvider {
      * out of scope here.
      */
     static CharSequence valueOf(MapWriter writer, int key) {
+        // DO NOT widen this guard to the reader's `key > -1 && key < symbolCount` shape. It looks
+        // like an oversight and is not: CellRegistry#getTupleFromWriter reads back an ordinal this
+        // same writer JUST interned, before the writer's committed symbol count covers it, and
+        // relies on that read succeeding. Widening the guard was measured to turn this into a
+        // TABLE-SUSPENDING failure on three ordinary distinct symbol values in a single commit, with
+        // no NULL involved at all.
         if (key == SymbolTable.VALUE_IS_NULL) {
             return null;
         }

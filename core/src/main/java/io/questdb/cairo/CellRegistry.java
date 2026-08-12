@@ -93,7 +93,25 @@ public class CellRegistry implements QuietCloseable {
         if (writer == null) {
             throw new IllegalStateException("CellRegistry opened read-only");
         }
-        CompositeTupleCodec.decode(MapWriter.valueOf(writer, ordinal), tupleOut);
+        final CharSequence encoded = MapWriter.valueOf(writer, ordinal);
+        if (encoded == null) {
+            // Defensive and currently unreachable, but the dependency it guards is real and subtle.
+            //
+            // MapWriter#valueOf returns null ONLY for SymbolTable.VALUE_IS_NULL. That NARROW guard is
+            // LOAD-BEARING here: this method reads back an ordinal this same writer just interned,
+            // whose value is not yet within the writer's COMMITTED symbol count, and the narrow guard
+            // lets that read through. Widening valueOf to the reader's `key > -1 && key < symbolCount`
+            // shape -- which looks like a tidy-up -- makes this call return null and decode() NPE,
+            // and was measured to SUSPEND A TABLE on three ordinary distinct symbol values in one
+            // commit, with no NULL anywhere. See .superpowers/sdd/ for the investigation.
+            //
+            // So: do not widen that guard without changing this call site first, and if it ever does
+            // return null, fail loudly here rather than NPE inside the codec.
+            throw CairoException.critical(0)
+                    .put("composite cell registry could not resolve an interned tuple [ordinal=").put(ordinal)
+                    .put(", size=").put(size()).put(']');
+        }
+        CompositeTupleCodec.decode(encoded, tupleOut);
     }
 
     /**
