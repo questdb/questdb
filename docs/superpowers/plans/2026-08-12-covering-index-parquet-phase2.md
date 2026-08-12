@@ -28,7 +28,7 @@ The spec's Phase 2 covers the enablers, the write path and the read path. Each p
 
 | part | contents | state |
 | --- | --- | --- |
-| **2A** | Hoist the posting primitives onto `IndexReader`; `flushRowGroup(ptr, rows)`; `_pm` footer `COVERING_INDEX` section | detailed below |
+| **2A** | Extract a `PostingIndexReader` contract; `flushRowGroup(ptr, rows)`; `_pm` footer `COVERING_INDEX` section | detailed below |
 | **2B** | Rust `_im` generation from the streaming writer; key-aligned `pidx.parquet` at the seal point; config gating; `parquet → native` and superseded-version GC | detailed below |
 | **2C** | `ParquetPostingIndexFwd/BwdReader`, `IndexFactory` dispatch on on-disk form, pruning levels 1–3, `collectDistinctKeys` | mapped at the end |
 
@@ -40,8 +40,8 @@ The spec's Phase 2 covers the enablers, the write path and the read path. Each p
 
 | file | change |
 | --- | --- |
-| `core/src/main/java/io/questdb/cairo/idx/IndexReader.java` | five default methods hoisted from `AbstractPostingIndexReader` |
-| `core/src/main/java/io/questdb/griffin/engine/table/CoveringIndexRecordCursorFactory.java:1354` | unguarded cast becomes an `instanceof` guard |
+| `core/src/main/java/io/questdb/cairo/idx/AbstractPostingIndexReader.java` | declares `implements PostingIndexReader` |
+| `core/src/main/java/io/questdb/griffin/engine/table/CoveringIndexRecordCursorFactory.java` | four concrete-type references narrowed to the interface |
 | `core/rust/qdbr/src/parquet_write/jni.rs` | `flushRowGroup` takes a row count |
 | `core/src/main/java/io/questdb/griffin/engine/table/parquet/PartitionEncoder.java` | matching Java declaration |
 | `core/rust/qdb-parquet-meta/src/types.rs`, `footer.rs` | `COVERING_INDEX_BIT` and its footer section |
@@ -56,232 +56,140 @@ The spec's Phase 2 covers the enablers, the write path and the read path. Each p
 | `core/rust/qdbr/src/parquet_metadata/index_gen.rs` | build an `_im` from a finished streaming writer's row groups plus caller-supplied key and boundary data |
 | `core/src/main/java/io/questdb/cairo/idx/ParquetIndexSeal.java` | drive the streaming Parquet writer over per-key posting runs, key-aligned, and emit both artifacts |
 | `core/src/test/java/io/questdb/test/cairo/ParquetIndexSealTest.java` | end-to-end: seal a partition, assert artifacts, key alignment, and round trip |
-| `core/src/test/java/io/questdb/test/cairo/idx/IndexReaderDefaultsTest.java` | the hoisted defaults return the fall-back sentinels |
+| `core/src/main/java/io/questdb/cairo/idx/PostingIndexReader.java` | the narrow posting contract both readers implement |
+| `core/src/test/java/io/questdb/test/cairo/idx/PostingIndexReaderContractTest.java` | pins the contract and guards it against quietly growing |
 
 ---
 
-## Task 1: Hoist the posting primitives onto `IndexReader`
+## Task 1: Extract a `PostingIndexReader` contract
 
-The covering factory casts to the concrete `AbstractPostingIndexReader` at `CoveringIndexRecordCursorFactory:1354`, unguarded, on the primary forward single-key covering path. A Phase 2C reader implementing only `IndexReader` would throw `ClassCastException` there. This task removes that obstacle before the reader exists; afterwards it means reworking the frame path.
+`CoveringIndexRecordCursorFactory` reaches the concrete `AbstractPostingIndexReader` in four places, and the cast at `:1354` is unguarded on the primary forward single-key covering path. A Phase 2C Parquet-backed reader cannot satisfy that cast without inheriting ~3100 lines of `.pk` chain and generation machinery it has no analogue for. Extract the narrow contract the factory actually uses instead.
+
+Hoisting these onto `IndexReader` was considered and rejected: bitmap indexes never become Parquet, so widening their contract buys nothing.
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/cairo/idx/IndexReader.java`
-- Modify: `core/src/main/java/io/questdb/cairo/idx/AbstractPostingIndexReader.java:243,276,395,528,1723`
-- Modify: `core/src/main/java/io/questdb/griffin/engine/table/CoveringIndexRecordCursorFactory.java:1354`
-- Test: `core/src/test/java/io/questdb/test/cairo/idx/IndexReaderDefaultsTest.java`
+- Create: `core/src/main/java/io/questdb/cairo/idx/PostingIndexReader.java`
+- Modify: `core/src/main/java/io/questdb/cairo/idx/AbstractPostingIndexReader.java:243,276,395,528`
+- Modify: `core/src/main/java/io/questdb/griffin/engine/table/CoveringIndexRecordCursorFactory.java:37,1354,1399,2640`
+- Test: `core/src/test/java/io/questdb/test/cairo/idx/PostingIndexReaderContractTest.java`
 
 **Interfaces:**
-- Produces: on `IndexReader` — `default long getEntryMaxValue()`, `default long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped)`, `default long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k)`, `default void populateCacheForKey(int key)`, `default void warmForKeys(int[] keys, int[] requiredCoverColumns)`. Phase 2C's Parquet reader inherits these and overrides what it can answer.
+- Produces: `public interface PostingIndexReader extends IndexReader` declaring exactly `long getEntryMaxValue()`, `long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped)`, `long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k)` and `void populateCacheForKey(int key)`. Phase 2C's Parquet reader implements this instead of extending the abstract class.
+
+**The seam was measured before this task was written — do not widen it.** The only methods called through the concrete type in that factory are the four above (`reader.` inside `fillFrameForKeyCheap`, and `posting.` at the `:2640` site). `warmForKeys` is NOT used there and must stay off the interface. If you find you need a fifth method to make this compile, STOP and report it: that means the seam is wider than measured and the shape needs rethinking, not a bigger interface.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `core/src/test/java/io/questdb/test/cairo/idx/IndexReaderDefaultsTest.java` (Apache-2.0 header copied from a neighbour in `io.questdb.test.cairo.idx`):
+Create `core/src/test/java/io/questdb/test/cairo/idx/PostingIndexReaderContractTest.java` with the Apache-2.0 header copied from a neighbour in that package. It asserts the contract is satisfiable without the chain machinery — i.e. that a class implementing `PostingIndexReader` compiles and can be passed where the covering factory expects one:
 
 ```java
-package io.questdb.test.cairo.idx;
-
-import io.questdb.cairo.idx.IndexReader;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.Numbers;
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
-import org.junit.Test;
-
-public class IndexReaderDefaultsTest extends AbstractCairoTest {
+    @Test
+    public void testNativeReaderSatisfiesTheContract() {
+        Assert.assertTrue(PostingIndexReader.class.isAssignableFrom(PostingIndexFwdReader.class));
+        Assert.assertTrue(PostingIndexReader.class.isAssignableFrom(PostingIndexBwdReader.class));
+    }
 
     @Test
-    public void testDefaultsReturnFallbackSentinels() {
-        final IndexReader reader = new MinimalIndexReader();
-        Assert.assertEquals(Numbers.LONG_NULL, reader.getEntryMaxValue());
-        Assert.assertEquals(-1, reader.countMatchesClamped(3, 0, 100, 100));
-        Assert.assertEquals(-1, reader.selectKthMatch(3, 0, 100, 100, 0));
-        reader.populateCacheForKey(3);
-        reader.warmForKeys(new int[]{3}, new int[]{0});
+    public void testContractDeclaresOnlyTheSeamMethods() {
+        final java.util.Set<String> declared = new java.util.TreeSet<>();
+        for (java.lang.reflect.Method m : PostingIndexReader.class.getDeclaredMethods()) {
+            declared.add(m.getName());
+        }
+        Assert.assertEquals("[countMatchesClamped, getEntryMaxValue, populateCacheForKey, selectKthMatch]", declared.toString());
     }
-
-    private static class MinimalIndexReader implements IndexReader {
-        @Override
-        public long getColumnTop() {
-            return 0;
-        }
-
-        @Override
-        public long getColumnTxn() {
-            return 0;
-        }
-
-        @Override
-        public RowCursor getCursor(int key, long minValue, long maxValue) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getKeyBaseAddress() {
-            return 0;
-        }
-
-        @Override
-        public int getKeyCount() {
-            return 0;
-        }
-
-        @Override
-        public long getKeyMemorySize() {
-            return 0;
-        }
-
-        @Override
-        public long getPartitionTxn() {
-            return 0;
-        }
-
-        @Override
-        public long getValueBaseAddress() {
-            return 0;
-        }
-
-        @Override
-        public int getValueBlockCapacity() {
-            return 0;
-        }
-
-        @Override
-        public long getValueMemorySize() {
-            return 0;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return false;
-        }
-
-        @Override
-        public void of(
-                io.questdb.cairo.CairoConfiguration configuration,
-                io.questdb.std.str.Path path,
-                CharSequence name,
-                long columnNameTxn,
-                long partitionTxn,
-                long columnTop
-        ) {
-        }
-
-        @Override
-        public void reloadConditionally() {
-        }
-    }
-}
 ```
 
-If `IndexReader`'s abstract method set differs from the overrides above, implement exactly what the interface declares — the point of the fixture is that it implements **only** the abstract methods, so the five under test come from defaults.
+The second test is the guard against the interface quietly growing: if a later change adds a method, it fails and forces the decision to be explicit.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
 export QDB_TEST_TMPDIR=/dev/shm/qdb-test && mkdir -p $QDB_TEST_TMPDIR
 cd ~/claude/wt/pidx-parquet
-mvn -pl core -Dtest=IndexReaderDefaultsTest test
+mvn -pl core -Dtest=PostingIndexReaderContractTest test
 ```
 
-Expected: compilation failure — `cannot find symbol: method getEntryMaxValue()`.
+Expected: compilation failure — `cannot find symbol: class PostingIndexReader`.
 
-- [ ] **Step 3: Add the defaults to `IndexReader`**
-
-In `core/src/main/java/io/questdb/cairo/idx/IndexReader.java`, insert each in correct alphabetical position among the existing methods:
+- [ ] **Step 3: Create the interface**
 
 ```java
+package io.questdb.cairo.idx;
+
+/**
+ * The posting-index primitives the covering query path reaches through a
+ * reader, separated from {@link AbstractPostingIndexReader}'s chain and
+ * generation machinery so a Parquet-backed reader can serve them without
+ * inheriting it.
+ * <p>
+ * Deliberately narrow: it declares exactly the methods
+ * {@code CoveringIndexRecordCursorFactory} calls through the concrete type.
+ * Adding to it couples a new caller to every implementation, so a new method
+ * belongs here only when more than one implementation can answer it.
+ */
+public interface PostingIndexReader extends IndexReader {
+
     /**
      * Exact count of postings for {@code key} within
      * {@code [minValue, maxValueClamped]}, or {@code -1} when the reader
-     * cannot answer from metadata alone and the caller must fall back to a
-     * cursor walk. Implementations that have no metadata-only answer inherit
-     * this default.
+     * cannot answer from metadata alone and the caller must walk a cursor.
      */
-    default long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
-        return -1;
-    }
+    long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped);
 
     /**
-     * Highest row id this reader's current entry covers, or
-     * {@link Numbers#LONG_NULL} when the reader cannot answer from metadata
-     * alone.
+     * Highest row id the reader's current entry covers.
      */
-    default long getEntryMaxValue() {
-        return Numbers.LONG_NULL;
-    }
+    long getEntryMaxValue();
 
     /**
-     * Warms any per-key cache. A no-op for readers that hold no such cache.
+     * Warms any per-key cache the reader keeps.
      */
-    default void populateCacheForKey(int key) {
-    }
+    void populateCacheForKey(int key);
 
     /**
      * Absolute row id of the {@code k}-th posting of {@code key} within
      * {@code [minValue, maxValueClamped]}, or {@code -1} when the reader
      * cannot resolve it from metadata alone.
      */
-    default long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k) {
-        return -1;
-    }
-
-    /**
-     * Warms whatever the reader needs to serve {@code keys} and
-     * {@code requiredCoverColumns}. A no-op for readers with nothing to warm.
-     */
-    default void warmForKeys(int[] keys, int[] requiredCoverColumns) {
-    }
+    long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k);
+}
 ```
 
-Add `import io.questdb.std.Numbers;` in the correct alphabetical position. Add `@Override` to the five implementations in `AbstractPostingIndexReader` (lines 243, 276, 395, 528, 1723) — they now override interface defaults.
+Declare `AbstractPostingIndexReader implements PostingIndexReader` and add `@Override` to the four implementations at lines 243, 276, 395 and 528. Do not move their bodies.
 
-- [ ] **Step 4: Replace the unguarded cast**
+- [ ] **Step 4: Narrow the covering factory to the interface**
 
-The cast sits inside `if (cheapEligible && prepRowCursor != null)`, which guards the cheap
-O(genCount) fast path; falling out of that block is already a supported outcome (the parked
-traverse). So the fix is to widen the guard rather than to add a fallback. Replace:
+In `CoveringIndexRecordCursorFactory`, change the import at `:37`, the `fillFrameForKeyCheap` parameter type at `:1399`, and the `instanceof` at `:2640` from `AbstractPostingIndexReader` to `PostingIndexReader`. At `:1354`, replace the unguarded cast by widening the enclosing guard:
 
 ```java
-            if (cheapEligible && prepRowCursor != null) {
-                final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) framePostingReader;
+            if (cheapEligible && prepRowCursor != null && framePostingReader instanceof PostingIndexReader reader) {
 ```
 
-with:
-
-```java
-            // The cheap path calls the posting metadata primitives directly. A
-            // reader that only implements IndexReader inherits their fall-back
-            // defaults, so it must take the traverse instead of being cast.
-            if (cheapEligible && prepRowCursor != null && framePostingReader instanceof AbstractPostingIndexReader reader) {
-```
-
-and delete the now-redundant local declaration on the following line, leaving the rest of the
-block unchanged. The pattern variable `reader` keeps every use below it compiling as-is, and the
-existing posting reader still satisfies the `instanceof`, so it keeps the fast path.
+and delete the now-redundant local declaration on the following line. Falling out of that block is already a supported outcome — it takes the parked traverse — so no new fallback is needed.
 
 - [ ] **Step 5: Run the tests**
 
 ```bash
 export QDB_TEST_TMPDIR=/dev/shm/qdb-test && mkdir -p $QDB_TEST_TMPDIR
 cd ~/claude/wt/pidx-parquet
-mvn -pl core -Dtest=IndexReaderDefaultsTest test
+mvn -pl core -Dtest=PostingIndexReaderContractTest test
 mvn -pl core -Dtest='PostingIndex*Test,Covering*Test' -DfailIfNoSpecifiedTests=false test
 ```
 
-Expected: the new test passes, and the full posting/covering suite (31 classes) stays green — this task must not change behaviour for the native reader.
+Expected: the new tests pass and the 31-class posting/covering suite stays green. This task changes no behaviour.
 
 - [ ] **Step 6: Negative control**
 
-Temporarily make `AbstractPostingIndexReader.countMatchesClamped` return `-1` unconditionally and re-run `Covering*Test`. Expected: failures, proving the covering fast path really uses the override rather than the new default. Restore and confirm green. Report what you observed — if nothing fails, the guard added in Step 4 has diverted the fast path and must be fixed.
+Temporarily make `AbstractPostingIndexReader.countMatchesClamped` return `-1` unconditionally and re-run `Covering*Test`. It MUST fail — proving the covering fast path still reaches the real implementation through the narrowed type rather than silently taking the traverse. If nothing fails, Step 4 has diverted the fast path and the change is wrong. Restore and confirm green. Report exactly what you observed.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add core/src/main/java/io/questdb/cairo/idx/IndexReader.java \
+git add core/src/main/java/io/questdb/cairo/idx/PostingIndexReader.java \
         core/src/main/java/io/questdb/cairo/idx/AbstractPostingIndexReader.java \
         core/src/main/java/io/questdb/griffin/engine/table/CoveringIndexRecordCursorFactory.java \
-        core/src/test/java/io/questdb/test/cairo/idx/IndexReaderDefaultsTest.java
-git commit -m "refactor(idx): hoist posting metadata primitives onto IndexReader"
+        core/src/test/java/io/questdb/test/cairo/idx/PostingIndexReaderContractTest.java
+git commit -m "refactor(idx): extract a PostingIndexReader contract"
 ```
 
 ---
