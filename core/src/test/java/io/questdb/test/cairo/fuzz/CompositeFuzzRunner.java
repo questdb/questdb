@@ -236,17 +236,25 @@ public class CompositeFuzzRunner {
      *     override happens strictly AFTER that reset, in the same deterministic column-iteration
      *     order both times {@code apply()} runs, so the shared-{@code Rnd} invariant is fully
      *     inherited, not broken.</li>
-     *     <li>{@link FuzzChangeSymbolCapacityOperation} -- GATED, but NOT because the product rejects
-     *     it: {@code TableWriter#changeSymbolCapacity} (reached directly from {@code ALTER TABLE ...
-     *     ALTER COLUMN ... SYMBOL CAPACITY n}) has NO {@code isRoutedComposite()} check, unlike its
-     *     sibling {@code changeColumnType}. Its own reopen step resolves the last partition via the
-     *     cellKey-0-only path -- {@code TableWriter#scaleSymbolCapacities()}'s doc, guarding the ONLY
-     *     OTHER call site of the same method, calls this "a genuine correctness risk, not merely a
-     *     missed optimization" for a routed composite table. A minimal SQL repro against a routed
-     *     2-cell table did not reproduce visible corruption (the risky reopen branch requires
-     *     transientRowCount &gt; 0 at ALTER time, a narrower timing window this repro did not hit), so
-     *     this is reported as a SUSPECTED, unconfirmed defect, not a proven one -- classified GATED
-     *     here purely for harness safety (never apply it to the twin) pending a proper audit.</li>
+     *     <li>{@link FuzzChangeSymbolCapacityOperation} -- SUPPORTED, following the audit this entry
+     *     previously deferred. It was classified GATED as a precaution while
+     *     {@code TableWriter#changeSymbolCapacity} was a SUSPECTED defect: it carries no
+     *     {@code isRoutedComposite()} check, and its reopen step resolves the last partition through
+     *     the cellKey-0-only path that {@code scaleSymbolCapacities}'s own doc calls "a genuine
+     *     correctness risk" for a routed composite table.
+     *     <p>
+     *     The audit (see {@code CompositeSymbolCapacityAlterTest}) settled it. The reopen provably DOES
+     *     run ungated on a routed composite table -- instrumentation gives
+     *     {@code routedComposite=true, transientRowCount=1, willReopen=true} -- but the ALTER is
+     *     ACCEPTED and leaves the table twin-correct and unsuspended, including when the ALTER and the
+     *     writes that follow it land in one apply pass, which is the shape that would use the
+     *     repositioned handle.
+     *     <p>
+     *     GATED is therefore the wrong label: {@link #applyGatedOperation} asserts a composite REFUSAL,
+     *     and there is none to assert. Residual risk, pinned by that test rather than by this
+     *     classification: nothing breaks only because the composite write path re-resolves per-cell
+     *     handles and never uses the one this reopen moved -- an unstated invariant of another code
+     *     path.</li>
      *     <li>{@link FuzzDropCreateTableOperation} -- GATED, also not a product rejection: it drops
      *     and recreates the table via {@code TableStructMetadataAdapter}, which carries no partition-
      *     spec/dimension information at all, so replaying it against the composite subject would
@@ -615,7 +623,7 @@ public class CompositeFuzzRunner {
         m.put(FuzzSetTtlOperation.class, Support.GATED);
         m.put(FuzzAddCoveringIndexOperation.class, Support.GATED);
         // GATED -- harness-safety only; the product itself does not throw for these (see javadoc).
-        m.put(FuzzChangeSymbolCapacityOperation.class, Support.GATED);
+        m.put(FuzzChangeSymbolCapacityOperation.class, Support.SUPPORTED);
         m.put(FuzzDropCreateTableOperation.class, Support.GATED);
         return m;
     }
