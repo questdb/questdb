@@ -1155,7 +1155,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     /**
      * Whether the most recent .pci open wrote its header. Tests use this to
-     * distinguish the seal-time identical-header fast path from a redundant
+     * distinguish the identical-header fast path from a redundant
      * rewrite, which is not observable from the unchanged file contents.
      */
     @TestOnly
@@ -4130,7 +4130,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int plen = path.size();
         try {
-            openSidecarInfoFile(path, name, postingColumnNameTxn, true);
+            openSidecarInfoFile(path, name, postingColumnNameTxn);
             path.trimTo(plen);
 
             // Open .pc0, .pc1, ... files. Each cover c uses its own
@@ -4167,12 +4167,11 @@ public class PostingIndexWriter implements IndexWriter {
     /**
      * Opens sidecar files for append, preserving existing data. Used by
      * writeSidecarGenData to add per-gen raw blocks after seal's stride-indexed
-     * data. Creates files if they don't exist, writes .pci header only when new.
+     * data. Creates files if they don't exist and repairs mismatched .pci metadata.
      * <p>
-     * When reopening existing files, the .pci header is preserved as-is. This is
-     * safe because the covered column configuration (INCLUDE clause) is part of
-     * the table schema and cannot change within a column version — schema changes
-     * create new file versions via sealTxn bump.
+     * The covered column configuration (INCLUDE clause) is part of the table schema
+     * and cannot change within a column version, so any mismatch is corruption and
+     * the expected header can be restored before the generation is appended.
      */
     private void openSidecarFilesForAppend(Path path, CharSequence name, long postingColumnNameTxn, long sealTxn) {
         if (coverCount <= 0) {
@@ -4180,7 +4179,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int plen = path.size();
         try {
-            openSidecarInfoFile(path, name, postingColumnNameTxn, false);
+            openSidecarInfoFile(path, name, postingColumnNameTxn);
             path.trimTo(plen);
 
             // Each cover c's filename uses the covered column's own
@@ -4216,8 +4215,7 @@ public class PostingIndexWriter implements IndexWriter {
     private void openSidecarInfoFile(
             Path path,
             CharSequence name,
-            long postingColumnNameTxn,
-            boolean rewriteExisting
+            long postingColumnNameTxn
     ) {
         isLastSidecarInfoHeaderWritten = false;
         LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
@@ -4250,7 +4248,7 @@ public class PostingIndexWriter implements IndexWriter {
         );
 
         boolean writeHeader = !exists || existingSize < payloadSize;
-        if (!writeHeader && rewriteExisting) {
+        if (!writeHeader) {
             writeHeader = sidecarInfoMem.getInt(0) != PostingIndexUtils.COVER_INFO_MAGIC
                     || sidecarInfoMem.getInt(Integer.BYTES) != coverCount;
             for (int c = 0; c < coverCount && !writeHeader; c++) {
