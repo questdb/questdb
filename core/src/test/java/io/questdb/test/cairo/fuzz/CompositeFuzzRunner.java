@@ -29,12 +29,15 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -60,6 +63,7 @@ public class CompositeFuzzRunner {
     private final Rnd rnd;
     private final SqlExecutionContext sqlExecutionContext;
     private Axes axes;
+    private int comparedShapeCount;
     private String compositeName;
     private String plainName;
 
@@ -191,23 +195,42 @@ public class CompositeFuzzRunner {
     }
 
     /**
-     * Orders by EVERY column, not just {@code ts}. The generator emits equal-timestamp rows on
-     * purpose ({@code probabilityOfSameTimestamp}), and {@code assertSqlCursors} compares cursors
-     * row by row -- so ordering by {@code ts} alone would leave tied rows in storage order, which
-     * differs between the twins by construction (the composite table groups rows by cell, the plain
-     * one does not). That would produce intermittent RED runs with no defect present, which is
-     * strictly worse than no harness: the first instinct on a red differential run must be to
-     * suspect the product, so the comparison itself has to be order-deterministic.
+     * The full comparison oracle: every shape in spec Sec 4.4 ("Verifying the Supported Surface")
+     * must be identical between subject and reference. Each of the seven {@code compare*} helpers
+     * below increments {@link #comparedShapeCount} exactly once, even where it issues more than one
+     * query, so {@link #comparedShapeCount()} always reads 7 after a full, uninterrupted run.
+     * <p>
+     * EVERY query issued by every shape orders by every selected column (or is a single-row
+     * aggregate, which needs no ordering at all) for the reason Task 1 established: the generator
+     * emits equal-timestamp rows on purpose ({@code probabilityOfSameTimestamp}), and the composite
+     * table's cell-grouped storage order differs from the plain table's by construction -- so a
+     * partial {@code ORDER BY} would leave ties to storage order and produce an intermittent false
+     * RED with no defect present. The first instinct on a red differential run must be to suspect
+     * the product, so the comparison itself has to be order-deterministic.
+     * <p>
+     * Composite-only sanity (spec: {@code table_partitions()} row count equals the number of
+     * distinct {@code (day, cell)} pairs, every named directory exists) is deliberately NOT
+     * implemented here: it is explicitly "asserted separately, not compared to the twin" in the
+     * spec, is outside this task's stated interface ({@code assertTwinEqual()} covering the seven
+     * compared shapes), and correctly recomputing the expected cell count would mean replicating
+     * {@code hash(col,N)}/{@code truncate(col,N)} bucket logic in SQL -- exactly the kind of
+     * harness-side complexity that risks a false RED unrelated to the product. Left for the
+     * anti-vacuity counters (Task 4), which read the count from the product's own counters instead
+     * of recomputing it.
      */
     public void assertTwinEqual() throws SqlException {
-        final String order = " ORDER BY ts, exch, sym, px, qty";
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "SELECT * FROM " + plainName + order,
-                "SELECT * FROM " + compositeName + order,
-                LOG
-        );
+        comparedShapeCount = 0;
+        compareFullScan();          // 1: full scan, forward and backward
+        compareAggregates();        // 2: count(*), min(ts), max(ts)
+        compareLatestOn();          // 3: LATEST ON ts PARTITION BY sym
+        compareSampleBy();          // 4: SAMPLE BY, keyed aggregate
+        compareDimensionFiltered(); // 5: dimension = / IN, present and absent
+        compareIntervalScan();      // 6: interval crossing a partition boundary
+        compareWindowJoinSlave();   // 7: window-join, table as slave
+    }
+
+    public int comparedShapeCount() {
+        return comparedShapeCount;
     }
 
     public String compositeName() {
@@ -256,6 +279,156 @@ public class CompositeFuzzRunner {
 
     public String plainName() {
         return plainName;
+    }
+
+    /**
+     * Shape 2: {@code count(*)}, {@code min(ts)}, {@code max(ts)}. A single row -- trivially
+     * order-deterministic, no {@code ORDER BY} needed.
+     */
+    private void compareAggregates() throws SqlException {
+        final String select = "SELECT count(*) c, min(ts) mn, max(ts) mx FROM ";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, select + plainName, select + compositeName, LOG);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 5: dimension-filtered reads, {@code =} and {@code IN}, each against one value known
+     * present and one known absent. "Present" is read off the reference table (content-identical to
+     * the subject by construction) rather than hardcoded, since Task 2's {@code axes.cardinality}
+     * varies which of {@code "SYM0".."SYM(cardinality-1)"} actually appear. "Absent" is a literal
+     * outside that whole naming scheme, so it is guaranteed never generated regardless of axes.
+     */
+    private void compareDimensionFiltered() throws SqlException {
+        final String present = firstNonNullExch();
+        final String absent = "SYM_ABSENT_PROBE";
+        final String order = " ORDER BY ts, exch, sym, px, qty";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + " WHERE exch = '" + present + "'" + order,
+                "SELECT * FROM " + compositeName + " WHERE exch = '" + present + "'" + order, LOG);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + " WHERE exch = '" + absent + "'" + order,
+                "SELECT * FROM " + compositeName + " WHERE exch = '" + absent + "'" + order, LOG);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + " WHERE exch IN ('" + present + "','" + absent + "')" + order,
+                "SELECT * FROM " + compositeName + " WHERE exch IN ('" + present + "','" + absent + "')" + order, LOG);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 1: full scan, forward ({@code ORDER BY ts ASC}) and backward ({@code ORDER BY ts DESC}).
+     * One counter increment for both queries, per the brief ("Each shape increments the counter
+     * once, even when it issues two queries").
+     */
+    private void compareFullScan() throws SqlException {
+        final String orderAsc = " ORDER BY ts, exch, sym, px, qty";
+        final String orderDesc = " ORDER BY ts DESC, exch DESC, sym DESC, px DESC, qty DESC";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + orderAsc, "SELECT * FROM " + compositeName + orderAsc, LOG);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + orderDesc, "SELECT * FROM " + compositeName + orderDesc, LOG);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 6: a timestamp-bounded interval scan crossing at least one partition boundary. The
+     * generator's window is {@code 2023-01-01T00:00 .. 2023-01-03T00:00} (table is
+     * {@code PARTITION BY DAY}); 18:00 the day before midnight through 06:00 the day after spans
+     * exactly one DAY boundary.
+     */
+    private void compareIntervalScan() throws SqlException {
+        final String sql = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'" +
+                " ORDER BY ts, exch, sym, px, qty";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + sql, "SELECT * FROM " + compositeName + sql, LOG);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 3: {@code LATEST ON ts PARTITION BY sym}. At most one row per distinct {@code sym}
+     * value -- including a NULL group, now that Task 2 restored NULL generation -- so
+     * {@code ORDER BY sym} alone makes row order deterministic.
+     */
+    private void compareLatestOn() throws SqlException {
+        final String sql = " LATEST ON ts PARTITION BY sym ORDER BY sym";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + sql, "SELECT * FROM " + compositeName + sql, LOG);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 4: {@code SAMPLE BY} over a bucket coarser than the partition time unit (DAY: the
+     * generator's window is a 2-day span, so {@code 3d} folds it to a single deterministic bucket
+     * boundary), with a keyed aggregate ({@code exch} is the implicit SAMPLE BY key: any
+     * non-aggregated selected column becomes one). {@code ORDER BY exch, ts} breaks ties across
+     * keys and buckets, including the NULL-{@code exch} group.
+     */
+    private void compareSampleBy() throws SqlException {
+        final String select = "SELECT exch, ts, sum(qty) q, avg(px) p FROM ";
+        final String sql = " SAMPLE BY 3d ORDER BY exch, ts";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                select + plainName + sql, select + compositeName + sql, LOG);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 7: a windowed aggregate with the table as the WINDOW JOIN slave. Built against a small,
+     * throwaway master ("probe") table of fixed, distinct timestamps spanning the fuzz window --
+     * WINDOW JOIN's left side needs no key match (an {@code ON} clause is optional per the grammar;
+     * QuestDB's own {@code SyncWindowJoinMemoryTrackerTest} uses the same bare form), so this probes
+     * every slave row within +-6h of each fixed probe timestamp, agnostic of {@code exch}/{@code
+     * sym}. The probe table is created and dropped around the comparison so repeated {@code
+     * assertTwinEqual()} calls on the same runner (or other runners in the same test) never collide
+     * on its name.
+     */
+    private void compareWindowJoinSlave() throws SqlException {
+        final String probeName = compositeName + "_probe";
+        engine.execute(
+                "CREATE TABLE " + probeName + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                sqlExecutionContext
+        );
+        try {
+            engine.execute(
+                    "INSERT INTO " + probeName + " VALUES " +
+                            "('2023-01-01T00:00:00.000000Z')," +
+                            "('2023-01-01T08:00:00.000000Z')," +
+                            "('2023-01-01T16:00:00.000000Z')," +
+                            "('2023-01-02T00:00:00.000000Z')," +
+                            "('2023-01-02T08:00:00.000000Z')," +
+                            "('2023-01-02T16:00:00.000000Z')",
+                    sqlExecutionContext
+            );
+            final String sql = "SELECT p.ts, count() c, sum(s.qty) q, avg(s.px) a, min(s.ts) mn, max(s.ts) mx" +
+                    " FROM " + probeName + " p WINDOW JOIN %s s" +
+                    " RANGE BETWEEN 6 hours PRECEDING AND 6 hours FOLLOWING EXCLUDE PREVAILING" +
+                    " ORDER BY p.ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    String.format(sql, plainName), String.format(sql, compositeName), LOG);
+            comparedShapeCount++;
+        } finally {
+            engine.execute("DROP TABLE " + probeName, sqlExecutionContext);
+        }
+    }
+
+    /**
+     * Reads a present {@code exch} value off the reference table for shape 5. The reference is
+     * content-identical to the subject by construction, and querying rather than hardcoding
+     * survives Task 2's cardinality axis changing which of the generated symbol pool actually
+     * landed in this run's rows.
+     */
+    private String firstNonNullExch() throws SqlException {
+        try (RecordCursorFactory factory = engine.select(
+                "SELECT exch FROM " + plainName + " WHERE exch IS NOT NULL LIMIT 1",
+                sqlExecutionContext
+        )) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                if (!cursor.hasNext()) {
+                    throw new AssertionError(
+                            "no non-null exch value generated -- cannot exercise the dimension-filtered shape"
+                    );
+                }
+                return Chars.toString(cursor.getRecord().getSymA(0));
+            }
+        }
     }
 
     /**

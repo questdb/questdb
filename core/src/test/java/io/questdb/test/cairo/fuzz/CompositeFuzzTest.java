@@ -52,4 +52,16 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             org.junit.Assert.assertTrue("axes must vary across seeds, saw " + seen, seen.size() > 3);
         });
     }
+
+    @Test
+    public void testAllShapesCompared() throws Exception {
+        assertMemoryLeak(() -> {
+            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(99L, 42L));
+            runner.createTables("shapes");
+            runner.applyGeneratedTransactions(500, 30);
+            runner.assertTwinEqual();
+            org.junit.Assert.assertEquals("all seven shapes must be compared",
+                    7, runner.comparedShapeCount());
+        });
+    }
 }
