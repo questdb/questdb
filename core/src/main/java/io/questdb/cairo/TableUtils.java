@@ -2298,7 +2298,13 @@ public final class TableUtils {
                 );
             }
 
-            final long resultParquetSize = partitionUpdater.updateFileMetadata();
+            // No covering-index token: this writes a brand-new candidate
+            // data.parquet and a brand-new _pm beside it, so no index built over
+            // the source file's row groups survives. The caller reseals and
+            // publishes afterwards. Stated explicitly rather than left to a
+            // default, because inheriting here would name row ids from the file
+            // this one replaces.
+            final long resultParquetSize = partitionUpdater.updateFileMetadata(0, 0);
             partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
             return resultParquetSize;
         } catch (Throwable th) {

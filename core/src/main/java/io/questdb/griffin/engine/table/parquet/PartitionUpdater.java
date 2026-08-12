@@ -74,7 +74,7 @@ public class PartitionUpdater implements QuietCloseable {
      * fsyncs the header before the matching {@code _txn} commit. Full creates and
      * rewrites target a non-authoritative file and need only the final fsync.
      * NOSYNC skips both barriers. The caller MUST invoke this after
-     * {@link #updateFileMetadata()} and the index build, and before the matching
+     * {@link #updateFileMetadata(long, int)} and the index build, and before the matching
      * {@code _txn} commit.
      */
     public void commitParquetMeta(boolean sync) {
@@ -218,12 +218,32 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    // call to this method will update file metadata
-    // MUST be called after all row groups have been updated
-    // returns the final file size
-    public long updateFileMetadata() {
+    /**
+     * Writes the new {@code _pm} snapshot for the updated parquet file and
+     * returns the final {@code data.parquet} size. MUST be called after every
+     * row group has been updated, and before
+     * {@link #commitParquetMeta(boolean)}.
+     * <p>
+     * {@code coveringIndexAddr} points at {@code coveringIndexCount} entries of
+     * three longs each: {@code column_id}, {@code index_txn} and
+     * {@code im_file_size}. That is the complete set the new footer must carry,
+     * never a delta, and {@code (0, 0)} is the explicit "drop the section"
+     * answer. There is deliberately no way to spell "inherit whatever the prior
+     * footer had": an in-place update may have replaced the very row group
+     * blocks the prior token's index was built over, so an inherited token
+     * would name row ids that no longer mean what they meant. A caller that
+     * keeps a covering index must reseal it and restate it here under a
+     * refreshed {@code index_txn}.
+     * <p>
+     * Dropping the token does not unlink the artifacts it named. A reader
+     * pinned to the prior snapshot still resolves the prior footer through
+     * {@code resolveFooter}, and so still resolves the prior {@code index_txn}.
+     * The caller must hand the superseded artifacts to the reader-gated posting
+     * seal purge instead of removing them at the drop point.
+     */
+    public long updateFileMetadata(long coveringIndexAddr, int coveringIndexCount) {
         assert ptr != 0;
-        return updateFileMetadata(ptr);
+        return updateFileMetadata(ptr, coveringIndexAddr, coveringIndexCount);
     }
 
     public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
@@ -334,7 +354,7 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     // throws CairoException on error, returns file size
-    private static native long updateFileMetadata(long impl);
+    private static native long updateFileMetadata(long impl, long coveringIndexAddr, int coveringIndexCount);
 
     private static native void updateRowGroup(
             long impl,

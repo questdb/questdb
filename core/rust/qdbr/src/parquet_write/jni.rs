@@ -322,6 +322,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
+    covering_index_ptr: jlong,
+    covering_index_count: jint,
 ) -> jlong {
     let env = &mut env;
     if updater.is_null() {
@@ -329,10 +331,43 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         err.add_context("error in PartitionUpdater.updateFileMetadata");
         return err.into_cairo_exception().throw::<jlong>(env);
     }
+    if covering_index_count < 0 || (covering_index_count > 0 && covering_index_ptr == 0) {
+        let mut err = fmt_err!(
+            InvalidType,
+            "covering index buffer is null for {covering_index_count} entries"
+        );
+        err.add_context("error in PartitionUpdater.updateFileMetadata");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let parquet_updater = unsafe { &mut *updater };
+    let mut covering_index = Vec::with_capacity(covering_index_count as usize);
+    for i in 0..covering_index_count as usize {
+        // SAFETY: Java guarantees `covering_index_count` entries of three i64
+        // each at `covering_index_ptr`, valid for the duration of the call.
+        // Read unaligned: nothing in the JNI contract guarantees the Java
+        // allocation's alignment, and an unaligned `&[i64]` is undefined
+        // behaviour the moment it is constructed.
+        let entry = unsafe { (covering_index_ptr as *const i64).add(i * 3) };
+        let column_id = unsafe { entry.read_unaligned() };
+        let index_txn = unsafe { entry.add(1).read_unaligned() };
+        let im_file_size = unsafe { entry.add(2).read_unaligned() };
+        let column_id = match u32::try_from(column_id) {
+            Ok(id) => id,
+            Err(_) => {
+                let mut err = fmt_err!(
+                    InvalidType,
+                    "covering index entry {i} has out of range column id {column_id}"
+                );
+                err.add_context("error in PartitionUpdater.updateFileMetadata");
+                return err.into_cairo_exception().throw::<jlong>(env);
+            }
+        };
+        covering_index.push((column_id, index_txn as u64, im_file_size as u64));
+    }
+    parquet_updater.set_covering_index(covering_index);
     match parquet_updater.end(None) {
         Ok(file_size) => file_size as jlong,
         Err(mut err) => {

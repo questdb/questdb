@@ -578,7 +578,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
                 }
-                newParquetSize = partitionUpdater.updateFileMetadata();
+                // Drop any covering-index token the prior footer carried. This
+                // merge rewrote or replaced row group blocks, so the index built
+                // over them no longer names the rows it named, and there is
+                // nothing to restate yet: updateParquetIndexes below rebuilds the
+                // index only after this footer is written. The artifacts the
+                // dropped token named are handed to the reader-gated posting seal
+                // purge by TableWriter, not unlinked here -- a reader pinned to
+                // the prior parquet size still resolves the prior footer.
+                newParquetSize = partitionUpdater.updateFileMetadata(0, 0);
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()

@@ -152,7 +152,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 // Once again with the correct row group id
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
 
                 final long updatedParquetPartitionSize = ff.length(path.$());
                 Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
@@ -220,7 +220,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L, -1);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
                 final long committedHead = updater.getResultParquetMetaFileSize();
                 Assert.assertTrue(committedHead > 0);
                 // Update A appended a row group + new footer: data.parquet grew,
@@ -245,7 +245,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, committedHead, committedParquetSize, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
                 final long newHead = updater.getResultParquetMetaFileSize();
                 Assert.assertTrue("incremental update must extend the _pm", newHead > committedHead);
                 path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -367,7 +367,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
 
                 final long updatedParquetPartitionSize = ff.length(path.$());
                 Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
@@ -421,7 +421,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
                 final long committedHead = updater.getResultParquetMetaFileSize();
                 Assert.assertTrue(committedHead > 0);
                 final long parquetDataSize1 = ff.length(path.$());
@@ -462,7 +462,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, physicalWithDeadTail, parquetDataSize1, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
                 final long newHead = updater.getResultParquetMetaFileSize();
                 // Publish the new snapshot (patch header + fsync), as the O3 job
                 // does after the index build.
@@ -559,7 +559,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
+                updater.updateFileMetadata(0, 0);
 
                 final long parquetMetaFileSize = updater.getResultParquetMetaFileSize();
                 Assert.assertTrue("_pm file size must be > 0", parquetMetaFileSize > 0);
