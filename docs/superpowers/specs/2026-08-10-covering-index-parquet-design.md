@@ -424,10 +424,18 @@ The primitives involved — `getEntryMaxValue`, `countMatchesClamped`, `selectKt
 `IndexReader`, and are all gen/chain-shaped, so a Parquet reader cannot inherit them
 meaningfully.
 
-**Decide before Phase 2 starts**, because both options get expensive once the Parquet
-reader exists: either hoist those primitives onto `IndexReader` as defaults returning the
-existing fall-back sentinels and change `:1354` to an `instanceof` guard (~20 lines
-today), or have the Parquet reader extend `AbstractPostingIndexReader` and override. A test must pin that
+**Decision: hoist, do not extend.** The five primitives move onto `IndexReader` as
+defaults returning the existing fall-back sentinels (`Numbers.LONG_NULL` / `-1`), and
+`:1354` becomes an `instanceof` guard. Rationale: `AbstractPostingIndexReader` is ~3100
+lines built around the `.pk` chain and generation directory, none of which a Parquet
+reader has; extending it would mean inheriting machinery only to override or no-op it,
+and would couple the two formats' lifecycles. Adding defaults to `IndexReader` is
+additive — the bitmap readers keep their behaviour unchanged, and the interface already
+carries a default of exactly this shape for
+`getCursor(key, minValue, maxValue, requiredCoverColumns)`.
+
+This must land **before** the Parquet reader exists; afterwards it means reworking the
+frame path. A test must pin that
 `touch_table()` on a Parquet-backed covering index succeeds and reports zero index
 pages, so the degradation stays intentional rather than becoming an accident.
 
@@ -484,8 +492,19 @@ pull-back, filter pushdown (pruning level 4), incremental index append.
 
 ## Risks
 
-1. **Rust row-group flush primitive.** No key-aligned boundaries without it; it
-   gates the whole layout.
+1. **`flushRowGroup` must take a row count.** The Phase 1 signature captures
+   `accumulated_rows` wholesale, so a boundary can only fall at a chunk boundary and a
+   caller must submit one chunk per key run — roughly 110k JNI submissions per partition
+   at the symbol cardinality this design targets. `write_pending_row_group` already
+   supports cutting mid-chunk via `first_partition_start` / `last_partition_end`, so the
+   fix is `flushRowGroup(writerPtr, rows)` setting
+   `forced_row_group_rows = Some(rows.min(accumulated_rows))`. Free while nothing calls
+   it; a JNI signature break afterwards.
+
+   Related: the fixed `rowGroupSize` threshold stays live and **will split a key**.
+   Phase 2 must suppress it — `row_group_size_opt` treats `0` as "use the default", not
+   "never" — and a test must assert no boundary falls mid-key, since the `_im` writer's
+   key-alignment validation would otherwise reject the file at seal time.
 2. **Write amplification.** Index rebuild is already wholesale on every commit
    touching a Parquet partition. Making it a *Parquet* write raises the cost of a
    one-row O3 insert into a large Parquet partition. This must be measured. A bad
