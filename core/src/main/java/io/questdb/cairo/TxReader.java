@@ -121,6 +121,9 @@ public class TxReader implements Closeable, Mutable {
     private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
+    // The level-2 resolver, created on first use. A table with no composite partition never allocates it,
+    // and one that has them opens only the _geometry of the partition being asked about.
+    private PartitionGeometry geometry;
     private MemoryMR roTxMemBase;
     // Materialised from tableRootSink the first time a composite partition has to be resolved, so a table
     // with no composite partition never allocates it.
@@ -140,6 +143,7 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public void clear() {
         clearData();
+        geometry = Misc.free(geometry);
         Misc.free(roTxMemBase);
     }
 
@@ -148,6 +152,31 @@ public class TxReader implements Closeable, Mutable {
         roTxMemBase = Misc.free(roTxMemBase);
         tableRoot = Misc.free(tableRoot);
         clear();
+    }
+
+    /**
+     * The level-2 resolver for this table's COMPOSITE partitions. Created on first use, so a table that
+     * has none never allocates it; asking it about a partition with no chain costs no read either.
+     */
+    public PartitionGeometry getGeometry() {
+        if (geometry == null) {
+            geometry = new PartitionGeometry().of(ff, this, tableRootSink.toString(), timestampType, partitionBy);
+        }
+        return geometry;
+    }
+
+    /**
+     * The number of file rows the partition's column files span - {@code E}, the furthest row it has ever
+     * held, live or dead. Equal to the live row count for an ordinary partition, and larger for a
+     * COMPOSITE one that holds dead space or whose pieces do not start at file row 0.
+     * <p>
+     * This, not the row count, is what a reader has to MAP: a piece can live anywhere in {@code [0, E)}.
+     */
+    public long getPartitionPhysicalRowCount(int partitionIndex) {
+        if (!hasGeometryChain(partitionIndex)) {
+            return getPartitionSize(partitionIndex);
+        }
+        return getGeometry().getE(partitionIndex);
     }
 
     public void dumpRawTxPartitionInfo(LongList container) {

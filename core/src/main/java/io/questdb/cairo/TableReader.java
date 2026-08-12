@@ -1480,7 +1480,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
+                        // MAP the whole file extent, not the live row count. A COMPOSITE partition's pieces
+                        // sit anywhere in [0, E) - one can start above file row 0, and dead space can sit
+                        // above the live rows - so a mapping sized to the row count would stop short of
+                        // rows the partition still holds. Equal to partitionSize for an ordinary partition,
+                        // and it costs a _geometry read only for a partition that has one.
+                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), txFile.getPartitionPhysicalRowCount(partitionIndex));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;

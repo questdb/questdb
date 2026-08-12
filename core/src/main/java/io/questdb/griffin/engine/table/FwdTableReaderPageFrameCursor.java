@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
@@ -279,14 +280,32 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             }
         }
 
+        // A COMPOSITE partition is several PIECES over one set of column files, and each piece sits at its
+        // own place in those files. So a frame is cut at piece boundaries as well - exactly as a parquet
+        // partition is cut at row-group boundaries just below - and carries that piece's SHIFT, which turns
+        // a partition row into a file row. A frame spanning two pieces would address the dead space between
+        // them. The shift is 0 for a partition with no geometry, which is every partition of an unsplit
+        // table, and resolving it costs a read only for a partition that has one.
+        long pieceShift = 0;
+        if (reader.getTxFile().hasGeometryChain(reenterPartitionIndex)) {
+            final PartitionGeometry geometry = reader.getTxFile().getGeometry();
+            final int piece = geometry.findPieceByRow(reenterPartitionIndex, partitionLo);
+            pieceShift = geometry.getPieceShift(reenterPartitionIndex, piece);
+            final long pieceHi = geometry.getPieceCumulativeLo(reenterPartitionIndex, piece)
+                    + geometry.getPieceRowCount(reenterPartitionIndex, piece);
+            if (pieceHi > partitionLo && pieceHi < adjustedHi) {
+                adjustedHi = pieceHi;
+            }
+        }
+
         for (int i = 0; i < columnCount; i++) {
             final int columnIndex = columnIndexes.getQuick(i);
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR colMem = reader.getColumn(readerColIndex);
             // when the entire column is NULL we make it skip the whole of the partition frame
             final long top = colMem instanceof NullMemoryCMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
-            final long partitionLoAdjusted = partitionLo - top;
-            final long partitionHiAdjusted = adjustedHi - top;
+            final long partitionLoAdjusted = partitionLo + pieceShift - top;
+            final long partitionHiAdjusted = adjustedHi + pieceShift - top;
             final int sh = columnSizeShifts.getQuick(i);
 
             if (partitionHiAdjusted > 0) {
