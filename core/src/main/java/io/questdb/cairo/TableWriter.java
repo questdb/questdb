@@ -4289,18 +4289,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
             }
         }
+        // putCellSegmentPathSafe, not putPathSafe: a NULL dimension value is ordinary data with its
+        // own cell (an IDENTITY ordinal of SymbolTable.VALUE_IS_NULL, or a dedicated-dict ordinal of
+        // the same, both reverse-looking-up to null) and renders as the reserved, collision-proof
+        // TableUtils.COMPOSITE_NULL_DIMENSION_TOKEN. Rendering it through putPathSafe instead would
+        // NPE on null -- and, before MapWriter.valueOf learned its own VALUE_IS_NULL guard, the
+        // reverse lookup itself read out of bounds (an AssertionError under -ea) and hung WAL apply
+        // outright, see dispatchCompositeCellRange.
         switch (dim.getKind()) {
             case PartitionDimension.KIND_IDENTITY:
-                TableUtils.putPathSafe(sink, symbolValueOf(dim.getColumnIndex(), ordinal));
+                TableUtils.putCellSegmentPathSafe(sink, symbolValueOf(dim.getColumnIndex(), ordinal));
                 break;
             case PartitionDimension.KIND_HASH:
                 sink.put(ordinal);
                 break;
             case PartitionDimension.KIND_TRUNCATE:
-                TableUtils.putPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
+                TableUtils.putCellSegmentPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
                 break;
             case PartitionDimension.KIND_EXPRESSION:
-                TableUtils.putPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
+                TableUtils.putCellSegmentPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
                 break;
             default:
                 throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
@@ -13099,6 +13106,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3Basket.checkCapacity(configuration, columnCount, indexCount);
         final AtomicInteger columnCounter = o3ColumnCounters.next();
 
+        // Rendered BEFORE o3PartitionUpdRemaining is incremented below, and this ordering is
+        // load-bearing, not cosmetic: o3PartitionUpdRemaining is only ever decremented by a
+        // dispatched task draining through o3ConsumePartitionUpdates(), so ANY throw between the
+        // increment and o3CommitPartitionAsync() strands the counter above zero forever and turns
+        // processO3BlockComposite's finally-block o3ConsumePartitionUpdates() into an infinite spin
+        // -- a WAL-apply HANG (not a crash, not a suspended table: the apply job never returns).
+        // That is exactly what a NULL IDENTITY dimension value used to do here, via an out-of-bounds
+        // reverse symbol lookup inside renderCellSegment (fixed at source in MapWriter#valueOf /
+        // TableUtils#putCellSegmentPathSafe). Rendering first keeps any future render-time failure a
+        // loud, diagnosable commit error that suspends the table, per this feature's fail-loudly rule.
+        //
+        // Immutable snapshot (see O3PartitionTask#getCellSegment's own docs): cellSegmentSink is a
+        // reused, mutable scratch sink -- an async worker may read this cell's task well after this
+        // method returns and the sink has been cleared/rewritten for a different cell.
+        cellSegmentSink.clear();
+        renderCellSegment(cellSegmentSink, cellKey);
+        final String cellSegment = cellSegmentSink.toString();
+
         final long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
         if (cellKey != 0) {
             if (o3PartitionUpdateSinkCellKeys == null) {
@@ -13110,13 +13135,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
         Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
-
-        // Immutable snapshot (see O3PartitionTask#getCellSegment's own docs): cellSegmentSink is a
-        // reused, mutable scratch sink -- an async worker may read this cell's task well after this
-        // method returns and the sink has been cleared/rewritten for a different cell.
-        cellSegmentSink.clear();
-        renderCellSegment(cellSegmentSink, cellKey);
-        final String cellSegment = cellSegmentSink.toString();
 
         final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
         final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);

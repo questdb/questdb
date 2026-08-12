@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
@@ -87,8 +88,21 @@ public interface MapWriter extends SymbolCountProvider {
      * registry's own cellKey, all of which are plain {@code MapWriter}s. Not meant for an arbitrary
      * out-of-range key or a {@code NullMapWriter} -- callers must already know {@code writer} is a
      * real, populated symbol map.
+     * <p>
+     * {@link SymbolTable#VALUE_IS_NULL} -- what {@link #put(CharSequence)} returns for a NULL
+     * symbol, and therefore a perfectly ordinary key a caller can hold -- reverse-looks-up to
+     * {@code null}, mirroring the read side's {@code SymbolMapReaderImpl#valueOf(int)} contract
+     * (which already returns {@code null} for any key outside {@code [0, symbolCount)}). Without
+     * this guard the key falls through to {@link SymbolMapWriter#keyToOffset(int)}, which turns
+     * {@code Integer.MIN_VALUE} into a hugely NEGATIVE memory offset: an {@code assert} failure
+     * under {@code -ea}, and an unchecked out-of-bounds native read (garbage value or SIGSEGV)
+     * without it. That was the root cause of the composite-partitioning WAL-apply hang on a NULL
+     * IDENTITY dimension value -- see {@code TableWriter#renderDimensionSegment}.
      */
     static CharSequence valueOf(MapWriter writer, int key) {
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            return null;
+        }
         return writer.getSymbolValuesMemory().getStrA(writer.getSymbolOffsetsMemory().getLong(SymbolMapWriter.keyToOffset(key)));
     }
 

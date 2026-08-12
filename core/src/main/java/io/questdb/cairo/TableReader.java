@@ -1057,7 +1057,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (dim.getKind() == PartitionDimension.KIND_HASH) {
                 sink.put(tuple[i]);
             } else {
-                TableUtils.putPathSafe(sink, valueOfDimensionKey(i, tuple[i]));
+                // putCellSegmentPathSafe, not putPathSafe: a NULL dimension value reverse-looks-up to
+                // null and renders as the reserved TableUtils.COMPOSITE_NULL_DIMENSION_TOKEN --
+                // byte-identical to TableWriter#renderDimensionSegment, which is what actually created
+                // the directory. Diverging here would look for a written cell under a name that does
+                // not exist.
+                TableUtils.putCellSegmentPathSafe(sink, valueOfDimensionKey(i, tuple[i]));
             }
         }
     }

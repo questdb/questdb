@@ -113,6 +113,13 @@ public final class TableUtils {
     // and these interners are dormant infrastructure in this plan (populated by later tasks), so a
     // modest default is fine here and can be tuned once real workloads exist.
     public static final int COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY = 256;
+    /**
+     * Reserved on-disk directory-name token for a composite partition dimension whose value is NULL.
+     * Injective against every real value because {@link #putPathSafe} escapes a literal {@code '%'}
+     * to {@code "%25"} -- see {@link #putCellSegmentPathSafe(CharSink, CharSequence)} for the full
+     * argument. Must never change once a table has been written with it: it IS the directory name.
+     */
+    public static final String COMPOSITE_NULL_DIMENSION_TOKEN = "%NULL";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -2876,6 +2883,32 @@ public final class TableUtils {
             } else {
                 sink.put(c);
             }
+        }
+    }
+
+    /**
+     * {@link #putPathSafe(CharSink, CharSequence)}, plus the one thing a composite-partition cell
+     * segment needs that a raw value escape cannot express: a NULL dimension value.
+     * <p>
+     * A NULL SYMBOL is ordinary data (the plain, day-only twin of a composite table stores and
+     * returns such rows), so a NULL dimension value must route to its own cell and therefore needs
+     * its own on-disk directory-name token. That token must be INJECTIVE against every possible
+     * real value, or two genuinely different cells would silently share one directory.
+     * {@link #COMPOSITE_NULL_DIMENSION_TOKEN} is {@code "%NULL"}: {@code putPathSafe} escapes a
+     * literal {@code '%'} to {@code "%25"}, so no real value can ever render to a name containing a
+     * BARE {@code '%'} -- a table holding the literal symbol {@code "%NULL"} renders
+     * {@code "%25NULL"} and stays a distinct cell. (A token like {@code "__NULL__"} would NOT be
+     * injective: the literal symbol value {@code __NULL__} renders identically.)
+     * <p>
+     * Used by both render sides -- {@code TableWriter#renderDimensionSegment} and
+     * {@code TableReader#renderCellSegment} -- which must agree byte-for-byte or a cell written
+     * under one name would be looked for under another.
+     */
+    public static void putCellSegmentPathSafe(CharSink<?> sink, @Nullable CharSequence value) {
+        if (value == null) {
+            sink.put(COMPOSITE_NULL_DIMENSION_TOKEN);
+        } else {
+            putPathSafe(sink, value);
         }
     }
 
