@@ -327,7 +327,13 @@ public class WalUtils {
                         continue;
                     }
                     dir.trimTo(len).concat(pName);
-                    if (ff.findType(pFind) == Files.DT_FILE) {
+                    final int type = ff.findType(pFind);
+                    // DT_UNKNOWN counts as a file, matching TableWriter.fsyncAttachedPartitionFiles: some
+                    // filesystems report it for regular files. Recursing on one now that the enumeration is
+                    // fail-stop would findFirst() a FILE -> ENOTDIR -> -1 -> abort the whole REBASE WAL,
+                    // where before the fail-stop it fell through and was still made durable by the
+                    // directory sync below.
+                    if (type == Files.DT_FILE || type == Files.DT_UNKNOWN) {
                         fsyncMappedFile(ff, dir, fileOpts);
                     } else {
                         syncStagingTreeDurable(ff, dir, fileOpts);

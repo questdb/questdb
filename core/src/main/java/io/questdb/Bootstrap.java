@@ -703,9 +703,13 @@ public class Bootstrap {
         if (Os.isOSX()) {
             path.of(dbRoot);
             if (Files.exists(path.$())) {
-                Files.getFileSystemStatus(path.$());
-                path.seekZ();
-                fsName = path.toString();
+                // A zero return means statfs failed and the buffer was NOT written, so path still holds the
+                // db root. Using it would emit "fs=/var/lib/questdb/db" and raise a false durability alarm
+                // naming a path as a filesystem.
+                if (Files.getFileSystemStatus(path.$()) != 0) {
+                    path.seekZ();
+                    fsName = path.toString();
+                }
             }
         }
         final int flags = DurabilityEnvironmentCheck.probe(cairoConfig.getFilesFacade(), fsName);

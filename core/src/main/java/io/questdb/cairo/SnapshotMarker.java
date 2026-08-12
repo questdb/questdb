@@ -228,10 +228,16 @@ public class SnapshotMarker implements Closeable {
         // On Linux this is a range-fdatasync that journals both extent metadata and data.
         mem.sync(false /* sync = MS_SYNC, not MS_ASYNC */);
 
-        // fsync the fd: the durability anchor. Guarantees inode metadata (mtime, i_size) AND data
-        // are stable after a crash, independently of the shared-journal policy. This is the call
-        // that makes the epoch marker a hard crash boundary.
-        ff.fsync(mem.getFd());
+        // fsyncDurable, not fsync: this is the durability anchor that makes the epoch marker a hard crash
+        // boundary, so it has to be the barrier that actually reaches stable storage. Plain fsync is not
+        // that on Darwin -- it leaves the bytes in the drive's volatile cache.
+        //
+        // It is load-bearing because the marker is what SELECTS the epoch generation, and the caller
+        // publishes the WAL-purge floor (tracker.setDurableEpochSeqTxn) immediately after this returns.
+        // With a non-durable marker: the floor advances, WalPurgeJob trims WAL up to the new epochSeqTxn,
+        // power is cut before the drive flushes, and recovery falls back to the PREVIOUS generation whose
+        // epochSeqTxn is older than the WAL that has already been deleted -- an unrecoverable gap.
+        ff.fsyncDurable(mem.getFd());
     }
 
     /**

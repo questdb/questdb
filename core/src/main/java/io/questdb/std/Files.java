@@ -200,14 +200,6 @@ public final class Files {
     }
 
     /**
-     * {@link #fsync(long)}'s contract -- data AND all metadata -- with the device cache actually flushed.
-     * <p>
-     * Distinct from {@link #fdatasync(long)} on purpose: fdatasync may skip metadata that is not needed to
-     * read the data back, so the two are not interchangeable where a caller has asked for fsync. Use this
-     * when fsync semantics are required AND the data must survive power loss; on macOS plain
-     * {@code fsync(2)} does not flush the drive's write cache, which is the gap this closes.
-     */
-    /**
      * ORDERING barrier, not a durability barrier. Writes issued before this reach the medium before writes
      * issued after it, but the data may still sit in the drive's volatile cache when this returns — so a
      * commit must NEVER be acknowledged as durable on the strength of this call alone.
@@ -224,6 +216,14 @@ public final class Files {
         return barrierFsync0(toOsFd(fd));
     }
 
+    /**
+     * {@link #fsync(long)}'s contract -- data AND all metadata -- with the device cache actually flushed.
+     * <p>
+     * Distinct from {@link #fdatasync(long)} on purpose: fdatasync may skip metadata that is not needed to
+     * read the data back, so the two are not interchangeable where a caller has asked for fsync. Use this
+     * when fsync semantics are required AND the data must survive power loss; on macOS plain
+     * {@code fsync(2)} does not flush the drive's write cache, which is the gap this closes.
+     */
     public static int fsyncDurable(long fd) {
         return fsyncDurable0(toOsFd(fd));
     }

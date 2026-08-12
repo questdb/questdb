@@ -50,10 +50,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     //
     // COMPLETENESS is the whole contract: a partition whose bytes changed but which is missing here would
     // be left non-durable behind an epoch that references its rows -> silent row loss on power cut. Every
-    // mutator of the attached-partition table therefore marks, including the ones that change only a flag
-    // or the name txn (a new partition VERSION is a new directory, whose files are new bytes). Column-file
-    // changes that leave this table untouched -- an UPDATE rewriting a column under a new column name txn
-    // -- are caught by the sibling set in ColumnVersionWriter, which TableWriter unions with this one.
+    // mutator of the attached-partition table therefore marks, including the ones that change only a FLAG
+    // or the name txn. The flag setters are not optional extras: markPartitionParquetReady() flips
+    // parquetGenerated after an async job wrote <partition>/data.parquet into the EXISTING partition
+    // directory, with no size update and no column-version upsert, so before they marked, the epoch skipped
+    // that partition entirely and never flushed the new parquet file while _txn.epoch already recorded
+    // parquetGenerated=true. Column-file changes that leave this table untouched -- an UPDATE rewriting a
+    // column under a new column name txn -- are caught by the sibling set in ColumnVersionWriter, which
+    // TableWriter unions with this one.
     private final LongHashSet dirtyPartitions = new LongHashSet();
     private long baseVersion;
     private TableWriter.ExtensionListener extensionListener;
@@ -200,6 +204,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     @Override
     public void clear() {
+        // Only advanceDurableEpoch() drains this, and only ADAPTIVE WAL tables ever reach it -- so without
+        // clearing here a NOSYNC/SYNC/ASYNC or non-WAL writer accumulates one entry per distinct partition
+        // touched for its entire life, and a pooled writer carries stale timestamps into its next tenancy.
+        dirtyPartitions.clear();
         clearData();
         if (txMemBase != null) {
             // Never trim _txn file to size. Size of the file can only grow up.
@@ -548,6 +556,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetFileSizeByRawIndex(int indexRaw, long size) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -565,6 +574,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -578,6 +588,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionReadOnlyByRawIndex(int indexRaw, boolean isReadOnly) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -595,6 +606,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionRemoteByRawIndex(int indexRaw, boolean isRemote) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -622,6 +634,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * reads back as the -1 "no version" sentinel.
      */
     public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        markPartitionDirtyByRawIndex(indexRaw);
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
