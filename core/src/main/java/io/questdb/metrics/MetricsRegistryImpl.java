@@ -58,11 +58,6 @@ public class MetricsRegistryImpl implements MetricsRegistry {
         }
     }
 
-    @TestOnly
-    public int getTargetCount() {
-        return targets.length;
-    }
-
     @Override
     public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
         AtomicLongGauge gauge = new AtomicLongGaugeImpl(name);
