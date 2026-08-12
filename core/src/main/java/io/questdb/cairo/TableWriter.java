@@ -8156,6 +8156,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Discards any covering-index token left staged on this writer and opens a
+     * fresh batch for one partition.
+     * <p>
+     * Staging happens per column in {@link #sealParquetIndexColumn}; only a
+     * successful {@link #publishParquetIndexTokens} clears it. A seal that
+     * throws part-way through a partition's column loop -- a cover the seal
+     * cannot gather, a mapping failure -- skips the publish entirely while the
+     * caller's rollback leaves the writer usable, so without this the next
+     * partition's publish would merge those triples into a different
+     * partition's footer, committing a token that names an {@code _im} which is
+     * not in that directory and, where the column id belongs to another column,
+     * names the wrong column too. Called at the head of every batch that ends in
+     * a publish, which is the only place the set is allowed to start non-empty.
+     */
+    private void beginParquetIndexTokenBatch() {
+        if (parquetIndexTokens.size() > 0) {
+            LOG.error().$("discarding covering index tokens staged by a seal that never published [table=").$(tableToken)
+                    .$(", entries=").$(parquetIndexTokens.size() / 3)
+                    .I$();
+            parquetIndexTokens.clear();
+        }
+    }
+
     private void indexParquetPartition(
             SymbolColumnIndexer indexer,
             CharSequence columnName,
@@ -8168,6 +8192,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestamp
     ) {
         // parquet partition
+        beginParquetIndexTokenBatch();
         path.trimTo(plen);
         LOG.info().$("indexing parquet [path=").$substr(pathRootSize, path).I$();
 
@@ -10906,6 +10931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (partitionIndex < 0) {
             return false;
         }
+        beginParquetIndexTokenBatch();
         boolean processed = false;
         long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
         int plen = path.size();
@@ -12942,6 +12968,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int partitionDirLen,
             IntList columnIndexes
     ) {
+        beginParquetIndexTokenBatch();
         long parquetAddr = 0;
         long parquetSize = 0;
         setPathForNativePartition(
@@ -13823,6 +13850,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!isParquetIndexFormat()) {
             return;
         }
+        beginParquetIndexTokenBatch();
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final int plen = path.size();
