@@ -2774,16 +2774,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAll(
                 """
                         a\tc\ttypeOf
-                        false\ta\tSTRING
-                        false\tb\tSTRING
-                        true\ta\tSTRING
-                        true\tb\tSTRING
-                        false\ta\tSTRING
-                        76\tx\tSTRING
-                        27\ty\tSTRING
-                        79\ty\tSTRING
-                        122\ty\tSTRING
-                        90\tx\tSTRING
+                        false\ta\tSYMBOL
+                        false\tb\tSYMBOL
+                        true\ta\tSYMBOL
+                        true\tb\tSYMBOL
+                        false\ta\tSYMBOL
+                        76\tx\tSYMBOL
+                        27\ty\tSYMBOL
+                        79\ty\tSYMBOL
+                        122\ty\tSYMBOL
+                        90\tx\tSYMBOL
                         """,
                 "select a, c, typeOf(c) from (x union all y)",
                 "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
@@ -2798,16 +2798,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAll(
                 """
                         a\tc\ttypeOf
-                        false\tb\tSTRING
-                        false\ta\tSTRING
-                        false\tb\tSTRING
-                        true\tb\tSTRING
-                        false\ta\tSTRING
-                        27\ty\tSTRING
-                        122\ty\tSTRING
-                        84\tx\tSTRING
-                        83\tx\tSTRING
-                        91\tx\tSTRING
+                        false\tb\tSYMBOL
+                        false\ta\tSYMBOL
+                        false\tb\tSYMBOL
+                        true\tb\tSYMBOL
+                        false\ta\tSYMBOL
+                        27\ty\tSYMBOL
+                        122\ty\tSYMBOL
+                        84\tx\tSYMBOL
+                        83\tx\tSYMBOL
+                        91\tx\tSYMBOL
                         """,
                 "select a, c, typeOf(c) from (x union all y)",
                 // column "u" is not ultimately selected from neither X nor Y

@@ -49,6 +49,10 @@ import org.jetbrains.annotations.Nullable;
  * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
  * populated by function dynamically, in that values that have not yet been returned via
  * getInt() are not cached.
+ * <p>
+ * A function that opts into {@link #supportsKeyValueAccess()} must return
+ * {@link SymbolTable#VALUE_IS_NULL} from {@link #getInt(Record)} for a null symbol and a
+ * non-negative key for every non-null symbol. See {@link SymbolTable#supportsKeyValueAccess()}.
  */
 public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
@@ -265,11 +269,21 @@ public abstract class SymbolFunction implements Function, SymbolTable {
     public abstract boolean isSymbolTableStatic();
 
     /**
-     * A clone of function's symbol table to enable concurrent SQL execution.
-     * During such execution symbol table clones will be assigned to individual executing
-     * thread.
+     * A symbol table to enable concurrent SQL execution. During such execution the returned
+     * tables are assigned to individual executing threads.
+     * <p>
+     * A function that reports {@link #supportsParallelism()} {@code == true} must return an
+     * independent snapshot here, safe to read from another thread while this function keeps
+     * advancing. A function that reports {@code supportsParallelism() == false} is never cloned for
+     * a parallel worker, so it MAY instead return a live view over its own (single-threaded) state.
+     * Such a view is valid only for serial reads, but like any other implementation it must return
+     * values that stay readable for the life of the table: a caller may hold a value across further
+     * reads of the source function.
+     * {@link io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory.Func} returns
+     * such a live view, backed by append-only storage so its values survive later interning.
      *
-     * @return clone of symbol table
+     * @return symbol table for concurrent execution (an independent snapshot when parallel, otherwise
+     * possibly a live serial view)
      */
     public SymbolTable newSymbolTable() {
         return null;
