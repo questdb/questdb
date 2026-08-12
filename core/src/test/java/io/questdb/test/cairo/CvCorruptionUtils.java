@@ -30,8 +30,6 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -66,10 +64,10 @@ public final class CvCorruptionUtils {
         try (Path path = new Path()) {
             LPSZ cvPath = path.of(configuration.getDbRoot()).concat(token).concat("_cv").$();
 
-            long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+            long version = RawFileAccess.peekLong(ff, cvPath, OFFSET_VERSION_64);
             boolean areaA = (version & 1L) == 0L;
-            long liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
-            long liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+            long liveOffset = RawFileAccess.peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+            long liveSize = RawFileAccess.peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
             Assert.assertTrue(
                     "live _cv area is empty, cannot corrupt it in-area [offset=" + liveOffset + ", size=" + liveSize + ']',
                     liveSize > 0
@@ -78,8 +76,8 @@ public final class CvCorruptionUtils {
             // Flip the first byte of the live area's DATA. Strictly inside [liveOffset, liveOffset + liveSize):
             // never [liveOffset + liveSize, liveOffset + liveSize + 16) (the trailer) and never the other area.
             long flipAt = liveOffset;
-            byte orig = peekByte(ff, cvPath, flipAt);
-            pokeByte(ff, cvPath, flipAt, (byte) (orig ^ 0x5A));
+            byte orig = RawFileAccess.peekByte(ff, cvPath, flipAt);
+            RawFileAccess.pokeByte(ff, cvPath, flipAt, (byte) (orig ^ 0x5A));
         }
     }
 
@@ -98,45 +96,4 @@ public final class CvCorruptionUtils {
         }
     }
 
-    private static byte peekByte(FilesFacade ff, LPSZ path, long offset) {
-        long fd = ff.openRO(path);
-        Assert.assertTrue(fd > -1);
-        long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Assert.assertEquals(1, ff.read(fd, buf, 1, offset));
-            return Unsafe.getByte(buf);
-        } finally {
-            Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
-            ff.close(fd);
-        }
-    }
-
-    // Positional single-byte write (no mmap, so it cannot truncate the file on close). Mirrors the
-    // pokeLong/pokeBytes helpers in ColumnVersionWriterTest.
-    private static void pokeByte(FilesFacade ff, LPSZ path, long offset, byte value) {
-        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
-        Assert.assertTrue(fd > -1);
-        long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Unsafe.putByte(buf, value);
-            Assert.assertEquals(1, ff.write(fd, buf, 1, offset));
-            ff.fsync(fd);
-        } finally {
-            Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
-            ff.close(fd);
-        }
-    }
-
-    private static long peekLong(FilesFacade ff, LPSZ path, long offset) {
-        long fd = ff.openRO(path);
-        Assert.assertTrue(fd > -1);
-        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, offset));
-            return Unsafe.getLong(buf);
-        } finally {
-            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            ff.close(fd);
-        }
-    }
 }

@@ -238,6 +238,16 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+    // Capability marker for the _txn body checksum. It is a property of the FILE ("from this txn on, every
+    // record carries a checksum"), so it lives in the BASE HEADER and not in the record's per-area reserved
+    // gap [124,128). Placed in the base header's previously unused tail padding: the last occupied slot is
+    // TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 (bytes [40,44)) and TX_BASE_HEADER_SIZE is 64 (the Math.max floor,
+    // above the 56 the layout actually needs), so [44,64) is free, always-zero padding. These are the two
+    // 8-byte-aligned longs it holds. Nothing grows and no format version is bumped: a file written before
+    // this change simply has zeros here, which reads as "no capability", so its absent checksums stay legacy.
+    // See TX_CHECKSUM_CAPABILITY_MAGIC for why the pair is needed at all.
+    public static final long TX_BASE_OFFSET_CAPABILITY_MAGIC_64 = 48;
+    public static final long TX_BASE_OFFSET_CAPABILITY_WATERMARK_64 = 56;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
@@ -258,8 +268,10 @@ public final class TableUtils {
     // Body checksum over the commit-immutable fields only (see calculateTxnBodyChecksum: [0,80) plus the
     // partition table). Occupies 8 of the 12 previously-unused gap bytes between the last lag field
     // (TX_OFFSET_LAG_MAX_TIMESTAMP_64, ends at 116) and TX_OFFSET_MAP_WRITER_COUNT_32 (128).
-    // Bytes [124,128) are left reserved and zero. A stored value of 0 means "absent" (old/empty file): readers skip the
-    // check, preserving back-compatibility (no format-version bump).
+    // Bytes [124,128) are left reserved and zero. A stored value of 0 means "absent". Absent is NOT
+    // unconditionally a pass: it is legacy (skip the check, back-compatible, no format-version bump) only for a
+    // record BELOW the file's capability watermark; at or beyond it a checksum was guaranteed written, so its
+    // absence is tearing. See TX_CHECKSUM_CAPABILITY_MAGIC and TxReader.unsafeVerifyBodyChecksum.
     public static final long TX_OFFSET_BODY_CHECKSUM_64 = 116;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
@@ -287,6 +299,21 @@ public final class TableUtils {
     public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L; // on-disk bytes (LE): ' ','C','V','C','H','K','S','M'
     // On-disk size of the _cv body-checksum trailer: 8-byte MAGIC + 8-byte checksum.
     public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
+    // Capability marker for the _txn body checksum, stored in the base header at
+    // TX_BASE_OFFSET_CAPABILITY_MAGIC_64 alongside a watermark at TX_BASE_OFFSET_CAPABILITY_WATERMARK_64.
+    //
+    // WHY: _txn's body checksum is gated on a bare `stored == 0` sentinel, which cannot tell a LEGACY record
+    // (written before the checksum existed) from one whose checksum slot was ZEROED BY A TORN PAGE WRITE - and
+    // a zeroed slot is exactly what a partial write leaves behind. Treating every 0 as legacy therefore serves
+    // a torn _txn as healthy. The pair here settles it: TxWriter stamps the magic once, with the watermark set
+    // to the txn it is committing, the first time it writes a checksum into this file. A record whose txn is at
+    // or beyond that watermark was guaranteed a checksum, so an absent one is tearing; below it, absent is
+    // simply legacy. _txn keeps its own frozen hash (calculateTxnBodyChecksum) and has no per-area magic, so it
+    // uses only ChecksumTrailer's capability half (isCovered / applyCapability), never ChecksumTrailer.classify.
+    //
+    // Value spells the ASCII bytes " TXCHKSM" on disk (little-endian putLong), matching the CV_CHECKSUM_MAGIC
+    // convention and vanishingly unlikely (~2^-64) to be matched by the zeros or stale bytes of a legacy file.
+    public static final long TX_CHECKSUM_CAPABILITY_MAGIC = 0x4D534B4843585420L; // on-disk bytes (LE): ' ','T','X','C','H','K','S','M'
     // Column flag bit layout (on-disk in _meta).
     // Bits 0, 2, 3 match the pre-posting-index layout, so tables written by
     // older versions keep meaning when read by new binaries, and tables

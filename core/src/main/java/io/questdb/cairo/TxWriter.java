@@ -970,6 +970,34 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private void storeBodyChecksum(int baseOffset, long recordSize, long partitionTableStart) {
         long checksum = calculateTxnBodyChecksum(txMemBase.addressOf(baseOffset), recordSize, partitionTableStart);
         txMemBase.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, checksum);
+        // Every route that writes a checksum lands here, so this is the one place that can honestly claim
+        // "from this txn on, records in this file carry one".
+        stampChecksumCapability();
+    }
+
+    /**
+     * Stamps the file-level checksum capability into the base header the first time this writer stores a body
+     * checksum into a file that has none. The watermark is the txn being committed -- the first txn actually
+     * guaranteed a checksum -- and NEVER 0: records already on disk (a pre-capability commit, or the
+     * checksum-free record {@code TableUtils.createTxn} lays down at table creation) were written without one
+     * and must keep reading as legacy. A 0 watermark would cover them and condemn every existing database as
+     * torn, which is the exact false positive this design exists to avoid.
+     * <p>
+     * Written watermark-first, magic-last: the magic is what {@code ChecksumTrailer.isCovered} gates on, so if
+     * the pair is ever observed half-written the file reads as "no capability" (legacy, permissive) rather
+     * than "everything covered from txn 0" (torn, catastrophic). Both slots are inside the base header and
+     * ahead of the version bump in {@code finishABHeader}/{@code commit}, so a reader either sees the
+     * capability with the record that justifies it or sees no capability at all.
+     */
+    private void stampChecksumCapability() {
+        if (txMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64) == TX_CHECKSUM_CAPABILITY_MAGIC) {
+            return;
+        }
+        // Math.max guards the one caller that does not bump txn (resetStructureVersionUnsafe, offline): a
+        // table created but never committed still sits at INITIAL_TXN, and 0 is not a legal watermark.
+        txMemBase.putLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, Math.max(txn, 1));
+        Unsafe.storeFence();
+        txMemBase.putLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64, TX_CHECKSUM_CAPABILITY_MAGIC);
     }
 
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {

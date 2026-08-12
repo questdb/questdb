@@ -163,6 +163,13 @@ public class TxReader implements Closeable, Mutable {
 
     public void dumpTo(MemoryW mem) {
         mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
+        // Clear the capability marker for the same reason the body-checksum slot below is zeroed: a dumped
+        // record carries no body checksum, so the destination must not claim one was guaranteed. Explicit so
+        // the result is correct even if `mem` is a reused buffer with a stale marker in the base header -
+        // that would make the checksum-free record this writes read as TORN. The first commit after a restore
+        // from this dump re-stamps both.
+        mem.putLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
+        mem.putLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
         boolean isA = (version & 1L) == 0L;
         final int baseOffset = TX_BASE_HEADER_SIZE;
         mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
@@ -866,23 +873,50 @@ public class TxReader implements Closeable, Mutable {
     /**
      * Verifies the stored body checksum of the area at {@link #baseOffset}/{@link #size} against a fresh
      * recompute over the commit-immutable range ({@code [0,80)} plus the partition table starting at
-     * {@code getPartitionTableSizeOffset(symbolColumnCount)}). A stored value of 0 means "absent"
-     * (old-format or freshly-reset record) and is treated as a pass for back-compatibility. This is
-     * race-free with concurrent writers: every covered byte changes only under a version bump, and the
-     * caller re-checks the version after this returns.
+     * {@code getPartitionTableSizeOffset(symbolColumnCount)}).
+     * <p>
+     * Tri-state, not a boolean over the raw bytes. A stored 0 means "absent", and absent alone is not a
+     * verdict: it is LEGACY (pass, back-compatible) for a record below the file's capability watermark, and
+     * TORN for one at or beyond it, where {@link TxWriter} guaranteed a checksum was written. That promotion
+     * is the whole point -- a bare {@code stored == 0} pass cannot tell a pre-checksum record from one whose
+     * slot a partial page write zeroed, so it served torn state as healthy.
+     * <p>
+     * Note {@code _txn} does NOT use {@link ChecksumTrailer#classify}: that is for magic-gated trailers hashed
+     * with {@code TableUtils.calculateCvAreaChecksum}, whereas {@code _txn} has no per-area magic and its own
+     * deliberately frozen {@code calculateTxnBodyChecksum}. Only the capability half of
+     * {@link ChecksumTrailer} applies here.
+     * <p>
+     * Race-free with concurrent writers: every covered byte, and the capability marker itself, changes only
+     * ahead of a version bump, and the caller re-checks the version after this returns.
      */
     private boolean unsafeVerifyBodyChecksum() {
-        long stored = roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64);
+        final long stored = roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64);
+        final int classification;
         if (stored == 0) {
-            // Absent: old-format or freshly-created/truncated record. Skip (back-compatible).
-            return true;
+            classification = ChecksumTrailer.ABSENT;
+        } else {
+            classification = stored == calculateTxnBodyChecksum(
+                    roTxMemBase.addressOf(baseOffset),
+                    size,
+                    getPartitionTableSizeOffset(symbolColumnCount)
+            ) ? ChecksumTrailer.PRESENT_OK : ChecksumTrailer.MISMATCH;
         }
-        long computed = calculateTxnBodyChecksum(
-                roTxMemBase.addressOf(baseOffset),
-                size,
-                getPartitionTableSizeOffset(symbolColumnCount)
+        final boolean covered = unsafeIsChecksumCovered(roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64));
+        return ChecksumTrailer.applyCapability(classification, covered) != ChecksumTrailer.MISMATCH;
+    }
+
+    /**
+     * True when the file's capability marker says a record with this txn was guaranteed a body checksum, so
+     * an absent one is tearing rather than legacy. False for any file written before the capability existed
+     * (the base-header slots are then zero, and no txn ever satisfies a magic that is not there).
+     */
+    private boolean unsafeIsChecksumCovered(long areaTxn) {
+        return ChecksumTrailer.isCovered(
+                roTxMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64),
+                TableUtils.TX_CHECKSUM_CAPABILITY_MAGIC,
+                roTxMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64),
+                areaTxn
         );
-        return stored == computed;
     }
 
     /**
@@ -917,12 +951,22 @@ public class TxReader implements Closeable, Mutable {
             intact = false;
         } else {
             final long stored = roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64);
-            // 0 is the "absent" sentinel (old-format or freshly-reset record) and is not evidence of tearing.
-            intact = stored == 0 || stored == calculateTxnBodyChecksum(
-                    roTxMemBase.addressOf(areaBaseOffset),
-                    areaSize,
-                    getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
-            );
+            final int classification;
+            if (stored == 0) {
+                classification = ChecksumTrailer.ABSENT;
+            } else {
+                classification = stored == calculateTxnBodyChecksum(
+                        roTxMemBase.addressOf(areaBaseOffset),
+                        areaSize,
+                        getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
+                ) ? ChecksumTrailer.PRESENT_OK : ChecksumTrailer.MISMATCH;
+            }
+            // Same capability promotion as unsafeVerifyBodyChecksum, and it MUST be the same: the load path
+            // and this diagnosis path disagreeing would mean one file reported as corruption by one and as
+            // reader contention by the other. The area's stored txn equals selectedVersion here (guarded
+            // immediately above), so that is the record id the watermark is compared against.
+            intact = ChecksumTrailer.applyCapability(classification, unsafeIsChecksumCovered(selectedVersion))
+                    != ChecksumTrailer.MISMATCH;
         }
 
         Unsafe.loadFence();
