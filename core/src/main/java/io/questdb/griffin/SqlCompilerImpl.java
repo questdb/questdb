@@ -46,6 +46,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -4597,6 +4598,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
+        }
+
+        // Composite-partitioning gate (sub-project 8). A materialized view over a composite base is
+        // currently NEITHER supported NOR refused: cairo/mv/ contains no composite awareness and no
+        // composite mat-view test exists, so the combination is simply unexercised. Refresh reads the
+        // base through ordinary SQL, which IS twin-correct, so it may well work -- but "may well work"
+        // is not a guarantee, and this feature's rule is that composite either behaves exactly like
+        // its plain twin or fails loudly. Until sub-project 7 proves it with differential tests, the
+        // honest answer is a loud refusal rather than an unverified silent path.
+        //
+        // Deliberately positioned before any table is created, and thrown at the base table name so
+        // the error carries a caret like its siblings ("base table must be a WAL table", "live views
+        // are not allowed as base tables in V1"). Removing this gate is sub-project 7's deliverable.
+        final TableToken matViewBaseToken = executionContext.getTableTokenIfExists(createMatViewOp.getBaseTableName());
+        if (matViewBaseToken != null && !matViewBaseToken.isMatView()) {
+            // Reader metadata, because the partition spec lives on TableReaderMetadata; this method
+            // already opens a base reader further down, so the idiom is not new here.
+            try (TableReader baseReader = engine.getReader(matViewBaseToken)) {
+                final PartitionSpec spec = baseReader.getMetadata().getPartitionSpec();
+                if (spec != null && spec.getDimensionCount() > 0) {
+                    // getTableNamePosition(), not a base-table position: CreateMatViewOperation
+                    // exposes no base-name position (unlike CreateLiveViewOperation, whose
+                    // validation block sits nearby and DOES). The caret therefore points at the view
+                    // name; the message names the base table explicitly to compensate.
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(),
+                                    "materialized views are not yet supported over a composite-partitioned base table [name=")
+                            .put(createMatViewOp.getBaseTableName()).put(']');
+                }
+            }
         }
 
         final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
