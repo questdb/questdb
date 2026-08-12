@@ -563,7 +563,11 @@ Expected: the new test passes; the 31-class posting/covering suite stays green, 
 
 - [ ] **Step 6: Negative control**
 
-Set the streaming writer's `rowGroupSize` to a small value so the fixed threshold fires mid-key, and confirm the seal **fails** with the `_im` key-alignment rejection rather than producing a file. Restore. Report what you observed — this is the end-to-end proof that the invariant is enforced in production, and it is the specific failure the spec warns about.
+The obvious form of this control does not work, and the reason is worth understanding before you run it. Shrinking `rowGroupSize` so the fixed threshold fires mid-key **does** make the seal fail — but with the wrong error. The threshold emits far more row groups than the caller declared first keys for, so the `_im` writer's directory-count check (`N first keys for M row groups`) fires first and the key-alignment check never runs. The control would look like it passed while testing something else entirely.
+
+Instead, isolate the defect: leave the threshold inert (a `rowGroupSize` large enough that it cannot fire) and break the *caller* — flush on a fixed row stride that ignores key boundaries, so the row-group count still matches the declared directory and a key split across a shared group is the only remaining defect. Confirm the seal fails with the key-alignment rejection specifically, naming the two row groups and the shared key. Then restore and re-verify green.
+
+This is the end-to-end proof that the invariant is enforced in production rather than only in the `_im` writer's unit tests. Report the verbatim message, not just that it failed — the whole point is *which* check caught it.
 
 - [ ] **Step 7: Commit**
 
