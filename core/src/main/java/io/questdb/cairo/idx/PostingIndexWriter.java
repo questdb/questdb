@@ -582,8 +582,8 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    // Sync order is .pv before .pk: a torn write must never leave the chain head
-    // (keyMem) pointing at unsynced gen bytes in valueMem.
+    // Sync order is .pv and covering sidecars before .pk: a torn write must
+    // never leave the chain head pointing at unsynced generation or cover data.
     //
     // The coverCount == 0 precondition holds on the covering rebuild path
     // (TableWriter.sealPostingIndexForPartition) only because
@@ -1948,11 +1948,20 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void sync(boolean async) {
         checkNotPoisoned();
-        // .pv before .pk: a torn write must never leave the chain head (keyMem)
-        // pointing at unsynced gen bytes in valueMem.
+        // Data before metadata: .pv and every covering sidecar must be durable
+        // before .pk can make their generation and end offsets durable.
         flushAllPending();
         if (valueMem.isOpen()) {
             valueMem.sync(async);
+        }
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            MemoryMARW mem = sidecarMems.getQuick(c);
+            if (mem != null && mem.isOpen()) {
+                mem.sync(async);
+            }
+        }
+        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+            sidecarInfoMem.sync(async);
         }
         if (keyMem.isOpen()) {
             keyMem.sync(async);

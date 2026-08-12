@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ReaderScanProfile;
@@ -3217,6 +3218,124 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     found.clear();
                     int gen1Only = reader.collectDistinctKeysInRange(found, 500, 599);
                     assertEquals(3, gen1Only);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommitSyncsCoveringSidecarsBeforeKeyFile() throws Exception {
+        final java.util.concurrent.ConcurrentHashMap<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.concurrent.ConcurrentHashMap<Long, Long> addrToFd = new java.util.concurrent.ConcurrentHashMap<>();
+        final ObjList<String> syncOrder = new ObjList<>();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                if (addr > 0) {
+                    addrToFd.put(addr, fd);
+                }
+                return addr;
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                if (newAddr > 0) {
+                    addrToFd.put(newAddr, fd);
+                }
+                return newAddr;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                Long fd = addrToFd.get(addr);
+                if (fd != null) {
+                    String path = fdToPath.get(fd);
+                    if (path != null) {
+                        syncOrder.add(path);
+                    }
+                }
+                super.msync(addr, len, async);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && name != null) {
+                    fdToPath.put(fd, Utf8s.stringFromUtf8Bytes(name));
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final FilesFacade trackingFf = ff;
+            final CairoConfiguration syncConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCommitMode() {
+                    return CommitMode.SYNC;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return trackingFf;
+                }
+            };
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final long doubleAddr = Unsafe.malloc(2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long intAddr = Unsafe.malloc(2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putDouble(doubleAddr, 42.0);
+                    Unsafe.putInt(intAddr, 7);
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            syncConfiguration, path, "commit_sync_order", COLUMN_NAME_TXN_NONE
+                    )) {
+                        writer.configureCovering(
+                                new long[]{doubleAddr, intAddr},
+                                new long[]{0, 0},
+                                new int[]{3, 2},
+                                new int[]{1, 2},
+                                new int[]{ColumnType.DOUBLE, ColumnType.INT},
+                                2
+                        );
+                        writer.add(0, 0);
+                        writer.setMaxValue(0);
+                        writer.commit();
+
+                        int pvSync = -1;
+                        int pc0Sync = -1;
+                        int pc1Sync = -1;
+                        int pciSync = -1;
+                        int pkSync = -1;
+                        for (int i = 0, n = syncOrder.size(); i < n; i++) {
+                            String file = syncOrder.getQuick(i);
+                            if (file.contains(".pv")) {
+                                pvSync = i;
+                            } else if (file.contains(".pc0")) {
+                                pc0Sync = i;
+                            } else if (file.contains(".pc1")) {
+                                pc1Sync = i;
+                            } else if (file.contains(".pci")) {
+                                pciSync = i;
+                            } else if (file.contains(".pk")) {
+                                pkSync = i;
+                            }
+                        }
+                        assertTrue(".pv must be synced: " + syncOrder, pvSync >= 0);
+                        assertTrue(".pc0 must be synced: " + syncOrder, pc0Sync >= 0);
+                        assertTrue(".pc1 must be synced: " + syncOrder, pc1Sync >= 0);
+                        assertTrue(".pci must be synced: " + syncOrder, pciSync >= 0);
+                        assertTrue(".pk must be synced: " + syncOrder, pkSync >= 0);
+                        assertTrue(".pv must sync before .pc0: " + syncOrder, pvSync < pc0Sync);
+                        assertTrue(".pv must sync before .pc1: " + syncOrder, pvSync < pc1Sync);
+                        assertTrue(".pv must sync before .pci: " + syncOrder, pvSync < pciSync);
+                        assertTrue(".pc0 must sync before .pk: " + syncOrder, pc0Sync < pkSync);
+                        assertTrue(".pc1 must sync before .pk: " + syncOrder, pc1Sync < pkSync);
+                        assertTrue(".pci must sync before .pk: " + syncOrder, pciSync < pkSync);
+                    }
+                } finally {
+                    Unsafe.free(intAddr, 2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(doubleAddr, 2L * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -15068,7 +15187,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPciFileSizeStableAndIdenticalHeaderNotRewrittenAcrossSealAndClose() throws Exception {
+    public void testPciFileSizeStableAcrossCommitSealAndClose() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final String name = "pci_size_stability";
