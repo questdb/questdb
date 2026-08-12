@@ -35,6 +35,7 @@
 //! The format specification lives in `docs/parquet-metadata.md`.
 
 pub mod convert;
+pub mod index_gen;
 pub mod jni;
 pub mod skip;
 
