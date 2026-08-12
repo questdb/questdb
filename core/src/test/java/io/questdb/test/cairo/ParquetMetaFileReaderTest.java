@@ -468,7 +468,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(7, reader.getCoveringIndexTxn(0));
                 Assert.assertEquals(1_180, reader.getCoveringIndexImFileSize(0));
                 Assert.assertEquals(9, reader.getCoveringIndexColumnId(1));
-                Assert.assertEquals(7, reader.getCoveringIndexTxn(1));
+                Assert.assertEquals(11, reader.getCoveringIndexTxn(1));
                 Assert.assertEquals(2_048, reader.getCoveringIndexImFileSize(1));
                 reader.clear();
             }
@@ -1996,7 +1996,9 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
     /**
      * Builds a _pm file carrying two covering-index entries
-     * (column id 3 and 9, both txn 7, im file sizes 1180 and 2048).
+     * (column id 3 txn 7 im file size 1180, column id 9 txn 11 im file
+     * size 2048). Every field differs between the two entries so a reader
+     * that resolves entry i's payload from entry j is caught.
      */
     private static ParquetMetaTestFile buildFileWithCoveringIndex(int columnCount, long... rowGroupSizes) {
         long writerPtr = ParquetMetaFileWriter.create();
@@ -2012,7 +2014,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
             }
             ParquetMetaFileWriter.addCoveringIndex(writerPtr, 3, 7, 1_180);
-            ParquetMetaFileWriter.addCoveringIndex(writerPtr, 9, 7, 2_048);
+            ParquetMetaFileWriter.addCoveringIndex(writerPtr, 9, 11, 2_048);
             ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
             return new ParquetMetaTestFile(resultPtr);

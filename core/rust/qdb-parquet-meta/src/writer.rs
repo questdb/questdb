@@ -372,6 +372,12 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// on the next chunk GET.
     scratchpad: Option<Vec<(u32, Vec<u8>)>>,
     prior_scratchpad: Vec<(u32, Vec<u8>)>,
+    /// Caller-set covering-index entries for the new footer; `None` means
+    /// "the setters were never called", which drops the section (fires
+    /// `debug_assert!` when `prior_covering_index` is non-empty -- see
+    /// `finish_appending_at()`).
+    covering_index: Option<Vec<(u32, u64, u64)>>,
+    prior_covering_index: Vec<(u32, u64, u64)>,
 }
 
 enum RowGroupEntry {
@@ -442,6 +448,11 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             .scratchpad_entries()
             .map(|(code, content)| (code, content.to_vec()))
             .collect();
+        let covering_index_count = footer.covering_index_count() as usize;
+        let mut prior_covering_index = Vec::with_capacity(covering_index_count);
+        for i in 0..covering_index_count {
+            prior_covering_index.push(footer.covering_index(i));
+        }
 
         Ok(Self {
             existing,
@@ -460,6 +471,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_seq_txn,
             scratchpad: None,
             prior_scratchpad,
+            covering_index: None,
+            prior_covering_index,
         })
     }
 
@@ -488,6 +501,26 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     /// Skipping the setter silently inherits the prior footer's scratchpad.
     pub fn set_scratchpad_entries(&mut self, entries: Vec<(u32, Vec<u8>)>) -> &mut Self {
         self.scratchpad = Some(entries);
+        self
+    }
+
+    /// Replaces the covering-index entries `(column_id, index_txn,
+    /// im_file_size)` on the new footer. An empty `Vec` is equivalent to
+    /// [`Self::clear_covering_index`]. Any update that rewrites row group
+    /// blocks invalidates the covering index built over them, so a caller
+    /// that keeps the section must restate it with a refreshed
+    /// `index_txn`: there is deliberately no inherit opt-in.
+    pub fn set_covering_index(&mut self, entries: Vec<(u32, u64, u64)>) -> &mut Self {
+        self.covering_index = Some(entries);
+        self
+    }
+
+    /// Explicit opt-in to drop the prior footer's covering-index section.
+    /// The new footer omits the section and its gating bit, so readers fall
+    /// back to a scan. Silences the `debug_assert!` in
+    /// `finish_appending_at()`.
+    pub fn clear_covering_index(&mut self) -> &mut Self {
+        self.covering_index = Some(Vec::new());
         self
     }
 
@@ -728,6 +761,27 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         };
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
+        // Unlike seq_txn, the fallback drops rather than inherits: an
+        // inherited token would point at an index built over row group
+        // blocks this append may have just replaced, and a reader trusting
+        // it returns wrong rows. Dropping costs a scan. Same reasoning as
+        // the shrink guard in `qdbr::parquet_metadata::convert` -- a
+        // forgotten setter fails loudly in debug rather than silently
+        // corrupting the file.
+        let effective_covering_index = match &self.covering_index {
+            Some(entries) => entries.as_slice(),
+            None => {
+                debug_assert!(
+                    self.prior_covering_index.is_empty(),
+                    "ParquetMetaUpdateWriter.finish: covering_index not set but prior footer had COVERING_INDEX_BIT with {} entr(ies); production paths must call .set_covering_index(new) to restate it or .clear_covering_index() to drop it",
+                    self.prior_covering_index.len()
+                );
+                &[]
+            }
+        };
+        for &(column_id, index_txn, im_file_size) in effective_covering_index {
+            fb.add_covering_index(column_id, index_txn, im_file_size);
+        }
         fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the committed footer's checksum. The old CRC covers
@@ -1446,6 +1500,144 @@ mod tests {
             ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
                 .unwrap();
         assert_eq!(prior_footer.scratchpad_entry(1), Some(&b"A"[..]));
+    }
+
+    fn make_file_with_covering_index(entries: &[(u32, u64, u64)]) -> (Vec<u8>, u64) {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column(
+            "ts",
+            0,
+            8,
+            ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
+            0,
+        );
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(1);
+        w.add_row_group(rg);
+        w.parquet_footer(4096, 256);
+        w.seq_txn(SeqTxn::new(1));
+        for &(column_id, index_txn, im_file_size) in entries {
+            w.add_covering_index(column_id, index_txn, im_file_size);
+        }
+        w.finish().unwrap()
+    }
+
+    /// Appends one row group through the update writer and returns a reader
+    /// over the resulting file plus the new committed size.
+    fn append_and_reopen(
+        original: &[u8],
+        updater: &mut ParquetMetaUpdateWriter<'_>,
+    ) -> (Vec<u8>, u64) {
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.to_vec();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+        (full, new_size)
+    }
+
+    #[test]
+    fn update_writer_drops_covering_index_when_unset() {
+        // Release-only: the drop fallback. Debug builds hit the
+        // debug_assert! covered by the test below. Dropping (rather than
+        // inheriting, as seq_txn does) degrades readers to a scan instead
+        // of handing them a token for a superseded index.
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "covering_index not set")]
+    fn update_writer_debug_asserts_covering_index_when_unset_and_prior_present() {
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let _ = updater.finish();
+    }
+
+    #[test]
+    fn update_writer_without_covering_index_stays_absent_when_prior_empty() {
+        // No prior entries -> no setter needed, no debug_assert, and the
+        // new footer omits the section exactly as it did before the
+        // feature existed.
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(1));
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 0);
+    }
+
+    #[test]
+    fn update_writer_replaces_covering_index_when_set() {
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.set_covering_index(vec![(3, 8, 2_048), (9, 8, 4_096)]);
+        updater.parquet_footer(8192, 256);
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 2);
+        assert_eq!(reader.covering_index(0), (3, 8, 2_048));
+        assert_eq!(reader.covering_index(1), (9, 8, 4_096));
+
+        // The prior footer keeps its own entry via the MVCC chain.
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.covering_index_count(), 1);
+        assert_eq!(prior_footer.covering_index(0), (3, 7, 1_180));
+    }
+
+    #[test]
+    fn update_writer_clears_covering_index_on_opt_in() {
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.clear_covering_index();
+        updater.parquet_footer(8192, 256);
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let latest = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!latest.footer_feature_flags().has_covering_index());
+        assert_eq!(latest.covering_index_count(), 0);
+
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.covering_index_count(), 1);
     }
 
     #[test]

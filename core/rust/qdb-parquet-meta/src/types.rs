@@ -247,7 +247,14 @@ impl FooterFeatureFlags {
     /// A dedicated bit rather than the `SCRATCHPAD` TLV: the scratchpad's
     /// update writer silently inherits the previous footer's entries when
     /// its setter is not called, which would leave a stale index token
-    /// pointing at a superseded index. This bit fails loudly instead.
+    /// pointing at a superseded index. This section drops instead -- an
+    /// update that calls neither `set_covering_index()` nor
+    /// `clear_covering_index()` fires a `debug_assert!` and, in release,
+    /// lands a footer with no covering-index section. Dropping degrades to
+    /// "no Parquet-form index" and therefore to a scan, which is correct if
+    /// slower; inheriting would hand out a token for an index that no longer
+    /// matches the data. Dropping is the fail-safe direction, inheriting the
+    /// fail-dangerous one.
     pub const COVERING_INDEX_BIT: u64 = 1 << 2;
 
     pub const fn new() -> Self {
