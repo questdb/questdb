@@ -79,6 +79,29 @@ const FIRST_KEY_SIZE: usize = std::mem::size_of::<i32>();
 /// `Long.BYTES`.
 const ROW_ID_SIZE: usize = std::mem::size_of::<i64>();
 
+/// Copies `count` elements out of a Java-side buffer, one unaligned read each.
+///
+/// `slice::from_raw_parts` cannot be used on these buffers: it requires the
+/// pointer to be aligned to `T`, and nothing in the JNI contract guarantees a
+/// Java-side allocation is aligned to 8. An unaligned `&[i64]` is undefined
+/// behaviour the moment it is constructed, whether or not it is ever read, so
+/// the reads are done element-wise exactly as [`addRowGroup`] already does for
+/// its column chunks. The copy costs one pass over a few hundred bytes at seal
+/// time and is off every hot path.
+///
+/// # Safety
+/// `ptr` must address `count` consecutive readable `T` values. Alignment is the
+/// one requirement this function lifts.
+///
+/// [`addRowGroup`]: Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup
+unsafe fn copy_unaligned<T: Copy>(ptr: *const T, count: usize) -> Vec<T> {
+    // `ptr.add` needs no alignment of its own; only `read_unaligned` touches
+    // memory, and that is the read this exists to make sound.
+    (0..count)
+        .map(|i| unsafe { std::ptr::read_unaligned(ptr.add(i)) })
+        .collect()
+}
+
 /// Holds the finished _im file bytes.
 pub struct IndexMetaBuiltFile {
     data: Vec<u8>,
@@ -342,7 +365,9 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
         let chunks = chunks_ptr as *const ColumnChunkRaw;
         for i in 0..chunk_count as usize {
             // read_unaligned: the buffer comes from a Java-side allocation whose
-            // alignment the JVM does not guarantee to be 8.
+            // alignment the JVM does not guarantee to be 8. Every typed buffer
+            // this file takes from Java is read the same way -- see
+            // [`copy_unaligned`].
             let chunk = unsafe { std::ptr::read_unaligned(chunks.add(i)) };
             if let Err(err) = block.set_column_chunk(i, chunk) {
                 let mut err: crate::parquet::error::ParquetError = err.into();
@@ -541,7 +566,10 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
         }
         let boundary_count = (data_boundaries_len / BOUNDARY_SIZE as i64) as usize;
 
-        let first_keys = unsafe { slice::from_raw_parts(first_keys_ptr, count as usize) };
+        // SAFETY: the length checks above bound every one of these buffers by
+        // the byte count the caller allocated, and `copy_unaligned` lifts the
+        // alignment requirement a `&[i32]` / `&[i64]` would impose.
+        let first_keys = unsafe { copy_unaligned(first_keys_ptr, count as usize) };
         // A negative key id would reach the writer as a key near u32::MAX and
         // trip the key-space bound with a diagnostic naming a key the caller
         // never passed. Refuse it while it is still recognisable.
@@ -554,9 +582,9 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
             return err.into_cairo_exception().throw(env);
         }
         let first_keys: Vec<u32> = first_keys.iter().map(|key| *key as u32).collect();
-        let row_id_mins = unsafe { slice::from_raw_parts(row_id_min_ptr, count as usize) };
-        let row_id_maxs = unsafe { slice::from_raw_parts(row_id_max_ptr, count as usize) };
-        let data_boundaries = unsafe { slice::from_raw_parts(data_boundaries_ptr, boundary_count) };
+        let row_id_mins = unsafe { copy_unaligned(row_id_min_ptr, count as usize) };
+        let row_id_maxs = unsafe { copy_unaligned(row_id_max_ptr, count as usize) };
+        let data_boundaries = unsafe { copy_unaligned(data_boundaries_ptr, boundary_count) };
 
         // SAFETY: the pointer comes from `Box::into_raw` in
         // `createStreamingParquetWriter`; single-threaded JNI access guarantees
@@ -564,9 +592,9 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
         let writer = unsafe { &*writer_ptr };
         match writer.generate_index_metadata(
             &first_keys,
-            row_id_mins,
-            row_id_maxs,
-            data_boundaries,
+            &row_id_mins,
+            &row_id_maxs,
+            &data_boundaries,
             key_space_size as u32,
             key_id_column,
             row_id_column,
@@ -644,8 +672,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setDataRowGroup
             return err.into_cairo_exception().throw(env);
         }
         let writer = unsafe { &mut *ptr };
-        let boundaries = unsafe { slice::from_raw_parts(boundaries_ptr, count as usize) };
-        writer.set_data_row_group_boundaries(boundaries);
+        // SAFETY: the length check above bounds the buffer by the byte count the
+        // caller allocated, and `copy_unaligned` lifts the alignment requirement
+        // a `&[i64]` would impose on a pointer the JVM does not align to 8.
+        let boundaries = unsafe { copy_unaligned(boundaries_ptr, count as usize) };
+        writer.set_data_row_group_boundaries(&boundaries);
     })
 }
 
