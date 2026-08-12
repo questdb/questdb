@@ -1051,7 +1051,20 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
                     sink.put(dim.getAlias()).put('=');
                 } else {
-                    sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+                    // denseIndexOfDimensionSource, NOT getColumnIndex(): the latter is a WRITER index
+                    // (create-time physical position, persisted in _meta and deliberately unmoved by a
+                    // later DROP COLUMN, which leaves a tombstone), while THIS metadata is DENSE --
+                    // the reader compacts dropped columns away. The two spaces diverge the moment a
+                    // lower-index column is dropped, and the stale writer index would then name the
+                    // WRONG column: rendering `px=BTC` where the writer wrote `exch=BTC`, i.e. a
+                    // directory the reader cannot find.
+                    //
+                    // The value branch below already translates this way; only this HIVE prefix did
+                    // not, so the two halves of one method disagreed. Unreachable today because DROP
+                    // COLUMN is refused on a routed composite table, but sub-project 2 lifts that
+                    // gate -- CompositeReaderIndexSpaceTest carries the @Ignore'd proof that
+                    // un-ignores when it does.
+                    sink.put(metadata.getColumnName(denseIndexOfDimensionSource(dim))).put('=');
                 }
             }
             if (dim.getKind() == PartitionDimension.KIND_HASH) {
