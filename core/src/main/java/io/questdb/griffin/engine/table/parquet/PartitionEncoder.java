@@ -188,7 +188,7 @@ public class PartitionEncoder {
      *
      * @param writerPtr streaming writer handle
      */
-    public static native void flushRowGroup(long writerPtr) throws CairoException;
+    public static native void flushRowGroup(long writerPtr, long rows) throws CairoException;
 
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
         final TableReaderMetadata metadata = tableReader.getMetadata();

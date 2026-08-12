@@ -1259,6 +1259,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 /// Captures a row group boundary at the caller's chosen point rather than at the
 /// configured `row_group_size`: the rows pending right now become a row group of their own.
 ///
+/// `rows` names the boundary explicitly and is clamped to the number of rows currently
+/// pending, so a caller may close a row group part-way through what it has already
+/// submitted rather than only at a chunk boundary. Passing the pending count reproduces
+/// the earlier whole-buffer behaviour.
+///
 /// The captured row count is fixed at the moment of the flush, so rows written afterwards
 /// cannot join the captured row group. Whichever call emits it next - a drain call
 /// (`writeStreamingParquetChunk(writerPtr, 0, 0)`), the next chunk write, or
@@ -1275,6 +1280,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     mut env: JNIEnv,
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
+    rows: jlong,
 ) {
     let env = &mut env;
     if encoder.is_null() {
@@ -1282,12 +1288,25 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
         return err.into_cairo_exception().throw::<()>(env);
     }
+    if rows < 0 {
+        let mut err = fmt_err!(InvalidType, "row count must not be negative: {}", rows);
+        err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
-    if encoder.forced_row_group_rows.is_none() && encoder.accumulated_rows > 0 {
-        encoder.forced_row_group_rows = Some(encoder.accumulated_rows);
+    // `rows == 0` names no boundary, so it must not arm: capturing zero would emit
+    // nothing (`capped_forced_row_count` filters it) while still making
+    // `forced_row_group_rows` non-empty, which would silently block every later flush.
+    if rows > 0 && encoder.forced_row_group_rows.is_none() && encoder.accumulated_rows > 0 {
+        // Stored unclamped. `capped_forced_row_count` is the single place the boundary is
+        // reconciled against what is actually pending, both here and for rows written
+        // between the flush and the drain. Clamping here as well would be a second
+        // mechanism for the same invariant, and no single-line regression in either could
+        // then be observed -- the other would silently cover it.
+        encoder.forced_row_group_rows = Some(rows as usize);
     }
 }
 

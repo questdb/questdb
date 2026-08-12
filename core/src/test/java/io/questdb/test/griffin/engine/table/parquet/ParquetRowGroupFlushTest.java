@@ -69,6 +69,14 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
     // Flush before the first chunk is written, when nothing is pending.
     private static final int FLUSH_BEFORE_ANY_ROWS = 1;
     // Flush after the first frame, write the second frame, then finish without draining.
+    // Both frames are submitted with no drain, so 8 rows are pending, and the
+    // boundary is then declared at 4 -- inside frame 2. The whole-buffer form of
+    // flushRowGroup could not express a cut there.
+    private static final int FLUSH_BOTH_FRAMES_THEN_AT_FOUR = 5;
+    // Both frames submitted with no drain, then a boundary declared far beyond the 8
+    // pending rows. The clamp must reduce it to 8, so one row group results. Without
+    // the clamp the writer would be asked for rows that do not exist.
+    private static final int FLUSH_BOTH_FRAMES_THEN_OVERSIZED = 6;
     private static final int FLUSH_MID_STREAM_NO_DRAIN = 2;
     // Flush after the first frame, then finish without writing anything else.
     private static final int FLUSH_MID_STREAM_THEN_FINISH = 3;
@@ -84,6 +92,22 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
     // Large enough that the fixed-size path cannot split the 8 test rows: every
     // row group boundary in the flush tests comes from flushRowGroup().
     private static final long ROW_GROUP_SIZE = 1_000_000;
+
+    @Test
+    public void testFlushAtRowCountCutsInsideAChunk() throws Exception {
+        // Frames of 3 and 5 rows are both submitted before any flush, so 8 rows are
+        // pending. Declaring the boundary at 4 cuts inside frame 2: the captured group
+        // takes all of frame 1 plus one row of frame 2, and finish emits the rest.
+        assertRowGroupSizes(FLUSH_BOTH_FRAMES_THEN_AT_FOUR, "flush_mid_chunk.parquet", 4, 4);
+    }
+
+    @Test
+    public void testFlushAtRowCountIsClampedToPending() throws Exception {
+        // 8 rows pending, boundary declared at 1_000. The clamp reduces it to 8, so the
+        // whole thing is one row group. Without the clamp the writer would be asked for
+        // 1_000 rows it does not have.
+        assertRowGroupSizes(FLUSH_BOTH_FRAMES_THEN_OVERSIZED, "flush_oversized.parquet", 8);
+    }
 
     @Test
     public void testFlushBeforeAnyRowsDoesNotArmBoundary() throws Exception {
@@ -327,7 +351,7 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
                         if (flushMode == FLUSH_BEFORE_ANY_ROWS) {
                             // Nothing is pending, so this must capture nothing: no row group is
                             // due, and the first chunk must not be forced into a group of its own.
-                            flushRowGroup(writerPtr);
+                            flushRowGroup(writerPtr, 0);
                             Assert.assertEquals(0, writeStreamingParquetChunk(writerPtr, 0, 0));
                         }
 
@@ -352,7 +376,9 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
 
                             long buffer = writeStreamingParquetChunk(writerPtr, columnData.getAddress(), frameRowCount);
                             if ((flushMode == FLUSH_MID_STREAM_NO_DRAIN && frameIndex == 1)
-                                    || flushMode == NO_FLUSH_NO_DRAIN) {
+                                    || flushMode == NO_FLUSH_NO_DRAIN
+                                    || flushMode == FLUSH_BOTH_FRAMES_THEN_AT_FOUR
+                                    || flushMode == FLUSH_BOTH_FRAMES_THEN_OVERSIZED) {
                                 // Take only what the write itself handed back: no drain call
                                 // to close anything the write left pending.
                                 if (buffer != 0) {
@@ -366,17 +392,17 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
                             }
 
                             if (flushMode == FLUSH_AFTER_EACH_FRAME) {
-                                flushRowGroup(writerPtr);
+                                flushRowGroup(writerPtr, frameRowCount);
                                 fileOffset = drain(writerPtr, ff, fd, fileOffset);
 
                                 // Flushing again with nothing pending must not emit an empty row
                                 // group: ParquetMetaFileReader treats a zero-row group as corruption.
-                                flushRowGroup(writerPtr);
+                                flushRowGroup(writerPtr, 0);
                                 fileOffset = drain(writerPtr, ff, fd, fileOffset);
                             } else if (frameIndex == 0 && armsBoundaryAfterFirstFrame(flushMode)) {
                                 // Capture the boundary between the two key runs, then leave it to
                                 // the next write or to finish to emit it.
-                                flushRowGroup(writerPtr);
+                                flushRowGroup(writerPtr, frameRowCount);
                             }
 
                             frameIndex++;
@@ -385,6 +411,14 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
                             }
                         }
                         Assert.assertEquals(flushMode == FLUSH_MID_STREAM_THEN_FINISH ? 1 : 2, frameIndex);
+
+                        if (flushMode == FLUSH_BOTH_FRAMES_THEN_AT_FOUR) {
+                            // 8 rows pending across two frames; the boundary lands inside
+                            // the second one, which only the row-count form can name.
+                            flushRowGroup(writerPtr, 4);
+                        } else if (flushMode == FLUSH_BOTH_FRAMES_THEN_OVERSIZED) {
+                            flushRowGroup(writerPtr, 1_000);
+                        }
 
                         fileOffset = appendBuffer(ff, fd, finishStreamingParquetWrite(writerPtr), fileOffset);
                     } finally {
