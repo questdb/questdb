@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -7980,6 +7981,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final boolean hasCovering = coveringColumnIndices != null && coveringColumnIndices.size() > 0;
             final int coverCount = hasCovering ? coveringColumnIndices.size() : 0;
 
+            // Under the parquet index format the seal emits a key-aligned
+            // <col>.pidx.<indexTxn>.parquet plus its _im instead of the native
+            // .pv/.pc* sidecars. It needs the postings in key order, which the
+            // index writer's on-disk generations are not, so the key of each
+            // indexed row is collected here as it is fed to the writer: one int
+            // per row, indexed by rowId - columnTop.
+            final boolean isParquetIndexFormat =
+                    configuration.getPostingIndexParquetPartitionFormat() == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+            final DirectIntList sealRowKeys = isParquetIndexFormat
+                    ? new DirectIntList(partitionSize - columnTop, MemoryTag.NATIVE_TABLE_WRITER)
+                    : null;
+
             // Build combined column list: SYMBOL (chunk 0) + covered
             // columns (chunks 1..N). A single decodeRowGroup call per
             // row group replaces the two separate decode loops.
@@ -8045,9 +8058,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long size = rowGroupBuffers.getChunkDataSize(0);
                         if (size == 0) {
                             BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                            if (sealRowKeys != null) {
+                                for (long r = rowId, lim = rowCount + rowGroupSize; r < lim; r++) {
+                                    sealRowKeys.add(0);
+                                }
+                            }
                         } else {
                             for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                final int indexKey = TableUtils.toIndexKey(Unsafe.getInt(p));
+                                indexWriter.add(indexKey, rowId);
+                                if (sealRowKeys != null) {
+                                    sealRowKeys.add(indexKey);
+                                }
                             }
                         }
                     }
@@ -8063,8 +8085,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 indexWriter.setMaxValue(partitionSize - 1);
-                indexer.seal();
+                if (isParquetIndexFormat) {
+                    sealParquetIndexColumn(
+                            columnName, plen, timestamp, columnTop,
+                            indexWriter.getKeyCount(), txWriter.getTxn() + 1,
+                            coveringColumnIndices, covMmaps, parquetMetadata, sealRowKeys
+                    );
+                } else {
+                    indexer.seal();
+                }
             } finally {
+                Misc.free(sealRowKeys);
                 if (hasCovering) {
                     indexer.releaseCoveredColumnReadMappings();
                 }
@@ -13773,6 +13804,86 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTxn = txWriter.getPartitionNameTxn(i);
             partitionRemoveCandidates.add(timestamp, partitionTxn);
         }
+    }
+
+    /**
+     * Seals the just-built covering index of a parquet partition as a
+     * key-aligned {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im},
+     * in place of the native {@code .pv} / {@code .pc*} sidecars.
+     * <p>
+     * The covered column addresses are the same row-ordered temp mmaps the
+     * native seal reads, and are addressed by absolute row id: the indexed
+     * SYMBOL's columnTop on a parquet partition is 0 whenever the decode runs
+     * at all, and {@code zeroColumnTopsAfterParquetRewrite} has already
+     * collapsed every covered column's top to 0.
+     */
+    private void sealParquetIndexColumn(
+            CharSequence columnName,
+            int plen,
+            long partitionTimestamp,
+            long columnTop,
+            int keySpaceSize,
+            long indexTxn,
+            IntList coveringColumnIndices,
+            ObjList<MemoryMARW> covMmaps,
+            ParquetMetaFileReader parquetMetadata,
+            DirectIntList sealRowKeys
+    ) {
+        final ObjList<CharSequence> coveredNames = new ObjList<>();
+        final IntList coveredTypes = new IntList();
+        final IntList coveredWriterIndices = new IntList();
+        final LongList coveredAddrs = new LongList();
+        final int coverCount = coveringColumnIndices != null ? coveringColumnIndices.size() : 0;
+        for (int slot = 0; slot < coverCount; slot++) {
+            final int covCol = coveringColumnIndices.getQuick(slot);
+            final MemoryMARW dataMem = covMmaps != null ? covMmaps.getQuick(2 * slot + 1) : null;
+            if (covCol < 0 || dataMem == null || !dataMem.isOpen()) {
+                throw CairoException.nonCritical()
+                        .put("parquet covering index requires every covered column in the partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", column=").put(columnName)
+                        .put(", coverSlot=").put(slot)
+                        .put(']');
+            }
+            coveredNames.add(metadata.getColumnName(covCol));
+            coveredTypes.add(metadata.getColumnType(covCol));
+            coveredWriterIndices.add(metadata.getColumnMetadata(covCol).getWriterIndex());
+            coveredAddrs.add(dataMem.addressOf(0));
+        }
+
+        // data.parquet's cumulative row counts: one more entry than it has row
+        // groups, starting at 0. The _im records them so a reader can map an
+        // index row id back to the data row group holding it.
+        final LongList dataRowGroupBoundaries = new LongList();
+        long cumulative = 0;
+        dataRowGroupBoundaries.add(0);
+        for (int i = 0, n = parquetMetadata.getRowGroupCount(); i < n; i++) {
+            cumulative += parquetMetadata.getRowGroupSize(i);
+            dataRowGroupBoundaries.add(cumulative);
+        }
+
+        ParquetIndexSeal.seal(
+                configuration,
+                ff,
+                path.trimTo(plen),
+                columnName,
+                indexTxn,
+                keySpaceSize,
+                sealRowKeys,
+                columnTop,
+                coveredNames,
+                coveredTypes,
+                coveredWriterIndices,
+                coveredAddrs,
+                dataRowGroupBoundaries
+        );
+        path.trimTo(plen);
+        LOG.info().$("sealed parquet covering index [table=").$(tableToken)
+                .$(", column=").$(columnName)
+                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                .$(", indexTxn=").$(indexTxn)
+                .$(", keySpaceSize=").$(keySpaceSize)
+                .I$();
     }
 
     /**
