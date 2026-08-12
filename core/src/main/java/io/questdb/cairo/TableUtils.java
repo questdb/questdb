@@ -116,8 +116,8 @@ public final class TableUtils {
     /**
      * Reserved on-disk directory-name token for a composite partition dimension whose value is NULL.
      * Injective against every real value because {@link #putPathSafe} escapes a literal {@code '%'}
-     * to {@code "%25"} -- see {@link #putCellSegmentPathSafe(CharSink, CharSequence)} for the full
-     * argument. Must never change once a table has been written with it: it IS the directory name.
+     * to {@code "%25"} -- see {@link #putCellSegmentPathSafe(CharSink, int, CharSequence)} for the
+     * full argument. Must never change once a table has been written with it: it IS the directory name.
      */
     public static final String COMPOSITE_NULL_DIMENSION_TOKEN = "%NULL";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -2903,10 +2903,31 @@ public final class TableUtils {
      * Used by both render sides -- {@code TableWriter#renderDimensionSegment} and
      * {@code TableReader#renderCellSegment} -- which must agree byte-for-byte or a cell written
      * under one name would be looked for under another.
+     * <p>
+     * The NULL-token decision is driven by {@code ordinalKey} itself
+     * ({@code == SymbolTable.VALUE_IS_NULL}), NOT by whether {@code value} happens to be null.
+     * Those are not the same question: the reverse lookup that produces {@code value} (a
+     * {@code SymbolMapReader}/{@code MapWriter} {@code valueOf}) can return null for other
+     * out-of-range keys too, and silently mistaking one of those for a NULL dimension value would
+     * be exactly the kind of composite-vs-plain-twin divergence this feature must never allow --
+     * before {@link #COMPOSITE_NULL_DIMENSION_TOKEN} existed, that same state threw an uncontrolled
+     * NPE inside {@link #putPathSafe}, which was at least loud. So: an {@code ordinalKey} that is
+     * NOT {@code VALUE_IS_NULL} but whose {@code value} is null anyway is treated as an unexpected
+     * reverse-lookup failure and throws, rather than being guessed to mean NULL.
+     *
+     * @param ordinalKey the per-dimension ordinal {@code value} was reverse-looked-up FROM; drives
+     *                    the NULL-token decision
+     * @param value      the reverse lookup's result for {@code ordinalKey}, or null
+     * @throws CairoException if {@code ordinalKey != SymbolTable.VALUE_IS_NULL} but {@code value}
+     *                         is null
      */
-    public static void putCellSegmentPathSafe(CharSink<?> sink, @Nullable CharSequence value) {
-        if (value == null) {
+    public static void putCellSegmentPathSafe(CharSink<?> sink, int ordinalKey, @Nullable CharSequence value) {
+        if (ordinalKey == SymbolTable.VALUE_IS_NULL) {
             sink.put(COMPOSITE_NULL_DIMENSION_TOKEN);
+        } else if (value == null) {
+            throw CairoException.critical(0)
+                    .put("composite dimension ordinal does not resolve to a value [ordinal=").put(ordinalKey)
+                    .put(']');
         } else {
             putPathSafe(sink, value);
         }

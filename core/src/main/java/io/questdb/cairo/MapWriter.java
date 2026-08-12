@@ -92,12 +92,31 @@ public interface MapWriter extends SymbolCountProvider {
      * {@link SymbolTable#VALUE_IS_NULL} -- what {@link #put(CharSequence)} returns for a NULL
      * symbol, and therefore a perfectly ordinary key a caller can hold -- reverse-looks-up to
      * {@code null}, mirroring the read side's {@code SymbolMapReaderImpl#valueOf(int)} contract
-     * (which already returns {@code null} for any key outside {@code [0, symbolCount)}). Without
-     * this guard the key falls through to {@link SymbolMapWriter#keyToOffset(int)}, which turns
-     * {@code Integer.MIN_VALUE} into a hugely NEGATIVE memory offset: an {@code assert} failure
-     * under {@code -ea}, and an unchecked out-of-bounds native read (garbage value or SIGSEGV)
-     * without it. That was the root cause of the composite-partitioning WAL-apply hang on a NULL
-     * IDENTITY dimension value -- see {@code TableWriter#renderDimensionSegment}.
+     * for that one case (which already returns {@code null} for any key outside
+     * {@code [0, symbolCount)}, VALUE_IS_NULL included). Without this guard the key falls through
+     * to {@link SymbolMapWriter#keyToOffset(int)}, which turns {@code Integer.MIN_VALUE} into a
+     * hugely NEGATIVE memory offset: an {@code assert} failure under {@code -ea}, and an unchecked
+     * out-of-bounds native read (garbage value or SIGSEGV) without it. That was the root cause of
+     * the composite-partitioning WAL-apply hang on a NULL IDENTITY dimension value -- see
+     * {@code TableWriter#renderDimensionSegment}.
+     * <p>
+     * <b>This guard is NOT as broad as the read side's.</b> A review pass (composite-partitioning
+     * NULL-fix follow-up) suggested widening it to the reader's full {@code key > -1 && key <
+     * symbolCount} form, matching {@code SymbolMapReaderImpl#valueOf} bound-for-bound and making a
+     * POSITIVE out-of-range key null too instead of silently reading garbage -- {@code -ea} or not.
+     * That widened form was tried and reverted: {@code TableWriter#processPartitionRemoveCandidates0}
+     * calls {@code CellRegistry#getTupleFromWriter}, which calls this method with a
+     * {@code partitionRemoveCandidates}-queued cellKey that can be a currently-out-of-range ordinal
+     * at render time (root cause not yet investigated) and, unlike every other caller here, does
+     * NOT null-check the result before feeding it to {@code CompositeTupleCodec#decode} --
+     * widening this guard turns that into an immediate {@code NullPointerException} that suspends
+     * the table, empirically reproducible with as few as THREE distinct real (non-NULL, non-empty)
+     * symbol values dispatched in one commit on a brand-new composite table -- not a NULL/empty-value
+     * edge case at all, an everyday shape. So: for a POSITIVE out-of-range key, this method still
+     * reads silent garbage rather than returning null -- exactly like an assertion-free build reads
+     * a NULL IDENTITY key before this class's own {@code VALUE_IS_NULL} guard. Fixing that requires
+     * fixing (or null-guarding) {@code getTupleFromWriter}'s caller first; tracked as a follow-up,
+     * out of scope here.
      */
     static CharSequence valueOf(MapWriter writer, int key) {
         if (key == SymbolTable.VALUE_IS_NULL) {

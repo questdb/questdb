@@ -4289,25 +4289,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
             }
         }
-        // putCellSegmentPathSafe, not putPathSafe: a NULL dimension value is ordinary data with its
-        // own cell (an IDENTITY ordinal of SymbolTable.VALUE_IS_NULL, or a dedicated-dict ordinal of
-        // the same, both reverse-looking-up to null) and renders as the reserved, collision-proof
-        // TableUtils.COMPOSITE_NULL_DIMENSION_TOKEN. Rendering it through putPathSafe instead would
-        // NPE on null -- and, before MapWriter.valueOf learned its own VALUE_IS_NULL guard, the
-        // reverse lookup itself read out of bounds (an AssertionError under -ea) and hung WAL apply
-        // outright, see dispatchCompositeCellRange.
+        // putCellSegmentPathSafe(sink, ordinal, value) is ORDINAL-driven, not value-driven (mirrors
+        // TableReader#renderCellSegment's identical fix): the NULL token is decided from `ordinal`
+        // itself (== SymbolTable.VALUE_IS_NULL), not from whether the reverse lookup happened to
+        // return null. On THIS side the reverse lookup (symbolValueOf / MapWriter.valueOf)
+        // currently only ever returns null for VALUE_IS_NULL, so the two decisions coincide today
+        // -- but that is a coincidence of MapWriter.valueOf's current implementation, not a
+        // contract this call site should lean on. Symmetric-by-construction with the reader side:
+        // an ordinal that is NOT VALUE_IS_NULL but still fails to resolve throws loud instead of
+        // silently rendering %NULL.
         switch (dim.getKind()) {
             case PartitionDimension.KIND_IDENTITY:
-                TableUtils.putCellSegmentPathSafe(sink, symbolValueOf(dim.getColumnIndex(), ordinal));
+                TableUtils.putCellSegmentPathSafe(sink, ordinal, symbolValueOf(dim.getColumnIndex(), ordinal));
                 break;
             case PartitionDimension.KIND_HASH:
                 sink.put(ordinal);
                 break;
             case PartitionDimension.KIND_TRUNCATE:
-                TableUtils.putCellSegmentPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
-                break;
             case PartitionDimension.KIND_EXPRESSION:
-                TableUtils.putCellSegmentPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
+                TableUtils.putCellSegmentPathSafe(sink, ordinal, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
                 break;
             default:
                 throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());

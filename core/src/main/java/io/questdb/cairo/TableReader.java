@@ -1057,12 +1057,20 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (dim.getKind() == PartitionDimension.KIND_HASH) {
                 sink.put(tuple[i]);
             } else {
-                // putCellSegmentPathSafe, not putPathSafe: a NULL dimension value reverse-looks-up to
-                // null and renders as the reserved TableUtils.COMPOSITE_NULL_DIMENSION_TOKEN --
-                // byte-identical to TableWriter#renderDimensionSegment, which is what actually created
-                // the directory. Diverging here would look for a written cell under a name that does
-                // not exist.
-                TableUtils.putCellSegmentPathSafe(sink, valueOfDimensionKey(i, tuple[i]));
+                // putCellSegmentPathSafe(sink, key, value) is ORDINAL-driven, not value-driven: the
+                // NULL token decision is made on tuple[i] itself (== SymbolTable.VALUE_IS_NULL),
+                // byte-identical to TableWriter#renderDimensionSegment, which is what actually
+                // created the directory. Deciding from valueOfDimensionKey's return instead would be
+                // WRONG -- SymbolMapReaderImpl#valueOf (and the shared dictReaderFor(dimIndex)
+                // reader TRUNCATE/EXPRESSION also go through) returns null for ANY key outside
+                // [0, symbolCount), not only VALUE_IS_NULL, so a value-driven check would silently
+                // render the reserved %NULL token for a cell tuple carrying a key the reader's
+                // symbol map does not yet cover -- exactly the "composite must never silently differ
+                // from its plain twin" rule this feature exists to uphold. Before the token existed,
+                // that same state threw an uncontrolled NPE inside putPathSafe -- loud. So: throw
+                // loud again for a non-NULL key that unexpectedly fails to resolve, instead of
+                // guessing it means NULL.
+                TableUtils.putCellSegmentPathSafe(sink, tuple[i], valueOfDimensionKey(i, tuple[i]));
             }
         }
     }

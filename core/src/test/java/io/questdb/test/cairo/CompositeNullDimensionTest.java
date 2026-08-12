@@ -164,19 +164,18 @@ public class CompositeNullDimensionTest extends AbstractCairoTest {
             assertWalTableNotSuspended("p");
             engine.releaseInactive();
 
+            // Route through assertTwinEquivalence (Minor 4, review finding): the two-dimension
+            // tuple is the MORE interesting pruning shape than the single-dimension cases, so it
+            // should get the STRONGER assertion set -- `= null`, `!= null` and LATEST ON -- not a
+            // hand-rolled, weaker one. assertTwinEquivalence only names the `exch` dimension, so
+            // `side`-specific coverage is added explicitly alongside it, below.
+            assertTwinEquivalence();
             assertSqlCursors(
                     "select ts, exch, side, px from p order by ts",
                     "select ts, exch, side, px from c order by ts");
             assertSqlCursors(
-                    "select ts, exch, side, px from p where exch is null order by ts",
-                    "select ts, exch, side, px from c where exch is null order by ts");
-            assertSqlCursors(
                     "select ts, exch, side, px from p where side is null order by ts",
                     "select ts, exch, side, px from c where side is null order by ts");
-            assertSqlCursors(
-                    "select ts, exch, side, px from p where exch = 'BTC' order by ts",
-                    "select ts, exch, side, px from c where exch = 'BTC' order by ts");
-            assertSqlCursors("select count() from p", "select count() from c");
 
             // Four distinct (exch, side) tuples -> four distinct nested cells, each rendering the
             // NULL token per-dimension.
@@ -248,6 +247,118 @@ public class CompositeNullDimensionTest extends AbstractCairoTest {
                     "select ts, exch, px from c where exch = '%NULL' order by ts");
             assertQuery("select count() from c where exch = '%NULL'").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
             assertQuery("select count() from c where exch is null").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    /**
+     * Important 2 (review finding): before this commit, a NULL source value on a HASH dimension hit
+     * the same out-of-bounds reverse lookup as IDENTITY, via {@code resolveRowCellKey ->
+     * symbolValueOf}. After it, the whole chain completes: {@code Hash.boundedHash(null, ...)}
+     * returns {@code -1}, so the bucket resolves to {@code floorMod(-1, N) == N-1} -- an ORDINARY
+     * bucket, indistinguishable from any other value that happens to hash there (a HASH dimension's
+     * ordinal is rendered as a bare bucket number, see {@code TableWriter#renderDimensionSegment}'s
+     * {@code KIND_HASH} case -- no reverse lookup, no {@code %NULL} token, by design: a bucket
+     * cannot be un-hashed). This is "correct by inspection" per the review, but was shipped
+     * untested; this proves the path is reachable and matches the plain twin.
+     */
+    @Test(timeout = 30_000)
+    public void testNullOnHashDimensionMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, hash(exch, 4) wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            insertIntoBothAndDrain(
+                    "('2023-01-01T00:00:00.000000Z','BTC',1.0)," +
+                            "('2023-01-01T00:00:01.000000Z',NULL,2.0)," +
+                            "('2023-01-01T00:00:02.000000Z','ETH',3.0)," +
+                            "('2023-01-01T00:00:03.000000Z',NULL,4.0)," +
+                            "('2023-01-01T00:00:04.000000Z','SOL',5.0)");
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+
+            assertTwinEquivalence();
+        });
+    }
+
+    /**
+     * Important 2 (review finding): before this commit, a NULL source value on a TRUNCATE dimension
+     * hit the same out-of-bounds reverse lookup as IDENTITY. After it, {@code
+     * CompositeDimensionTransform#truncatedPrefix(null, ...)} returns null, the dedicated dict's
+     * {@code put(null)} returns {@code SymbolTable.VALUE_IS_NULL}, and -- UNLIKE HASH -- TRUNCATE
+     * DOES reverse-look-up its ordinal to render the segment (a dedicated-dict {@code MapWriter},
+     * see {@code KIND_TRUNCATE} in {@code TableWriter#renderDimensionSegment}), so this exercises
+     * the SAME ordinal-driven {@code putCellSegmentPathSafe} decision Important 1 fixed, just via
+     * the dedicated-dict path rather than the source column's own symbol map. Proves it renders the
+     * reserved {@code %NULL} token (not a throw, not a garbage prefix) and matches the plain twin.
+     */
+    @Test(timeout = 30_000)
+    public void testNullOnTruncateDimensionMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, truncate(exch, 3) wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            insertIntoBothAndDrain(
+                    "('2023-01-01T00:00:00.000000Z','BTC',1.0)," +
+                            "('2023-01-01T00:00:01.000000Z',NULL,2.0)," +
+                            "('2023-01-01T00:00:02.000000Z','ETH',3.0)," +
+                            "('2023-01-01T00:00:03.000000Z',NULL,4.0)");
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+
+            assertTwinEquivalence();
+
+            TableToken tableToken = engine.verifyTableName("c");
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertEquals(
+                    setOf("exch=BTC", "exch=ETH", "exch=%NULL"),
+                    listCellDirNames(ff, tableToken, "2023-01-01"));
+        });
+    }
+
+    /**
+     * Minor 2 (review finding, NO code change -- establishes behaviour only). {@code putPathSafe("")}
+     * emits nothing, so a cell whose dimension value is the empty string {@code ''} renders an EMPTY
+     * segment -- {@code ''} is a distinct, real, NON-null ordinal, so this is a completely different
+     * code path than the {@code %NULL} token (which is ordinal-driven off {@code VALUE_IS_NULL},
+     * per Important 1 -- {@code ''} never has that ordinal). Pre-existing, not introduced by the
+     * commit under review; the new {@code putCellSegmentPathSafe} javadoc asserts injectivity as a
+     * design property without calling this out. This test establishes what ACTUALLY happens: does
+     * {@code ''} collapse onto the day directory, and does QuestDB still store/query {@code ''}
+     * distinctly from NULL regardless?
+     */
+    @Test(timeout = 30_000)
+    public void testEmptyStringDimensionValueDoesNotCollideWithNullOrData() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBothAndDrain(
+                    "('2023-01-01T00:00:00.000000Z','BTC',1.0)," +
+                            "('2023-01-01T00:00:01.000000Z','',2.0)," +
+                            "('2023-01-01T00:00:02.000000Z',NULL,3.0)");
+
+            assertWalTableNotSuspended("c");
+            engine.releaseInactive();
+
+            // '' and NULL are DISTINCT values in QuestDB (this is not specific to composite
+            // partitioning) -- both twins must agree on that.
+            assertTwinEquivalence();
+            assertQuery("select count() from c where exch = ''").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("select count() from c where exch is null").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = '' order by ts",
+                    "select ts, exch, px from c where exch = '' order by ts");
+
+            // Document what the '' cell's on-disk segment actually is: putPathSafe("") writes
+            // nothing, so in HIVE naming the segment is the bare "exch=" prefix with an empty
+            // value tail -- NOT the day directory itself, and NOT the %NULL token.
+            TableToken tableToken = engine.verifyTableName("c");
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertEquals(
+                    setOf("exch=BTC", "exch=%NULL", "exch="),
+                    listCellDirNames(ff, tableToken, "2023-01-01"));
         });
     }
 
