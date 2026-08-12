@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -307,6 +308,27 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                 }
             }
         }
+
+        // The parquet form of the same sealed version: <col>.pidx.<sealTxn>.parquet
+        // and its ._im, written in place of the .pv/.pc* the code above removes. A
+        // partition carries one form or the other, and both are keyed by the same
+        // txn, so removeQuiet's ENOENT-tolerant true answers for whichever form is
+        // absent and one task retires the version whichever way it was sealed.
+        //
+        // The _im goes first. It is the parquet form's commit signal -- the token in
+        // the _pm names an _im file size, and the reader resolves the parquet only
+        // through it -- so a crash between the two unlinks leaves a parquet with no
+        // _im, which the writer's orphan sweep reclaims. The other order would leave
+        // an _im naming a parquet that is gone.
+        path.trimTo(pathPartitionLen);
+        if (!ff.removeQuiet(ParquetIndexSeal.indexMetaFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+            allRemoved = false;
+        }
+        path.trimTo(pathPartitionLen);
+        if (!ff.removeQuiet(ParquetIndexSeal.indexParquetFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+            allRemoved = false;
+        }
+        path.trimTo(pathPartitionLen);
 
         boolean done = allRemoved && scanAllCoversRemoved;
         if (done) {

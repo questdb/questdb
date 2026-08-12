@@ -274,6 +274,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path other;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
+    // Scratch for sweepOrphanParquetIndexArtifacts: the directory listing must
+    // finish before any unlink, so the names are collected first.
+    private final ObjList<CharSequence> orphanParquetIndexNames = new ObjList<>();
     private final DirectIntList parquetBloomFilterIndexes;
     private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
     private final DirectIntList parquetColumnIdsAndTypes;
@@ -12158,6 +12161,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // already rewound the path buffer.
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final int plen = path.size();
+        sweepOrphanParquetIndexArtifacts(plen);
         final LongList merged = new LongList();
         final LongList supersededColumnIds = new LongList();
         final LongList supersededIndexTxns = new LongList();
@@ -14879,6 +14883,65 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
+    }
+
+    /**
+     * Removes every {@code <col>.pidx.<txn>.parquet} in the partition directory
+     * that has no committed {@code _im} beside it.
+     * <p>
+     * The seal must write the parquet before the {@code _im} -- the {@code _im}
+     * is generated from the finished writer's own thrift metadata -- so a seal
+     * that fails between the two leaves the parquet behind. Such a file can
+     * never be referenced: the {@code _pm} token is published only after the
+     * {@code _im} commits, so no footer, live or superseded, names it and no
+     * reader can reach it. That makes it removable on sight, without the
+     * scoreboard gate a superseded artifact needs.
+     * <p>
+     * An {@code _im} whose {@code IM_FILE_SIZE} is still zero counts as absent:
+     * that is exactly the uncommitted state a crash between the body write and
+     * the header patch leaves, and no token was published for it either.
+     */
+    private void sweepOrphanParquetIndexArtifacts(int plen) {
+        orphanParquetIndexNames.clear();
+        path.trimTo(plen);
+        final StringSink fileName = Misc.getThreadLocalSink();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.endsWith(fileName, ParquetIndexSeal.PIDX_SUFFIX) && Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)) {
+                orphanParquetIndexNames.add(Chars.toString(fileName));
+            }
+        });
+        path.trimTo(plen);
+        for (int i = 0, n = orphanParquetIndexNames.size(); i < n; i++) {
+            final CharSequence parquetName = orphanParquetIndexNames.getQuick(i);
+            final CharSequence stem = parquetName.subSequence(0, parquetName.length() - ParquetIndexSeal.PIDX_SUFFIX.length());
+            path.trimTo(plen).concat(stem).put(ParquetIndexSeal.IM_SUFFIX).$();
+            final long imFd = ff.openRO(path.$());
+            long imFileSize = -1;
+            if (imFd > -1) {
+                try {
+                    imFileSize = ff.readNonNegativeLong(imFd, 0);
+                } finally {
+                    ff.close(imFd);
+                }
+            }
+            path.trimTo(plen);
+            if (imFileSize > 0) {
+                continue;
+            }
+            path.trimTo(plen).concat(parquetName).$();
+            if (ff.removeQuiet(path.$())) {
+                LOG.info().$("removed orphan parquet index with no committed _im [table=").$(tableToken)
+                        .$(", file=").$(parquetName)
+                        .I$();
+            }
+            path.trimTo(plen);
+        }
+        orphanParquetIndexNames.clear();
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
