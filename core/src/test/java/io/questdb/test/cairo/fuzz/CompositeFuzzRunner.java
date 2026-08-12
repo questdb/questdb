@@ -94,7 +94,9 @@ public class CompositeFuzzRunner {
     private Axes axes;
     private long baselineExistingCellRowCount;
     private long baselineFastAppendCommittedCount;
+    private long baselineFastAppendEligibleCount;
     private long baselineMultiCellFastAppendCommittedCount;
+    private long baselineMultiCellFastAppendEligibleCount;
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
     private String compositeName;
@@ -473,9 +475,29 @@ public class CompositeFuzzRunner {
             final long fastAppendCommits =
                     (TableWriter.getCompositeFastAppendCommittedCount() - baselineFastAppendCommittedCount)
                             + (TableWriter.getCompositeMultiCellFastAppendCommittedCount() - baselineMultiCellFastAppendCommittedCount);
-            if (fastAppendCommits < 1) {
+            final long fastAppendEligible =
+                    (TableWriter.getCompositeFastAppendEligibleCount() - baselineFastAppendEligibleCount)
+                            + (TableWriter.getCompositeMultiCellFastAppendEligibleCount() - baselineMultiCellFastAppendEligibleCount);
+            // The floor is "eligible implies committed", NOT "the flag is on, so it must have happened".
+            //
+            // Fast-append is an OPTIMISATION with real preconditions -- an in-order commit onto the last
+            // partition's cell, which must already hold rows, with no indexes, no var-size value column
+            // and no column top. A run whose shape never satisfies them never becomes eligible, and
+            // demanding a fast-append commit anyway asserts something the product never promised.
+            // Measured, not assumed: at seed (6734027928530775461, 7885943598324962968) -- 3 dimensions,
+            // cardinality 64, 1061 cells over the run -- the ELIGIBLE counters are 0, so nothing was
+            // skipped; the data is simply too fragmented for a commit to ever extend the last cell in
+            // order. Raising cairo.wal.composite.fastappend.max.open.cells from 64 to 8192 changed
+            // nothing, ruling out the open-cell cap.
+            //
+            // What IS worth failing on is a commit the writer judged ELIGIBLE and then did not take:
+            // that is the fast-append path silently not running when it should, which is exactly what
+            // this floor is for. Deterministic coverage of fast-append actually firing belongs to the
+            // fixed-shape matrix (CompositeMatrixTest), which pins the axes instead of drawing them.
+            if (fastAppendEligible > 0 && fastAppendCommits < 1) {
                 throw new AssertionError(exercisedFailureMessage(
-                        "fast-append commits=" + fastAppendCommits + " floor=1 (fastAppend flag is ON for this run)"
+                        "fast-append eligible=" + fastAppendEligible + " but committed=" + fastAppendCommits
+                                + " -- the writer judged commits eligible for the fast-append path and took none"
                 ));
             }
         }
@@ -533,6 +555,8 @@ public class CompositeFuzzRunner {
         this.baselineExistingCellRowCount = TableWriter.getCompositeExistingCellRowCount();
         this.baselineFastAppendCommittedCount = TableWriter.getCompositeFastAppendCommittedCount();
         this.baselineMultiCellFastAppendCommittedCount = TableWriter.getCompositeMultiCellFastAppendCommittedCount();
+        this.baselineFastAppendEligibleCount = TableWriter.getCompositeFastAppendEligibleCount();
+        this.baselineMultiCellFastAppendEligibleCount = TableWriter.getCompositeMultiCellFastAppendEligibleCount();
         this.axes = Axes.resolve(rnd);
         final String cols = "(ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE, qty LONG)";
 
