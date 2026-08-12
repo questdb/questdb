@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -154,6 +155,110 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                             hardLinkCount(p.toString())
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testConvertBackToNativeRebuildsAWorkingIndex() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO NATIVE LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // restoreIndexFilesAfterParquetToNative prefers hard-linking the
+            // existing index files and falls back to rebuildColumnIndex when the
+            // key file is absent. The parquet seal leaves a .pk behind, so the
+            // link branch would fire and carry over a key file whose chain has
+            // no visible generation; the fallback is forced instead, and it is
+            // complete because rebuildColumnIndex calls configureCoveringIfNeeded.
+            try (Path path = new Path()) {
+                assertNoFileNamed(partitionPath(path), "sym.pidx.");
+                assertAnyFileNamed(partitionPath(path), "sym.pc0.");
+                Assert.assertTrue(
+                        "the rebuilt native index must publish a sealed .pv generation",
+                        hasSealedValueFile(partitionPath(path))
+                );
+            }
+            // Served from the rebuilt covering index, and the same rows the
+            // partition returned before it was ever converted.
+            assertQuery("select count() from (" + COVERED_QUERY + ')')
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n75000\n");
+        });
+    }
+
+    @Test
+    public void testSecondSealSupersedesTheFirst() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            final String firstMeta;
+            final String firstParquet;
+            final long firstIndexTxn;
+            try (Path path = new Path()) {
+                firstMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                firstParquet = onlyFileNamed(partitionPath(path), "sym.pidx.", ".parquet");
+                firstIndexTxn = Numbers.parseLong(
+                        firstMeta.substring("sym.pidx.".length(), firstMeta.length() - "._im".length())
+                );
+            }
+
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                final FilesFacade ff = configuration.getFilesFacade();
+                final String secondMeta = newestFileNamed(partitionPath(path), "sym.pidx.", "._im", firstMeta);
+                final long secondIndexTxn = Numbers.parseLong(
+                        secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length())
+                );
+                Assert.assertTrue(
+                        "the second seal must publish a later index txn [first=" + firstIndexTxn
+                                + ", second=" + secondIndexTxn + ']',
+                        secondIndexTxn > firstIndexTxn
+                );
+                final long imFileSize = ff.length(partitionPath(path).concat(secondMeta).$());
+                assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, secondIndexTxn, imFileSize);
+
+                // Superseded is not grounds to delete. The prior footer is still
+                // in the _pm MVCC chain and a reader pinned to the older
+                // committed data.parquet size resolves it, and with it the old
+                // index_txn, so the pair must survive the supersession itself.
+                Assert.assertTrue(
+                        "the superseded _im must outlive the supersession",
+                        ff.exists(partitionPath(path).concat(firstMeta).$())
+                );
+                Assert.assertTrue(
+                        "the superseded index parquet must outlive the supersession",
+                        ff.exists(partitionPath(path).concat(firstParquet).$())
+                );
+
+                // It is the reader-gated purge that retires them, from the entry
+                // the drop point handed it: same decision point, so the pointer
+                // and the files it named cannot part company.
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    for (int i = 0; i < 8; i++) {
+                        setCurrentMicros(Math.max(currentMicros, 0) + 10_000_000L);
+                        job.run();
+                    }
+                }
+                Assert.assertFalse(
+                        "the purge must unlink the superseded _im",
+                        ff.exists(partitionPath(path).concat(firstMeta).$())
+                );
+                Assert.assertFalse(
+                        "the purge must unlink the superseded index parquet",
+                        ff.exists(partitionPath(path).concat(firstParquet).$())
+                );
             }
         });
     }
@@ -585,6 +690,23 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
      */
     private static long hardLinkCount(String file) throws Exception {
         return ((Number) java.nio.file.Files.getAttribute(java.nio.file.Path.of(file), "unix:nlink")).longValue();
+    }
+
+    /**
+     * The one file matching {@code prefix}/{@code suffix} that is not
+     * {@code exclude}. Used where a superseded artifact is deliberately still on
+     * disk, so "exactly one" is the wrong assertion.
+     */
+    private static String newestFileNamed(Path partitionPath, String prefix, String suffix, String exclude) {
+        final File[] files = new File(partitionPath.toString())
+                .listFiles((_, name) -> name.startsWith(prefix) && name.endsWith(suffix) && !name.equals(exclude));
+        Assert.assertNotNull("no directory at " + partitionPath, files);
+        Assert.assertEquals(
+                "expected exactly one " + prefix + "*" + suffix + " other than " + exclude + " under " + partitionPath,
+                1,
+                files.length
+        );
+        return files[0].getName();
     }
 
     private static String onlyFileNamed(Path partitionPath, String prefix, String suffix) {
