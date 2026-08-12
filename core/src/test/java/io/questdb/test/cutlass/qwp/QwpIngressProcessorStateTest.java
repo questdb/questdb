@@ -3162,6 +3162,72 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsSalvageSurvivesCloseFailure() throws Exception {
+        // Mirror image of testGetTableUpdateDetailsDiscardsWhenSalvageCommitFails:
+        // there the salvage FAILS and the lookup must refuse; here the salvage
+        // SUCCEEDS and only the close that follows it fails, so the lookup must
+        // NOT refuse. evictStaleTud frees the TUD right after the salvage commit,
+        // and that free closes the writer, rolling back through real file IO that
+        // can hit ENOSPC/EIO. Before the guard that failure escaped
+        // getTableUpdateDetails and the QWP layer refused the frame -- pushing the
+        // client to replay rows the renamed table had already durably accepted,
+        // duplicating them. The guard swallows the close failure and lets the
+        // successful salvage stand.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_close_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            int[] consumerNotifications = new int[1];
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> consumerNotifications[0]++);
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_close_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Install the failing-close writer BEFORE buffering the row: the
+                // row then sits in that writer, so the salvage commit is a real
+                // one and the close is the only step that fails.
+                replaceWriterWithFailingCloseWalWriter(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_close_src TO sal_close_dst");
+                execute("CREATE TABLE sal_close_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // No try/catch here on purpose: an escaping close failure fails
+                // this test outright, which is exactly the pre-guard behavior.
+                WalTableUpdateDetails rebuilt = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_close_src"), null, null, 1
+                );
+                Assert.assertNotNull(rebuilt);
+                Assert.assertNotSame("stale entry must be rebuilt against the new table", tud, rebuilt);
+                Assert.assertEquals(1, cache.size());
+                Assert.assertEquals("a successful salvage must still record its txn",
+                        1, consumerNotifications[0]);
+
+                // The salvaged row landed in the renamed table -- these are the
+                // very rows a refused frame would have made the client resend.
+                drainWalQueue();
+                assertQuery("SELECT count() FROM sal_close_dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count() FROM sal_close_src")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsRejectsInvalidDeferredArrayColumnName() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -4798,6 +4864,42 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     throw new UnsupportedOperationException(method.getName());
                 }
         ));
+    }
+
+    private static void replaceWriterWithFailingCloseWalWriter(WalTableUpdateDetails tud) throws Exception {
+        // A REAL WalWriter subclass, not a TableWriterAPI proxy: evictStaleTud
+        // only attempts salvage when tud.getWriter() instanceof WalWriter, so no
+        // proxy reaches the salvage arm at all. Unlike
+        // replaceWriterWithFailingCommitWalWriter, nothing about the commit is
+        // faked -- the caller installs this writer BEFORE buffering its row, so
+        // the row lives here and the salvage commits it for real. Only the close
+        // that follows the salvage fails.
+        TableToken token = tud.getTableToken();
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, new WalWriter(
+                engine.getConfiguration(),
+                token,
+                engine.getTableSequencerAPI(),
+                engine.getDdlListener(token),
+                engine.getWalDirectoryPolicy(),
+                engine.getWalLocker(),
+                engine.getRecentWriteTracker(),
+                engine.getTelemetryWal()
+        ) {
+            @Override
+            public void close() {
+                // Release the real resources first so the test stays leak-free,
+                // then simulate the rollback-on-close file IO hitting
+                // ENOSPC/EIO on the way out.
+                super.close();
+                throw CairoException.critical(5).put("simulated close failure");
+            }
+        });
     }
 
     private static void replaceWriterWithFailingCommitWalWriter(WalTableUpdateDetails tud) throws Exception {

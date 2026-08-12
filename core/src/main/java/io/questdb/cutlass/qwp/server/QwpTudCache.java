@@ -755,11 +755,28 @@ public class QwpTudCache implements QuietCloseable {
         }
         tableUpdateDetails.removeAt(key);
         cachedTableCount = tableUpdateDetails.size();
-        // Freeing a commitOnClose=false TUD rolls back whatever is still
-        // uncommitted. If rows were discarded (dropped table, or a failed
-        // salvage), propagate so the QWP layer rejects instead of acknowledging
-        // them; the UDP receiver has no ack and simply drops the datagram.
-        Misc.free(tud);
+        try {
+            // Freeing a commitOnClose=false TUD rolls back whatever is still
+            // uncommitted -- real file IO that can fail on ENOSPC/EIO.
+            Misc.free(tud);
+        } catch (Throwable th) {
+            // Neither branch below may let that failure escape. After a
+            // successful salvage the rows are already committed and durable, so
+            // an escape would turn a success into a frame refusal and the
+            // client would replay rows the renamed table already holds --
+            // duplicate data. In the discard branch the throw below is the more
+            // informative one: it names the table and the reason the rows went
+            // away, where a raw IO error refuses the frame just the same but
+            // tells the operator nothing. Either way the writer is already out
+            // of the map and discarded, and the condition that broke this close
+            // resurfaces on the next commit through the fresh writer, which does
+            // propagate. This log keeps the IO detail.
+            LOG.error().$("could not close evicted stale writer [table=").$(tableNameUtf8)
+                    .$(", e=").$safe(th.getMessage()).I$();
+        }
+        // Rows the eviction could not re-home are gone: refuse so the QWP layer
+        // rejects instead of acknowledging them; the UDP receiver has no ack and
+        // simply drops the datagram.
         if (hadBufferedRows && !isSalvaged) {
             throw CairoException.nonCritical()
                     .put(isRenamed ? "renamed" : "dropped")

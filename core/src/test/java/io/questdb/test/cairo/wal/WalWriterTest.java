@@ -6425,7 +6425,7 @@ public class WalWriterTest extends AbstractCairoTest {
         // margin, which also lands the append pointer mid-page instead of
         // exactly on a page boundary.
         final long timestampEntryBytes = 2L * Long.BYTES;
-        return (int) (Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100;
+        return (int) ((Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100);
     }
 
     private static void testReadMatViewState(int chunkSize) {
