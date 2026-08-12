@@ -47,7 +47,9 @@ stages:
 
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    # An explicit condition drops the implicit succeeded(), so restore it: a queue build
+    # whose CheckChanges stage failed must not post a real enterprise run.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
     jobs:
@@ -56,7 +58,13 @@ stages:
         pool: hetzner-incus
         variables:
           SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        # A PR or merge-queue build triggers enterprise CI even when no source path changed:
+        # enterprise-ci is a required check, so GitHub blocks a PR that never reports it from
+        # joining the queue, and ejects a queue entry that never reports it.
+        condition: >-
+          or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+          eq(variables['Build.Reason'], 'PullRequest'),
+          startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/'))
         steps:
           - checkout: none
           - bash: |
