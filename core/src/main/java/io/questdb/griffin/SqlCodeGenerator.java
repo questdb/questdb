@@ -505,7 +505,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
     private final MarkoutHorizonContext markoutHorizonContext = new MarkoutHorizonContext();
-    private final LongList prefixes = new LongList();
     private final PushdownFilterExtractor pushdownFilterExtractor = new PushdownFilterExtractor();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final RecordComparatorCompiler recordComparatorCompiler;
@@ -2874,7 +2873,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Lifts a WITHIN geohash predicate out of the residual filter into {@link #prefixes}, which
+     * Lifts a WITHIN geohash predicate out of the residual filter into {@code prefixes}, which
      * {@link LatestByAllIndexedRecordCursorFactory} reads as a prefix scan over the index.
      * <p>
      * That factory is the only consumer, and it evaluates no filter of its own, so the predicate
@@ -2882,7 +2881,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * LATEST ON key, no key extraction, and a residual filter that is nothing but the WITHIN node.
      * Under any other shape - several LATEST ON keys, a key predicate alongside the WITHIN, or
      * anything else left in the filter - the generator builds a factory that never looks at
-     * {@link #prefixes}, and lifting the predicate would drop it from the query. Leaving it in the
+     * {@code prefixes}, and lifting the predicate would drop it from the query. Leaving it in the
      * filter costs a per-row evaluation and keeps the answer right.
      * <p>
      * This runs after {@link WhereClauseParser#extract}, not before, so the decision can read the
@@ -2895,7 +2894,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntrinsicModel intrinsicModel,
             ObjList<ExpressionNode> latestBy,
             RecordMetadata queryMeta,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            LongList prefixes
     ) throws SqlException {
         if (!configuration.useWithinLatestByOptimisation()
                 || intrinsicModel.filter == null
@@ -11024,10 +11024,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
         final TableToken tableToken = metadata.getTableToken();
-        // Generator-wide state shared by every query this generator compiles, so it must start
-        // empty for this one. extractWithinPrefixes() below fills it only once it knows a factory
-        // will read it back.
-        prefixes.clear();
+        // Local to this table query rather than a generator field: compiling a sub-query in the
+        // WHERE clause re-enters this method and would otherwise leave its own prefixes behind for
+        // whichever query resumes, pointing a prefix scan at another table's geohash column.
+        final LongList prefixes = new LongList();
 
         int hasInterval = -1;
         RuntimeIntrinsicIntervalModel pushedIntervalModel = null;
@@ -11127,7 +11127,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (latestByColumnCount > 0) {
-                extractWithinPrefixes(model, intrinsicModel, latestBy, queryMeta, executionContext);
+                extractWithinPrefixes(model, intrinsicModel, latestBy, queryMeta, executionContext, prefixes);
                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
                     // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op

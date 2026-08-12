@@ -58,6 +58,35 @@ public class LatestOnWithinPrefixTest extends AbstractCairoTest {
     }
 
     /**
+     * Compiling a sub-query in the WHERE clause re-enters the table-query generator, so a
+     * generator-wide prefix list would come back carrying the sub-query's WITHIN. The outer query
+     * then either trips its own invariant check or, with assertions off, prefix-scans against
+     * another table's geohash column.
+     */
+    @Test
+    public void testNestedSubQueryDoesNotLeakPrefixes() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE flags (ts TIMESTAMP, g GEOHASH(8c), sym SYMBOL INDEX, b BOOLEAN) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE readings (ts TIMESTAMP, v LONG, sym SYMBOL INDEX) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO flags VALUES ('2026-01-01T00:00:00.000000Z', #sp05bcde, 'k', true)");
+            execute("INSERT INTO readings VALUES ('2026-01-01T00:00:00.000000Z', 1, 'k')");
+
+            assertQuery("SELECT * FROM readings " +
+                    "WHERE (SELECT b FROM flags WHERE g WITHIN(#sp05) LATEST ON ts PARTITION BY sym) " +
+                    "LATEST ON ts PARTITION BY sym")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tsym
+                            2026-01-01T00:00:00.000000Z\t1\tk
+                            """);
+        });
+    }
+
+    /**
      * Two WITHIN predicates cannot both become a prefix scan. The pre-extraction pass used to reject
      * the query outright; now they stay in the filter and intersect, which is what the same query
      * already did with the optimisation off.
