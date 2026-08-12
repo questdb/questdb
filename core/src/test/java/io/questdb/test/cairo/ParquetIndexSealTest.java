@@ -54,6 +54,12 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
 
     // Symbol 's15' is the highest key id the indexed partition carries, so the
     // key space bound is its index key (15 + 1 for the null slot) plus one.
+    // Both columns are covered and the key is a single symbol, so this is served
+    // from the posting index rather than by scanning the parquet. Written out
+    // rather than built from TABLE_NAME and INDEXED_PARTITION, which are declared
+    // after it.
+    private static final String COVERED_QUERY =
+            "select price, qty from t_pidx where sym = 's0' and ts in '2024-01-01'";
     private static final int EXPECTED_KEY_SPACE_SIZE = 17;
     private static final String INDEXED_PARTITION = "2024-01-01";
     // Index keys of 's0', 's7' and 's15', that is the symbol id plus one for the
@@ -76,6 +82,33 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private static final int[] PRESENT_KEYS = {1, 8, 16};
     private static final int SKEWED_ROW_COUNT = 300_000;
     private static final String TABLE_NAME = "t_pidx";
+
+    @Test
+    public void testPostingIndexReadIsRefusedWhileTheParquetFormatIsSelected() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            // The seal wrote the index as parquet and discarded the native chain,
+            // which a reader would otherwise read as "no keys, no rows" and answer
+            // with an empty cursor. Nothing reads the parquet form yet, so the
+            // read must fail rather than answer.
+            assertQuery(COVERED_QUERY).failsWith("has no reader yet");
+        });
+    }
+
+    @Test
+    public void testPostingIndexReadIsServedWhileTheNativeFormatIsSelected() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            // The negative control for the refusal above: on the default format
+            // the same query over the same partition is served, so the refusal
+            // cannot be reached by a user who has not set the property.
+            assertQuery("select count() from (" + COVERED_QUERY + ')')
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n75000\n");
+        });
+    }
 
     @Test
     public void testSealPacksManySmallKeysIntoSharedRowGroups() throws Exception {
@@ -368,6 +401,19 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 "postings\tdistinctRowIds\tminRowId\tmaxRowId\n"
                         + partitionRowCount + '\t' + partitionRowCount + "\t0\t" + (partitionRowCount - 1) + '\n'
         );
+    }
+
+    /**
+     * The sparse-key fixture with its parquet partition indexed, that is
+     * everything the two format tests share.
+     */
+    private void createIndexedSparseKeyTable() throws Exception {
+        createSparseKeyTable();
+        execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+        drainWalQueue();
+        engine.releaseInactive();
     }
 
     /**

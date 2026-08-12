@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -372,6 +373,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
+        checkPostingIndexIsReadable(partitionIndex, columnIndex);
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
@@ -862,6 +864,42 @@ public class TableReader implements Closeable, SymbolTableSource {
             return txFile.getVersion() == txFile.unsafeReadVersion();
         }
         return false;
+    }
+
+    /**
+     * Refuses to read a posting index over a parquet partition while
+     * {@code cairo.posting.index.parquet.partition.format} selects
+     * {@code parquet}.
+     * <p>
+     * In that mode {@code TableWriter.indexParquetColumn} discards the native
+     * chain and seals the index as {@code <col>.pidx.<txn>.parquet} instead, so
+     * the chain is left with no visible generation. A reader treats that as "no
+     * keys, no rows" and returns an empty cursor, which turns a configuration
+     * flip into silently wrong answers: ADD INDEX reports success and every
+     * indexed query over a parquet partition returns nothing. The reader for
+     * the parquet form lands in a later phase; until it does, this is the point
+     * where the two disagree, so this is where it fails.
+     * <p>
+     * Reachable only when the format is explicitly set to {@code parquet}; the
+     * default is {@code native} and takes the first branch out.
+     */
+    private void checkPostingIndexIsReadable(int partitionIndex, int columnIndex) {
+        if (configuration.getPostingIndexParquetPartitionFormat() != PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET) {
+            return;
+        }
+        if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+            return;
+        }
+        if (getPartitionFormatFromMetadata(partitionIndex) != PartitionFormat.PARQUET) {
+            return;
+        }
+        throw CairoException.nonCritical()
+                .put("posting index of a parquet partition is sealed as parquet and has no reader yet")
+                .put(", set cairo.posting.index.parquet.partition.format=native and rebuild the index [table=")
+                .put(tableToken.getTableName())
+                .put(", column=").put(metadata.getColumnName(columnIndex))
+                .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
+                .put(']');
     }
 
     private void checkSchedulePurgeO3Partitions() {
