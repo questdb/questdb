@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -40,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -252,6 +254,13 @@ public class CompositeFuzzRunner {
      */
     private static final Map<Class<? extends FuzzTransactionOperation>, Support> OPERATION_SUPPORT = buildOperationSupportMap();
 
+    /**
+     * How many distinct timestamps {@link #comparePointTimestampScans} probes. Small on purpose: each
+     * probe is two full comparisons, and the highest-multiplicity timestamps (which it takes first) are
+     * where several cells of one day share a timestamp -- the shape the probe exists for.
+     */
+    private static final int POINT_TIMESTAMP_PROBES = 8;
+
     public Axes axes() {
         return axes;
     }
@@ -385,7 +394,7 @@ public class CompositeFuzzRunner {
      * The full comparison oracle: every shape in spec Sec 4.4 ("Verifying the Supported Surface")
      * must be identical between subject and reference. Each of the seven {@code compare*} helpers
      * below increments {@link #comparedShapeCount} exactly once, even where it issues more than one
-     * query, so {@link #comparedShapeCount()} always reads 7 after a full, uninterrupted run.
+     * query, so {@link #comparedShapeCount()} always reads 8 after a full, uninterrupted run.
      * <p>
      * EVERY query issued by every shape orders by every selected column (or is a single-row
      * aggregate, which needs no ordering at all) for the reason Task 1 established: the generator
@@ -413,6 +422,7 @@ public class CompositeFuzzRunner {
         compareSampleBy();          // 4: SAMPLE BY, keyed aggregate
         compareDimensionFiltered(); // 5: dimension = / IN, present and absent
         compareIntervalScan();      // 6: interval crossing a partition boundary
+        comparePointTimestampScans(); // 6b: WHERE ts = <t>, point intervals over multi-cell days
         compareWindowJoinSlave();   // 7: window-join, table as slave
     }
 
@@ -640,6 +650,51 @@ public class CompositeFuzzRunner {
      * {@code PARTITION BY DAY}); 18:00 the day before midnight through 06:00 the day after spans
      * exactly one DAY boundary.
      */
+    /**
+     * Shape 6b: EQUALITY (point) timestamp filters, {@code WHERE ts = <t>}, over timestamps taken from
+     * the data itself -- preferring timestamps carried by more than one row, since those are the ones
+     * that span several cells of a day.
+     * <p>
+     * This exists because {@link #compareIntervalScan}'s single fixed window is one interval out of the
+     * many the scan can be handed, and it missed a real defect: an interval scan retired its interval at
+     * the first cell of a multi-cell day that failed to match it, silently dropping every later sibling
+     * cell's rows. A point filter is the sharpest probe for that -- {@code [t, t]} is the interval most
+     * cells of a day fail to match -- and it is fully deterministic: full rows are compared, and no tie
+     * is involved, unlike {@link #compareLatestOn}.
+     * <p>
+     * Timestamps come from the PLAIN reference, so which timestamps get probed never depends on the
+     * behaviour under test.
+     */
+    private void comparePointTimestampScans() throws SqlException {
+        final LongList timestamps = new LongList();
+        collectLongs("SELECT ts FROM (SELECT ts, count() c FROM " + plainName
+                + " GROUP BY ts ORDER BY c DESC, ts) LIMIT " + POINT_TIMESTAMP_PROBES, timestamps);
+        for (int i = 0, n = timestamps.size(); i < n; i++) {
+            final String where = " WHERE ts = cast(" + timestamps.getQuick(i) + " AS TIMESTAMP)";
+            final String order = " ORDER BY ts, exch, sym, px, qty";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM " + plainName + where + order,
+                    "SELECT * FROM " + compositeName + where + order, LOG);
+            // count() runs through calculateSize(), a different code path from the row scan above --
+            // a fix to only one of them would pass the comparison above and still miscount.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM " + plainName + where,
+                    "SELECT count() FROM " + compositeName + where, LOG);
+        }
+        comparedShapeCount++;
+    }
+
+    private void collectLongs(String sql, LongList out) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    out.add(record.getLong(0));
+                }
+            }
+        }
+    }
+
     private void compareIntervalScan() throws SqlException {
         final String sql = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'" +
                 " ORDER BY ts, exch, sym, px, qty";
@@ -649,14 +704,40 @@ public class CompositeFuzzRunner {
     }
 
     /**
-     * Shape 3: {@code LATEST ON ts PARTITION BY sym}. At most one row per distinct {@code sym}
-     * value -- including a NULL group, now that Task 2 restored NULL generation -- so
-     * {@code ORDER BY sym} alone makes row order deterministic.
+     * Shape 3: {@code LATEST ON ts PARTITION BY sym}. At most one row per distinct {@code sym} value --
+     * including a NULL group, now that Task 2 restored NULL generation.
+     * <p>
+     * This does NOT compare the two full result sets row for row, and the reason is a real property of
+     * the query rather than a concession. The generator emits duplicate timestamps
+     * ({@code probabilityOfSameTimestamp}), so a {@code sym} group can hold TWO rows at its maximum
+     * timestamp. Both are equally "the latest"; {@code LATEST ON} does not define which one it returns,
+     * and the twins genuinely differ there -- a composite table orders rows sharing a timestamp by
+     * {@code cellKey}, a plain table by insertion. Demanding row equality would fail on a legal tie.
+     * <p>
+     * So the comparison asserts the two things {@code LATEST ON} DOES determine, which together are
+     * strictly stronger than "the counts match":
+     * <ol>
+     *     <li><b>the groups and their timestamps are identical</b> -- same {@code sym} values, same
+     *     maximum timestamp for each. A dropped group, an extra group, or a wrong "latest" timestamp all
+     *     fail here; only the choice WITHIN a tie is left free.</li>
+     *     <li><b>every row returned for the composite table is a genuine row of the plain twin</b> --
+     *     so a tie cannot be satisfied by a fabricated or mis-assembled row. A wrong {@code exch},
+     *     {@code px} or {@code qty} stitched onto the right {@code (sym, ts)} fails here.</li>
+     * </ol>
+     * A row that is both a real row of the twin AND carries the group's true maximum timestamp is a
+     * correct answer to this query, whichever member of a tie it happens to be.
      */
     private void compareLatestOn() throws SqlException {
-        final String sql = " LATEST ON ts PARTITION BY sym ORDER BY sym";
+        final String latest = " LATEST ON ts PARTITION BY sym";
+        // (1) same groups, same latest timestamp per group -- exact comparison.
         TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                "SELECT * FROM " + plainName + sql, "SELECT * FROM " + compositeName + sql, LOG);
+                "SELECT sym, ts FROM " + plainName + latest + " ORDER BY sym",
+                "SELECT sym, ts FROM " + compositeName + latest + " ORDER BY sym", LOG);
+        // (2) every composite-returned row exists verbatim in the twin.
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT count() FROM (SELECT 1 FROM long_sequence(0))",
+                "SELECT count() FROM ((SELECT * FROM " + compositeName + latest + ") EXCEPT (SELECT * FROM " + plainName + "))",
+                LOG);
         comparedShapeCount++;
     }
 
