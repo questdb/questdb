@@ -33,7 +33,7 @@ QuestDB is hardware efficient, with quick setup and operational efficiency.
 
 <div align="center">
   <a href="https://demo.questdb.com/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src=".github/console.webp" width="900" />
+    <img alt="QuestDB Web Console showing a live technical-analysis dashboard, schema explorer, and monitoring panel" src=".github/console.webp" width="900" />
   </a>
   <p><em>QuestDB Web Console - click to launch demo</em></p>
 </div>
@@ -142,44 +142,56 @@ questdb stop
 Alternatively, to kickoff the full onboarding journey, start with our concise
 [quick start guide](https://questdb.com/docs/getting-started/quick-start/).
 
-### First-party ingestion clients
+### First-party clients
 
-QuestDB clients for ingesting data via the InfluxDB Line Protocol:
+QuestDB clients for ingesting data and running queries over the QuestDB Wire
+Protocol:
 
-- [Python](https://questdb.com/docs/ingestion/clients/python/)
-- [.NET](https://questdb.com/docs/ingestion/clients/dotnet/)
-- [C/C++](https://questdb.com/docs/ingestion/clients/c-and-cpp/)
-- [Go](https://questdb.com/docs/ingestion/clients/go/)
-- [Java](https://questdb.com/docs/ingestion/clients/java/)
-- [NodeJS](https://questdb.com/docs/ingestion/clients/nodejs/)
-- [Rust](https://questdb.com/docs/ingestion/clients/rust/)
+- [Python](https://questdb.com/docs/connect/clients/python/)
+- [.NET](https://questdb.com/docs/connect/clients/dotnet/)
+- [C/C++](https://questdb.com/docs/connect/clients/c-and-cpp/)
+- [Go](https://questdb.com/docs/connect/clients/go/)
+- [Java](https://questdb.com/docs/connect/clients/java/)
+- [NodeJS](https://questdb.com/docs/connect/clients/nodejs/)
+- [Rust](https://questdb.com/docs/connect/clients/rust/)
 
 ### Connect to QuestDB
 
-Interact with QuestDB and your data via the following interfaces:
+See the [Connect overview](https://questdb.com/docs/connect/overview/) for the
+full picture.
 
-- [Web Console](https://questdb.com/docs/getting-started/web-console/overview/) for an interactive SQL
-  editor and CSV import on port `9000`
-- [InfluxDB Line Protocol](https://questdb.com/docs/ingestion/ilp/overview/)
-  for streaming ingestion on port `9000`
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/query/pgwire/overview/)
-  for programmatic queries on port `8812`
-- [REST API](https://questdb.com/docs/query/rest-api/) for CSV import and
-  cURL on port `9000`
+The **QuestDB Wire Protocol (QWP)** is the native protocol and the recommended
+way to talk to QuestDB. It is binary, streams in both directions over a single
+connection on port `9000`, and covers ingestion and queries through one
+connect string. The first-party clients listed above speak it.
+
+QuestDB also speaks compatibility protocols, so existing tooling works
+unchanged:
+
+- [InfluxDB Line Protocol](https://questdb.com/docs/connect/compatibility/ilp/overview/)
+  for collectors and pipelines that already emit ILP, on port `9000`
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/connect/compatibility/pgwire/overview/)
+  for Postgres drivers, BI tools, and ORMs, on port `8812`
+- [REST API](https://questdb.com/docs/connect/compatibility/rest-api/) for HTTP
+  scripting, cURL, and CSV import, on port `9000`
+
+For interactive use, the
+[Web Console](https://questdb.com/docs/getting-started/web-console/overview/)
+provides a SQL editor, charts, and CSV import on port `9000`.
 
 ### Popular third-party tools
 
 Popular tools that integrate with QuestDB include:
 
-- [Kafka](https://questdb.com/docs/ingestion/message-brokers/kafka/)
-- [Redpanda](https://questdb.com/docs/ingestion/message-brokers/redpanda/)
+- [Kafka](https://questdb.com/docs/connect/message-brokers/kafka/)
+- [Redpanda](https://questdb.com/docs/connect/message-brokers/redpanda/)
 - [Grafana](https://questdb.com/docs/integrations/visualization/grafana/)
 - [Polars](https://questdb.com/docs/integrations/data-processing/polars/)
 - [Pandas](https://questdb.com/docs/integrations/data-processing/pandas/)
 - [PowerBI](https://questdb.com/docs/integrations/visualization/powerbi/)
 - [Superset](https://questdb.com/docs/integrations/visualization/superset/)
-- [Apache Flink](https://questdb.com/docs/ingestion/message-brokers/flink/)
-- [Telegraf](https://questdb.com/docs/ingestion/message-brokers/telegraf/)
+- [Apache Flink](https://questdb.com/docs/connect/message-brokers/flink/)
+- [Telegraf](https://questdb.com/docs/connect/message-brokers/telegraf/)
 - [MindsDB](https://questdb.com/docs/integrations/other/mindsdb/)
 
 ### End-to-end code scaffolds
@@ -234,11 +246,15 @@ and contact information.
 
 ### 🚢 Deploy QuestDB
 
-- [AWS](https://questdb.com/docs/deployment/aws/)
-- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
 - [Official Docker image](https://questdb.com/docs/deployment/docker/)
-- [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.com/docs/deployment/kubernetes/)
+- [systemd](https://questdb.com/docs/deployment/systemd/)
+- [AWS](https://questdb.com/docs/deployment/aws/)
+- [Azure](https://questdb.com/docs/deployment/azure/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
+- [Hetzner](https://questdb.com/docs/deployment/hetzner/)
+- [ZFS compression](https://questdb.com/docs/deployment/compression-zfs/)
 
 ## Contribute
 

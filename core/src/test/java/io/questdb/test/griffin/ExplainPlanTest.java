@@ -2974,7 +2974,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 10, 0, (char) 0, 20, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -9229,13 +9229,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            UnionSymbolCast
+                              functions: [i,s::symbol]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                         """);
     }
 
@@ -9245,13 +9247,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            Union
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            UnionSymbolCast
+                              functions: [i,s::symbol]
+                                Union
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                         """);
     }
 

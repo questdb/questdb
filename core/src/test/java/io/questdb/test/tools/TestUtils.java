@@ -180,13 +180,17 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAscii(utf8Sequence)) {
-            // isAscii()=true but value is not actually ASCII — this is always wrong.
-            // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
-            // VarcharSlice uses column-level metadata and may not know per-value).
-            Utf8StringSink sink = new Utf8StringSink();
-            sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
-            Assert.fail(sink.toString());
+        if (utf8Sequence != null && utf8Sequence.isAscii()) {
+            for (int i = 0, n = utf8Sequence.size(); i < n; i++) {
+                if (utf8Sequence.byteAt(i) < 0) {
+                    // isAscii()=true but value is not actually ASCII — this is always wrong.
+                    // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
+                    // VarcharSlice uses column-level metadata and may not know per-value).
+                    Utf8StringSink sink = new Utf8StringSink();
+                    sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
+                    Assert.fail(sink.toString());
+                }
+            }
         }
     }
 
@@ -1714,7 +1718,7 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
+        return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
     }
 
     @NotNull
@@ -2748,6 +2752,25 @@ public final class TestUtils {
             sink.put(lines[n - i - 1]).put('\n');
         }
         return sink;
+    }
+
+    /**
+     * Reads a seed override off a system property, falling back to the clock-derived
+     * default. A failing fuzz run prints its seeds; passing them back through
+     * {@code -Dfuzz.s0=<s0> -Dfuzz.s1=<s1>} replays the same draw, which is what makes a
+     * CI fuzz failure actionable at all. Without an override the seeds stay clock-derived,
+     * so ordinary runs keep exploring new cases.
+     */
+    private static long seedOf(String propertyName, long defaultSeed) {
+        final String value = System.getProperty(propertyName);
+        if (value == null) {
+            return defaultSeed;
+        }
+        try {
+            return Numbers.parseLong(value);
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("invalid seed override [" + propertyName + "=" + value + ']');
+        }
     }
 
     private static String toHexString(Long256 expected) {
