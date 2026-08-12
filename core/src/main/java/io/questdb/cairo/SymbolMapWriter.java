@@ -58,6 +58,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     private final MemoryMARW charMem;
     private final int columnIndex; // column index in the table writer metadata
+    private final FilesFacade ff;
     private final BitmapIndexWriter indexWriter;
     private final SymbolValueCountCollector valueCountCollector;
     private CharSequenceIntHashMap cache;
@@ -88,6 +89,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
+            this.ff = ff;
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
             if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -422,6 +424,21 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         charMem.sync(async);
         offsetMem.sync(async);
         indexWriter.sync(async);
+    }
+
+    @Override
+    public void fsyncFiles() {
+        // offsetMem/charMem are the data, the index is derived from them; flush data before index to
+        // match sync()'s ordering discipline.
+        fsyncIfOpen(charMem.getFd());
+        fsyncIfOpen(offsetMem.getFd());
+        indexWriter.fsyncFiles();
+    }
+
+    private void fsyncIfOpen(long fd) {
+        if (fd != -1) {
+            ff.fsync(fd);
+        }
     }
 
     @Override

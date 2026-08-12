@@ -111,6 +111,18 @@ public interface MapWriter extends SymbolCountProvider {
     void sync(boolean async);
 
     /**
+     * Follow {@link #sync(boolean)}'s msync with an fsync of the underlying files.
+     * <p>
+     * The adaptive durable epoch finishes with ONE device barrier that, per {@code fcntl(2)}, persists
+     * "data that had been fsync'd on the same device before". Symbol maps live in the table root rather
+     * than a partition directory, so the epoch's partition sweep never reaches them and msync alone leaves
+     * them outside the letter of that guarantee. Default is a no-op: implementations with no files (the
+     * no-op and view map writers) have nothing to flush.
+     */
+    default void fsyncFiles() {
+    }
+
+    /**
      * Phase 1 of the batched SYNC-mode flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushKick()}.
      * Default keeps current behavior (no-op kick + the fallback {@code sync(false)} in
      * {@link #syncFlushFinishIfExtended()} provides durability), so non-overriding writers are unchanged.

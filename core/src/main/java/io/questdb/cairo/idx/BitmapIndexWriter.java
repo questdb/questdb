@@ -460,6 +460,22 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     /**
+     * fsync the index files after {@link #sync(boolean)}'s msync, in the same value-before-key order.
+     * Lets the adaptive epoch's single trailing device barrier cover them: fcntl(2) words that guarantee
+     * as applying to data "fsync'd on the same device before".
+     */
+    public void fsyncFiles() {
+        fsyncIfOpen(valueMem.getFd());
+        fsyncIfOpen(keyMem.getFd());
+    }
+
+    private void fsyncIfOpen(long fd) {
+        if (fd != -1) {
+            ff.fsync(fd);
+        }
+    }
+
+    /**
      * Batched SYNC stage 1 (Linux): push both index files' dirty pages to the page cache. Kicks are
      * order-free (no device flush, no durability ordering yet), so value/key order does not matter here.
      */

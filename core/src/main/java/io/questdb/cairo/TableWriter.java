@@ -15892,7 +15892,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // make the symbol maps durable, exactly as before.
             syncColumns0(false /* sync, not async */);
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                denseSymbolMapWriters.getQuick(i).sync(false);
+                final MapWriter symbolWriter = denseSymbolMapWriters.getQuick(i);
+                symbolWriter.sync(false);
+                // sync() is msync only, and symbol maps live in the TABLE ROOT rather than a partition
+                // directory, so the partition sweep below never reaches them. fcntl(2) words the trailing
+                // device barrier's guarantee as covering data "fsync'd on the same device before", so an
+                // msync-only file sits outside the letter of it. Cheap (a handful of fds, per epoch
+                // cadence) and it makes the guarantee literal rather than mechanism-dependent.
+                symbolWriter.fsyncFiles();
             }
             if (ff.isSyncfsFileSystemWide()) {
                 // Linux with batching disabled still has a true filesystem-wide syncfs primitive.
