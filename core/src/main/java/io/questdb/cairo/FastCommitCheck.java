@@ -389,7 +389,12 @@ public final class FastCommitCheck {
      * Returns {@code null} if the file cannot be opened, has unknown length, or exceeds {@code maxBytes}.
      * (Mirrors the equivalent reader in {@link WriteBarrierCheck}.)
      */
-    private static String readSmallFile(FilesFacade ff, String path, int maxBytes) {
+    /**
+     * Read a {@code /proc} or {@code /sys} pseudo-file in full. Public so the pseudo-file sizing rule can be
+     * asserted directly: {@code classifyDbRoot} early-returns off Linux, so a test that goes through it
+     * cannot exercise this on any other platform -- which is how the fstat-sizing bug survived.
+     */
+    public static String readSmallFile(FilesFacade ff, String path, int maxBytes) {
         long fd = -1;
         long mem = 0;
         long allocSize = 0;
@@ -399,19 +404,25 @@ public final class FastCommitCheck {
             if (fd < 0) {
                 return null;
             }
-            final long size = ff.length(fd);
-            if (size < 0 || size > maxBytes) {
-                return null;
-            }
-            allocSize = size + 1;
+            // Size the read from maxBytes, NOT from ff.length(fd): every file this reader targets lives in
+            // /proc or /sys, and pseudo-files do not report a usable size. Measured on Linux 6.8:
+            //   /proc/mounts                 fstat=0     readable=2007
+            //   /proc/fs/ext4/<dev>/options  fstat=0     readable=305
+            //   /sys/... (sysfs)             fstat=4096  readable=11
+            // Trusting fstat therefore read ZERO bytes and returned an empty string, which
+            // findLongestPrefixMount reads as "no mounts" -> classifyDbRoot returns UNKNOWN -> the caller
+            // treats fast_commit as absent and LEAVES BATCHED syncfs ENABLED. That is the exact
+            // configuration this class exists to rule out, so the guard never fired on a real Linux host.
+            // A single pread of up to maxBytes gets the whole content for every file of interest.
+            allocSize = maxBytes + 1L;
             mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-            final long bytesRead = ff.read(fd, mem, size, 0);
-            if (bytesRead != size) {
+            final long bytesRead = ff.read(fd, mem, maxBytes, 0);
+            if (bytesRead < 0) {
                 return null;
             }
-            Unsafe.getUnsafe().putByte(mem + size, (byte) 0);
+            Unsafe.getUnsafe().putByte(mem + bytesRead, (byte) 0);
             final Utf8StringSink sink = new Utf8StringSink();
-            Utf8s.strCpy(mem, mem + size, sink);
+            Utf8s.strCpy(mem, mem + bytesRead, sink);
             return sink.toString();
         } finally {
             if (fd >= 0) {
