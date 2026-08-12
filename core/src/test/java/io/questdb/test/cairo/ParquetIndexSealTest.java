@@ -101,6 +101,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // is 1. The _pm covering-index entry is keyed by writer index, which is what
     // the _pm records as a column id.
     private static final int SYM_COLUMN_ID = 1;
+    private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
     private static final String SWITCH_TABLE_NAME = "t_pidx_switch";
     private static final String TABLE_NAME = "t_pidx";
 
@@ -357,6 +358,105 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchToParquetResealsTheIndexIntoTheNewDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            // switchNativePartitionWithParquet swaps a parquet generated beside a
+            // native partition in as the partition itself. Under the parquet index
+            // format linkPartitionIndexFiles deliberately carries no POSTING
+            // sidecar over, so resealParquetIndexesAfterSwitch is the only thing
+            // that puts an index in the new directory: without it the switch
+            // publishes a parquet partition whose indexed column has no index at
+            // all. The existing switch test cannot see any of this -- its table is
+            // unindexed and its parquet is an empty stub.
+            execute("CREATE TABLE " + SWITCH_INDEXED_TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO " + SWITCH_INDEXED_TABLE_NAME + " SELECT" +
+                    " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(20000)");
+            // A later partition, so the one under test is not the active one: a
+            // non-WAL table cannot hold a parquet active partition, and CONVERT
+            // silently leaves it native.
+            execute("INSERT INTO " + SWITCH_INDEXED_TABLE_NAME + " VALUES" +
+                    " ('2024-01-02T00:00:00Z', 's0', 1.0, 1)");
+            execute("ALTER TABLE " + SWITCH_INDEXED_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+
+            // A real data.parquet + _pm for this partition, produced the only way
+            // a test can produce one, then put back beside the native partition --
+            // which is the state the switch expects to find and what a background
+            // parquet generator would leave.
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String[] carried = {"data.parquet", TableUtils.PARQUET_METADATA_FILE_NAME};
+            execute("ALTER TABLE " + SWITCH_INDEXED_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            final long parquetNameTxn = currentPartitionNameTxn(SWITCH_INDEXED_TABLE_NAME);
+            // Staged out before the convert back, which removes the parquet
+            // directory as soon as it commits.
+            try (Path src = new Path(); Path stage = new Path()) {
+                for (String name : carried) {
+                    partitionPathAt(src, SWITCH_INDEXED_TABLE_NAME, parquetNameTxn).concat(name).$();
+                    stage.of(root).concat("stage_" + name).$();
+                    Assert.assertTrue("the generated " + name + " must exist", ff.exists(src.$()));
+                    Assert.assertTrue("could not stage " + name, ff.copy(src.$(), stage.$()) >= 0);
+                }
+            }
+            execute("ALTER TABLE " + SWITCH_INDEXED_TABLE_NAME + " CONVERT PARTITION TO NATIVE LIST '" + INDEXED_PARTITION + "'");
+            final long nativeNameTxn = currentPartitionNameTxn(SWITCH_INDEXED_TABLE_NAME);
+            long generatedParquetSize = -1;
+            try (Path stage = new Path(); Path dst = new Path()) {
+                for (String name : carried) {
+                    stage.of(root).concat("stage_" + name).$();
+                    partitionPathAt(dst, SWITCH_INDEXED_TABLE_NAME, nativeNameTxn).concat(name).$();
+                    Assert.assertTrue("could not place " + name, ff.copy(stage.$(), dst.$()) >= 0);
+                    if ("data.parquet".equals(name)) {
+                        generatedParquetSize = ff.length(dst.$());
+                    }
+                    ff.removeQuiet(stage.$());
+                }
+            }
+            Assert.assertTrue("the staged parquet must have a size", generatedParquetSize > 0);
+
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            engine.releaseInactive();
+
+            final TableToken token = engine.verifyTableName(SWITCH_INDEXED_TABLE_NAME);
+            final long switchedNameTxn;
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                final TxWriter tx = writer.getTxWriter();
+                final long partitionTs = tx.getPartitionTimestampByIndex(0);
+                tx.setPartitionParquetGenerated(tx.getPartitionIndex(partitionTs), true);
+                Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTs, generatedParquetSize));
+                switchedNameTxn = tx.getPartitionNameTxn(tx.getPartitionIndex(partitionTs));
+            }
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                final Path partition = partitionPathAt(path, SWITCH_INDEXED_TABLE_NAME, switchedNameTxn);
+                // Not the native sidecars: the switch must not have carried them
+                // over, and the seal must have written the parquet form instead.
+                assertNoFileNamed(partition, "sym.pc0.");
+                Assert.assertFalse(
+                        "the switch must publish no sealed .pv generation under the parquet format",
+                        hasSealedValueFile(partitionPathAt(path, SWITCH_INDEXED_TABLE_NAME, switchedNameTxn))
+                );
+                final String indexMeta = onlyFileNamed(
+                        partitionPathAt(path, SWITCH_INDEXED_TABLE_NAME, switchedNameTxn), "sym.pidx.", "._im");
+                onlyFileNamed(partitionPathAt(path, SWITCH_INDEXED_TABLE_NAME, switchedNameTxn), "sym.pidx.", ".parquet");
+                final long indexTxn = Numbers.parseLong(
+                        indexMeta.substring("sym.pidx.".length(), indexMeta.length() - "._im".length())
+                );
+                final long imFileSize = imFileSizeField(
+                        partitionPathAt(path, SWITCH_INDEXED_TABLE_NAME, switchedNameTxn).concat(indexMeta).$());
+                // And the new directory's own _pm names it, so the artifacts are
+                // referenced rather than merely present.
+                assertCoveringIndexToken(path, SWITCH_INDEXED_TABLE_NAME, SYM_COLUMN_ID, indexTxn, imFileSize);
+            }
+        });
+    }
+
+    @Test
     public void testSecondSealSupersedesTheFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
@@ -416,7 +516,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                                     + ", second=" + secondIndexTxn + ']',
                             secondIndexTxn > firstIndexTxn
                     );
-                    final long imFileSize = ff.length(partitionPath(path).concat(secondMeta).$());
+                    final long imFileSize = imFileSizeField(partitionPath(path).concat(secondMeta).$());
                     assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, secondIndexTxn, imFileSize);
 
                     // Replacing the token unlinks nothing by itself.
@@ -522,8 +622,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 final long indexTxn = Numbers.parseLong(
                         indexMeta.substring("sym.pidx.".length(), indexMeta.length() - "._im".length())
                 );
-                final long imFileSize = configuration.getFilesFacade()
-                        .length(partitionPath(path).concat(indexMeta).$());
+                final long imFileSize = imFileSizeField(partitionPath(path).concat(indexMeta).$());
                 assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, indexTxn, imFileSize);
             }
         });
@@ -731,8 +830,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 final long indexTxn = Numbers.parseLong(
                         indexMeta.substring("sym.pidx.".length(), indexMeta.length() - "._im".length())
                 );
-                final long imFileSize = configuration.getFilesFacade()
-                        .length(partitionPath(path).concat(indexMeta).$());
+                final long imFileSize = imFileSizeField(partitionPath(path).concat(indexMeta).$());
                 assertCoveringIndexToken(path, TABLE_NAME, SYM_COLUMN_ID, indexTxn, imFileSize);
             }
         });
@@ -1047,6 +1145,27 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 setCurrentMicros(Math.max(currentMicros, 0) + 10_000_000L);
                 job.run();
             }
+        }
+    }
+
+    /**
+     * The {@code _im}'s own {@code IM_FILE_SIZE} header field, which is what
+     * {@code docs/index-metadata.md} defines the third field of the {@code _pm}
+     * covering-index entry to be. The file's length on disk agrees with it today,
+     * but it is the field the format names, and it is also the commit signal --
+     * zero until the seal patches it last -- so asserting on the length would
+     * pass over an {@code _im} that was never committed.
+     */
+    private long imFileSizeField(io.questdb.std.str.LPSZ imFile) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long fd = ff.openRO(imFile);
+        Assert.assertTrue("_im must be readable [file=" + imFile + ']', fd > -1);
+        try {
+            final long imFileSize = ff.readNonNegativeLong(fd, 0);
+            Assert.assertTrue("_im must be committed [file=" + imFile + ']', imFileSize > 0);
+            return imFileSize;
+        } finally {
+            ff.close(fd);
         }
     }
 

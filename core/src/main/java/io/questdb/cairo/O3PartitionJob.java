@@ -584,8 +584,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // nothing to restate yet: updateParquetIndexes below rebuilds the
                 // index only after this footer is written. The artifacts the
                 // dropped token named are handed to the reader-gated posting seal
-                // purge by TableWriter, not unlinked here -- a reader pinned to
-                // the prior parquet size still resolves the prior footer.
+                // purge by TableWriter, not unlinked here: this footer is written
+                // for a data.parquet of a different size, so it does not shadow
+                // the one before it, and a reader pinned to the prior parquet size
+                // still resolves the prior footer and the prior index_txn.
                 newParquetSize = partitionUpdater.updateFileMetadata(0, 0, 0);
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();

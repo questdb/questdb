@@ -229,18 +229,24 @@ public class PartitionUpdater implements QuietCloseable {
      * {@code column_id}, {@code index_txn} and {@code im_file_size}. The byte
      * length travels with the count and the native side rejects the call unless
      * the two agree. That is the complete set the new footer must carry, never a
-     * delta, and {@code (0, 0, 0)} is the explicit "drop the section" answer. There is deliberately no way to spell "inherit whatever the prior
-     * footer had": an in-place update may have replaced the very row group
-     * blocks the prior token's index was built over, so an inherited token
-     * would name row ids that no longer mean what they meant. A caller that
-     * keeps a covering index must reseal it and restate it here under a
-     * refreshed {@code index_txn}.
+     * delta, and {@code (0, 0, 0)} is the explicit "drop the section" answer.
+     * There is deliberately no way to spell "inherit whatever the prior footer
+     * had": an in-place update may have replaced the very row group blocks the
+     * prior token's index was built over, so an inherited token would name row
+     * ids that no longer mean what they meant. A caller that keeps a covering
+     * index must reseal it and restate it here under a refreshed
+     * {@code index_txn}.
      * <p>
-     * Dropping the token does not unlink the artifacts it named. A reader
-     * pinned to the prior snapshot still resolves the prior footer through
-     * {@code resolveFooter}, and so still resolves the prior {@code index_txn}.
-     * The caller must hand the superseded artifacts to the reader-gated posting
-     * seal purge instead of removing them at the drop point.
+     * Dropping the token does not unlink the artifacts it named. This call
+     * writes a footer for a {@code data.parquet} whose size has changed, so it
+     * does not shadow the prior footer: {@code resolveFooter} keys on the
+     * parquet size, and a reader pinned to the prior snapshot asks for the prior
+     * size and still gets the prior footer, and with it the prior
+     * {@code index_txn}. (That does not hold for a footer restating the same
+     * parquet size -- a token-only publish -- which shadows the one before it;
+     * see {@code TableWriter.publishParquetIndexTokens}.) The caller must hand
+     * the superseded artifacts to the reader-gated posting seal purge instead of
+     * removing them at the drop point.
      */
     public long updateFileMetadata(long coveringIndexAddr, long coveringIndexSize, int coveringIndexCount) {
         assert ptr != 0;

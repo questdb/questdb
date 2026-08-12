@@ -8183,9 +8183,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * not in that directory and, where the column id belongs to another column,
      * names the wrong column too. Called at the head of every batch that ends in
      * a publish, which is the only place the set is allowed to start non-empty.
+     * <p>
+     * {@code plen} is the length {@code path} is set to the partition directory
+     * with; the orphan sweep runs against it.
      */
-    private void beginParquetIndexTokenBatch() {
+    private void beginParquetIndexTokenBatch(int plen) {
         parquetIndexRetiredColumnIds.clear();
+        // Reclaim what a previous seal on this partition left half-written,
+        // before this batch writes anything of its own. Done here rather than at
+        // publish time so the trigger is "a seal batch ran" and not "a seal batch
+        // reached its publish": the state the sweep is for is exactly the one a
+        // batch that threw leaves behind, and that batch never reaches a publish.
+        // Nothing of this batch exists yet, so it cannot match its own artifacts.
+        sweepOrphanParquetIndexArtifacts(plen);
         if (parquetIndexTokens.size() > 0) {
             LOG.error().$("discarding covering index tokens staged by a seal that never published [table=").$(tableToken)
                     .$(", entries=").$(parquetIndexTokens.size() / 3)
@@ -8206,8 +8216,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestamp
     ) {
         // parquet partition
-        beginParquetIndexTokenBatch();
         path.trimTo(plen);
+        beginParquetIndexTokenBatch(plen);
         LOG.info().$("indexing parquet [path=").$substr(pathRootSize, path).I$();
 
         long parquetAddr = 0;
@@ -10945,7 +10955,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (partitionIndex < 0) {
             return false;
         }
-        beginParquetIndexTokenBatch();
         boolean processed = false;
         long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
         int plen = path.size();
@@ -10955,6 +10964,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             plen = path.size();
         }
+        beginParquetIndexTokenBatch(plen);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
         // One parquet open/mmap/decoder for the whole partition: a partition with
         // several covering posting columns decodes the file once and feeds each
@@ -12311,7 +12321,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // already rewound the path buffer.
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final int plen = path.size();
-        sweepOrphanParquetIndexArtifacts(plen);
         final LongList merged = new LongList();
         final LongList supersededColumnIds = new LongList();
         final LongList supersededIndexTxns = new LongList();
@@ -12993,7 +13002,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int partitionDirLen,
             IntList columnIndexes
     ) {
-        beginParquetIndexTokenBatch();
         long parquetAddr = 0;
         long parquetSize = 0;
         setPathForNativePartition(
@@ -13004,6 +13012,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionNameTxn
         );
         assert path.size() == partitionDirLen;
+        beginParquetIndexTokenBatch(partitionDirLen);
         try {
             if (parquetRewriteRowGroupBuffers == null) {
                 parquetRewriteRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER, true);
@@ -13875,10 +13884,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!isParquetIndexFormat()) {
             return;
         }
-        beginParquetIndexTokenBatch();
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final int plen = path.size();
+        beginParquetIndexTokenBatch(plen);
         long parquetAddr = 0;
         long parquetSize = 0;
         boolean opened = false;
@@ -13988,7 +13997,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!parquetRetireScratchColumnIds.contains(writerIndex)) {
                 continue;
             }
-            beginParquetIndexTokenBatch();
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            try {
+                beginParquetIndexTokenBatch(path.size());
+            } finally {
+                path.trimTo(pathSize);
+            }
             parquetIndexRetiredColumnIds.add(writerIndex);
             publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
         }
@@ -15340,6 +15354,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", file=").$(parquetName)
                         .I$();
             }
+            // And the uncommitted _im beside it, if one was written. It is
+            // unreferenced for the same reason -- no footer names it -- and
+            // leaving it would keep a file on disk permanently that nothing can
+            // ever read or reclaim, since the predicate above is keyed on the
+            // parquet that is now gone.
+            path.trimTo(plen).concat(stem).put(ParquetIndexSeal.IM_SUFFIX).$();
+            ff.removeQuiet(path.$());
             path.trimTo(plen);
         }
         orphanParquetIndexNames.clear();
