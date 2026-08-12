@@ -59,9 +59,62 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // Index keys of 's0', 's7' and 's15', that is the symbol id plus one for the
     // null slot. These three of the table's sixteen symbols are all the indexed
     // partition holds, which is what makes its key ids sparse.
+    // Row group first keys and row counts the packed fixture must produce. Read
+    // the createPackedKeyTable javadoc for how each boundary arises; between them
+    // the five groups exercise every branch of planRowGroups.
+    private static final int[] PACKED_GROUP_FIRST_KEYS = {1, 201, 343, 344, 344};
+    private static final long[] PACKED_GROUP_ROW_COUNTS = {100_000, 99_400, 700, 100_000, 50_000};
+    // Key id of the packed fixture's row id, as SQL. Symbol ids are handed out in
+    // first-appearance order and an index key is the symbol id plus one for the
+    // null slot, so 'q0' is key 1, 'q342' is key 343 and 'q999' is key 344.
+    private static final String PACKED_KEY_OF_ROW_ID =
+            "case when row_id < 100000 then row_id / 500 + 1" +
+                    " when row_id < 200100 then 201 + (row_id - 100000) / 700" +
+                    " else 344 end";
+    private static final int PACKED_ROW_COUNT = 350_100;
+    private static final String PACKED_TABLE_NAME = "t_pidx_packed";
     private static final int[] PRESENT_KEYS = {1, 8, 16};
     private static final int SKEWED_ROW_COUNT = 300_000;
     private static final String TABLE_NAME = "t_pidx";
+
+    @Test
+    public void testSealPacksManySmallKeysIntoSharedRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createPackedKeyTable();
+
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String indexParquetPath;
+            try (Path path = new Path()) {
+                final String indexParquet = onlyFileNamed(partitionPath(path, PACKED_TABLE_NAME), "sym.pidx.", ".parquet");
+                final String indexMeta = onlyFileNamed(partitionPath(path, PACKED_TABLE_NAME), "sym.pidx.", "._im");
+                indexParquetPath = partitionPath(path, PACKED_TABLE_NAME).concat(indexParquet).toString();
+
+                final IndexMetaFileReader reader = new IndexMetaFileReader();
+                IndexMetaFileReader.openAndMapRO(
+                        configuration.getFilesFacade(),
+                        partitionPath(path, PACKED_TABLE_NAME).concat(indexMeta).$(),
+                        reader
+                );
+                try {
+                    assertRowGroupsAreKeyAligned(reader);
+                    assertRowGroupsArePacked(reader);
+                } finally {
+                    reader.close();
+                }
+            }
+
+            assertPostingsCoverEveryRow(indexParquetPath, PACKED_ROW_COUNT);
+            assertPostingKeysAgree(indexParquetPath, PACKED_KEY_OF_ROW_ID);
+            assertCoveredValuesAgree(indexParquetPath, INDEXED_PARTITION);
+        });
+    }
 
     @Test
     public void testSealWritesAKeyAlignedParquetIndex() throws Exception {
@@ -196,6 +249,40 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The packed fixture's row groups are the ones the key-alignment invariant
+     * exists for: two of them hold hundreds of keys apiece. The skewed fixture
+     * produces only single-key groups, which makes every statistics assertion
+     * above trivially true, so the exact layout is pinned here.
+     */
+    private static void assertRowGroupsArePacked(IndexMetaFileReader reader) {
+        Assert.assertEquals("row group count", PACKED_GROUP_FIRST_KEYS.length, reader.getIndexRowGroupCount());
+        final int keyIdColumn = reader.getKeyIdColumn();
+        int sharedGroups = 0;
+        for (int i = 0; i < PACKED_GROUP_FIRST_KEYS.length; i++) {
+            Assert.assertEquals("row group " + i + " first key", PACKED_GROUP_FIRST_KEYS[i], reader.getRowGroupFirstKey(i));
+            Assert.assertEquals("row group " + i + " row count", PACKED_GROUP_ROW_COUNTS[i], reader.getRowGroupNumRows(i));
+            if (reader.getChunkMaxStat(i, keyIdColumn) > reader.getChunkMinStat(i, keyIdColumn)) {
+                sharedGroups++;
+            }
+        }
+        Assert.assertEquals("groups holding more than one key", 2, sharedGroups);
+        // Group 0 is closed by the branch that fires when a key boundary lands
+        // exactly on the target, group 1 by the branch that closes an open shared
+        // group before a key that would overflow it. Neither runs on the skewed
+        // fixture.
+        Assert.assertEquals(
+                "the group closed on the exact target must hold 200 keys",
+                200,
+                reader.getChunkMaxStat(0, keyIdColumn) - reader.getChunkMinStat(0, keyIdColumn) + 1
+        );
+        Assert.assertEquals(
+                "the group closed before an overflowing key must hold 142 keys",
+                142,
+                reader.getChunkMaxStat(1, keyIdColumn) - reader.getChunkMinStat(1, keyIdColumn) + 1
+        );
+    }
+
     private static String onlyFileNamed(Path partitionPath, String prefix, String suffix) {
         final File[] files = new File(partitionPath.toString())
                 .listFiles((_, name) -> name.startsWith(prefix) && name.endsWith(suffix));
@@ -311,8 +398,45 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    /**
+     * Builds a partition whose keys are mostly small, so row groups pack many
+     * keys into one. Over the row's own {@code x}, which is its row id plus one:
+     * <ul>
+     *     <li>{@code x} in [1, 100000]: 200 keys of 500 rows. The 200th key ends
+     *     exactly on the 100000-row target, closing a 200-key shared group.</li>
+     *     <li>{@code x} in [100001, 200100]: 143 keys of 700 rows. The 143rd would
+     *     take the open group to 100100 rows, so the group is closed before it
+     *     with 142 keys in it.</li>
+     *     <li>{@code x} above 200100: one key of 150000 rows, which exceeds the
+     *     target on its own and so takes consecutive dedicated groups.</li>
+     * </ul>
+     */
+    private void createPackedKeyTable() throws Exception {
+        execute("CREATE TABLE " + PACKED_TABLE_NAME + " (" +
+                "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + PACKED_TABLE_NAME + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " CASE WHEN x <= 100000 THEN 'q' || ((x - 1) / 500)" +
+                " WHEN x <= 200100 THEN 'q' || (200 + (x - 100001) / 700)" +
+                " ELSE 'q999' END," +
+                " x::DOUBLE," +
+                " x" +
+                " FROM long_sequence(" + PACKED_ROW_COUNT + ")");
+        drainWalQueue();
+        // A later partition, so the indexed one is not the active partition and
+        // can be converted to parquet. Its symbol already exists, so it moves no
+        // key id.
+        execute("INSERT INTO " + PACKED_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 'q0', 1.0, 1)");
+        drainWalQueue();
+    }
+
     private Path partitionPath(Path path) {
-        final TableToken token = engine.verifyTableName(TABLE_NAME);
+        return partitionPath(path, TABLE_NAME);
+    }
+
+    private Path partitionPath(Path path, String tableName) {
+        final TableToken token = engine.verifyTableName(tableName);
         final long partitionTs;
         final long nameTxn;
         try (TableReader reader = engine.getReader(token)) {
