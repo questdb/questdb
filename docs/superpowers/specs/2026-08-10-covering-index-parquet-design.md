@@ -424,15 +424,28 @@ The primitives involved — `getEntryMaxValue`, `countMatchesClamped`, `selectKt
 `IndexReader`, and are all gen/chain-shaped, so a Parquet reader cannot inherit them
 meaningfully.
 
-**Decision: hoist, do not extend.** The five primitives move onto `IndexReader` as
-defaults returning the existing fall-back sentinels (`Numbers.LONG_NULL` / `-1`), and
-`:1354` becomes an `instanceof` guard. Rationale: `AbstractPostingIndexReader` is ~3100
-lines built around the `.pk` chain and generation directory, none of which a Parquet
-reader has; extending it would mean inheriting machinery only to override or no-op it,
-and would couple the two formats' lifecycles. Adding defaults to `IndexReader` is
-additive — the bitmap readers keep their behaviour unchanged, and the interface already
-carries a default of exactly this shape for
-`getCursor(key, minValue, maxValue, requiredCoverColumns)`.
+**Decision: extract a posting-reader contract.** Neither hoisting onto `IndexReader` nor
+extending `AbstractPostingIndexReader` is right.
+
+- *Hoisting* would put posting-specific primitives on a general interface whose other
+  implementers — the bitmap readers — will never answer them. Bitmap indexes never become
+  Parquet, so they have no stake in this at all; widening their contract to solve a
+  posting-only problem buys nothing.
+- *Extending* would make the Parquet reader inherit ~3100 lines built around the `.pk`
+  chain and generation directory, overriding or no-opping a large surface it has no
+  analogue for, and coupling the two formats' lifecycles.
+
+Instead, extract a narrow `PostingIndexReader` interface carrying exactly the primitives
+the covering factory reaches through the concrete type, and have both the native
+`AbstractPostingIndexReader` and the Phase 2C Parquet reader implement it. The chain and
+generation machinery stays where it is.
+
+The seam is small and was measured before choosing: `CoveringIndexRecordCursorFactory`
+references the concrete type in four places (an import, the cast at `:1354`, the
+`fillFrameForKeyCheap` parameter at `:1399`, and the `instanceof` at `:2640`), and the only
+methods called through it are `getEntryMaxValue`, `countMatchesClamped`, `selectKthMatch`
+and `populateCacheForKey`. `warmForKeys` is not used there and stays off the interface
+until a caller needs it.
 
 This must land **before** the Parquet reader exists; afterwards it means reworking the
 frame path. A test must pin that
