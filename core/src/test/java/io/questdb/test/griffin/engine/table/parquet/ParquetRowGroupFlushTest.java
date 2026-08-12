@@ -56,7 +56,7 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.flushRowG
 import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.writeStreamingParquetChunk;
 
 /**
- * Covers {@link io.questdb.griffin.engine.table.parquet.PartitionEncoder#flushRowGroup(long)}:
+ * Covers {@link io.questdb.griffin.engine.table.parquet.PartitionEncoder#flushRowGroup(long, long)}:
  * the caller, not the configured row group size, decides where a row group ends.
  */
 public class ParquetRowGroupFlushTest extends AbstractCairoTest {
@@ -72,11 +72,11 @@ public class ParquetRowGroupFlushTest extends AbstractCairoTest {
     // Both frames are submitted with no drain, so 8 rows are pending, and the
     // boundary is then declared at 4 -- inside frame 2. The whole-buffer form of
     // flushRowGroup could not express a cut there.
-    private static final int FLUSH_BOTH_FRAMES_THEN_AT_FOUR = 5;
+    private static final int FLUSH_BOTH_FRAMES_THEN_AT_FOUR = 7;
     // Both frames submitted with no drain, then a boundary declared far beyond the 8
     // pending rows. The clamp must reduce it to 8, so one row group results. Without
     // the clamp the writer would be asked for rows that do not exist.
-    private static final int FLUSH_BOTH_FRAMES_THEN_OVERSIZED = 6;
+    private static final int FLUSH_BOTH_FRAMES_THEN_OVERSIZED = 8;
     private static final int FLUSH_MID_STREAM_NO_DRAIN = 2;
     // Flush after the first frame, then finish without writing anything else.
     private static final int FLUSH_MID_STREAM_THEN_FINISH = 3;

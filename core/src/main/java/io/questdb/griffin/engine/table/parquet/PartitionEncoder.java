@@ -187,6 +187,11 @@ public class PartitionEncoder {
      * capture, since only one boundary can be pending at a time.
      *
      * @param writerPtr streaming writer handle
+     * @param rows      row count the captured group closes over, clamped to the number of
+     *                  rows currently pending. Passing more than are pending closes exactly
+     *                  what is pending; passing {@code 0} captures nothing. A boundary may
+     *                  therefore fall part-way through rows already submitted, rather than
+     *                  only at a chunk boundary.
      */
     public static native void flushRowGroup(long writerPtr, long rows) throws CairoException;
 
