@@ -1381,10 +1381,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * single-key path. Produces metadata IDENTICAL to {@link #fillFrameByTraverse}
          * -- same count, same absolute first/last posting span, and the same per-key
          * genLookup cache side effect -- using only the posting-reader metadata
-         * primitives ({@link AbstractPostingIndexReader#getEntryMaxValue},
-         * {@link AbstractPostingIndexReader#countMatchesClamped},
-         * {@link AbstractPostingIndexReader#selectKthMatch},
-         * {@link AbstractPostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
+         * primitives ({@link PostingIndexReader#getEntryMaxValue},
+         * {@link PostingIndexReader#countMatchesClamped},
+         * {@link PostingIndexReader#selectKthMatch},
+         * {@link PostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
          * <p>
          * Returns {@link #SENTINEL_FALLBACK} when the layout is genuinely MIXED
          * ({@code countMatchesClamped} sentinel) or a chunk's boundary posting cannot be
@@ -2611,7 +2611,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * a metadata-only answer that decodes NO covered columns and never walks the postings
          * ({@code CountRecordCursorFactory} uses {@code baseCursor.size()} when it returns >= 0).
          * <p>
-         * Uses {@link AbstractPostingIndexReader#countMatchesClamped} (the EXACT per-gen
+         * Uses {@link PostingIndexReader#countMatchesClamped} (the EXACT per-gen
          * first/last-posting coverage check), NOT {@code reader.getCursor(...).size()} which
          * false-bails on a freshly-resealed partition (where the encoding's slack max upper bound
          * straddles the clamp while the true max is within it) and then forces an O(rows) traverse.
