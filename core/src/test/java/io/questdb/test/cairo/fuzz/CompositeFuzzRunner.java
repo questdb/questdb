@@ -86,9 +86,16 @@ public class CompositeFuzzRunner {
         TableWriterAPI compositeWriter = engine.getTableWriterAPI(compositeName, "composite fuzz apply");
         TableWriterAPI plainWriter = engine.getTableWriterAPI(plainName, "composite fuzz apply");
         try {
-            // FuzzTransactionOperation.apply() resets the passed-in Rnd from a seed stored on the
-            // operation itself (see FuzzInsertOperation#apply), so re-applying the same operation
-            // to a second writer using the same Rnd instance reproduces identical values.
+            // Applying the same operation to BOTH writers from ONE Rnd reproduces identical values
+            // only because FuzzInsertOperation#apply opens with rnd.reset(s1, s0), replaying from a
+            // seed stored on the operation itself.
+            //
+            // That invariant is NARROW: rnd.reset appears in FuzzInsertOperation and in NO other
+            // Fuzz*Operation. Task 1 is safe because it generates inserts exclusively. ANY task that
+            // widens the generated operation mix (Task 2 onwards) MUST re-verify this per operation
+            // type -- an operation that does not reset would consume from the shared stream and hand
+            // the second twin different values, silently producing a false failure or, worse,
+            // matching garbage.
             Rnd applyRnd = new Rnd();
             for (int i = 0, n = transactions.size(); i < n; i++) {
                 FuzzTransaction transaction = transactions.getQuick(i);
@@ -112,12 +119,22 @@ public class CompositeFuzzRunner {
         TestUtils.drainWalQueue(engine);
     }
 
+    /**
+     * Orders by EVERY column, not just {@code ts}. The generator emits equal-timestamp rows on
+     * purpose ({@code probabilityOfSameTimestamp}), and {@code assertSqlCursors} compares cursors
+     * row by row -- so ordering by {@code ts} alone would leave tied rows in storage order, which
+     * differs between the twins by construction (the composite table groups rows by cell, the plain
+     * one does not). That would produce intermittent RED runs with no defect present, which is
+     * strictly worse than no harness: the first instinct on a red differential run must be to
+     * suspect the product, so the comparison itself has to be order-deterministic.
+     */
     public void assertTwinEqual() throws SqlException {
+        final String order = " ORDER BY ts, exch, sym, px, qty";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "SELECT * FROM " + plainName + " ORDER BY ts",
-                "SELECT * FROM " + compositeName + " ORDER BY ts",
+                "SELECT * FROM " + plainName + order,
+                "SELECT * FROM " + compositeName + order,
                 LOG
         );
     }
