@@ -356,7 +356,50 @@ public class LimitTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
+                    select /*+ no_covering */ price
+                    from trades
+                    where sym = 'AAA-BBB'
+                        and venue = 'venue-1'
+                        and ts <= '2026-08-02T00:00:03.000000Z'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Index backward scan on: sym")
+                    .returns("""
+                            price
+                            4.0
+                            6.0
+                            """);
+
+            assertQuery("""
                     select /*+ no_covering */ ts, price
+                    from trades
+                    where sym = 'AAA-BBB'
+                        and venue = 'venue-1'
+                        and ts <= '2026-08-02T00:00:03.000000Z'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                SelectedRecord
+                                    Limit value: 2 skip-rows-max: 0 take-rows-max: 2
+                                        PageFrame
+                                            Index backward scan on: sym
+                                              filter: sym=1 and venue='venue-1'
+                                            Interval backward scan on: trades
+                                              intervals: [("MIN","2026-08-02T00:00:03.000000Z")]
+                            """)
+                    .returns("""
+                            ts\tprice
+                            2026-08-02T00:00:01.000000Z\t4.0
+                            2026-08-02T00:00:03.000000Z\t6.0
+                            """);
+
+            assertQuery("""
+                    select /*+ no_index */ ts, price
                     from trades
                     where sym = 'AAA-BBB'
                         and venue = 'venue-1'
@@ -366,7 +409,7 @@ public class LimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
-                    .withPlanContaining("Index forward scan on: sym")
+                    .withPlanNotContaining("Encode sort light", "Index backward scan on: sym")
                     .returns("""
                             ts\tprice
                             2026-08-02T00:00:01.000000Z\t4.0
@@ -1078,7 +1121,6 @@ public class LimitTest extends AbstractCairoTest {
             assertQuery("y where sym = 'googl' limit -3")
                     .noLeakCheck()
                     .timestamp("timestamp")
-                    .expectSize()
                     .returns("""
                             i\tsym\tprice\ttimestamp
                             -3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z

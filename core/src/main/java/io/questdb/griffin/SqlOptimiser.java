@@ -589,6 +589,18 @@ public class SqlOptimiser implements Mutable {
         };
     }
 
+    private static boolean isIndexedSymbolEquality(ExpressionNode column, ExpressionNode value, RecordMetadata metadata) {
+        if (column == null || column.type != LITERAL || value == null || value.type != CONSTANT) {
+            return false;
+        }
+        final CharSequence columnName = column.token;
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
+        return columnIndex > -1
+                && ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                && metadata.isColumnIndexed(columnIndex);
+    }
+
     /**
      * Returns true for join types that NULL-extend the master (left) side: SPLICE, FULL OUTER and
      * RIGHT OUTER, plus the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL variants {@code homogenizeCrossJoins}
@@ -4890,6 +4902,51 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private boolean hasIndexedSymbolEquality(IQueryModel model, SqlExecutionContext executionContext) {
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        final ExpressionNode whereClause = model.getWhereClause();
+        if (tableNameExpr == null || tableNameExpr.type == FUNCTION || whereClause == null) {
+            return false;
+        }
+
+        final CharSequence tableName = tableNameExpr.token;
+        if (Chars.startsWith(tableName, IQueryModel.NO_ROWID_MARKER)) {
+            return false;
+        }
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            return false;
+        }
+
+        boolean found = false;
+        try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+            sqlNodeStack.clear();
+            sqlNodeStack.push(whereClause);
+            while (!sqlNodeStack.isEmpty()) {
+                final ExpressionNode node = sqlNodeStack.pop();
+                if (node.type == OPERATION
+                        && Chars.equals(node.token, '=')
+                        && (isIndexedSymbolEquality(node.lhs, node.rhs, metadata)
+                        || isIndexedSymbolEquality(node.rhs, node.lhs, metadata))) {
+                    found = true;
+                    break;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                if (node.lhs != null) {
+                    sqlNodeStack.push(node.lhs);
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+            }
+        } finally {
+            sqlNodeStack.clear();
+        }
+        return found;
+    }
+
     private boolean hasNoAggregateQueryColumns(IQueryModel model) {
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         for (int i = 0, k = columns.size(); i < k; i++) {
@@ -8380,7 +8437,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * For queries on tables with designated timestamp, no where clause and no order by or order by ts only :
+     * For queries on tables with designated timestamp and no order by or order by ts only:
      * <p>
      * For example:
      * select a,b from X limit -10 -> select a,b from (select * from X order by ts desc limit 10) order by ts asc
@@ -8389,11 +8446,44 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model input model
      */
-    private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model) {
+    private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model, SqlExecutionContext executionContext) {
         if (model == null || !model.isOptimisable()) {
             return;
         }
         if (
+                model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
+                        && model.getNestedModel() != null
+                        && model.getNestedModel().isOptimisable()
+                        && model.getNestedModel().getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
+                        && model.getNestedModel().getNestedModel() == null
+                        && model.getNestedModel().getTableName() != null
+                        && model.getNestedModel().getTimestamp() != null
+                        && model.getNestedModel().getOrderBy().size() == 0
+                        && model.getNestedModel().getUnionModel() == null
+                        && model.getNestedModel().getJoinModels().size() == 1
+                        && !model.getNestedModel().hasSharedRefs()
+                        && !SqlHints.hasNoIndexHint(model)
+                        && !SqlHints.hasNoIndexHint(model.getNestedModel())
+                        && model.getOrderBy().size() == 0
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && Chars.equals(model.getLimitLo().token, '-')
+                        && hasIndexedSymbolEquality(model.getNestedModel(), executionContext)
+        ) {
+            final IQueryModel nested = model.getNestedModel();
+            final ExpressionNode timestamp = nested.getTimestamp();
+
+            model.addOrderBy(timestamp, IQueryModel.ORDER_DIRECTION_ASCENDING);
+            nested.addOrderBy(timestamp, IQueryModel.ORDER_DIRECTION_DESCENDING);
+            nested.getOrderByAdvice().add(timestamp);
+            nested.getOrderByDirectionAdvice().add(IQueryModel.ORDER_DIRECTION_DESCENDING);
+            nested.setAllowPropagationOfOrderByAdvice(false);
+            nested.setLimit(model.getLimitLo().rhs, null);
+            model.setLimit(null, null);
+            rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel(), executionContext);
+        } else if (
                 model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                         && model.getNestedModel() != null
                         && model.getNestedModel().isOptimisable()
@@ -8448,7 +8538,7 @@ public class SqlOptimiser implements Mutable {
 
                 model.setNestedModel(reversedNested);
                 model.setLimit(null, null);
-                rewriteMultipleTermLimitedOrderByPart1(reversedNested.getNestedModel());
+                rewriteMultipleTermLimitedOrderByPart1(reversedNested.getNestedModel(), executionContext);
             } else {
                 if (nested.getOrderByAdvice().size() == 0) {
                     for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
@@ -8465,16 +8555,16 @@ public class SqlOptimiser implements Mutable {
                 nested.setAllowPropagationOfOrderByAdvice(false);
                 nested.setLimit(model.getLimitLo().rhs, null);
                 model.setLimit(null, null);
-                rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel());
+                rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel(), executionContext);
             }
         } else {
-            rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel());
+            rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel(), executionContext);
         }
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            rewriteMultipleTermLimitedOrderByPart1(joinModels.getQuick(i));
+            rewriteMultipleTermLimitedOrderByPart1(joinModels.getQuick(i), executionContext);
         }
-        rewriteMultipleTermLimitedOrderByPart1(model.getUnionModel());
+        rewriteMultipleTermLimitedOrderByPart1(model.getUnionModel(), executionContext);
     }
 
     /**
@@ -12605,7 +12695,7 @@ public class SqlOptimiser implements Mutable {
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
-            rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
+            rewriteMultipleTermLimitedOrderByPart1(rewrittenModel, sqlExecutionContext);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             validateWindowJoins(rewrittenModel, sqlExecutionContext, 0);

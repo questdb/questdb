@@ -35,9 +35,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -52,25 +50,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             @Nullable Function hiFunction,
             int argPos
     ) {
-        this(base, loFunction, hiFunction, argPos, 0);
-    }
-
-    public LimitRecordCursorFactory(
-            RecordCursorFactory base,
-            Function loFunction,
-            @Nullable Function hiFunction,
-            int argPos,
-            int maxNegativeLimit
-    ) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(
-                loFunction,
-                hiFunction,
-                argPos,
-                maxNegativeLimit,
-                base.recordCursorSupportsRandomAccess()
-        );
+        this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos);
     }
 
     @Override
@@ -193,7 +175,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        cursor.freeTailRows();
         base.close();
     }
 
@@ -201,49 +182,26 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final int argPos;
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
-        private final int maxNegativeLimit;
         private final Function rightFunction;
-        private final boolean supportsRandomAccess;
         private RecordCursor base;
         private long baseRowsToSkip;
         private long baseRowsToTake;
         private long baseSize;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
-        private boolean isTailBuffered;
-        private boolean isTailMaterialized;
         private long lo;
         private long remaining;
         private long size;
-        private int tailCapacity;
-        private int tailCount;
-        private int tailIndex;
-        private DirectLongList tailRows;
-        private int tailStart;
 
-        public LimitRecordCursor(
-                Function leftFunction,
-                Function rightFunction,
-                int argPos,
-                int maxNegativeLimit,
-                boolean supportsRandomAccess
-        ) {
+        public LimitRecordCursor(Function leftFunction, Function rightFunction, int argPos) {
             this.leftFunction = leftFunction;
             this.rightFunction = rightFunction;
             this.argPos = argPos;
-            this.maxNegativeLimit = maxNegativeLimit;
-            this.supportsRandomAccess = supportsRandomAccess;
         }
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter sizeCounter) {
             ensureReadyToConsume();
-            if (isTailBuffered) {
-                sizeCounter.add(remaining);
-                tailIndex = tailCount;
-                remaining = 0;
-                return;
-            }
             if (isBaseSizeKnown()) {
                 sizeCounter.add(remaining);
             } else {
@@ -281,18 +239,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTripped();
             ensureReadyToConsume();
-            if (isTailBuffered) {
-                if (remaining > 0) {
-                    int rowIndex = tailStart + tailIndex++;
-                    if (rowIndex >= tailCapacity) {
-                        rowIndex -= tailCapacity;
-                    }
-                    base.recordAt(base.getRecord(), tailRows.get(rowIndex));
-                    remaining--;
-                    return true;
-                }
-                return false;
-            }
             if (remaining <= 0) {
                 return false;
             }
@@ -341,16 +287,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void skipRows(Counter skipCounter, long maxRowsAfterSkip) {
             ensureReadyToConsume();
-            if (isTailBuffered) {
-                final long rowsToSkip = Math.min(skipCounter.get(), remaining);
-                skipCounter.dec(rowsToSkip);
-                tailIndex += (int) rowsToSkip;
-                remaining -= rowsToSkip;
-                if (skipCounter.get() == 0) {
-                    remaining = Math.min(remaining, maxRowsAfterSkip);
-                }
-                return;
-            }
             long rowsToSkip = skipCounter.get();
             long excessCount = Math.max(0, rowsToSkip - remaining);
             rowsToSkip -= excessCount;
@@ -374,12 +310,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            if (isTailBuffered) {
-                materializeTail();
-                tailIndex = 0;
-                remaining = tailCount;
-                return;
-            }
             ensureBoundsResolved();
             base.toTop();
             counter.set(baseRowsToSkip);
@@ -413,62 +343,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (remaining != -1) {
                 return;
             }
-            if (isTailBuffered) {
-                materializeTail();
-                return;
-            }
             ensureBoundsResolved();
             toTop();
         }
 
-        private void freeTailRows() {
-            tailRows = Misc.free(tailRows);
-        }
-
         private boolean isBaseSizeKnown() {
             return baseSize >= 0;
-        }
-
-        private void materializeTail() {
-            if (isTailMaterialized) {
-                return;
-            }
-
-            if (tailRows == null) {
-                tailRows = new DirectLongList(tailCapacity, MemoryTag.NATIVE_OFFLOAD);
-            } else {
-                tailRows.clear();
-                if (tailRows.getCapacity() < tailCapacity) {
-                    tailRows.setCapacity(tailCapacity);
-                }
-            }
-
-            base.toTop();
-            final Record record = base.getRecord();
-            long rowCount = 0;
-            int writeIndex = 0;
-            while (base.hasNext()) {
-                if (rowCount < tailCapacity) {
-                    tailRows.add(record.getRowId());
-                } else {
-                    tailRows.set(writeIndex, record.getRowId());
-                }
-                if (++writeIndex == tailCapacity) {
-                    writeIndex = 0;
-                }
-                rowCount++;
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
-
-            tailCount = (int) Math.min(rowCount, tailCapacity);
-            tailStart = rowCount >= tailCapacity ? writeIndex : 0;
-            tailIndex = 0;
-            baseSize = rowCount;
-            baseRowsToSkip = rowCount - tailCount;
-            baseRowsToTake = tailCount;
-            remaining = tailCount;
-            size = tailCount;
-            isTailMaterialized = true;
         }
 
         private void resolveBoundsCheap() {
@@ -560,17 +440,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             remaining = -1;
             counter.clear();
             resolveBoundsCheap();
-            isTailBuffered = rightFunction == null
-                    && maxNegativeLimit > 0
-                    && leftArg < 0
-                    && leftArg >= -(long) maxNegativeLimit
-                    && supportsRandomAccess
-                    && !isBaseSizeKnown();
-            isTailMaterialized = false;
-            tailCapacity = isTailBuffered ? (int) -leftArg : 0;
-            tailCount = 0;
-            tailIndex = 0;
-            tailStart = 0;
         }
     }
 }
