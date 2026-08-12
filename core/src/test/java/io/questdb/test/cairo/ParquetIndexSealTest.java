@@ -60,12 +60,14 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // null slot. These three of the table's sixteen symbols are all the indexed
     // partition holds, which is what makes its key ids sparse.
     private static final int[] PRESENT_KEYS = {1, 8, 16};
+    private static final int SKEWED_ROW_COUNT = 300_000;
     private static final String TABLE_NAME = "t_pidx";
 
     @Test
     public void testSealWritesAKeyAlignedParquetIndex() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
+            inputRoot = root;
             createSparseKeyTable();
 
             execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
@@ -74,6 +76,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseInactive();
 
+            final String indexParquetPath;
             try (Path path = new Path()) {
                 final String indexParquet = onlyFileNamed(partitionPath(path), "sym.pidx.", ".parquet");
                 final String indexMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
@@ -82,6 +85,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         indexParquet.substring(0, indexParquet.length() - ".parquet".length()),
                         indexMeta.substring(0, indexMeta.length() - "._im".length())
                 );
+                indexParquetPath = partitionPath(path).concat(indexParquet).toString();
 
                 final FilesFacade ff = configuration.getFilesFacade();
                 final IndexMetaFileReader reader = new IndexMetaFileReader();
@@ -94,6 +98,22 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     reader.close();
                 }
             }
+
+            assertPostingsCoverEveryRow(indexParquetPath, SKEWED_ROW_COUNT);
+            // The whole point of the payload assertion: the _im says nothing
+            // about what the parquet holds, so the key of every posting is
+            // checked against the row id it is filed under. 's0' takes the rows
+            // whose x is divisible by 4, 's7' those with x % 4 == 1 and 's15'
+            // the rest, and x is row id + 1.
+            assertPostingKeysAgree(
+                    indexParquetPath,
+                    "case when (row_id + 1) % 4 = 0 then 1 when (row_id + 1) % 4 = 1 then 8 else 16 end"
+            );
+            assertCoveredValuesAgree(indexParquetPath, INDEXED_PARTITION);
+            assertIndexParquetQuery(
+                    "select key_id, count() from read_parquet('" + indexParquetPath + "') order by key_id",
+                    "key_id\tcount\n1\t75000\n8\t75000\n16\t150000\n"
+            );
         });
     }
 
@@ -189,6 +209,81 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * The fixtures write {@code price}, {@code qty} and the row's timestamp from
+     * the row's own {@code x}, which is its row id plus one, so a covered value
+     * that does not satisfy that arithmetic was gathered from the wrong row.
+     * This is what a wrong cover stride or a wrong {@code firstRowId} offset in
+     * {@code sortPostingsByKey} looks like from outside; nothing in the
+     * {@code _im} can see it. The designated timestamp is a covered column too,
+     * because {@code cairo.posting.index.auto.include.timestamp} defaults on.
+     */
+    private void assertCoveredValuesAgree(String indexParquetPath, String partition) throws Exception {
+        assertIndexParquetQuery(
+                "select count() from read_parquet('" + indexParquetPath + "')" +
+                        " where price is null or qty is null or ts is null" +
+                        " or price <> row_id + 1 or qty <> row_id + 1" +
+                        " or ts <> dateadd('u', (row_id + 1)::int, '" + partition + "T00:00:00Z'::timestamp)",
+                "count\n0\n"
+        );
+    }
+
+    /**
+     * Runs a query over the emitted index parquet on the non-parallel
+     * {@code read_parquet} path.
+     * <p>
+     * The parallel page-frame path cannot read this file: it projects columns by
+     * QuestDB column id and, in
+     * {@code ReadParquetRecordCursor.canProjectMetadata}, substitutes the
+     * parquet column index for any negative id. The index parquet's synthetic
+     * {@code key_id} and {@code row_id} carry id -1 (the {@code _im} writer
+     * requires exactly that to tell them from the covered columns), so
+     * {@code key_id} is remapped to id 0 and collides with any covered column
+     * whose writer index is 0 - the designated timestamp, here. {@code key_id}
+     * then serves the timestamp's page truncated to 32 bits. The file itself is
+     * correct; only that projection is wrong, and it is out of this task's
+     * scope.
+     */
+    private void assertIndexParquetQuery(String sql, String expected) throws Exception {
+        final boolean wasParallel = sqlExecutionContext.isParallelReadParquetEnabled();
+        try {
+            sqlExecutionContext.setParallelReadParquetEnabled(false);
+            assertQuery(sql).inferRandomAccess().expectSize().returns(expected);
+        } finally {
+            sqlExecutionContext.setParallelReadParquetEnabled(wasParallel);
+        }
+    }
+
+    /**
+     * Every posting is filed under the key the row actually holds.
+     * {@code keyIdOfRowId} is the fixture's own row id to key id mapping, so a
+     * counting sort that placed a row under a neighbouring key is caught even
+     * though the per-key counts would still add up.
+     */
+    private void assertPostingKeysAgree(String indexParquetPath, String keyIdOfRowId) throws Exception {
+        assertIndexParquetQuery(
+                "select count() from read_parquet('" + indexParquetPath + "')" +
+                        " where key_id <> (" + keyIdOfRowId + ")",
+                "count\n0\n"
+        );
+    }
+
+    /**
+     * The index carries exactly one posting per row of the partition, and the
+     * row ids it carries are the partition's own {@code [0, rowCount)} with no
+     * duplicate and no gap. A dropped row, a duplicated row or a shifted row id
+     * base all fail here.
+     */
+    private void assertPostingsCoverEveryRow(String indexParquetPath, long partitionRowCount) throws Exception {
+        assertIndexParquetQuery(
+                "select count() postings, count_distinct(row_id) distinctRowIds," +
+                        " min(row_id) minRowId, max(row_id) maxRowId" +
+                        " from read_parquet('" + indexParquetPath + "')",
+                "postings\tdistinctRowIds\tminRowId\tmaxRowId\n"
+                        + partitionRowCount + '\t' + partitionRowCount + "\t0\t" + (partitionRowCount - 1) + '\n'
+        );
+    }
+
+    /**
      * The table's symbols are inserted into a later partition first, so the
      * symbol map assigns ids 0..15 there; the indexed partition then uses only
      * 's0', 's7' and 's15', leaving its key ids sparse.
@@ -212,7 +307,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
                 " x::DOUBLE," +
                 " x" +
-                " FROM long_sequence(300000)");
+                " FROM long_sequence(" + SKEWED_ROW_COUNT + ")");
         drainWalQueue();
     }
 
