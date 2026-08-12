@@ -96,6 +96,89 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
     }
 
+    /**
+     * Plans what this commit does to ONE COMPOSITE partition, and is the direct analogue of
+     * {@link #processParquetPartition} - same level, same contract. A composite partition is the parquet
+     * FILE and a piece is a ROW GROUP: the partition is handed over whole, with the slice of O3 rows that
+     * routes into it, and works out its own internal structure. Nothing outside dispatches to a piece.
+     * <p>
+     * Four steps, and only the second has no parquet counterpart:
+     * <ol>
+     *     <li>resolve the partition's pieces - ONE {@code _geometry} read, for this partition only, the
+     *     analogue of reading a parquet file's row-group bounds;</li>
+     *     <li>PRE-SPLIT: cut existing pieces so the batch lands on as little data as possible. A parquet
+     *     file arrives already divided because the encoder wrote it in row groups, so
+     *     {@code computeMergeActions} always has somewhere small to merge into; a native partition arrives
+     *     as ONE piece, and merging a batch into it rewrites everything. Cutting is FREE - two entries over
+     *     the same files, no bytes move - so the structure is manufactured lazily, aimed at where this
+     *     batch actually lands. This step decides the write amplification; everything after it executes;</li>
+     *     <li>assign every O3 row to a piece or to a gap between pieces, as
+     *     {@link O3ParquetMergeStrategy#computeMergeActions} does over row groups;</li>
+     *     <li>execute the action list, then publish one {@code _geometry} record and one {@code _txn}
+     *     record.</li>
+     * </ol>
+     * Steps 1 to 3 are here. Step 4 is not written yet: KEEP copies nothing by design - the piece's bytes
+     * stay and only its extent is carried forward - while MERGE and NEW_PIECE both write at the shared
+     * files' tail, and that executor is the next piece of work. Until it exists nothing produces a
+     * composite partition, so this method is unreachable, and it throws rather than silently doing
+     * something else if that ever stops being true.
+     *
+     * @return the number of actions planned
+     */
+    public static int processCompositePartition(
+            int partitionIndex,
+            long srcOooLo,
+            long srcOooHi,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            LongList boundsOut,
+            LongList cutsOut,
+            ObjList<O3CompositeMergeStrategy.Action> actionsOut
+    ) {
+        final TxReader txReader = tableWriter.getTxReader();
+        final PartitionGeometry geometry = txReader.getGeometry();
+
+        // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
+        boundsOut.clear();
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        for (int p = 0; p < pieceCount; p++) {
+            O3CompositeMergeStrategy.addPieceBounds(
+                    boundsOut,
+                    geometry.getPieceTimestampLo(partitionIndex, p),
+                    geometry.getPieceTimestampHi(partitionIndex, p),
+                    geometry.getPieceRowCount(partitionIndex, p)
+            );
+        }
+
+        // 2. The pre-split, applied in memory. A cut moves no bytes, so the plan can refine the partition's
+        // structure before deciding anything else.
+        final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
+        O3CompositeMergeStrategy.computeCuts(
+                boundsOut,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                minPieceRows,
+                tableWriter.getConfiguration().getO3PartitionPreSplitMaxCuts(),
+                cutsOut
+        );
+        // Right to left: a cut inserts a piece and shifts every index above it, so applying the highest
+        // first leaves the lower cuts' indices valid.
+        for (int c = cutsOut.size() - 2; c >= 0; c -= 2) {
+            O3CompositeMergeStrategy.applyCut(boundsOut, (int) cutsOut.getQuick(c), cutsOut.getQuick(c + 1));
+        }
+
+        // 3. Every O3 row assigned to a piece or to a gap between pieces.
+        return O3CompositeMergeStrategy.computeActions(
+                boundsOut,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                minPieceRows,
+                actionsOut
+        );
+    }
+
     public static void processParquetPartition(
             Path pathToTable,
             int timestampType,
@@ -764,6 +847,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
+
+        // A COMPOSITE partition is handed over WHOLE, exactly as a parquet one is on the branch below: one
+        // task, one partition, and it works out its own internal structure. Nothing here dispatches to a
+        // piece. Unreachable until the executor exists, since nothing yet produces a composite partition.
+        final int compositeIndex = tableWriter.getTxReader().getPartitionIndex(partitionTimestamp);
+        if (compositeIndex > -1 && tableWriter.getTxReader().hasGeometryChain(compositeIndex)) {
+            processCompositePartition(
+                    compositeIndex,
+                    srcOooLo,
+                    srcOooHi,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    // Allocated here only because this path throws immediately below. The executor will
+                    // hold the plan's scratch on the task, the way the parquet path holds its context.
+                    new LongList(),
+                    new LongList(),
+                    new ObjList<>()
+            );
+            throw CairoException.critical(0)
+                    .put("composite partition write is not implemented [table=").put(tableWriter.getTableToken().getTableName())
+                    .put(", partition=").put(partitionTimestamp)
+                    .put(']');
+        }
 
         if (isParquet) {
             if (srcDataMax < 1) {

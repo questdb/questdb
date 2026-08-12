@@ -444,6 +444,12 @@ public interface CairoConfiguration {
 
     long getO3MinLag();
 
+    /**
+     * How many PRE-SPLIT cuts one commit may make in a partition. A cut moves no bytes, but each one adds
+     * a piece the partition then carries, so the budget trades write amplification against piece count.
+     */
+    int getO3PartitionPreSplitMaxCuts();
+
     int getO3OpenColumnQueueCapacity();
 
     int getO3PartitionQueueCapacity();

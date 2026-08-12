@@ -384,6 +384,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3MidPartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
+    private final int o3PartitionPreSplitMaxCuts;
     private final boolean o3PartitionOverwriteControlEnabled;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
@@ -1788,6 +1789,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
+            this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 7));
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
@@ -4307,6 +4309,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getO3MinLag() {
             return o3MinLagUs;
+        }
+
+        @Override
+        public int getO3PartitionPreSplitMaxCuts() {
+            return o3PartitionPreSplitMaxCuts;
         }
 
         @Override

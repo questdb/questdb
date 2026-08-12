@@ -683,6 +683,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionPreSplitMaxCuts() {
+        return 7;
+    }
+
+    @Override
     public int getO3OpenColumnQueueCapacity() {
         return 1024;
     }

@@ -669,6 +669,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionPreSplitMaxCuts() {
+        return getDelegate().getO3PartitionPreSplitMaxCuts();
+    }
+
+    @Override
     public int getO3OpenColumnQueueCapacity() {
         return getDelegate().getO3OpenColumnQueueCapacity();
     }
