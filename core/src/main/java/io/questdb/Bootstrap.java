@@ -709,30 +709,7 @@ public class Bootstrap {
             }
         }
         final int flags = DurabilityEnvironmentCheck.probe(cairoConfig.getFilesFacade(), fsName);
-        final String mode = CommitMode.toString(commitMode);
-
-        if ((flags & DurabilityEnvironmentCheck.GUEST_DISCARDS_FLUSH) != 0) {
-            // The only one the operator can undo, so the only one logged as an error.
-            log.errorW().$("WARNING: a virtio block device reports write_cache=write through")
-                    .$(": the guest kernel treats the device as having NO volatile cache and issues NO flushes")
-                    .$(" -- commit mode ").$(mode).$(" cannot make anything durable;")
-                    .$(" undo with: echo 'write back' > /sys/block/<dev>/queue/write_cache")
-                    .$(" [dbRoot=").$(dbRoot).$(']').$();
-        }
-        if ((flags & DurabilityEnvironmentCheck.HOST_DOWNGRADES_FLUSH) != 0) {
-            log.advisoryW().$("NOTE: running under Apple Virtualization, so the macOS host implements this")
-                    .$(" guest's device flush as fsync() rather than F_FULLFSYNC")
-                    .$(" -- commit mode ").$(mode).$(" survives process failure but NOT host power loss.")
-                    .$(" No guest-side or container-side setting changes this")
-                    .$(" [dbRoot=").$(dbRoot).$(']').$();
-        }
-        if ((flags & DurabilityEnvironmentCheck.FLUSH_NOT_A_BARRIER_FS) != 0) {
-            log.advisoryW().$("NOTE: db root filesystem does not implement F_FULLFSYNC")
-                    .$(" (macOS implements it on apfs/hfs/msdos/udf only)")
-                    .$(" -- flushes degrade to fsync(), which does not flush the drive cache, so commit mode ")
-                    .$(mode).$(" does NOT survive power loss; relocate the db root to an APFS volume")
-                    .$(" [dbRoot=").$(dbRoot).$(", fs=").$(fsName).$(']').$();
-        }
+        DurabilityEnvironmentCheck.logAdvisories(log, flags, commitMode, dbRoot, fsName);
     }
 
     private void verifyWriteBarriers(CairoConfiguration cairoConfig) {

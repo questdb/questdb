@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.log.Log;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -147,11 +148,74 @@ public final class DurabilityEnvironmentCheck {
             if (!Os.isLinux()) {
                 return OK;
             }
-            return classify(false, null, ProcFs.read(ff, PROC_DMI_SYS_VENDOR, SMALL_FILE_MAX_BYTES), readWorstVirtioWriteCache(ff));
+            return probeGuest(ff);
         } catch (Throwable t) {
             // A durability advisory must never be the thing that stops the database booting.
             return OK;
         }
+    }
+
+    /**
+     * The Linux half of {@link #probe}, with NO platform gate, so the /sys reads and the device scan can be
+     * driven on any platform through an injected {@link FilesFacade}. Keeping the {@code Os} check in the
+     * caller is deliberate: a probe that gates internally can only be tested on the platform it targets,
+     * which is exactly how the {@code FastCommitCheck} reader bug survived.
+     */
+    public static int probeGuest(FilesFacade ff) {
+        return classify(
+                false,
+                null,
+                ProcFs.read(ff, PROC_DMI_SYS_VENDOR, SMALL_FILE_MAX_BYTES),
+                readWorstVirtioWriteCache(ff)
+        );
+    }
+
+    /**
+     * Emit the advisories for {@code flags}. Separated from the probe so the messages and their log LEVELS
+     * are assertable without a matching platform: only {@link #GUEST_DISCARDS_FLUSH} is something an
+     * operator can undo, so it alone is an error; the other two are notices about environments that cannot
+     * currently be fixed.
+     *
+     * @return true if anything was logged
+     */
+    public static boolean logAdvisories(
+            Log log,
+            int flags,
+            int commitMode,
+            CharSequence dbRoot,
+            CharSequence fsName
+    ) {
+        // NOSYNC/ASYNC make no power-loss promise, so there is nothing to contradict.
+        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
+            return false;
+        }
+        final String mode = CommitMode.toString(commitMode);
+        boolean logged = false;
+        if ((flags & GUEST_DISCARDS_FLUSH) != 0) {
+            log.errorW().$("WARNING: a virtio block device reports write_cache=write through")
+                    .$(": the guest kernel treats the device as having NO volatile cache and issues NO flushes")
+                    .$(" -- commit mode ").$(mode).$(" cannot make anything durable;")
+                    .$(" undo with: echo 'write back' > /sys/block/<dev>/queue/write_cache")
+                    .$(" [dbRoot=").$(dbRoot).$(']').$();
+            logged = true;
+        }
+        if ((flags & HOST_DOWNGRADES_FLUSH) != 0) {
+            log.advisoryW().$("NOTE: running under Apple Virtualization, so the macOS host implements this")
+                    .$(" guest's device flush as fsync() rather than F_FULLFSYNC")
+                    .$(" -- commit mode ").$(mode).$(" survives process failure but NOT host power loss.")
+                    .$(" No guest-side or container-side setting changes this")
+                    .$(" [dbRoot=").$(dbRoot).$(']').$();
+            logged = true;
+        }
+        if ((flags & FLUSH_NOT_A_BARRIER_FS) != 0) {
+            log.advisoryW().$("NOTE: db root filesystem does not implement F_FULLFSYNC")
+                    .$(" (macOS implements it on apfs/hfs/msdos/udf only)")
+                    .$(" -- flushes degrade to fsync(), which does not flush the drive cache, so commit mode ")
+                    .$(mode).$(" does NOT survive power loss; relocate the db root to an APFS volume")
+                    .$(" [dbRoot=").$(dbRoot).$(", fs=").$(fsName).$(']').$();
+            logged = true;
+        }
+        return logged;
     }
 
     private static boolean isDarwinFullFsyncFs(CharSequence fsName) {
