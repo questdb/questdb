@@ -24,9 +24,6 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
-import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
-import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -39,6 +36,9 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
