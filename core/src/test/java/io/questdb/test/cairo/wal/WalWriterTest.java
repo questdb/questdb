@@ -5198,7 +5198,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             WalWriter w = engine.getWalWriter(token);
             ColumnarRowAppender appender = w.getColumnarRowAppender();
-            int rowCount = 2_200;
+            int rowCount = rowsCrossingAppendPages(16_384);
             appender.beginColumnarWrite(rowCount);
             // cancelColumnarWrite() rolls back every column's append pointer
             // regardless of what was written, so writing only the designated-
@@ -5274,7 +5274,8 @@ public class WalWriterTest extends AbstractCairoTest {
             // Buffer enough uncommitted rows that the designated-timestamp column's
             // append pointer crosses into a second page: rollback to row 0 then has
             // to remap page 0, forcing a real ff.mmap() call.
-            for (int i = 0; i < 2_200; i++) {
+            final int rowCount = rowsCrossingAppendPages(16_384);
+            for (int i = 0; i < rowCount; i++) {
                 TableWriter.Row row = w.newRow(1_000_000L + i);
                 row.putInt(1, i);
                 row.append();
@@ -5283,7 +5284,9 @@ public class WalWriterTest extends AbstractCairoTest {
             armed.set(true);
             try {
                 w.close();
-                Assert.fail("close must propagate the rollback failure");
+                Assert.fail("close must propagate the rollback failure -- the ff.mmap() injection never fired"
+                        + " (armed=" + armed.get() + "), so rolling back " + rowCount + " rows never left page 0"
+                        + " of the " + Files.ceilPageSize(16_384) + "-byte effective append page");
             } catch (CairoException expected) {
             } finally {
                 armed.set(false);
@@ -6405,6 +6408,22 @@ public class WalWriterTest extends AbstractCairoTest {
                 .col("b", ColumnType.STRING)
                 .timestamp("ts")
                 .wal();
+    }
+
+    private static int rowsCrossingAppendPages(long requestedPageSize) {
+        // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
+        // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
+        // granularity: 4 KB on Linux x64, 16 KB on macOS arm64, but 64 KB on
+        // Windows (GetSystemInfo().dwAllocationGranularity). A hard-coded row
+        // count is therefore a silent no-op on Windows -- the append pointer
+        // never leaves page 0, rollback takes jumpTo()'s in-page fast path,
+        // and the injected ff.mmap() failure never fires. The WAL designated
+        // timestamp occupies a 128-bit (timestamp, rowId) pair per row, so
+        // size the count off the effective page size: two full pages plus a
+        // margin, which also lands the append pointer mid-page instead of
+        // exactly on a page boundary.
+        final long timestampEntryBytes = 2L * Long.BYTES;
+        return (int) (Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100;
     }
 
     private static void testReadMatViewState(int chunkSize) {
