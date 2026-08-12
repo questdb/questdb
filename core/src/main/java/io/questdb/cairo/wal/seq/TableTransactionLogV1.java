@@ -67,6 +67,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
+    private final TxnLogCrcSidecar crcSidecar = new TxnLogCrcSidecar();
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
@@ -107,6 +108,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
+        recordCrcBeforePublish(maxTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
         sync0();
         // Transactions are 1 based here
@@ -131,6 +133,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
         }
         txnMem.close(false);
+        crcSidecar.close();
     }
 
     @Override
@@ -145,12 +148,21 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putInt(0);
         sync0();
         txnMem.jumpTo(HEADER_SIZE);
+
+        // A table created by this binary is covered from its very first txn: nothing predates the
+        // sidecar here, so the watermark is 1 rather than lastTxn + 1 as on the open() path.
+        try {
+            crcSidecar.of(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), 1L);
+        } finally {
+            path.trimTo(pathLength);
+        }
     }
 
     @Override
     public long endMetadataChangeEntry() {
         // Transactions are 1 based here
         long nextTxn = maxTxn.incrementAndGet();
+        recordCrcBeforePublish(nextTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
         return nextTxn;
     }
@@ -207,6 +219,15 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
+        // Watermark = the next txn to be written. Records already on disk predate this sidecar and
+        // carry no CRC, so they must stay classified as legacy rather than torn. A sidecar that
+        // already exists keeps its own recorded watermark; this value only matters on first creation.
+        final int seqDirLen = path.size();
+        try {
+            crcSidecar.of(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), lastTxn + 1);
+        } finally {
+            path.trimTo(seqDirLen);
+        }
         txnMem.jumpTo(HEADER_SIZE);
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
@@ -216,6 +237,25 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     @Override
     public void setCommitMode(int commitMode) {
         this.tableCommitMode = commitMode;
+    }
+
+    /**
+     * Records the CRC for {@code txn} and makes it durable BEFORE the caller publishes the txn in the
+     * header. The order is the invariant: a header that advertises a txn whose CRC never reached the
+     * device leaves a record the reader classifies as absent-beyond-the-watermark -- torn -- which is a
+     * loud false alarm on an otherwise healthy table. The reverse order costs nothing: a CRC with no
+     * txn behind it is simply never read.
+     * <p>
+     * The 8-byte append rides the same grade as the header flush, so on NOSYNC it costs no barrier at
+     * all, and elsewhere it is one small extra file in a flush that was happening anyway.
+     */
+    private void recordCrcBeforePublish(long txn) {
+        final long recordOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+        crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
+        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        if (commitMode != CommitMode.NOSYNC) {
+            crcSidecar.sync(false);
+        }
     }
 
     private void sync0() {
