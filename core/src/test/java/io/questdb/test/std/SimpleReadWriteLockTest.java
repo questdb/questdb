@@ -31,6 +31,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 
@@ -66,6 +67,69 @@ public class SimpleReadWriteLockTest {
     @Test
     public void testHammerTryLockSingleReaderSingleWriter() throws Exception {
         testHammerTryLock(1, 1, 1000);
+    }
+
+    /**
+     * The property that matters: a timed write acquire must GIVE UP while a reader is resident,
+     * rather than spinning until the reader leaves. Without a bound, a caller on a borrowed thread
+     * is pinned for as long as the reader holds.
+     */
+    @Test
+    public void testTimedWriteTryLockGivesUpWhileReaderResident() throws Exception {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        lock.readLock().lock();
+        try {
+            final long t0 = System.nanoTime();
+            Assert.assertFalse(lock.writeLock().tryLock(200, TimeUnit.MILLISECONDS));
+            final long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            Assert.assertTrue("must wait at least the timeout, waited " + elapsedMs + "ms", elapsedMs >= 150);
+            Assert.assertTrue("must not wait unboundedly, waited " + elapsedMs + "ms", elapsedMs < 10_000);
+
+            // Negative control: a failed timed acquire must roll back, leaving the lock usable.
+            // A new reader can still enter, which proves the reader bias was undone.
+            Assert.assertTrue(lock.readLock().tryLock());
+            lock.readLock().unlock();
+            Assert.assertFalse("write lock must not be held after a failed timed acquire", lock.isWriteLocked());
+        } finally {
+            lock.readLock().unlock();
+        }
+        // With no readers left the same call must now succeed.
+        Assert.assertTrue(lock.writeLock().tryLock(200, TimeUnit.MILLISECONDS));
+        lock.writeLock().unlock();
+    }
+
+    @Test
+    public void testTimedWriteTryLockSucceedsWhenReaderLeavesInTime() throws Exception {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        lock.readLock().lock();
+        final Thread releaser = new Thread(() -> {
+            Os.sleep(100);
+            lock.readLock().unlock();
+        }, "reader-releaser");
+        releaser.start();
+        try {
+            Assert.assertTrue(lock.writeLock().tryLock(30, TimeUnit.SECONDS));
+            lock.writeLock().unlock();
+        } finally {
+            releaser.join();
+        }
+    }
+
+    @Test
+    public void testReadTryLockFailsWhileWriteHeld() {
+        final SimpleReadWriteLock lock = new SimpleReadWriteLock();
+        lock.writeLock().lock();
+        try {
+            Assert.assertFalse(lock.readLock().tryLock());
+        } finally {
+            lock.writeLock().unlock();
+        }
+        // Released: the reader must get in now, and the count must not have been corrupted by the
+        // failed attempt above.
+        Assert.assertTrue(lock.readLock().tryLock());
+        lock.readLock().unlock();
+        Assert.assertTrue(lock.writeLock().tryLock());
+        lock.writeLock().unlock();
     }
 
     @Test
