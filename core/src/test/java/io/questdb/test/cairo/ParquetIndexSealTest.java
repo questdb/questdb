@@ -196,6 +196,42 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertBackToNativeRebuildsAWorkingIndexAfterTheFormatIsFlippedBack() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+
+            // The direction a configuration-keyed gate gets wrong. The partition
+            // is already sealed as parquet; flipping the property back says
+            // nothing about that, but it makes a format-keyed test answer "not
+            // sealed as parquet", so the link branch fires, carries over the .pk
+            // the parquet seal left behind -- a key file whose chain has no
+            // visible generation -- and the converted native partition answers
+            // "no keys, no rows". No refusal can see it: the partition is native
+            // by then, and the reader's probe returns early for those.
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            engine.releaseInactive();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO NATIVE LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                assertNoFileNamed(partitionPath(path), "sym.pidx.");
+                assertAnyFileNamed(partitionPath(path), "sym.pc0.");
+                Assert.assertTrue(
+                        "the rebuilt native index must publish a sealed .pv generation",
+                        hasSealedValueFile(partitionPath(path))
+                );
+            }
+            assertQuery("select count() from (" + COVERED_QUERY + ')')
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n75000\n");
+        });
+    }
+
+    @Test
     public void testSecondSealSupersedesTheFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {

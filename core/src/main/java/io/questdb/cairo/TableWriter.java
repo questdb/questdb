@@ -13927,6 +13927,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
     }
 
+    /**
+     * Reads the source partition's {@code _pm} and collects the column ids its
+     * committed footer publishes a parquet-form covering index for.
+     * <p>
+     * This is the "what does this partition already carry" question, and only
+     * the published token answers it. The configured format answers a different
+     * one -- what the next seal would write -- and the two disagree in both
+     * directions: over a partition sealed as parquet the property can since have
+     * been flipped back to {@code native}, and over a natively sealed one it can
+     * since have been flipped to {@code parquet}.
+     */
+    private void readPublishedParquetIndexColumnIds(int partitionDirLen, long parquetFileSize, IntList out) {
+        out.clear();
+        long parquetMetaAddr = 0;
+        long parquetMetaSize = 0;
+        try {
+            openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
+            parquetMetaAddr = parquetMetaReader.getAddr();
+            parquetMetaSize = parquetMetaReader.getFileSize();
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                out.add(parquetMetaReader.getCoveringIndexColumnId(i));
+            }
+        } finally {
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(partitionDirLen);
+        }
+    }
+
     private void restoreIndexFilesAfterParquetToNative(
             long partitionTimestamp,
             long parquetNameTxn,
@@ -13935,6 +13966,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
         final int srcDirLen = path.size();
+        // Which columns this partition carries in the parquet form, read off its
+        // own _pm rather than inferred from the configured format. The partition
+        // is still parquet in the _txn here: setPartitionNative runs after this.
+        final IntList parquetIndexColumnIds = new IntList();
+        readPublishedParquetIndexColumnIds(
+                srcDirLen,
+                txWriter.getPartitionParquetFileSize(txWriter.getPartitionIndex(partitionTimestamp)),
+                parquetIndexColumnIds
+        );
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -13958,7 +13998,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // rows". Force the rebuild fallback, which is complete
                 // (rebuildColumnIndex calls configureCoveringIfNeeded) and is
                 // the only path back for this form.
-                final boolean sealedAsParquetIndex = isParquetIndexFormat() && IndexType.isPosting(indexType);
+                //
+                // Keyed on the published token, not on the configured format.
+                // Seal a partition as parquet, flip the property back to
+                // native, then CONVERT PARTITION TO NATIVE: a format-keyed test
+                // is false, the .pk exists, the link branch fires and the new
+                // native partition silently answers "no keys, no rows" -- on a
+                // path the reader's refusal cannot observe, because it returns
+                // early for a partition that is no longer parquet.
+                final boolean sealedAsParquetIndex = IndexType.isPosting(indexType)
+                        && parquetIndexColumnIds.contains(metadata.getColumnMetadata(columnIndex).getWriterIndex());
 
                 // Prefer linking the existing index files
                 if (!sealedAsParquetIndex
