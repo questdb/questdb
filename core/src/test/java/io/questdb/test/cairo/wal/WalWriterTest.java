@@ -5175,7 +5175,8 @@ public class WalWriterTest extends AbstractCairoTest {
         // the pool routing above, and that the latch stops the expel branch's
         // retry from re-running the failing IO (mapFailures == 1, asserted
         // below).
-        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16_384);
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
         AtomicBoolean armed = new AtomicBoolean(false);
         AtomicInteger mapFailures = new AtomicInteger();
         ff = new TestFilesFacadeImpl() {
@@ -5198,7 +5199,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             WalWriter w = engine.getWalWriter(token);
             ColumnarRowAppender appender = w.getColumnarRowAppender();
-            int rowCount = rowsCrossingAppendPages(16_384);
+            final int rowCount = rowsCrossingAppendPages(pageSize);
             appender.beginColumnarWrite(rowCount);
             // cancelColumnarWrite() rolls back every column's append pointer
             // regardless of what was written, so writing only the designated-
@@ -5255,7 +5256,8 @@ public class WalWriterTest extends AbstractCairoTest {
         // column across a page boundary, so its rollback must remap page 0 via
         // ff.mmap() -- confirmed empirically by instrumenting every FilesFacade
         // method the WAL writer path could plausibly touch during close().
-        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 16_384);
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
         AtomicBoolean armed = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override
@@ -5274,7 +5276,7 @@ public class WalWriterTest extends AbstractCairoTest {
             // Buffer enough uncommitted rows that the designated-timestamp column's
             // append pointer crosses into a second page: rollback to row 0 then has
             // to remap page 0, forcing a real ff.mmap() call.
-            final int rowCount = rowsCrossingAppendPages(16_384);
+            final int rowCount = rowsCrossingAppendPages(pageSize);
             for (int i = 0; i < rowCount; i++) {
                 TableWriter.Row row = w.newRow(1_000_000L + i);
                 row.putInt(1, i);
@@ -5284,9 +5286,9 @@ public class WalWriterTest extends AbstractCairoTest {
             armed.set(true);
             try {
                 w.close();
-                Assert.fail("close must propagate the rollback failure -- the ff.mmap() injection never fired"
-                        + " (armed=" + armed.get() + "), so rolling back " + rowCount + " rows never left page 0"
-                        + " of the " + Files.ceilPageSize(16_384) + "-byte effective append page");
+                Assert.fail("close must propagate the rollback failure -- the ff.mmap() injection never fired,"
+                        + " so rolling back " + rowCount + " rows never left page 0"
+                        + " of the " + Files.ceilPageSize(pageSize) + "-byte effective append page");
             } catch (CairoException expected) {
             } finally {
                 armed.set(false);
