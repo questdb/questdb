@@ -1766,6 +1766,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long partitionRowCount = getPartitionSize(partitionIndex);
             copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), partitionRowCount);
             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, false);
+            // After the tops are zeroed, so the seal reads the same [0, size)
+            // range the rewritten parquet materialises, and before the _txn
+            // commit, so the partition is never committed as parquet without the
+            // index copyOrRebuildColumnIndexes deliberately skipped.
+            resealParquetIndexesAfterSwitch(partitionTimestamp, getTxn(), parquetFileLength);
 
             columnVersionWriter.commit();
             // used to update txn and bump recordStructureVersion
@@ -2790,7 +2795,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (columnTop == 0) {
+                // Under the parquet index format a POSTING index over a parquet
+                // partition is <col>.pidx.<indexTxn>.parquet plus its _im, not
+                // the native .pv / .pci / .pc* set, so carrying those over would
+                // publish sidecars no reader of that partition consults and
+                // leave a chain the next seal has to discard. Such a column
+                // takes the rebuild branch whatever its top, which reads the
+                // destination parquet and seals the parquet form instead.
+                // BITMAP indexes are unaffected: the format selects nothing for
+                // them, so the decision is per column, not per partition.
+                final boolean sealAsParquetIndex = isParquetIndexFormat() && IndexType.isPosting(indexType);
+                if (columnTop == 0 && !sealAsParquetIndex) {
                     linkColumnIndexFiles(
                             srcDirLen,
                             dstDirLen,
@@ -2805,7 +2820,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // column and normalizeColumnTopsAfterParquetRewrite will set
                     // this top to zero, including absent (-1), partial and
                     // full-top (>= partitionSize) source states.
-                    assert columnTop == -1 || columnTop > 0;
+                    assert sealAsParquetIndex || columnTop == -1 || columnTop > 0;
                     parquetRewriteColumnIndexes.add(columnIndex);
                 }
             }
@@ -5888,6 +5903,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                 if (colTop == -1 || colTop >= partitionRowCount) {
                     continue; // column does not exist or has no data in this partition
+                }
+                if (isParquetIndexFormat() && IndexType.isPosting(indexType)) {
+                    // Under the parquet index format a POSTING index over a
+                    // parquet partition is <col>.pidx.<indexTxn>.parquet plus its
+                    // _im, not the native .pv / .pci / .pc* set, so neither
+                    // carrying those over nor rebuilding them natively produces
+                    // what a reader of that partition will consult. The caller
+                    // reseals the column from the parquet it has just written,
+                    // once the column tops are zeroed. BITMAP indexes are
+                    // unaffected: the format selects nothing for them.
+                    continue;
                 }
 
                 final String columnName = metadata.getColumnName(columnIndex);
@@ -13811,8 +13837,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
+                // A POSTING index sealed as parquet leaves a .pk behind -- the
+                // seal still feeds the native index writer to count keys -- but
+                // no sealed .pv generation and no .pc* covers, so the link
+                // branch below would carry over a key file whose chain has no
+                // visible generation and a reader would answer "no keys, no
+                // rows". Force the rebuild fallback, which is complete
+                // (rebuildColumnIndex calls configureCoveringIfNeeded) and is
+                // the only path back for this form.
+                final boolean sealedAsParquetIndex = isParquetIndexFormat() && IndexType.isPosting(indexType);
+
                 // Prefer linking the existing index files
-                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                if (!sealedAsParquetIndex
+                        && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }
