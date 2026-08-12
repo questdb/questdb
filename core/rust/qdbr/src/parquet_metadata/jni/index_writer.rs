@@ -36,6 +36,13 @@
 //! transition per chunk field. Stats too wide to inline are patched onto the
 //! last row group afterwards, exactly as `_pm`'s `addBloomFilter` does.
 //!
+//! That surface is not how production writes an `_im`. `generateIndexMetadata`
+//! is: it builds the whole file from a finished streaming parquet writer, whose
+//! thrift metadata is the only place the per-chunk codec, encodings, byte
+//! ranges, null counts and statistics exist. Java supplies what only it knows --
+//! the key directory, the row-id zone maps and `data.parquet`'s row-group
+//! boundaries -- and never the values it cannot see.
+//!
 //! These `extern "system"` functions are called from Java via JNI. Raw pointer
 //! parameters are null-checked via the `check_not_null!` macro before
 //! dereferencing, so the functions are safe in practice but cannot be marked
@@ -53,6 +60,7 @@ use crate::parquet_metadata::header::ColumnDescriptorRaw;
 use crate::parquet_metadata::index_meta::IndexMetaWriter;
 use crate::parquet_metadata::types::{ColumnFlags, COLUMN_CHUNK_SIZE};
 use crate::parquet_metadata::{ColumnChunkRaw, RowGroupBlockBuilder};
+use crate::parquet_write::jni::StreamingParquetWriter;
 use crate::qwp_zstd::payload_message;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong};
@@ -63,6 +71,13 @@ use std::slice;
 /// Byte width of one `data.parquet` row group boundary, matching Java's
 /// `Long.BYTES`.
 const BOUNDARY_SIZE: usize = std::mem::size_of::<i64>();
+
+/// Byte width of one `RG_FIRST_KEY` entry, matching Java's `Integer.BYTES`.
+const FIRST_KEY_SIZE: usize = std::mem::size_of::<i32>();
+
+/// Byte width of one `RG_ROW_ID_MIN` / `RG_ROW_ID_MAX` entry, matching Java's
+/// `Long.BYTES`.
+const ROW_ID_SIZE: usize = std::mem::size_of::<i64>();
 
 /// Holds the finished _im file bytes.
 pub struct IndexMetaBuiltFile {
@@ -428,6 +443,145 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_finish(
     })
 }
 
+/// Generates the complete `_im` for the covering-index parquet a streaming
+/// parquet write has just finished, and hands it back as an
+/// [`IndexMetaBuiltFile`] read with `resultDataPtr` / `resultDataLen` and freed
+/// with `destroyResult`.
+///
+/// This is the production `_im` path. It does not go through the `create` /
+/// `addColumn` / `addRowGroup` surface above because `_im` records, per (row
+/// group, column), the codec, the encodings present, the byte range, the null
+/// count and the min/max statistics -- values Java never sees, because the
+/// parquet encoder produces them and they live only in the writer's own thrift
+/// metadata. Java supplies what only it knows: the key directory, the row-id
+/// zone maps and `data.parquet`'s row-group boundaries.
+///
+/// `writer_ptr` must be a writer whose `finishStreamingParquetWrite` has
+/// already run: before that the parquet footer does not exist, and its zero
+/// offset is rejected rather than recorded.
+///
+/// `count` is the index row-group count, and `first_keys_len`, `row_id_min_len`
+/// and `row_id_max_len` are those buffers' own byte lengths, which must account
+/// for exactly that many elements of their own width. `data_boundaries_len` is
+/// likewise a byte length, and the boundary count is derived from it rather
+/// than passed separately, so no count decides how far a read goes without its
+/// buffer's length agreeing. Without that, a caller that miscounts produces an
+/// out-of-bounds native read that nothing on either side can detect.
+///
+/// Every `_im` writer validation stays in force, including the key-alignment
+/// invariant: an index whose row groups split a key across a group shared with
+/// another key is refused here rather than written and discovered later.
+/// Nothing at read time can detect that violation.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMetadata(
+    mut env: JNIEnv,
+    _class: JClass,
+    writer_ptr: *mut StreamingParquetWriter,
+    first_keys_ptr: *const i32,
+    first_keys_len: jlong,
+    row_id_min_ptr: *const i64,
+    row_id_min_len: jlong,
+    row_id_max_ptr: *const i64,
+    row_id_max_len: jlong,
+    data_boundaries_ptr: *const i64,
+    data_boundaries_len: jlong,
+    count: jint,
+    key_space_size: jint,
+    key_id_column: jint,
+    row_id_column: jint,
+    first_cover_column: jint,
+    payload_kind: jint,
+) -> *mut IndexMetaBuiltFile {
+    ffi_guard(&mut env, "generateIndexMetadata", |env| {
+        check_not_null!(env, writer_ptr, "StreamingParquetWriter");
+        check_not_null!(env, first_keys_ptr, "IndexMetaFileWriter first keys");
+        check_not_null!(env, row_id_min_ptr, "IndexMetaFileWriter row id minima");
+        check_not_null!(env, row_id_max_ptr, "IndexMetaFileWriter row id maxima");
+        check_not_null!(env, data_boundaries_ptr, "IndexMetaFileWriter boundaries");
+        // A negative jint would become an enormous slice length below.
+        check_not_negative!(env, count, "IndexMetaFileWriter row group count");
+        check_not_negative!(env, key_space_size, "IndexMetaFileWriter key space size");
+        check_not_negative!(
+            env,
+            first_cover_column,
+            "IndexMetaFileWriter first cover column"
+        );
+        // count is non-negative by the check above, so these products are exact
+        // in i64 and the comparisons bound the reads that follow by the buffers
+        // the caller actually allocated.
+        for (name, len, element_size) in [
+            ("first key", first_keys_len, FIRST_KEY_SIZE),
+            ("row id min", row_id_min_len, ROW_ID_SIZE),
+            ("row id max", row_id_max_len, ROW_ID_SIZE),
+        ] {
+            let expected_len = count as i64 * element_size as i64;
+            if len != expected_len {
+                let err = parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "{} buffer length {} does not match {} entries of {} bytes",
+                    name,
+                    len,
+                    count,
+                    element_size
+                );
+                return err.into_cairo_exception().throw(env);
+            }
+        }
+        // The boundary count is whatever the buffer's own length accounts for,
+        // so there is no second count to disagree with it.
+        if data_boundaries_len <= 0 || data_boundaries_len % BOUNDARY_SIZE as i64 != 0 {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "boundary buffer length {} is not a positive multiple of {} bytes",
+                data_boundaries_len,
+                BOUNDARY_SIZE
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+        let boundary_count = (data_boundaries_len / BOUNDARY_SIZE as i64) as usize;
+
+        let first_keys = unsafe { slice::from_raw_parts(first_keys_ptr, count as usize) };
+        // A negative key id would reach the writer as a key near u32::MAX and
+        // trip the key-space bound with a diagnostic naming a key the caller
+        // never passed. Refuse it while it is still recognisable.
+        if let Some(negative) = first_keys.iter().find(|key| **key < 0) {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row group first key {} is negative",
+                negative
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+        let first_keys: Vec<u32> = first_keys.iter().map(|key| *key as u32).collect();
+        let row_id_mins = unsafe { slice::from_raw_parts(row_id_min_ptr, count as usize) };
+        let row_id_maxs = unsafe { slice::from_raw_parts(row_id_max_ptr, count as usize) };
+        let data_boundaries = unsafe { slice::from_raw_parts(data_boundaries_ptr, boundary_count) };
+
+        // SAFETY: the pointer comes from `Box::into_raw` in
+        // `createStreamingParquetWriter`; single-threaded JNI access guarantees
+        // no aliasing, and generation only reads the finished writer.
+        let writer = unsafe { &*writer_ptr };
+        match writer.generate_index_metadata(
+            &first_keys,
+            row_id_mins,
+            row_id_maxs,
+            data_boundaries,
+            key_space_size as u32,
+            key_id_column,
+            row_id_column,
+            first_cover_column as u32,
+            payload_kind as u32,
+        ) {
+            Ok(data) => Box::into_raw(Box::new(IndexMetaBuiltFile { data })),
+            Err(mut err) => {
+                err.add_context("error in IndexMetaFileWriter.generateIndexMetadata");
+                err.into_cairo_exception().throw(env)
+            }
+        }
+    })
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_resultDataLen(
     mut env: JNIEnv,
@@ -582,8 +736,8 @@ mod tests {
         assert_eq!(caught.unwrap(), 42);
     }
 
-    /// A guard on eleven of twelve entry points is a guard on none of them: the
-    /// twelfth is the one a corrupt file reaches. Reading the source is the
+    /// A guard on twelve of thirteen entry points is a guard on none of them:
+    /// the thirteenth is the one a corrupt file reaches. Reading the source is the
     /// only way to assert the property over every entry point at once, and it
     /// costs nothing at runtime. The count is asserted too, so a new entry
     /// point has to come past this test.
@@ -610,6 +764,6 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 12, "entry point count changed");
+        assert_eq!(checked, 13, "entry point count changed");
     }
 }

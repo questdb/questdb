@@ -1079,6 +1079,50 @@ pub struct StreamingParquetWriter {
     // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
     // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
     pending_row_group_buffers: Vec<Option<crate::parquet_read::RowGroupBuffers>>,
+    // Total size of the parquet file this writer produced, captured from `finish`.
+    // Zero until then. `current_buffer` cannot stand in for it: the buffer is
+    // truncated at every drain, so its length is the last drain's byte count and
+    // not the file's. `_im` needs the file size to derive the index parquet's
+    // footer length.
+    parquet_file_size: u64,
+}
+
+impl StreamingParquetWriter {
+    /// Builds the `_im` covering-index metadata for the index parquet this
+    /// writer produced. Valid only after `finishStreamingParquetWrite`: before
+    /// that the parquet footer has not been written, and the zero footer offset
+    /// is rejected rather than recorded.
+    ///
+    /// The arguments are those of
+    /// [`crate::parquet_metadata::index_gen::generate_index_metadata`], whose
+    /// documentation defines them; this only supplies the writer's own state.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn generate_index_metadata(
+        &self,
+        first_keys: &[u32],
+        row_id_mins: &[i64],
+        row_id_maxs: &[i64],
+        data_boundaries: &[i64],
+        key_space_size: u32,
+        key_id_column: i32,
+        row_id_column: i32,
+        first_cover_column: u32,
+        payload_kind: u32,
+    ) -> ParquetResult<Vec<u8>> {
+        crate::parquet_metadata::index_gen::generate_index_metadata(
+            &self.chunked_writer,
+            self.parquet_file_size,
+            first_keys,
+            row_id_mins,
+            row_id_maxs,
+            data_boundaries,
+            key_space_size,
+            key_id_column,
+            row_id_column,
+            first_cover_column,
+            payload_kind,
+        )
+    }
 }
 
 #[no_mangle]
@@ -1200,6 +1244,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             accumulated_rows: 0,
             rows_written_to_row_groups: 0,
             pending_row_group_buffers: Vec::new(),
+            parquet_file_size: 0,
         })
     };
 
@@ -1499,7 +1544,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.rows_written_to_row_groups += encoder.accumulated_rows;
         }
 
-        encoder
+        // The returned size is the parquet file's, counting every drain, which
+        // is what `_im` derives the index parquet's footer length from.
+        encoder.parquet_file_size = encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
