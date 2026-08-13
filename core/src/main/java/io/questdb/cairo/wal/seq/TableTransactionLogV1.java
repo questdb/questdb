@@ -296,6 +296,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         private long crcBuf;
         private long crcFd = -1;
         private long crcFirstCoveredTxn = Long.MAX_VALUE;
+        private long lastReadCrc;
         private long fd;
         private FilesFacade ff;
         private long txn;
@@ -320,7 +321,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
             crcFirstCoveredTxn = Long.MAX_VALUE;
             if (crcBuf != 0) {
-                Unsafe.free(crcBuf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
                 crcBuf = 0;
             }
             if (fd > 0) {
@@ -466,26 +467,21 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
          * on the other.
          */
         private void verifyRecordChecksum() {
-            if (!isCrcApplicable(txn)) {
-                // No entry, or one whose stamp does not name this txn. The sidecar's pages flush
-                // independently of _txnlog's, so after a crash an entry can be missing or half-written
-                // at ANY txn -- none of which says anything about the RECORD. Read it unverified.
-                //
-                // An earlier attempt inferred this from a high-water mark ("a hole with something
-                // after it is real corruption"). The crash sweep disproved it: independent page
-                // writeback puts holes anywhere, and that rule SUSPENDED tables whose records were
-                // intact. The stamp replaces the inference.
+            if (!readApplicableCrc(txn)) {
+                // No applicable entry: none written, the stamp does not name this txn, or the read
+                // failed. The sidecar's pages flush independently of _txnlog's, so after a crash an
+                // entry can be missing or half-landed at ANY txn -- none of which says anything about
+                // the RECORD. Read it unverified.
                 return;
             }
-            // The stamp names this txn, so the pair landed whole and the CRC is authoritative -- a
-            // disagreement here is real corruption, INCLUDING a zeroed CRC, since
-            // calculateCvAreaChecksum never returns 0 for a record it actually hashed.
+            // Stamped for this txn, so the CRC is authoritative and a disagreement is real corruption
+            // -- INCLUDING a zeroed CRC, which is why applicability is a separate answer from the value.
             TxnLogRecordVerifier.verify(
                     txn,
                     address + txnOffset,
                     RECORD_SIZE,
-                    readStoredCrc(txn),
-                    Long.MIN_VALUE, // applicability is decided by the stamp above, not by a watermark
+                    lastReadCrc,
+                    Long.MIN_VALUE, // applicability already decided by the stamp
                     txnOffset
             );
         }
@@ -502,27 +498,37 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                     : 0L;
         }
 
-        /** True when the sidecar holds an entry stamped with exactly this txn. */
-        private boolean isCrcApplicable(long txn) {
+        /**
+         * Reads the whole {@code [crc][stamp]} pair in ONE pread. Returns whether the entry APPLIES to
+         * this txn, leaving the CRC in {@link #lastReadCrc}.
+         * <p>
+         * Applicability and value are deliberately separate answers. Returning the CRC alone cannot
+         * distinguish "no applicable entry" from "an entry stamped for this txn whose CRC is zero" --
+         * and the second is corruption, since calculateCvAreaChecksum never returns 0 for a record it
+         * hashed. Collapsing them silently skips detection.
+         * <p>
+         * One read, not two: the pair is 16 adjacent, 16-byte-aligned bytes, so a second syscall buys
+         * nothing on what is the default sequencer read path. It also makes the failure direction
+         * right -- a short or failed read now means "not applicable" (unverified) instead of being
+         * indistinguishable from "the CRC was never written", which would report corruption.
+         */
+        private boolean readApplicableCrc(long txn) {
+            lastReadCrc = 0;
             if (crcFd <= -1 || txn < crcFirstCoveredTxn) {
                 return false;
             }
-            final long stampOffset = TxnLogCrcSidecar.BODY_OFFSET
-                    + (txn - crcFirstCoveredTxn) * TxnLogCrcSidecar.ENTRY_SIZE
-                    + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET;
-            return ff.read(crcFd, crcBuf, Long.BYTES, stampOffset) == Long.BYTES
-                    && Unsafe.getUnsafe().getLong(crcBuf) == txn;
-        }
-
-        private long readStoredCrc(long txn) {
             final long offset = TxnLogCrcSidecar.BODY_OFFSET
                     + (txn - crcFirstCoveredTxn) * TxnLogCrcSidecar.ENTRY_SIZE;
-            // Raw 8-byte read, NOT readNonNegativeLong: a checksum uses the full 64-bit range, so a
-            // legitimately negative CRC would come back as -1 and read as absent.
-            if (ff.read(crcFd, crcBuf, Long.BYTES, offset) != Long.BYTES) {
-                return 0;
+            if (ff.read(crcFd, crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, offset) != TxnLogCrcSidecar.ENTRY_SIZE) {
+                return false;
             }
-            return Unsafe.getUnsafe().getLong(crcBuf);
+            // The stamp gates the CRC: only a stamp naming THIS txn proves the pair landed whole.
+            if (Unsafe.getUnsafe().getLong(crcBuf + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET) != txn) {
+                return false;
+            }
+            // Raw read, NOT readNonNegativeLong: a checksum uses the full 64-bit range.
+            lastReadCrc = Unsafe.getUnsafe().getLong(crcBuf);
+            return true;
         }
 
         private void openCrcSidecar(FilesFacade ff, boolean bypassFdCache, Path path) {
@@ -572,7 +578,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             this.txnLo = txnLo;
             txn = txnLo;
             if (crcBuf == 0) {
-                crcBuf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                crcBuf = Unsafe.malloc(TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
             openCrcSidecar(ff, bypassFdCache, path);
             return this;

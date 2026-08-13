@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TxnLogCrcSidecar;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,14 +42,14 @@ import org.junit.Test;
  * intact, but a reader that treats "no CRC at or beyond the watermark" as torn condemns it. That is a
  * false alarm on healthy data, which is worse than not checking at all.
  * <p>
- * V1 is no longer the default, so the format is pinned in {@link #setUp()} -- under V2 there is no
- * sidecar at all and every assertion here would pass for the wrong reason.
+ * The format is pinned in {@link #setUp()} rather than inherited: under V2 there is no sidecar at all
+ * and every assertion here would pass for the wrong reason if the default ever moves.
  */
 public class TxnLogCrcSidecarCrashTest extends AbstractCrashConsistencyTest {
 
     @Override
     public void setUp() {
-        // Must be set BEFORE the engine is built: setting it inside a test method is too late, and the
+        // Must be set BEFORE the engine is built: setting it inside a test method is too late and the
         // tables come out V2. The assertIsV1 precondition below exists because that actually happened.
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
         super.setUp();
@@ -104,8 +105,15 @@ public class TxnLogCrcSidecarCrashTest extends AbstractCrashConsistencyTest {
                         .concat(token)
                         .concat(WalUtils.SEQ_DIR)
                         .concat(WalUtils.TXNLOG_CRC_FILE_NAME);
-                // Zero from the third entry onward: header and the first entries survive.
-                crashFf.tornTail(path.$(), 24 + 2 * 8, 64);
+                // Zero WHOLE entries from the third onward, using the layout constants rather than
+                // hardcoded offsets: a tear that clipped an entry in half would leave a stamped entry
+                // with a zeroed CRC, which is CORRECTLY reported as torn and would test the opposite
+                // of what this test is about. Header and the first two entries survive.
+                crashFf.tornTail(
+                        path.$(),
+                        TxnLogCrcSidecar.BODY_OFFSET + 2L * TxnLogCrcSidecar.ENTRY_SIZE,
+                        8L * TxnLogCrcSidecar.ENTRY_SIZE
+                );
             }
             crashAndReopen();
 

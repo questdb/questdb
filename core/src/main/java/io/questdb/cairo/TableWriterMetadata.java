@@ -193,6 +193,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         TableUtils.validateMeta(metaPath, metaMem, columnNameIndexMap, ColumnType.VERSION);
+        // The WRITER must verify too, not just the reader. Without this a TableWriter can open a rotted
+        // _meta, run an ALTER, and rewriteMetadata stamps a FRESH, VALID checksum over the corrupt
+        // values -- laundering the corruption and destroying the very evidence the checksum exists to
+        // preserve. One xxh3 pass over a small file, on a path that already reads the whole thing.
+        TableUtils.verifyMetaBodyChecksum(metaPath, metaMem, metaMem.size());
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);

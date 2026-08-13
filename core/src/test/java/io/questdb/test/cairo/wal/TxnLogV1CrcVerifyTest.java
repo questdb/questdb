@@ -47,9 +47,9 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        // These are V1 tests. V2 is the default now, so V1 has to be asked for explicitly -- a count
-        // of 0 selects it. Without this the tables under test are V2 and carry their CRC in-record,
-        // so there is no _txnlog.c to corrupt or delete and the assertions measure nothing.
+        // These are V1 tests. V1 is the default today, but say so explicitly rather than inheriting it:
+        // under V2 the CRC lives in-record, there is no _txnlog.c to corrupt or delete, and every
+        // assertion here would pass for the wrong reason if the default ever moves.
         node1.setProperty(io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
     }
 
@@ -96,7 +96,7 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
 
             try {
                 replayFromScratch(token);
-                Assert.fail("a CRC hole below the high-water mark must still be reported as torn");
+                Assert.fail("a stamped entry whose CRC disagrees must still be reported as torn");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "sequencer txnlog record");
             }

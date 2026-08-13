@@ -36,6 +36,19 @@ import org.junit.Test;
 public class TxnLogCrcSidecarTest extends AbstractCairoTest {
 
     @Test
+    public void testEntriesAreAlignedToTheirOwnSize() {
+        // A [crc][stamp] pair MUST NOT straddle a page: mmap writes pages back independently, so a
+        // split pair can land its stamp while losing its CRC, and the reader would then condemn an
+        // intact record. Alignment is what prevents that, and it is one careless header field away
+        // from being lost again.
+        Assert.assertEquals(
+                "sidecar entries must be aligned to ENTRY_SIZE, or a pair can span a page boundary",
+                0,
+                TxnLogCrcSidecar.BODY_OFFSET % TxnLogCrcSidecar.ENTRY_SIZE
+        );
+    }
+
+    @Test
     public void testAppendedCrcReadsBack() throws Exception {
         assertMemoryLeak(() -> {
             final long size = 28; // V1 RECORD_SIZE

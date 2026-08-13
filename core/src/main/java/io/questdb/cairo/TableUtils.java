@@ -471,37 +471,6 @@ public final class TableUtils {
     }
 
     /**
-     * Computes a 64-bit checksum over the ENTIRE committed {@code _cv} (column-version) area
-     * {@code [0, size)}, used to detect a torn/partially-written area (e.g. a reordered or partial msync
-     * under NOSYNC) that the existing A/B version protocol alone cannot catch. Unlike {@code _txn}, the
-     * {@code _cv} area is ALWAYS fully rewritten per commit (see {@link ColumnVersionWriter#doCommit()} -
-     * the whole area is written to a fresh {@code writeOffset}, then the header offset/size is updated and
-     * the version bumped); there is NO in-place stable-version mutation of a published area, so the whole
-     * contiguous area is commit-immutable and can be covered with zero exclusions. The checksum long is
-     * stored on disk immediately AFTER the area, at {@code [offset + size, offset + size + 8)}; the
-     * {@code OFFSET_SIZE_{A,B}} header field continues to record {@code size} (the data length only, a
-     * multiple of {@code BLOCK_SIZE_BYTES}) so older readers still parse the blocks unchanged.
-     * <p>
-     * Uses the SAME polynomial-over-little-endian-words + avalanche as
-     * {@link #calculateTxnBodyChecksum(long, long, long)} ({@code hashTxnBodyRange} / {@code xxh3Avalanche64}),
-     * applied to the single contiguous range {@code [0, size)} (any alignment is handled by the helper, so
-     * the write and read sides agree as long as they pass the same {@code size}).
-     * <p>
-     * PRESENCE / BACK-COMPAT: the checksum is part of a 16-byte trailer
-     * {@code [offset + size, offset + size + 16)} = {@code [MAGIC | checksum]}. The reader treats a
-     * checksum as PRESENT only when the file is long enough AND {@link #CV_CHECKSUM_MAGIC} sits at
-     * {@code offset + size}; otherwise it skips the verify. This is what keeps page-rounded legacy
-     * pre-checksum files (whose trailing bytes are non-zero adjacent-area data) from being mis-read as
-     * checksummed. Because presence is magic-gated rather than content/zero-gated, the genuine-{@code 0}
-     * -> {@code 1} remap below is no longer load-bearing; it is kept (harmless) only so the stored value
-     * is never the bare {@code 0} an even older reader might have treated as "absent".
-     *
-     * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
-     *                     mapped address of the on-disk {@code offset})
-     * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
-     * @return a non-zero 64-bit checksum
-     */
-    /**
      * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, EXCLUDING the 16 bytes at
      * {@code [META_OFFSET_BODY_LEN_64, META_OFFSET_BODY_CHECKSUM_64 + 8)} that carry the length and the
      * checksum itself -- a field cannot cover its own value.
@@ -562,6 +531,37 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Computes a 64-bit checksum over the ENTIRE committed {@code _cv} (column-version) area
+     * {@code [0, size)}, used to detect a torn/partially-written area (e.g. a reordered or partial msync
+     * under NOSYNC) that the existing A/B version protocol alone cannot catch. Unlike {@code _txn}, the
+     * {@code _cv} area is ALWAYS fully rewritten per commit (see {@link ColumnVersionWriter#doCommit()} -
+     * the whole area is written to a fresh {@code writeOffset}, then the header offset/size is updated and
+     * the version bumped); there is NO in-place stable-version mutation of a published area, so the whole
+     * contiguous area is commit-immutable and can be covered with zero exclusions. The checksum long is
+     * stored on disk immediately AFTER the area, at {@code [offset + size, offset + size + 8)}; the
+     * {@code OFFSET_SIZE_{A,B}} header field continues to record {@code size} (the data length only, a
+     * multiple of {@code BLOCK_SIZE_BYTES}) so older readers still parse the blocks unchanged.
+     * <p>
+     * Uses the SAME polynomial-over-little-endian-words + avalanche as
+     * {@link #calculateTxnBodyChecksum(long, long, long)} ({@code hashTxnBodyRange} / {@code xxh3Avalanche64}),
+     * applied to the single contiguous range {@code [0, size)} (any alignment is handled by the helper, so
+     * the write and read sides agree as long as they pass the same {@code size}).
+     * <p>
+     * PRESENCE / BACK-COMPAT: the checksum is part of a 16-byte trailer
+     * {@code [offset + size, offset + size + 16)} = {@code [MAGIC | checksum]}. The reader treats a
+     * checksum as PRESENT only when the file is long enough AND {@link #CV_CHECKSUM_MAGIC} sits at
+     * {@code offset + size}; otherwise it skips the verify. This is what keeps page-rounded legacy
+     * pre-checksum files (whose trailing bytes are non-zero adjacent-area data) from being mis-read as
+     * checksummed. Because presence is magic-gated rather than content/zero-gated, the genuine-{@code 0}
+     * -> {@code 1} remap below is no longer load-bearing; it is kept (harmless) only so the stored value
+     * is never the bare {@code 0} an even older reader might have treated as "absent".
+     *
+     * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
+     *                     mapped address of the on-disk {@code offset})
+     * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
+     * @return a non-zero 64-bit checksum
+     */
     public static long calculateCvAreaChecksum(long areaBaseAddr, long size) {
         // The whole area is commit-immutable (fully rewritten each commit, never mutated in place under a
         // stable version), so cover [0, size) with no exclusions.

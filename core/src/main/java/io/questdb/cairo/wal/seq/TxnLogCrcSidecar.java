@@ -67,12 +67,23 @@ import io.questdb.std.str.Path;
  */
 public class TxnLogCrcSidecar implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TxnLogCrcSidecar.class);
-    /** Body starts here; the header is fixed-size. */
-    public static final int BODY_OFFSET = 24;
+    /**
+     * Body starts here. 32, not 24, so that {@code BODY_OFFSET % ENTRY_SIZE == 0} and every
+     * {@code [crc][stamp]} pair is 16-byte ALIGNED.
+     * <p>
+     * At 24 the entries sat at 8 mod 16, so each pair straddled a 16-byte boundary and one pair in 256
+     * straddled a PAGE boundary -- putting the CRC and its stamp in different pages. mmap writes those
+     * back independently, and {@code storeFence()} orders CPU stores, not writeback, so a power cut
+     * could land the stamp while losing the CRC. The reader would then see a stamp naming the txn with
+     * a zero CRC beside it and report a torn record that is perfectly intact -- precisely the false
+     * alarm the stamp was introduced to eliminate. Alignment reduces the interleaving to intra-sector,
+     * which is the atomicity this codebase already assumes.
+     */
+    public static final int BODY_OFFSET = 32;
     /** Entry = [crc:8][stamp:8]. The stamp is the txn the CRC describes; see append(). */
     public static final int ENTRY_SIZE = 2 * Long.BYTES;
-    /** 2, not 1: the entry grew a stamp, so a v1 sidecar is not readable by this code. */
-    public static final int FILE_VERSION = 2;
+    /** 3: v1 had no stamp, v2 had one but at an unaligned offset. Both are rejected as unreadable. */
+    public static final int FILE_VERSION = 3;
     /** Offset of the stamp within an entry. */
     public static final int ENTRY_STAMP_OFFSET = Long.BYTES;
     /** Spells " TLCHKSM" on disk (LE), matching the shape of CV_CHECKSUM_MAGIC / TX_CHECKSUM_CAPABILITY_MAGIC. */
@@ -105,6 +116,19 @@ public class TxnLogCrcSidecar implements QuietCloseable {
     }
 
     private void of(FilesFacade ff, Path path, long watermark, boolean newLineage) {
+        try {
+            of0(ff, path, watermark, newLineage);
+        } catch (Throwable th) {
+            // ENOSPC, EROFS, EMFILE, permissions: this file carries no durability claim, so failing to
+            // open it must cost DETECTION, never ingestion. Propagating would take the sequencer -- and
+            // therefore the table -- down, and open() now touches this path for every legacy table.
+            LOG.error().$("could not open txnlog CRC sidecar, checksums disabled [path=").$(path)
+                    .$(", error=").$(th.getMessage()).I$();
+            close();
+        }
+    }
+
+    private void of0(FilesFacade ff, Path path, long watermark, boolean newLineage) {
         close();
         mem = Vm.getCMARWInstance();
         // smallFile, not of(..., -1, ...): it sizes the mapping from ff.length(name), which is what
