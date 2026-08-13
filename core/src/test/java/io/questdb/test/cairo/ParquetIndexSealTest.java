@@ -710,6 +710,66 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * I8: a token publish changes the partition's directory -- it gains a
+     * {@code <col>.pidx} pair and its {@code _pm} grows a footer -- while
+     * leaving every field of the partition's own {@code _txn} record alone:
+     * same name txn, same row count, same {@code data.parquet} size, so the
+     * offset-3 value word does not move either.
+     * <p>
+     * That is precisely the state {@code squashSplitPartitions} documents the
+     * squash counter for -- "even when the partition has the same version and
+     * row count it will be included in a backup" -- and without stamping it a
+     * per-partition consumer, incremental backup in particular, cannot tell
+     * that the directory changed at all.
+     * <p>
+     * The test asserts both halves: the fields that must not move, so the
+     * premise is real rather than assumed, and the counter that must.
+     */
+    @Test
+    public void testATokenPublishRestampsThePartitionsChangeToken() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+
+            final TableToken token = engine.verifyTableName(TABLE_NAME);
+            final long nameTxnBefore;
+            final long rowCountBefore;
+            final long parquetSizeBefore;
+            final int squashCountBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+                rowCountBefore = reader.getTxFile().getPartitionSize(0);
+                parquetSizeBefore = reader.getTxFile().getPartitionParquetFileSize(0);
+                squashCountBefore = reader.getTxFile().getPartitionSquashCount(0);
+            }
+
+            // DROP + ADD INDEX publishes into the _pm twice and writes no row, so
+            // nothing about the partition's data changes.
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("premise: the partition name txn must not move",
+                        nameTxnBefore, reader.getTxFile().getPartitionNameTxn(0));
+                Assert.assertEquals("premise: the partition row count must not move",
+                        rowCountBefore, reader.getTxFile().getPartitionSize(0));
+                Assert.assertEquals("premise: the data.parquet size must not move",
+                        parquetSizeBefore, reader.getTxFile().getPartitionParquetFileSize(0));
+                Assert.assertNotEquals(
+                        "a token publish must restamp the partition's own change token, or a per-partition"
+                                + " consumer cannot see that the directory changed",
+                        squashCountBefore,
+                        reader.getTxFile().getPartitionSquashCount(0)
+                );
+            }
+        });
+    }
+
     @Test
     public void testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber() throws Exception {
         assertMemoryLeak(() -> {

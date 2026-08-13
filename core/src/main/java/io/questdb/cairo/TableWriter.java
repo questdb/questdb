@@ -422,10 +422,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
-    private IntList parquetRewriteColumnIndexes;
-    private SymbolColumnIndexer parquetRewriteIndexer;
-    private byte parquetRewriteIndexerType = IndexType.NONE;
-    private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -2819,81 +2815,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
-    /**
-     * Carries indexed SYMBOL files into a freshly rewritten parquet partition.
-     * Indexes whose source column top is already zero are hard-linked. Indexes
-     * whose top will be normalized to zero are rebuilt from the rewritten
-     * parquet so their NULL prefix (or all-NULL body) and POSTING sidecars are
-     * physically present before the column-version commit publishes top zero.
-     */
-    public void linkOrRebuildPartitionIndexFilesAfterParquetRewrite(
-            long partitionTimestamp,
-            long oldPartitionNameTxn,
-            long newPartitionNameTxn,
-            long newParquetFileSize
-    ) {
-        if (parquetRewriteColumnIndexes == null) {
-            parquetRewriteColumnIndexes = new IntList();
-        } else {
-            parquetRewriteColumnIndexes.clear();
-        }
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
-        final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
-        final int dstDirLen = other.size();
-        try {
-            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
-                    continue;
-                }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                // Under the parquet index format a POSTING index over a parquet
-                // partition is <col>.pidx.<indexTxn>.parquet plus its _im, not
-                // the native .pv / .pci / .pc* set, so carrying those over would
-                // publish sidecars no reader of that partition consults and
-                // leave a chain the next seal has to discard. Such a column
-                // takes the rebuild branch whatever its top, which reads the
-                // destination parquet and seals the parquet form instead.
-                // BITMAP indexes are unaffected: the format selects nothing for
-                // them, so the decision is per column, not per partition.
-                final boolean sealAsParquetIndex = isParquetIndexFormat() && IndexType.isPosting(indexType);
-                if (columnTop == 0 && !sealAsParquetIndex) {
-                    linkColumnIndexFiles(
-                            srcDirLen,
-                            dstDirLen,
-                            metadata.getColumnName(columnIndex),
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
-                            indexType,
-                            partitionTimestamp,
-                            oldPartitionNameTxn
-                    );
-                } else {
-                    // The rewritten parquet materializes every current-schema
-                    // column and normalizeColumnTopsAfterParquetRewrite will set
-                    // this top to zero, including absent (-1), partial and
-                    // full-top (>= partitionSize) source states.
-                    assert sealAsParquetIndex || columnTop == -1 || columnTop > 0;
-                    parquetRewriteColumnIndexes.add(columnIndex);
-                }
-            }
-
-            if (parquetRewriteColumnIndexes.size() > 0) {
-                rebuildParquetRewriteIndexes(
-                        partitionTimestamp,
-                        newPartitionNameTxn,
-                        newParquetFileSize,
-                        dstDirLen,
-                        parquetRewriteColumnIndexes
-                );
-            }
-        } finally {
-            parquetRewriteColumnIndexes.clear();
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-    }
-
     public void linkPartitionIndexFiles(long partitionTimestamp, long oldPartitionNameTxn, long newPartitionNameTxn) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
         final int partitionDirLen = path.size();
@@ -3523,7 +3444,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     checkDistressed();
                 }
                 freeColumns(false);
+                final boolean parquetIndexTokensDurable = deferredParquetFormPostingSealPurgesPending();
                 txWriter.unsafeLoadAll();
+                if (parquetIndexTokensDurable) {
+                    // unsafeLoadAll just discarded the in-memory partition table
+                    // version bump publishParquetIndexTokens made, but the _pm
+                    // append it accompanied is durable. Re-apply it so the next
+                    // commit still tells readers to drop the pre-publish mapping.
+                    txWriter.bumpPartitionTableVersion();
+                }
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
@@ -6967,7 +6896,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
-            if (task.getToTableTxn() > currentTableTxn) {
+            // A parquet-form task is never abandoned by a rollback. It is queued
+            // only after publishParquetIndexTokens has patched the _pm header and
+            // fsynced it, so the supersession it retires is durable and the
+            // rollback does not undo it; dropping the task would leak the pair it
+            // names for good, with nothing left to reference it and nothing left
+            // to remove it. Its window still holds: the bound is getTxn() + 1 and
+            // the rollback leaves getTxn() where it was, so the next commit is
+            // the txn the window names. A native-form task is the opposite case
+            // -- its seal is part of the transaction being rolled back -- and
+            // still goes.
+            if (task.getToTableTxn() > currentTableTxn
+                    && task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
                 releaseDeferredPostingSealPurgeTask(task);
             } else {
                 deferredPostingSealPurges.setQuick(writePos++, task);
@@ -7070,8 +7010,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquetMetaReader is a flyweight: it never owns its mmap, so
         // clear() (release native handle, zero state) is the right cleanup.
         parquetMetaReader.clear();
-        Misc.free(parquetRewriteIndexer);
-        Misc.free(parquetRewriteRowGroupBuffers);
         Misc.free(parquetBloomFilterIndexes);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
@@ -12528,6 +12466,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // directory. TableReader#testAReloadingReaderDropsItsParquetMetaMappingAcrossATokenPublish
         // pins the invariant; it cannot pin this call, and says so.
         txWriter.bumpPartitionTableVersion();
+        // The partition's directory changed -- it gained a <col>.pidx pair and
+        // its _pm grew a footer -- while its own _txn record did not: same name
+        // txn, same row count, same data.parquet size, so setPartitionParquetFileSize
+        // is not called and the offset-3 value word does not move either. That is
+        // exactly the state the squash counter exists to make visible; its own
+        // comment names it, "even when the partition has the same version and row
+        // count it will be included in a backup". Stamping it here is what lets a
+        // per-partition consumer see the change at all.
+        //
+        // A consumer that compares per-partition state must therefore treat the
+        // squash counter (and .squash_ts on its 16-bit overflow) as part of the
+        // partition's identity, not only as a squash signal: for this event it is
+        // the ONLY field that moves.
+        final int publishedPartitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (publishedPartitionIndex > -1 && !txWriter.incrementPartitionSquashCounter(publishedPartitionIndex)) {
+            squashSplitPartitions_updateSquashTimestampFile(partitionTimestamp, partitionNameTxn);
+        }
         for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
             purgeSupersededParquetIndexArtifacts(
                     supersededColumnIds.getQuick(i),
@@ -13077,82 +13032,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionBy,
                 partitionSize
         );
-    }
-
-    private void rebuildParquetRewriteIndexes(
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long parquetFileSize,
-            int partitionDirLen,
-            IntList columnIndexes
-    ) {
-        long parquetAddr = 0;
-        long parquetSize = 0;
-        setPathForNativePartition(
-                path.trimTo(pathSize),
-                timestampType,
-                partitionBy,
-                partitionTimestamp,
-                partitionNameTxn
-        );
-        assert path.size() == partitionDirLen;
-        beginParquetIndexTokenBatch(partitionDirLen);
-        try {
-            if (parquetRewriteRowGroupBuffers == null) {
-                parquetRewriteRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER, true);
-            }
-            parquetRewriteRowGroupBuffers.reopen();
-            openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
-            parquetSize = parquetMetaReader.getParquetFileSize();
-            path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                final int columnIndex = columnIndexes.getQuick(i);
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (parquetRewriteIndexer == null || parquetRewriteIndexerType != indexType) {
-                    parquetRewriteIndexer = Misc.free(parquetRewriteIndexer);
-                    parquetRewriteIndexer = new SymbolColumnIndexer(configuration, indexType);
-                    parquetRewriteIndexerType = indexType;
-                }
-                try {
-                    indexParquetColumn(
-                            parquetRewriteIndexer,
-                            metadata.getColumnName(columnIndex),
-                            columnIndex,
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
-                            metadata.getIndexValueBlockCapacity(columnIndex),
-                            indexType,
-                            partitionDirLen,
-                            partitionTimestamp,
-                            parquetRewriteRowGroupBuffers,
-                            true,
-                            true,
-                            partitionNameTxn
-                    );
-                } finally {
-                    parquetRewriteIndexer.clear();
-                    path.trimTo(partitionDirLen);
-                }
-            }
-        } finally {
-            Misc.free(parquetRewriteRowGroupBuffers);
-            Misc.free(parquetDecoder);
-            if (parquetAddr != 0) {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            final long parquetMetaAddr = parquetMetaReader.getAddr();
-            final long parquetMetaSize = parquetMetaReader.getFileSize();
-            parquetMetaReader.clear();
-            if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
-            path.trimTo(pathSize);
-        }
-        // After the mappings above are released: the publish reopens the _pm
-        // through the same reader, and appends to the file the decoder was
-        // reading.
-        publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
     }
 
     private void rebuildColumnIndex(
@@ -14151,6 +14030,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean hasPostingIndexedSymbolColumn() {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void restoreIndexFilesAfterParquetToNative(
             long partitionTimestamp,
             long parquetNameTxn,
@@ -14162,12 +14051,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Which columns this partition carries in the parquet form, read off its
         // own _pm rather than inferred from the configured format. The partition
         // is still parquet in the _txn here: setPartitionNative runs after this.
+        //
+        // Skipped outright when the table has no POSTING-indexed symbol column,
+        // because only such a column can carry a parquet-form index and the read
+        // throws on an unreadable _pm. Without the guard, CONVERT PARTITION TO
+        // NATIVE would start failing on tables that have nothing to do with this
+        // feature.
         final IntList parquetIndexColumnIds = new IntList();
-        readPublishedParquetIndexColumnIds(
-                srcDirLen,
-                txWriter.getPartitionParquetFileSize(txWriter.getPartitionIndex(partitionTimestamp)),
-                parquetIndexColumnIds
-        );
+        if (hasPostingIndexedSymbolColumn()) {
+            readPublishedParquetIndexColumnIds(
+                    srcDirLen,
+                    txWriter.getPartitionParquetFileSize(txWriter.getPartitionIndex(partitionTimestamp)),
+                    parquetIndexColumnIds
+            );
+        }
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -14415,6 +14312,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
+    }
+
+    private boolean deferredParquetFormPostingSealPurgesPending() {
+        synchronized (parquetSealPurgeLock) {
+            for (int i = 0, n = deferredPostingSealPurges.size(); i < n; i++) {
+                if (deferredPostingSealPurges.getQuick(i).getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void rollbackDeferredPostingSealPurges() {

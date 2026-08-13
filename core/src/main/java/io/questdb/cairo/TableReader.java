@@ -906,6 +906,18 @@ public class TableReader implements Closeable, SymbolTableSource {
      * throw. Only an unopenable (row-less) partition returns without deciding:
      * it has no index files to read either way.
      * <p>
+     * A remotely-served partition cannot be turned into an error by those
+     * throws, checked rather than assumed. {@code openPartition0}'s parquet
+     * branch already requires the LOCAL {@code _pm} to exist before it opens
+     * anything, and {@code openParquetMetadata} already throws "failed to
+     * resolve footer" for a footer that does not resolve -- both before this
+     * probe can run and for remote and local partitions alike. What remote
+     * changes is only the {@code data.parquet}: a missing one is tolerated by
+     * stubbing {@code parquetPartitions} with {@code NullMemoryCMR}, and this
+     * probe does not touch it. So any partition that reaches here with a mapped
+     * {@code _pm} has already had its footer resolved, and one whose {@code _pm}
+     * is missing or corrupt failed to open earlier with the same verdict.
+     * <p>
      * Reachable only for a POSTING-indexed column of a parquet partition, so
      * the common path costs two comparisons. Remove this when the parquet-form
      * reader lands; until then it is the point where the writer's form and the
