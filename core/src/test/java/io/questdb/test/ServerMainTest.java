@@ -704,7 +704,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.posting.index.auto.include.timestamp\tQDB_CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.indexer.spill.bytes.max\tQDB_CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.parquet.partition.format\tQDB_CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT\tnative\tdefault\tfalse\tfalse\n" +
-                                    "cairo.posting.index.parquet.payload\tQDB_CAIRO_POSTING_INDEX_PARQUET_PAYLOAD\trow_per_posting\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.row.id.encoding\tQDB_CAIRO_POSTING_INDEX_ROW_ID_ENCODING\tadaptive\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.adaptive.delta.at.or.above\tQDB_CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE\t2000\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.seal.gen.threshold\tQDB_CAIRO_POSTING_SEAL_GEN_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +

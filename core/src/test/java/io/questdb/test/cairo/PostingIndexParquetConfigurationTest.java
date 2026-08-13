@@ -35,7 +35,11 @@ import org.junit.Test;
  * {@code CairoTestConfiguration extends CairoConfigurationWrapper}. A getter the
  * wrapper does not forward silently resolves to the {@code CairoConfiguration}
  * interface default instead, so setting the property has no effect and any test
- * built on it is vacuous. These tests pin the forwarding.
+ * built on it is vacuous. This test pins the forwarding.
+ * <p>
+ * It covered a second property, {@code cairo.posting.index.parquet.payload}, until that
+ * property was removed for having no production consumer. Reintroduce both together when
+ * the row-per-key payload arm gains a writer.
  */
 public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
 
@@ -45,15 +49,6 @@ public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> Assert.assertEquals(
                 PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
                 configuration.getPostingIndexParquetPartitionFormat()
-        ));
-    }
-
-    @Test
-    public void testParquetPayloadOverrideReachesWrappedConfiguration() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PAYLOAD, "row_per_key");
-        assertMemoryLeak(() -> Assert.assertEquals(
-                PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_KEY,
-                configuration.getPostingIndexParquetPayload()
         ));
     }
 }

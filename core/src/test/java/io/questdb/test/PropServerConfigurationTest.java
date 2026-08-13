@@ -1892,25 +1892,16 @@ public class PropServerConfigurationTest {
                 PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
                 configuration.getCairoConfiguration().getPostingIndexParquetPartitionFormat()
         );
-        Assert.assertEquals(
-                PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_POSTING,
-                configuration.getCairoConfiguration().getPostingIndexParquetPayload()
-        );
     }
 
     @Test
     public void testPostingIndexParquetFormatOverrides() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.posting.index.parquet.partition.format", "parquet");
-        properties.setProperty("cairo.posting.index.parquet.payload", "row_per_key");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(
                 PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
                 configuration.getCairoConfiguration().getPostingIndexParquetPartitionFormat()
-        );
-        Assert.assertEquals(
-                PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_KEY,
-                configuration.getCairoConfiguration().getPostingIndexParquetPayload()
         );
     }
 
@@ -1918,15 +1909,10 @@ public class PropServerConfigurationTest {
     public void testPostingIndexParquetFormatUnknownValueFallsBackToDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.posting.index.parquet.partition.format", "banana");
-        properties.setProperty("cairo.posting.index.parquet.payload", "banana");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(
                 PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
                 configuration.getCairoConfiguration().getPostingIndexParquetPartitionFormat()
-        );
-        Assert.assertEquals(
-                PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_POSTING,
-                configuration.getCairoConfiguration().getPostingIndexParquetPayload()
         );
     }
 

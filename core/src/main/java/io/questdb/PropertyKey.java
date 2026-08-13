@@ -107,7 +107,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP("cairo.posting.index.auto.include.timestamp"),
     CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX("cairo.posting.index.indexer.spill.bytes.max"),
     CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT("cairo.posting.index.parquet.partition.format"),
-    CAIRO_POSTING_INDEX_PARQUET_PAYLOAD("cairo.posting.index.parquet.payload"),
     CAIRO_POSTING_INDEX_ROW_ID_ENCODING("cairo.posting.index.row.id.encoding"),
     CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY("cairo.page.frame.reduce.queue.capacity"),
     CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY("cairo.page.frame.rowid.list.capacity"),

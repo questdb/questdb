@@ -448,7 +448,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int postingIndexAdaptiveDeltaAtOrAbove;
     private final boolean postingIndexAutoIncludeTimestamp;
     private final byte postingIndexParquetPartitionFormat;
-    private final byte postingIndexParquetPayload;
     private final byte postingIndexRowIdEncoding;
     private final long postingIndexerSpillBytesMax;
     private final int postingSealGenThreshold;
@@ -1701,10 +1700,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
                 case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
                 default -> PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
-            };
-            this.postingIndexParquetPayload = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PAYLOAD, "row_per_posting")) {
-                case "row_per_key" -> PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_KEY;
-                default -> PostingIndexUtils.PARQUET_INDEX_PAYLOAD_ROW_PER_POSTING;
             };
             this.postingIndexAdaptiveDeltaAtOrAbove = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE, 2000);
             this.postingIndexerSpillBytesMax = getLongSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
@@ -4624,11 +4619,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public byte getPostingIndexParquetPartitionFormat() {
             return postingIndexParquetPartitionFormat;
-        }
-
-        @Override
-        public byte getPostingIndexParquetPayload() {
-            return postingIndexParquetPayload;
         }
 
         @Override

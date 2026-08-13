@@ -224,8 +224,6 @@ public final class PostingIndexUtils {
     public static final int PAGE_SIZE = 4096;
     public static final byte PARQUET_INDEX_FORMAT_NATIVE = 0;
     public static final byte PARQUET_INDEX_FORMAT_PARQUET = 1;
-    public static final byte PARQUET_INDEX_PAYLOAD_ROW_PER_KEY = 1;
-    public static final byte PARQUET_INDEX_PAYLOAD_ROW_PER_POSTING = 0;
     public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;

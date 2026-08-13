@@ -915,11 +915,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public byte getPostingIndexParquetPayload() {
-        return getDelegate().getPostingIndexParquetPayload();
-    }
-
-    @Override
     public long getPostingIndexerSpillBytesMax() {
         return getDelegate().getPostingIndexerSpillBytesMax();
     }
