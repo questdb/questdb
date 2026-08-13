@@ -120,6 +120,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private static final String RESIDUE_TABLE_NAME = "t_pidx_residue";
     private static final String ROLLBACK_TABLE_NAME = "t_pidx_rollback";
     private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
+    private static final String DROP_COLUMN_TABLE_NAME = "t_pidx_dropcol";
     private static final String SWITCH_TABLE_NAME = "t_pidx_switch";
     private static final String TABLE_NAME = "t_pidx";
     // Two-symbol fixtures below. Rows are only ever counted per key, so a small
@@ -2480,6 +2481,161 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Why the cache is keyed by column id inside a partition rather than laid
+     * out densely over the {@code (partition, column)} grid that {@code columns},
+     * {@code columnTops} and {@code indexes} use.
+     * <p>
+     * {@code ALTER TABLE ... DROP COLUMN} shifts every later READER column index
+     * down. It does not shift writer indexes: QuestDB keeps the dropped column's
+     * {@code _meta} slot with a negated type, so the ids the {@code _pm} records
+     * -- {@code TableWriter} stages the token with {@code getWriterIndex()} and
+     * retires with {@code writerIndex} -- are exactly the ids that survive.
+     * A dense per-reader-index cache is shifted by nothing:
+     * {@code reshuffleColumns} moves {@code columns} / {@code columnTops} /
+     * {@code indexes} and never touches {@code parquetMetadataPartitions}, so
+     * every entry above the drop would re-point at its neighbour's -- a silently
+     * wrong {@code index_txn}, or a silent "no covering index" for a column that
+     * has one.
+     * <p>
+     * So this drops {@code doomed}, which sits between the two indexed columns,
+     * and asserts each survivor still resolves ITS OWN token. Under a dense
+     * layout {@code sym2} would move from reader index 3 to 2 and read
+     * {@code doomed}'s empty slot.
+     * <p>
+     * <b>The masking question, answered in the assertions below.</b> A dense
+     * layout is only observably wrong if the partition is still open, with the
+     * cache it had before the drop, when the shifted index is used to read it:
+     * a close rebuilds either layout correctly. {@code reconcileOpenPartitions0}
+     * closes every open parquet partition it visits, so the question is whether
+     * the drop reaches it. It does not for this shape -- the fast path in
+     * {@code reconcileOpenPartitions} fires whenever the partition table version
+     * and the column version are both unchanged, and it examines only the LAST
+     * partition, which the indexed one is not. That fact is asserted rather than
+     * described, so the day it changes this test says so.
+     */
+    @Test
+    public void testDroppingAColumnBeforeAnIndexedOneKeepsEveryTokenWithItsOwnColumn() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createTwoIndexedColumnsTable();
+            try (TableReader reader = engine.getReader(engine.verifyTableName(DROP_COLUMN_TABLE_NAME))) {
+                final int symIndexBefore = reader.getMetadata().getColumnIndex("sym");
+                final int sym2IndexBefore = reader.getMetadata().getColumnIndex("sym2");
+                final int symWriterIndex = reader.getMetadata().getWriterIndex(symIndexBefore);
+                final int sym2WriterIndex = reader.getMetadata().getWriterIndex(sym2IndexBefore);
+                Assert.assertTrue(reader.openPartition(0) > 0);
+
+                final long symIndexTxn = reader.getPartitionIndexTxn(0, symIndexBefore);
+                final long sym2IndexTxn = reader.getPartitionIndexTxn(0, sym2IndexBefore);
+                // Fixture guards: both columns must publish a token, and the two
+                // tokens must differ, or an entry read off the wrong column is
+                // indistinguishable from the right one.
+                Assert.assertEquals(
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, symIndexBefore)
+                );
+                Assert.assertEquals(
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, sym2IndexBefore)
+                );
+                Assert.assertNotEquals(
+                        "the fixture must seal the two columns under different index txns",
+                        symIndexTxn,
+                        sym2IndexTxn
+                );
+
+                final long columnVersionBefore = reader.getTxFile().getColumnVersion();
+                final long partitionTableVersionBefore = reader.getTxFile().getPartitionTableVersion();
+
+                execute("ALTER TABLE " + DROP_COLUMN_TABLE_NAME + " DROP COLUMN doomed");
+                drainWalQueue();
+                Assert.assertTrue("the reader must have something to reload", reader.reload());
+
+                // Premise 1: the reader indexes really did shift, and the writer
+                // indexes really did not. Without both, nothing distinguishes the
+                // two layouts.
+                final int symIndexAfter = reader.getMetadata().getColumnIndex("sym");
+                final int sym2IndexAfter = reader.getMetadata().getColumnIndex("sym2");
+                Assert.assertEquals(
+                        "premise: sym sits before the drop, so its reader index must NOT move",
+                        symIndexBefore,
+                        symIndexAfter
+                );
+                Assert.assertEquals(
+                        "premise: sym2 sits after the drop, so its reader index must shift down"
+                                + " -- that shift is the whole hazard [before=" + sym2IndexBefore + ']',
+                        sym2IndexBefore - 1,
+                        sym2IndexAfter
+                );
+                Assert.assertEquals(
+                        "premise: the writer index -- the id the _pm records -- must survive the drop",
+                        sym2WriterIndex,
+                        reader.getMetadata().getWriterIndex(sym2IndexAfter)
+                );
+                Assert.assertEquals(symWriterIndex, reader.getMetadata().getWriterIndex(symIndexAfter));
+
+                // Premise 2: the partition is still open, with the cache and the
+                // mapping it had before the drop. A close would rebuild either
+                // layout from the _pm and mask the difference outright, which is
+                // what makes this the negative control for the keying choice
+                // rather than a test that passes for the wrong reason.
+                Assert.assertEquals(
+                        "premise: the drop must not move the column version, or reconcileOpenPartitions"
+                                + " takes its slow path and closes the partition",
+                        columnVersionBefore,
+                        reader.getTxFile().getColumnVersion()
+                );
+                Assert.assertEquals(
+                        "premise: the drop must not move the partition table version, for the same reason",
+                        partitionTableVersionBefore,
+                        reader.getTxFile().getPartitionTableVersion()
+                );
+                Assert.assertTrue(
+                        "premise: the drop must leave the partition open, or a dense layout"
+                                + " would be rebuilt by the reopen and the two layouts are"
+                                + " indistinguishable through production",
+                        reader.getPartitionRowCount(0) > -1
+                );
+
+                // The verdict. A dense (partition, column) cache answers these
+                // with doomed's slot for sym2.
+                Assert.assertEquals(
+                        "sym2 must still resolve its own token after the shift",
+                        sym2IndexTxn,
+                        reader.getPartitionIndexTxn(0, sym2IndexAfter)
+                );
+                Assert.assertEquals(
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, sym2IndexAfter)
+                );
+                Assert.assertEquals(
+                        "sym must still resolve its own token after the shift",
+                        symIndexTxn,
+                        reader.getPartitionIndexTxn(0, symIndexAfter)
+                );
+
+                // And on the production path, where the refusal names the index
+                // txn it decided on.
+                try {
+                    reader.getIndexReader(0, sym2IndexAfter, IndexReader.DIR_FORWARD);
+                    Assert.fail("the parquet-form posting index must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "column=sym2");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + sym2IndexTxn);
+                }
+                try {
+                    reader.getIndexReader(0, symIndexAfter, IndexReader.DIR_FORWARD);
+                    Assert.fail("the parquet-form posting index must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "column=sym,");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + symIndexTxn);
+                }
+            }
+        });
+    }
+
     @Test
     public void testPostingIndexReadIsServedWhileTheNativeFormatIsSelected() throws Exception {
         assertMemoryLeak(() -> {
@@ -3136,6 +3292,37 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 "postings\tdistinctRowIds\tminRowId\tmaxRowId\n"
                         + partitionRowCount + '\t' + partitionRowCount + "\t0\t" + (partitionRowCount - 1) + '\n'
         );
+    }
+
+    /**
+     * A parquet partition whose {@code _pm} publishes a covering-index token for
+     * TWO columns, sealed in separate passes so the two tokens name different
+     * index txns, with an unindexed {@code doomed} column between them: writer
+     * ids ts 0, sym 1, doomed 2, sym2 3.
+     */
+    private void createTwoIndexedColumnsTable() throws Exception {
+        execute("CREATE TABLE " + DROP_COLUMN_TABLE_NAME + " (" +
+                "ts TIMESTAMP, sym SYMBOL, doomed SYMBOL, sym2 SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + DROP_COLUMN_TABLE_NAME + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                " 'd' || (x % 4)," +
+                " 'o' || (x % 4)," +
+                " x::DOUBLE," +
+                " x" +
+                " FROM long_sequence(" + TWO_SYMBOL_ROW_COUNT + ")");
+        drainWalQueue();
+        // A later partition, so the indexed one is not the active partition.
+        execute("INSERT INTO " + DROP_COLUMN_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 's0', 'd0', 'o0', 1.0, 1)");
+        drainWalQueue();
+        execute("ALTER TABLE " + DROP_COLUMN_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        execute("ALTER TABLE " + DROP_COLUMN_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+        drainWalQueue();
+        execute("ALTER TABLE " + DROP_COLUMN_TABLE_NAME + " ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (qty)");
+        drainWalQueue();
+        engine.releaseInactive();
     }
 
     /**
