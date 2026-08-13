@@ -2270,10 +2270,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // In this order the crash window leaves the mirror state: the column
             // is committed as not indexed while some partitions still carry a
             // token for it. No query is wrong -- the probe returns on the first
-            // comparison and the scan does not use an index at all -- and the
-            // stale entry is reclaimed by the next publish for that partition,
-            // which drops any token naming a column that is no longer
-            // POSTING-indexed.
+            // comparison and the scan does not use an index at all.
+            //
+            // That residue is PERMANENT, not self-healing. An earlier note here
+            // claimed the next publish for the partition drops any token naming
+            // a column that is no longer POSTING-indexed. publishParquetIndexTokens'
+            // merge loop has three outcomes -- retired (only for ids explicitly
+            // staged in parquetIndexRetiredColumnIds), copied forward, resealed
+            // -- and consults metadata in none of them. So the token is restated
+            // by every later footer for that partition and the pidx pair it
+            // names stays on disk until a later DROP INDEX on that column
+            // retires it for real. A leak, and what makes the reseal
+            // supersession branch in that merge reachable.
+            //
+            // Reclaiming it there by asking metadata whether the column is still
+            // indexed would be wrong as this code stands: addIndex flips
+            // columnMetadata.setIndexType only AFTER writeIndex returns, so every
+            // publish made during an ADD INDEX runs while metadata still reports
+            // the column as not indexed. Any such rule needs a signal that is
+            // not the live metadata flag.
             if (hadPostingIndex && retireParquetIndexTokens(postingWriterIndex)) {
                 commitTxWriter();
             }
