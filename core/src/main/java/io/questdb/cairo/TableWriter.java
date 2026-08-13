@@ -3505,8 +3505,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i++) {
                         final long publishedTimestamp = parquetIndexPublishedPartitions.getQuick(i);
                         // Re-resolved against the reloaded _txn rather than taken
-                        // from the recorded pair: the rollback may have taken the
-                        // partition's name txn back, or the partition away.
+                        // from a recorded name txn: the list holds the timestamp
+                        // alone, and the rollback may have taken the partition's
+                        // name txn back, or the partition away.
                         final long publishedNameTxn =
                                 txWriter.getPartitionNameTxnByPartitionTimestamp(publishedTimestamp, Long.MIN_VALUE);
                         if (publishedNameTxn != Long.MIN_VALUE) {
