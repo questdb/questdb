@@ -15567,7 +15567,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // (0,0,0) contract). Deleting on that reading would unlink a pair the
         // footer a reader DOES resolve still names. Re-read across the whole
         // chain before licensing the unlink.
-        readPublishedParquetIndexTokens(plen, parquetSweepScratchTokens, true);
+        // Passing the candidate lets the walk stop at the first footer that
+        // answers the question, instead of always enumerating to the end of the
+        // chain. That matters because the state that arms this escalation is
+        // not transient: a pair the O3 in-place update's (0,0,0) dropped from
+        // the covering section, and which no later publish supersedes, survives
+        // every sweep, so the escalation fires on every subsequent seal batch on
+        // the partition while the chain grows two footers per commit.
+        readPublishedParquetIndexTokens(plen, parquetSweepScratchTokens, true, columnId, indexTxn);
         return parquetSweepTokensResolved && isAboveEveryPublishedIndexTxn(columnId, indexTxn);
     }
 
@@ -15605,6 +15612,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * two must not be conflated.
      */
     private void readPublishedParquetIndexTokens(int plen, LongList out, boolean walkChain) {
+        readPublishedParquetIndexTokens(plen, out, walkChain, -1, 0);
+    }
+
+    /**
+     * As {@link #readPublishedParquetIndexTokens(int, LongList, boolean)}, plus
+     * the one question an escalating caller asks of the union: does any footer
+     * name {@code stopColumnId} with an index txn at or above
+     * {@code stopIndexTxn}? Once the answer is yes it cannot become no -- the
+     * remaining footers can only add entries -- so the walk stops there.
+     * <p>
+     * That is a cost bound, not a semantic change: the caller's verdict is
+     * identical either way. What it is NOT allowed to do is leave
+     * {@link #parquetSweepTokensFullChain} set, because a walk stopped early
+     * carries a PREFIX of the union, and that field is the memo on the strength
+     * of which a later candidate for a DIFFERENT column skips its own walk.
+     * <p>
+     * Pass {@code stopColumnId < 0} to enumerate unconditionally. Column ids are
+     * writer indices, so no real column matches.
+     */
+    private void readPublishedParquetIndexTokens(int plen, LongList out, boolean walkChain, long stopColumnId, long stopIndexTxn) {
         out.clear();
         parquetSweepTokensResolved = false;
         parquetSweepTokensFullChain = false;
@@ -15617,14 +15644,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             }
             fileSize = parquetMetaReader.getFileSize();
+            boolean decided = false;
             do {
                 for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
-                    out.add(parquetMetaReader.getCoveringIndexColumnId(i));
-                    out.add(parquetMetaReader.getCoveringIndexTxn(i));
+                    final long tokenColumnId = parquetMetaReader.getCoveringIndexColumnId(i);
+                    final long tokenIndexTxn = parquetMetaReader.getCoveringIndexTxn(i);
+                    out.add(tokenColumnId);
+                    out.add(tokenIndexTxn);
+                    decided |= tokenColumnId == stopColumnId && stopIndexTxn <= tokenIndexTxn;
                 }
-            } while (walkChain && parquetMetaReader.resolvePrevFooter());
+            } while (!decided && walkChain && parquetMetaReader.resolvePrevFooter());
             parquetSweepTokensResolved = true;
-            parquetSweepTokensFullChain = walkChain;
+            parquetSweepTokensFullChain = walkChain && !decided;
         } catch (CairoException e) {
             out.clear();
             parquetSweepTokensResolved = false;

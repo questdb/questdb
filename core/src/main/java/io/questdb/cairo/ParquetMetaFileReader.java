@@ -173,6 +173,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // true after the verified parse on the first resolveFooter so
     // subsequent resolves skip re-verification. Reset by clear().
     private boolean checksumVerified;
+    // How many CRC32 verifications this reader has run against the currently
+    // bound mapping. One verification hashes the whole _pm prefix up to the
+    // footer verified, so this count -- not the footer count -- is the cost
+    // model of a resolvePrevFooter enumeration: verifying once per step makes
+    // a walk over N footers hash O(N^2) bytes. It must stay at one however
+    // long the chain is; resolvePrevFooter carries the argument for why one
+    // suffices. Reset by clear().
+    private int checksumVerifications;
     private int columnCount;
     // Lazily built because most readers never resolve stable ids. Reused across
     // bindings so repeated sidecar scans do not allocate a map per partition.
@@ -344,10 +352,23 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.isColumnIdToIndexBuilt = false;
         this.rowGroupCount = 0;
         this.checksumVerified = false;
+        this.checksumVerifications = 0;
     }
 
     public long getAddr() {
         return addr;
+    }
+
+    /**
+     * How many CRC32 verifications this reader has run since it was bound to
+     * its current mapping. Exposed so a test can put a ceiling on the cost of a
+     * {@link #resolvePrevFooter()} enumeration without timing it: each
+     * verification hashes the whole {@code _pm} prefix up to the footer it
+     * verifies, so one per step is a quadratic walk and one per walk is not.
+     */
+    @TestOnly
+    public int getChecksumVerifications() {
+        return checksumVerifications;
     }
 
     public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
@@ -830,10 +851,21 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * this one. Callers that must establish "no footer, live or superseded, names
      * X" enumerate rather than resolve.
      * <p>
-     * Each step re-binds the native handle to the newly selected footer and
-     * re-verifies its checksum, so accessors that read through the handle
-     * (the covering-index section among them) describe the footer this call
-     * settled on and not the one before it.
+     * Each step re-binds the native handle to the newly selected footer, so
+     * accessors that read through the handle (the covering-index section among
+     * them) describe the footer this call settled on and not the one before it.
+     * <p>
+     * <b>It does not re-verify the checksum, and must not.</b> A footer's CRC
+     * covers {@code [HEADER_CRC_AREA_OFF, its own crc field)} -- the whole
+     * {@code _pm} prefix beneath it, not just its own bytes -- and the bound
+     * below puts each predecessor's last byte at or before the byte its
+     * successor starts at. So the footer the enumeration entered at, which was
+     * verified, already covers every byte of every footer the walk can reach,
+     * by induction over the steps. Verifying per step re-hashes that prefix
+     * once per footer, which is what made a walk over {@code N} footers hash
+     * {@code N^2 * F / 2} bytes: measured at 96.9 ms for an 802-footer,
+     * 177 KB {@code _pm}, on a commit path. {@link #getChecksumVerifications()}
+     * is the standing ceiling on it.
      *
      * @return false at the end of the chain, and ONLY at the end of the chain
      * @throws CairoException if the link is malformed, or if the next footer's
@@ -873,6 +905,11 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put(']');
         }
         resetResolvedFooter();
+        // Restored across the reset, which clears it so a re-resolve out of the
+        // blue verifies. Here the verification obligation is already discharged
+        // by the footer this step is leaving -- see the javadoc -- so the reset
+        // only has to drop the native handle bound to that footer.
+        checksumVerified = true;
         return resolveFooterAt(prevSize);
     }
 
@@ -1026,6 +1063,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             nativeReaderPtr = createNativeReader(addr, currentSize, true);
             nativeReaderFileSize = currentSize;
             checksumVerified = true;
+            // One verification hashes the whole prefix up to currentSize, so
+            // this counter is the walk's cost, not its length.
+            checksumVerifications++;
         }
 
         // Validate into locals and assign fields only at the end, so a failure

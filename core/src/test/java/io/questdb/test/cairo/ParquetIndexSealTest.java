@@ -113,12 +113,110 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // Writer index of the second SYMBOL column in the two-symbol fixture below:
     // ts 0, sym 1, sym2 2.
     private static final int SYM2_COLUMN_ID = 2;
+    private static final String CHAIN_COST_TABLE_NAME = "t_pidx_chain_cost";
     private static final String CHAIN_TABLE_NAME = "t_pidx_chain";
     private static final String RESIDUE_TABLE_NAME = "t_pidx_residue";
     private static final String ROLLBACK_TABLE_NAME = "t_pidx_rollback";
     private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
     private static final String SWITCH_TABLE_NAME = "t_pidx_switch";
     private static final String TABLE_NAME = "t_pidx";
+
+    /**
+     * W4-I1: the cost of a {@code _pm} chain walk must not grow with the chain.
+     * <p>
+     * Every {@code resolvePrevFooter} step used to re-verify the footer's CRC,
+     * and a footer's CRC covers the whole {@code _pm} prefix beneath it, so a
+     * walk over {@code N} footers hashed {@code N^2 * F / 2} bytes. Measured on
+     * this fixture before the fix: 202 footers / 6.5 ms, 402 / 25.1 ms, 602 /
+     * 55.3 ms, 802 / 96.9 ms -- a clean quadratic, paid inside
+     * {@code beginParquetIndexTokenBatch} on the O3 commit path, and paid on
+     * EVERY commit once a pair the O3 in-place update dropped from the covering
+     * section arms the escalation permanently.
+     * <p>
+     * Asserted as a ceiling on verifications rather than as a stopwatch: one
+     * verification hashes one prefix, so "one per walk" and "one per footer" is
+     * exactly the difference between linear and quadratic, and the count does
+     * not vary with the machine.
+     * <p>
+     * The O3 rewrite trigger is turned off for the duration, because it is the
+     * only thing that resets the chain today and this test is about what happens
+     * when it does not fire. That is not a synthetic state: the trigger is dead
+     * bytes in {@code data.parquet}, and a late append into a non-last parquet
+     * partition adds only the old parquet footer plus a small tail row group per
+     * commit.
+     */
+    @Test
+    public void testAChainWalkVerifiesOneChecksumHoweverLongTheChainIs() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        // Four row groups over 20k rows: a single-row-group parquet always takes
+        // the O3 REWRITE branch, which lands in a new directory with a fresh _pm.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, 1000000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1000000000000L);
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE " + CHAIN_COST_TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO " + CHAIN_COST_TABLE_NAME + " SELECT" +
+                    " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(20000)");
+            // A later partition, so the indexed one is not the active partition:
+            // a non-WAL table cannot hold a parquet active partition.
+            execute("INSERT INTO " + CHAIN_COST_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 's0', 1.0, 1)");
+            execute("ALTER TABLE " + CHAIN_COST_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            execute("ALTER TABLE " + CHAIN_COST_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            engine.releaseInactive();
+
+            // Each O3 commit appends two footers: the in-place update's, which
+            // drops the covering section, and the reseal publish's.
+            for (int i = 1; i <= 100; i++) {
+                execute("INSERT INTO " + CHAIN_COST_TABLE_NAME + " VALUES ('" + INDEXED_PARTITION
+                        + "T00:00:00.03" + (i < 10 ? "000" : i < 100 ? "00" : "0") + i
+                        + "Z', 's0', 1.0, 1)");
+            }
+            engine.releaseInactive();
+
+            final FilesFacade facade = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                final long addr = ParquetMetaFileReader.openAndMapRO(
+                        facade,
+                        partitionPath(path, CHAIN_COST_TABLE_NAME).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                        reader
+                );
+                Assert.assertTrue("_pm must be readable", addr != 0);
+                final long fileSize = reader.getFileSize();
+                try {
+                    int footers = 0;
+                    Assert.assertTrue(reader.resolveLastFooter());
+                    do {
+                        footers++;
+                    } while (reader.resolvePrevFooter());
+                    Assert.assertTrue(
+                            "premise: the chain must actually be long, or a ceiling on the walk's cost"
+                                    + " proves nothing [footers=" + footers + ']',
+                            footers >= 150
+                    );
+                    Assert.assertEquals(
+                            "a chain walk must verify exactly one checksum: each verification hashes the"
+                                    + " whole _pm prefix up to its footer, so one per step makes the walk"
+                                    + " quadratic in the chain length, on a commit path, with nothing but"
+                                    + " the O3 rewrite trigger bounding that length [footers=" + footers
+                                    + ", pmBytes=" + fileSize + ']',
+                            1,
+                            reader.getChecksumVerifications()
+                    );
+                } finally {
+                    reader.clear();
+                    facade.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
+            }
+        });
+    }
 
     @Test
     public void testSwitchToParquetCopiesTheParquetMetaRatherThanSharingItsInode() throws Exception {
