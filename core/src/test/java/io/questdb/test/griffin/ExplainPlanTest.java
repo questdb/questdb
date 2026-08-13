@@ -9229,13 +9229,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            UnionSymbolCast
+                              functions: [i,s::symbol]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                         """);
     }
 
@@ -9245,13 +9247,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            Union
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            UnionSymbolCast
+                              functions: [i,s::symbol]
+                                Union
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                         """);
     }
 

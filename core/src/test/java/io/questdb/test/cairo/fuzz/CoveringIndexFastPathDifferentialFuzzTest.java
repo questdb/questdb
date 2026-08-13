@@ -195,6 +195,14 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);
+        // assertTablesIdentical() sorts the whole table (ORDER BY ts, sym, value) through
+        // EncodedSort, which charges 32 bytes per row against these two caps combined. The
+        // corpus can retain up to 79 rounds x 8 txns x 4049 rows = ~2.56M rows when truncates
+        // land early or never, or ~82MB of sort entries - the test-default combined cap of
+        // ~22.4MB overflows at ~699k rows. 128MB each (256MB combined) covers the worst case
+        // three times over; the sort commits memory as rows arrive, so typical runs stay small.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 134_217_728);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 134_217_728);
 
         final int symbolCardinality = 3 + rnd.nextInt(14); // 3..16
         final List<Op> ops = precomputeStream(rnd, symbolCardinality);

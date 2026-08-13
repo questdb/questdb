@@ -44,9 +44,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1815,6 +1817,51 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("LONG", target, values);
             }
+        });
+    }
+
+    @Test
+    public void testMalformedVarcharToFixedIsNullInLazyAndO3Conversions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (val VARCHAR, uid VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableWriter writer = getWriter("pt")) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:02.000000Z"));
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.putVarchar(1, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+
+                row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
+                row.putVarchar(0, new Utf8String("3"));
+                row.putVarchar(1, new Utf8String("00000000-0000-0000-0000-000000000003"));
+                row.append();
+                writer.commit();
+            }
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            // The UUID target guards the null that a malformed UTF-8 decode yields:
+            // Uuid.checkDashesAndLength() dereferences it and throws NPE, which the
+            // NumericException catch does not cover. The INT target alone does not
+            // exercise this - Numbers.parseInt() rejects null with NumericException.
+            execute("ALTER TABLE pt ALTER COLUMN uid TYPE UUID");
+
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tuid
+                            null\t
+                            """);
+
+            execute("INSERT INTO pt VALUES (2, '00000000-0000-0000-0000-000000000002', '2024-01-01T00:00:01.000000Z')");
+
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tuid
+                            2\t00000000-0000-0000-0000-000000000002
+                            null\t
+                            """);
         });
     }
 

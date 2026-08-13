@@ -611,11 +611,9 @@ public class ColumnTypeConverter {
 
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-
-                if (utf8 != null) {
-                    sink.clear();
-                    sink.put(utf8);
-                    StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
+                CharSequence value = utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null;
+                if (value != null) {
+                    StringTypeDriver.appendValue(dstFixMem, dstVarMem, value);
                 } else {
                     StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
                 }
@@ -645,16 +643,8 @@ public class ColumnTypeConverter {
             dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-
-                if (utf8 != null) {
-                    sink.clear();
-                    sink.put(utf8);
-                    int symbol = symbolMapWriterLite.resolveSymbol(sink);
-                    dstFixMem.putInt(symbol);
-                } else {
-                    int symbol = symbolMapWriterLite.resolveSymbol(null);
-                    dstFixMem.putInt(symbol);
-                }
+                CharSequence value = utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null;
+                dstFixMem.putInt(symbolMapWriterLite.resolveSymbol(value));
             }
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
         } finally {

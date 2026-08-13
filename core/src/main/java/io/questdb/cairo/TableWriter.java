@@ -124,6 +124,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -233,6 +234,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
     private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
+    private final DirectUtf8String directUtf8String = new DirectUtf8String();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
@@ -4241,7 +4243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ParquetColumnTypeConverter.convertVarColumnToFixed(
                             effectiveSrcType, columnType, srcDataPtr, srcAuxPtr,
                             (int) rowGroupRowCount, dstPtr,
-                            utf8Sink, utf16Sink,
+                            directUtf8String, utf16Sink,
                             coveringDecimal64, coveringDecimal128, coveringDecimal256);
                 } else {
                     dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
@@ -11853,7 +11855,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         effectiveSrcType, tableColumnType,
                                         srcDataPtr, srcAuxPtr,
                                         (int) rowGroupRowCount, fixBuf,
-                                        utf8Sink, utf16Sink,
+                                        directUtf8String, utf16Sink,
                                         d64, d128, d256
                                 );
                                 appendBuffer(dstFixFd, fixBuf, fixSize);
@@ -15532,22 +15534,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
         /**
-         * Writes UTF8-encoded string to WAL. As the name of the function suggests the storage format is
-         * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
+         * Writes a direct UTF8-encoded string to a UTF16 STRING column.
          *
          * @param columnIndex index of the column we are writing to
-         * @param value       UTF8 bytes represented as CharSequence interface.
-         *                    On this interface, getChar() returns a byte, not complete character.
+         * @param value       direct UTF8 sequence to write
+         * @throws CairoException if the value contains malformed UTF8; storing null instead would
+         *                        discard what the caller sent and still report success
          */
         void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
 
         /**
-         * Writes UTF8-encoded string. Accepts any Utf8Sequence implementation.
-         * For DirectUtf8Sequence, delegates to the more efficient putStrUtf8(int, DirectUtf8Sequence).
-         * For other implementations (e.g., Utf8StringSink), converts to UTF-16 and writes.
+         * Writes a UTF8-encoded string to a UTF16 STRING column.
          *
          * @param columnIndex index of the column we are writing to
          * @param value       UTF8 sequence to write
+         * @throws CairoException if the value contains malformed UTF8; storing null instead would
+         *                        discard what the caller sent and still report success
          */
         void putStrUtf8(int columnIndex, Utf8Sequence value);
 
@@ -16080,21 +16082,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStrUtf8(int columnIndex, Utf8Sequence value) {
-            if (value == null) {
-                putStr(columnIndex, null);
+            if (value instanceof DirectUtf8Sequence directValue) {
+                putStrUtf8(columnIndex, directValue);
                 return;
             }
-            if (value instanceof DirectUtf8Sequence ds) {
-                putStrUtf8(columnIndex, ds);
-                return;
-            }
-            if (value.isAscii()) {
-                putStr(columnIndex, value.asAsciiCharSequence());
-            } else {
-                utf16Sink.clear();
-                Utf8s.utf8ToUtf16(value, utf16Sink);
-                putStr(columnIndex, utf16Sink);
-            }
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrThrow(value, utf16Sink) : null);
         }
 
         @Override

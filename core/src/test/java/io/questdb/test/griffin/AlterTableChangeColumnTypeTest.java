@@ -494,6 +494,30 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeVarcharToIntRejectsMalformedUtf8() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putVarchar(1, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE INT");
+
+            assertQuery("SELECT col FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            col
+                            null
+                            """);
+        });
+    }
+
+    @Test
     public void testChangeDoubleToDecimalNonWal() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
@@ -715,6 +739,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             """);
 
             execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeVarcharToStringAndSymbolRejectsMalformedUtf8() throws Exception {
+        assertMemoryLeak(() -> {
+            assertMalformedVarcharConversionIsNull("STRING");
+            assertMalformedVarcharConversionIsNull("SYMBOL");
         });
     }
 
@@ -2629,6 +2661,28 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
         });
+    }
+
+    private void assertMalformedVarcharConversionIsNull(String targetType) throws Exception {
+        execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+
+        try (TableWriter writer = getWriter("x")) {
+            TableWriter.Row row = writer.newRow(0);
+            row.putVarchar(1, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+            row.append();
+            writer.commit();
+        }
+
+        execute("ALTER TABLE x ALTER COLUMN col TYPE " + targetType);
+
+        assertQuery("SELECT col IS NULL AS is_null FROM x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        is_null
+                        true
+                        """);
+        execute("DROP TABLE x");
     }
 
     private void assumeNonWal() {

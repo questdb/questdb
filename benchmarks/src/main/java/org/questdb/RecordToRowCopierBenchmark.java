@@ -603,11 +603,11 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
         }
 
         @Override
