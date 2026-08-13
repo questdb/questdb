@@ -174,6 +174,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         openSmallFile(ff, path, pathLen, metaMem, WalUtils.INITIAL_META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         if (writeInitialMetadata) {
             TableUtils.writeMetadata(tableStruct, ColumnType.VERSION, tableId, metaMem);
+            // writeMetadata stamps META_FORMAT_MINOR_VERSION_LATEST, which opens the body-checksum
+            // version gate -- so every producer of this layout must stamp the checksum too, or the
+            // reader finds a gate-open file with no checksum behind it.
+            TableUtils.storeMetaBodyChecksum(metaMem, metaMem.getAppendOffset());
         }
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);

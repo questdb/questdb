@@ -152,7 +152,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         // A table created by this binary is covered from its very first txn: nothing predates the
         // sidecar here, so the watermark is 1 rather than lastTxn + 1 as on the open() path.
         try {
-            crcSidecar.of(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), 1L);
+            crcSidecar.ofNewLineage(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), 1L);
         } finally {
             path.trimTo(pathLength);
         }
@@ -169,7 +169,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     @Override
     public void fdatasyncTxnLog() {
-        // The deferred (batched) device flush for adaptive group commit (V1 has a single header file).
+        // The deferred (batched) device flush for adaptive group commit. The CRC sidecar goes FIRST:
+        // the header must not become device-durable ahead of the CRC for a txn it advertises, or a
+        // crash in between leaves an intact record whose CRC never landed -- which the reader
+        // classifies as torn, a loud false alarm on healthy data.
+        crcSidecar.fdatasync();
         if (txnMem.isOpen()) {
             ff.fdatasync(txnMem.getFd());
         }
@@ -254,7 +258,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
         final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
         if (commitMode != CommitMode.NOSYNC) {
-            crcSidecar.sync(false);
+            // Mirror the grade sync0() gives the header, rather than always taking MS_SYNC. Under
+            // adaptive group commit (W>0) the header deliberately takes MS_ASYNC and defers the device
+            // flush to fdatasyncTxnLog(); an unconditional MS_SYNC here would be a device flush per
+            // commit and would defeat exactly the batching this branch exists to add.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
+                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+            crcSidecar.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
+                crcSidecar.fdatasync();
+            }
         }
     }
 
@@ -476,6 +489,18 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             return Unsafe.getUnsafe().getLong(crcBuf);
         }
 
+        private int readSidecarInt(FilesFacade ff, long offset) {
+            return ff.read(crcFd, crcBuf, Integer.BYTES, offset) == Integer.BYTES
+                    ? Unsafe.getUnsafe().getInt(crcBuf)
+                    : -1;
+        }
+
+        private long readSidecarLong(FilesFacade ff, long offset) {
+            return ff.read(crcFd, crcBuf, Long.BYTES, offset) == Long.BYTES
+                    ? Unsafe.getUnsafe().getLong(crcBuf)
+                    : 0L;
+        }
+
         private void openCrcSidecar(FilesFacade ff, boolean bypassFdCache, Path path) {
             final int len = path.size();
             try {
@@ -484,10 +509,13 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
                 crcFd = bypassFdCache ? ff.openRONoCache(path.$()) : ff.openRO(path.$());
                 if (crcFd > -1) {
-                    if (ff.read(crcFd, crcBuf, Long.BYTES, 0) == Long.BYTES
-                            && Unsafe.getUnsafe().getLong(crcBuf) == TxnLogCrcSidecar.MAGIC
-                            && ff.read(crcFd, crcBuf, Long.BYTES, 16) == Long.BYTES) {
-                        crcFirstCoveredTxn = Unsafe.getUnsafe().getLong(crcBuf);
+                    // Validate the FULL header, not just the magic. Accepting a sidecar whose entry
+                    // size differs from the compiled-in one would compute misaligned offsets, read
+                    // non-zero garbage as a CRC, and report "torn" on a perfectly healthy table.
+                    if (readSidecarLong(ff, 0) == TxnLogCrcSidecar.MAGIC
+                            && readSidecarInt(ff, 8) == TxnLogCrcSidecar.FILE_VERSION
+                            && readSidecarInt(ff, 12) == TxnLogCrcSidecar.ENTRY_SIZE) {
+                        crcFirstCoveredTxn = readSidecarLong(ff, 16);
                     } else {
                         // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
                         // durability claim, so the cost is lost detection, never a failed read.

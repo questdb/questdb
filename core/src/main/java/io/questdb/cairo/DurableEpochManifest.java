@@ -229,7 +229,7 @@ public final class DurableEpochManifest {
             // The enrolment int lands inside the checksummed range, so the stored _meta body checksum
             // now describes the previous contents. Refresh BEFORE the fsync, so the checksum and the
             // bytes it covers are made durable together.
-            TableUtils.refreshMetaBodyChecksumOnFd(ff, fd, tempMem);
+            TableUtils.refreshMetaBodyChecksumOnFd(ff, fd, tempMem, tablePath);
             ff.fsync(fd);
         } finally {
             Unsafe.free(tempMem, Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);

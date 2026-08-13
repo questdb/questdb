@@ -24,8 +24,9 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -64,6 +65,7 @@ import io.questdb.std.str.Path;
  * already covered, and lowering it would retroactively claim coverage the file never had.
  */
 public class TxnLogCrcSidecar implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(TxnLogCrcSidecar.class);
     /** Body starts here; the header is fixed-size. */
     public static final int BODY_OFFSET = 24;
     public static final int ENTRY_SIZE = Long.BYTES;
@@ -81,22 +83,43 @@ public class TxnLogCrcSidecar implements QuietCloseable {
      * stamped as its {@code firstCoveredTxn}; when it already exists, the recorded watermark wins.
      */
     public void of(FilesFacade ff, Path path, long watermark) {
+        of(ff, path, watermark, false);
+    }
+
+    /**
+     * Opens the sidecar for a BRAND NEW txnlog lineage, rewriting the header unconditionally.
+     * <p>
+     * {@code create()} lays down a fresh {@code _txnlog} starting at txn 1. If a stale {@code _txnlog.c}
+     * survived a previous lineage -- WAL to non-WAL and back, where the WAL-persistence removal only
+     * logs when rmdir fails -- adopting its watermark W would leave records 1..W-1 legacy and then, at
+     * txn W, match the NEW records against the OLD lineage's CRCs. That is a permanent "torn" verdict on
+     * a healthy table, so the header must be reset rather than adopted.
+     */
+    public void ofNewLineage(FilesFacade ff, Path path, long watermark) {
+        of(ff, path, watermark, true);
+    }
+
+    private void of(FilesFacade ff, Path path, long watermark, boolean newLineage) {
         close();
         mem = Vm.getCMARWInstance();
         // smallFile, not of(..., -1, ...): it sizes the mapping from ff.length(name), which is what
         // creates the file cleanly when it does not exist yet.
         mem.smallFile(ff, path.$(), MemoryTag.MMAP_TX_LOG);
         final long size = mem.size();
-        if (size >= BODY_OFFSET && mem.getLong(0) == MAGIC) {
+        if (!newLineage && size >= BODY_OFFSET && mem.getLong(0) == MAGIC) {
             // Existing sidecar: adopt its header. Never rewrite it -- see the class javadoc.
             final int fileVersion = mem.getInt(OFFSET_FILE_VERSION);
             final int entrySize = mem.getInt(OFFSET_ENTRY_SIZE);
             if (fileVersion != FILE_VERSION || entrySize != ENTRY_SIZE) {
-                throw CairoException.critical(0)
-                        .put("unsupported txnlog CRC sidecar [path=").put(path)
-                        .put(", version=").put(fileVersion)
-                        .put(", entrySize=").put(entrySize)
-                        .put(']');
+                // Disable coverage rather than refuse to open the table. This file carries no
+                // durability claim, so an unreadable one must cost DETECTION, never ingestion --
+                // throwing here would make an unrecognised sidecar block the sequencer entirely.
+                LOG.error().$("unsupported txnlog CRC sidecar, checksums disabled [path=").$(path)
+                        .$(", version=").$(fileVersion)
+                        .$(", entrySize=").$(entrySize)
+                        .I$();
+                close();
+                return;
             }
             firstCoveredTxn = mem.getLong(OFFSET_FIRST_COVERED_TXN);
         } else {
@@ -151,6 +174,13 @@ public class TxnLogCrcSidecar implements QuietCloseable {
             return 0;
         }
         return mem.getLong(offset);
+    }
+
+    /** Device flush, for the deferred/batched path. No-op when the sidecar is not open. */
+    public void fdatasync() {
+        if (mem != null) {
+            mem.getFilesFacade().fdatasync(mem.getFd());
+        }
     }
 
     /** Makes everything written so far durable. Callers order this against the txnlog header. */

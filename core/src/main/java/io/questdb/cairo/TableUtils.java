@@ -540,6 +540,14 @@ public final class TableUtils {
             return;
         }
         final long bodyLen = metaMem.getLong(META_OFFSET_BODY_LEN_64);
+        if (bodyLen == 0) {
+            // ABSENT, not an error. writeMetadata() stamps META_FORMAT_MINOR_VERSION_LATEST for every
+            // producer of this layout, so the version gate can open on a file whose writer never
+            // stamped a checksum. Treating that as fatal would brick such a file; treating it as
+            // absent degrades to unverified, which is the back-compatible direction and keeps the
+            // "absent coverage, never wrong coverage" contract for a writer that is added later.
+            return;
+        }
         if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI || bodyLen > memSize) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("_meta body length is impossible [path=").put(metaPath)
@@ -750,14 +758,27 @@ public final class TableUtils {
      * No-op on a {@code _meta} that carries no checksum. Never throws for a file it cannot interpret:
      * losing the checksum costs detection, whereas failing here would fail the enrolment itself.
      */
-    public static void refreshMetaBodyChecksumOnFd(FilesFacade ff, long fd, long tempMem) {
+    public static void refreshMetaBodyChecksumOnFd(FilesFacade ff, long fd, long tempMem, Utf8Sequence metaPath) {
         final long bodyLen = ff.readNonNegativeLong(fd, META_OFFSET_BODY_LEN_64);
         if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI) {
-            return; // absent or unusable: legacy _meta
+            return; // absent or unusable: legacy _meta, nothing to invalidate
+        }
+        // Bound by the real file, not just from below: bodyLen comes off disk and sizes the allocation
+        // below, so a corrupt 8 bytes at META_OFFSET_BODY_LEN_64 must not become an arbitrary malloc.
+        final long fileLen = ff.length(fd);
+        if (fileLen <= 0 || bodyLen > fileLen) {
+            LOG.critical().$("could not refresh _meta checksum, implausible body length [path=").$(metaPath)
+                    .$(", bodyLen=").$(bodyLen).$(", fileLen=").$(fileLen).I$();
+            return;
         }
         final long buf = Unsafe.malloc(bodyLen, MemoryTag.NATIVE_TABLE_WRITER);
         try {
             if (ff.read(fd, buf, bodyLen, 0) != bodyLen) {
+                // The caller has ALREADY mutated the file, so a stale checksum now describes the old
+                // bytes. Unlike the re-derivable sidecars, _meta fails HARD on a mismatch, so this is
+                // not a silent loss of detection -- it is a table that will not load. Say so loudly.
+                LOG.critical().$("could not refresh _meta checksum, short read [path=").$(metaPath)
+                        .$(", bodyLen=").$(bodyLen).I$();
                 return;
             }
             // Same gate the reader applies, evaluated on the bytes we just read.
@@ -772,7 +793,9 @@ public final class TableUtils {
                 return;
             }
             Unsafe.getUnsafe().putLong(tempMem, calculateMetaBodyChecksum(buf, bodyLen));
-            ff.write(fd, tempMem, Long.BYTES, META_OFFSET_BODY_CHECKSUM_64);
+            if (ff.write(fd, tempMem, Long.BYTES, META_OFFSET_BODY_CHECKSUM_64) != Long.BYTES) {
+                LOG.critical().$("could not refresh _meta checksum, short write [path=").$(metaPath).I$();
+            }
         } finally {
             Unsafe.free(buf, bodyLen, MemoryTag.NATIVE_TABLE_WRITER);
         }
@@ -3438,6 +3461,14 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Writes the {@code _meta} record layout. This stamps META_FORMAT_MINOR_VERSION_LATEST, which opens
+     * the body-checksum version gate, so <b>every caller must stamp the checksum too</b> --
+     * {@link #storeMetaBodyChecksum(MemoryMARW, long)} once the record is complete. This method takes a
+     * {@link MemoryA} and cannot do it itself. Callers: {@link #createTableOrViewOrMatViewFiles} and
+     * {@code SequencerMetadata.create}; {@code TableWriter.rewriteMetadata} writes the same layout
+     * inline and stamps it there.
+     */
     public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
         int count = tableStruct.getColumnCount();
         mem.putInt(count);
