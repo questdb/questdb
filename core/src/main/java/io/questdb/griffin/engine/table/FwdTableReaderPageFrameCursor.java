@@ -288,7 +288,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // table, and resolving it costs a read only for a partition that has one.
         long pieceShift = 0;
         if (reader.getTxFile().hasGeometryChain(reenterPartitionIndex)) {
-            final PartitionGeometry geometry = reader.getTxFile().getGeometry();
+            final PartitionGeometry geometry = reader.getGeometry();
             final int piece = geometry.findPieceByRow(reenterPartitionIndex, partitionLo);
             pieceShift = geometry.getPieceShift(reenterPartitionIndex, piece);
             final long pieceHi = geometry.getPieceCumulativeLo(reenterPartitionIndex, piece)

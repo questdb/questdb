@@ -280,7 +280,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // them. 0 for a partition with no geometry, which is every partition of an unsplit table.
         long pieceShift = 0;
         if (reader.getTxFile().hasGeometryChain(reenterPartitionIndex)) {
-            final PartitionGeometry geometry = reader.getTxFile().getGeometry();
+            final PartitionGeometry geometry = reader.getGeometry();
             final int piece = geometry.findPieceByRow(reenterPartitionIndex, partitionHi - 1);
             pieceShift = geometry.getPieceShift(reenterPartitionIndex, piece);
             final long pieceLo = geometry.getPieceCumulativeLo(reenterPartitionIndex, piece);

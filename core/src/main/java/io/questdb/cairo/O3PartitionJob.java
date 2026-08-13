@@ -152,7 +152,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ObjList<O3CompositeMergeStrategy.Action> actionsOut
     ) {
         final TxReader txReader = tableWriter.getTxReader();
-        final PartitionGeometry geometry = txReader.getGeometry();
+        final PartitionGeometry geometry = tableWriter.getGeometry();
 
         // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
         boundsOut.clear();
@@ -239,7 +239,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final O3CompositeContext ctx = COMPOSITE_CONTEXT.get();
         ctx.clear();
         final TxReader txReader = tableWriter.getTxReader();
-        final PartitionGeometry geometry = txReader.getGeometry();
+        final PartitionGeometry geometry = tableWriter.getGeometry();
 
         final int actionCount = processCompositePartition(
                 partitionIndex,
@@ -257,7 +257,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 pathToTable,
                 partitionTimestamp,
                 srcNameTxn,
-                txReader.getPartitionPhysicalRowCount(partitionIndex),
+                tableWriter.getPartitionPhysicalRowCount(partitionIndex),
                 oooColumns,
                 srcOooMax,
                 sortedTimestampsAddr,

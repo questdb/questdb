@@ -87,6 +87,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
+    private PartitionGeometry partitionGeometry;
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final int timestampType;
@@ -571,6 +572,34 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getTransientRowCount() {
         return txFile.getTransientRowCount();
+    }
+
+    /**
+     * The level-2 resolver for this table's COMPOSITE partitions, created on first use. Owned HERE rather
+     * than by {@link TxReader}, which carries only the flag and the offset out of {@code _txn} and reaches
+     * no file: this class is what knows the table's path, so it is what can open a partition's
+     * {@code _geometry}.
+     */
+    public PartitionGeometry getGeometry() {
+        if (partitionGeometry == null) {
+            partitionGeometry = new PartitionGeometry().of(
+                    ff, txFile, path.trimTo(rootLen).toString(), metadata.getTimestampType(), getPartitionedBy()
+            );
+        }
+        return partitionGeometry;
+    }
+
+    /**
+     * The number of file rows a partition's column files span - {@code E}, the furthest row it has ever
+     * held, live or dead. Equal to the live row count for an ordinary partition, larger for a COMPOSITE one
+     * that holds dead space or whose pieces do not start at file row 0. This, not the row count, is what a
+     * reader must MAP: a piece can live anywhere in {@code [0, E)}.
+     */
+    public long getPartitionPhysicalRowCount(int partitionIndex) {
+        if (!txFile.hasGeometryChain(partitionIndex)) {
+            return txFile.getPartitionSize(partitionIndex);
+        }
+        return getGeometry().getE(partitionIndex);
     }
 
     public TxReader getTxFile() {
@@ -1485,7 +1514,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // above the live rows - so a mapping sized to the row count would stop short of
                         // rows the partition still holds. Equal to partitionSize for an ordinary partition,
                         // and it costs a _geometry read only for a partition that has one.
-                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), txFile.getPartitionPhysicalRowCount(partitionIndex));
+                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), getPartitionPhysicalRowCount(partitionIndex));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;

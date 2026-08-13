@@ -311,6 +311,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
+    private PartitionGeometry partitionGeometry;
     private final TxnScoreboard txnScoreboard;
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -1461,6 +1462,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public FrameFactory getFrameFactory() {
         return engine.getFrameFactory();
+    }
+
+    /**
+     * The level-2 resolver for this table's COMPOSITE partitions, created on first use. Owned HERE rather
+     * than by {@link TxWriter}, which carries only the flag and the offset in and out of {@code _txn} and
+     * reaches no file: this class is what knows the table's path, so it is what can open and append a
+     * partition's {@code _geometry}.
+     */
+    /**
+     * The number of file rows a partition's column files span - {@code E}, the furthest row it has ever
+     * held, live or dead, and where the next write to it appends. Equal to the live row count for an
+     * ordinary partition, larger for a COMPOSITE one.
+     */
+    public long getPartitionPhysicalRowCount(int partitionIndex) {
+        if (!txWriter.hasGeometryChain(partitionIndex)) {
+            return txWriter.getPartitionSize(partitionIndex);
+        }
+        return getGeometry().getE(partitionIndex);
+    }
+
+    public PartitionGeometry getGeometry() {
+        if (partitionGeometry == null) {
+            partitionGeometry = new PartitionGeometry().of(
+                    ff, txWriter, path.trimTo(pathSize).toString(), timestampType, partitionBy
+            );
+        }
+        return partitionGeometry;
     }
 
     @Override
