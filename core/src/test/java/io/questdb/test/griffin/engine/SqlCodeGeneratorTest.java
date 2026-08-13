@@ -29,16 +29,21 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
@@ -8389,6 +8394,838 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolAndStringStaysString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE ts (s STRING)");
+            execute("INSERT INTO ta VALUES ('a'), ('b')");
+            execute("INSERT INTO ts VALUES ('c')");
+
+            // A branch that is not SYMBOL keeps the union result STRING: re-symbolisation only
+            // kicks in when every contributing branch is SYMBOL.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM ts")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).noRandomAccess().expectSize()
+                    .returns("s\na\nb\nc\n");
+            assertQuery("SELECT s FROM ts UNION ALL SELECT s FROM ta")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).noRandomAccess().expectSize()
+                    .returns("s\nc\na\nb\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsAggregateFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), ('a')");
+            execute("INSERT INTO tb VALUES ('b'), (NULL)");
+
+            // mode/first/last over a union symbol resolve it through getInt (the merged dictionary
+            // key) and valueOf, not a static table. UNION ALL preserves branch order (ta rows then
+            // tb rows), so first is 'a' and last is the trailing NULL; mode is 'a' (seen twice) and
+            // count(s) skips the NULL.
+            assertQuery("SELECT first(s) f, last(s) l, mode(s) m, count(s) c FROM (ta UNION ALL tb)")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("f\tl\tm\tc\na\t\ta\t3\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCastsBackToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tc (s SYMBOL, v LONG)");
+            execute("INSERT INTO ta VALUES ('a', 1), ('b', 2)");
+            execute("INSERT INTO tb VALUES ('c', 3), ('a', 4)");
+            execute("INSERT INTO tc VALUES ('d', 5)");
+
+            // UNION ALL of two SYMBOL columns comes back as SYMBOL, re-symbolised once at the end
+            // of the chain, rather than left as the STRING the union produces internally. Each
+            // assertion drives a full cursor pass, so the re-symbolised values are checked too.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\nb\nc\na\n");
+            // UNION (distinct) too.
+            assertQuery("SELECT s FROM ta UNION SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess()
+                    .returns("s\na\nb\nc\n");
+            // N-way chain: still SYMBOL, wrapped only once at the outermost level.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb UNION ALL SELECT s FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\nb\nc\na\nd\n");
+            // Constant symbols have no backing table dictionary yet still round-trip.
+            assertQuery("SELECT cast('x' AS SYMBOL) s FROM long_sequence(1) UNION ALL SELECT cast('y' AS SYMBOL) s FROM long_sequence(1)")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\nx\ny\n");
+            // EXCEPT keeps side-A symbols natively (unaffected by re-symbolisation). Its cursor
+            // materialises the result, so it supports random access.
+            assertQuery("SELECT s FROM ta EXCEPT SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\nb\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsClearsMaskForEarlyStringLeg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tb (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tc (s1 STRING, s2 SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a', 'p')");
+            execute("INSERT INTO tb VALUES ('b', 'q')");
+            execute("INSERT INTO tc VALUES ('c', 'r')");
+
+            // s1 (the earlier candidate) stops qualifying at the third leg while s2 (the later one)
+            // survives. The in-place mask compaction must drop candidate slot 0 and shift the retained
+            // s2 down into it, so the write index trails the read index - the arrangement
+            // testUnionOfSymbolColumnsClearsMaskForLateStringLeg (a trailing-column drop, write and
+            // read indices stay aligned) never reaches.
+            assertQuery("SELECT s1, s2 FROM ta UNION ALL SELECT s1, s2 FROM tb UNION ALL SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).columnType(1, ColumnType.SYMBOL)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+            assertQuery("SELECT s1, s2 FROM ta UNION SELECT s1, s2 FROM tb UNION SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).columnType(1, ColumnType.SYMBOL)
+                    .noRandomAccess()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsClearsMaskForLateStringLeg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tb (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tc (s1 SYMBOL, s2 STRING)");
+            execute("INSERT INTO ta VALUES ('a', 'p')");
+            execute("INSERT INTO tb VALUES ('b', 'q')");
+            execute("INSERT INTO tc VALUES ('c', 'r')");
+
+            // s2 stops qualifying for re-symbolisation only at the third leg. This pins
+            // recursive mask clearing for both UNION implementations.
+            assertQuery("SELECT s1, s2 FROM ta UNION ALL SELECT s1, s2 FROM tb UNION ALL SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.STRING)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+            assertQuery("SELECT s1, s2 FROM ta UNION SELECT s1, s2 FROM tb UNION SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.STRING)
+                    .noRandomAccess()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), ('b'), ('a')");
+            execute("INSERT INTO tb VALUES ('b'), ('c')");
+
+            // DISTINCT over a symbol union keeps the SYMBOL type and collapses duplicates
+            // across both branches.
+            assertQuery("SELECT DISTINCT s FROM (ta UNION ALL tb) ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\nb\nc\n");
+            // count_distinct / count(DISTINCT) drive the symbol through getInt, whose lazy
+            // dictionary assigns one key per distinct value, so the count is the distinct
+            // string count across both branches.
+            assertQuery("SELECT count_distinct(s) c FROM (ta UNION ALL tb)")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n3\n");
+            assertQuery("SELECT count(DISTINCT s) c FROM (ta UNION ALL tb)")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n3\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCountDoesNotMaterializeKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keep the input cardinality high enough to exercise dictionary growth without
+            // making the regression depend on the test JVM's heap size.
+            execute("CREATE TABLE ta AS (SELECT x::SYMBOL s FROM long_sequence(50_000))");
+            execute("CREATE TABLE tb AS (SELECT (x + 50_000)::SYMBOL s FROM long_sequence(50_000))");
+
+            try (RecordCursorFactory factory = select("SELECT count(s) FROM (ta UNION ALL tb)")) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(100_000, cursor.getRecord().getLong(0));
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // count(K) only needs nullness. In particular, consuming all 100k distinct
+                    // values must not populate the union's lazy symbol dictionary.
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCountHandlesNullWithoutMaterializingKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, g INT)");
+            execute("CREATE TABLE tb (s SYMBOL, g INT)");
+            execute("INSERT INTO ta VALUES ('a', 1), (NULL, 1), (NULL, 2)");
+            execute("INSERT INTO tb VALUES ('b', 1), ('c', 2), (NULL, 2)");
+
+            try (RecordCursorFactory factory = select("SELECT count(s) FROM (ta UNION ALL tb)")) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(3, record.getLong(0));
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+
+            try (RecordCursorFactory factory = select("""
+                    SELECT g, count(s) c
+                    FROM (
+                        SELECT s, g FROM ta
+                        UNION ALL
+                        SELECT s, g FROM tb
+                    )
+                    GROUP BY g
+                    ORDER BY g
+                    """)) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, record.getInt(0));
+                    Assert.assertEquals(2, record.getLong(1));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(2, record.getInt(0));
+                    Assert.assertEquals(1, record.getLong(1));
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCreateIndexedTableAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            // The reproduction from #6203. CREATE TABLE ... INDEX(f) validates the
+            // declaration against the SELECT's result type, so while a symbol-only union widened
+            // to STRING the clause failed with "indexes are supported only for SYMBOL columns: f"
+            // and the reporter had to re-cast the column back through a subquery.
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT 'IDX_SYMBOL'::SYMBOL AS f FROM long_sequence(3)
+                        UNION ALL
+                        SELECT 'OTHER_SYMBOL'::SYMBOL AS f FROM long_sequence(2)
+                    ), INDEX(f)""");
+
+            // Assert the index really exists rather than that the DDL merely parsed: the column
+            // has to be SYMBOL and carry a BITMAP index with a real block capacity. Note
+            // symbolCached is false here where testUnionOfSymbolColumnsCreateTableAsSelect sees
+            // true. SqlParser.parseCreateTableIndexDef mints a column model for the indexed name
+            // and never calls setSymbolCacheFlag, so the model keeps the false that clear() left,
+            // while the inferred path hardcodes true. Any CTAS with a bare INDEX(...) loses symbol
+            // caching that way, union or not, and it predates this change - so this row records
+            // today's behaviour rather than endorsing it.
+            assertQuery("SHOW COLUMNS FROM tab")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                            "f\tSYMBOL\ttrue\t256\tfalse\t128\t2\tfalse\tfalse\tBITMAP\t\n");
+
+            // And that the indexed column reads back, including through a lookup the index
+            // actually serves - which is the point of the issue, so pin the scan too.
+            assertQuery("SELECT f, count() c FROM tab ORDER BY f")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("f\tc\nIDX_SYMBOL\t3\nOTHER_SYMBOL\t2\n");
+            assertQuery("SELECT count() c FROM tab WHERE f = 'IDX_SYMBOL'")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("Index forward scan on: f")
+                    .returns("c\n3\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCreateTableAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            execute("INSERT INTO ta VALUES ('a', 1), ('b', 2)");
+            execute("INSERT INTO tb VALUES ('c', 3), ('a', 4)");
+
+            // CTAS derives the new table's schema from the union's result type, so a symbol-only
+            // union now materialises a SYMBOL column where it previously widened it to STRING.
+            execute("CREATE TABLE tu AS (SELECT s FROM ta UNION ALL SELECT s FROM tb)");
+
+            assertQuery("SELECT s FROM tu")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\na\nb\nc\na\n");
+
+            // Pin the created column's storage parameters, not just its type. A union carries no
+            // source symbol metadata to inherit - the set operation widens SYMBOL to STRING
+            // internally and the projection re-declares the column - so capacity, cache flag and
+            // index all come from defaults. Those choose the on-disk layout and the write cost,
+            // and they surface again through SHOW CREATE TABLE, materialized-view definitions and
+            // replicated schemas, so a silent change here is user-visible well beyond this query.
+            // A union over high-cardinality symbols therefore lands on the default 128 capacity.
+            assertQuery("SHOW COLUMNS FROM tu")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                            "s\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCreateWalTableAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, ts TIMESTAMP)");
+            execute("CREATE TABLE tb (s SYMBOL, ts TIMESTAMP)");
+            execute("INSERT INTO ta VALUES ('a', 1::TIMESTAMP), (NULL, 2::TIMESTAMP)");
+            execute("INSERT INTO tb VALUES ('b', 3::TIMESTAMP), ('a', 4::TIMESTAMP)");
+
+            // WAL CTAS takes its column type from the union and writes through the WAL
+            // path. Applying the WAL must retain both SYMBOL metadata and the NULL key.
+            execute("CREATE TABLE tu AS (SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            assertQuery("SELECT s FROM tu ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\na\n\nb\na\n");
+            assertQuery("SELECT count(*) c FROM tu WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsDistinctTranslatesNativeKeysPerSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            // Both source dictionaries assign native key 0, but to different text. A distinct
+            // UNION switches to B through UnionRecordCursor.switchToCursorB(), not the UNION ALL
+            // transition covered elsewhere, so the projection must refresh its source tracker.
+            execute("INSERT INTO ta VALUES ('a')");
+            execute("INSERT INTO tb VALUES ('b')");
+
+            try (RecordCursorFactory factory = select("SELECT s FROM ta UNION SELECT s FROM tb")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int aKey = record.getInt(0);
+                    TestUtils.assertEquals("a", resultTable.valueOf(aKey));
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int bKey = record.getInt(0);
+                    Assert.assertNotEquals(aKey, bKey);
+                    TestUtils.assertEquals("b", resultTable.valueOf(bKey));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsDynamicEqualityDoesNotMaterializeKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta AS (SELECT x::SYMBOL s, x::SYMBOL expected FROM long_sequence(1000))");
+            execute("CREATE TABLE tb AS (SELECT (x + 1000)::SYMBOL s, (x + 1001)::SYMBOL expected FROM long_sequence(1000))");
+
+            try (RecordCursorFactory factory = select("SELECT s FROM (ta UNION ALL tb) WHERE s = expected")) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(2, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    int rowCount = 0;
+                    while (cursor.hasNext()) {
+                        rowCount++;
+                    }
+                    Assert.assertEquals(1000, rowCount);
+
+                    // Both sides are non-static SYMBOL columns, so equality compares their
+                    // string values and leaves both lazy dictionaries untouched.
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                    Assert.assertNull(symbolCasts.getQuick(1).valueOf(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsDynamicSourcesPreferTextAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = select("""
+                    SELECT x::STRING::SYMBOL s FROM long_sequence(3)
+                    UNION ALL
+                    SELECT (x + 3)::STRING::SYMBOL s FROM long_sequence(3)
+                    """)) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    Assert.assertFalse(symbolTable.supportsKeyValueAccess());
+                    Assert.assertFalse(cursor.newSymbolTable(0).supportsKeyValueAccess());
+
+                    final Record record = cursor.getRecord();
+                    final String[] expected = {"1", "2", "3", "4", "5", "6"};
+                    for (String value : expected) {
+                        Assert.assertTrue(cursor.hasNext());
+                        TestUtils.assertEquals(value, record.getSymA(0));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // QWP follows supportsKeyValueAccess(). Keeping it on the text path for an
+                    // all-dynamic union must leave the query-scoped merged dictionary untouched.
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsFollowedByNonUnionSetOperation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("CREATE TABLE tc (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a')");
+            execute("INSERT INTO tb VALUES ('b')");
+            execute("INSERT INTO tc VALUES ('b')");
+
+            final String[] unionOperations = {"UNION", "UNION ALL"};
+            final String[] followingOperations = {"EXCEPT", "EXCEPT ALL", "INTERSECT", "INTERSECT ALL"};
+            for (String unionOperation : unionOperations) {
+                for (String followingOperation : followingOperations) {
+                    final String expected = followingOperation.startsWith("EXCEPT") ? "s\na\n" : "s\nb\n";
+                    final String flatQuery = "SELECT s FROM ta " + unionOperation
+                            + " SELECT s FROM tb " + followingOperation + " SELECT s FROM tc";
+                    final String parenthesisedQuery = "SELECT s FROM (SELECT s FROM ta " + unionOperation
+                            + " SELECT s FROM tb) " + followingOperation + " SELECT s FROM tc";
+
+                    assertQuery("SELECT * FROM (" + flatQuery + ") ORDER BY s")
+                            .noLeakCheck().columnType(0, ColumnType.SYMBOL).returns(expected);
+                    assertQuery("SELECT * FROM (" + parenthesisedQuery + ") ORDER BY s")
+                            .noLeakCheck().columnType(0, ColumnType.SYMBOL).returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsInsertIntoTypedTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), (NULL)");
+            execute("INSERT INTO tb VALUES ('b'), ('a')");
+            execute("CREATE TABLE t_str (s STRING)");
+            execute("CREATE TABLE t_varchar (s VARCHAR)");
+            execute("CREATE TABLE t_sym (s SYMBOL)");
+
+            // Regression guard: pin the union SOURCE type. The target-table assertions below pass
+            // even with re-symbolisation reverted (target types are fixed and the values round-trip),
+            // so this SYMBOL assertion is the one that fails when the fix regresses.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\n\nb\na\n");
+
+            // The union result is now SYMBOL, so INSERT ... SELECT routes through the SYMBOL-source
+            // row copier into each target type. Values, including a NULL symbol, must round-trip.
+            execute("INSERT INTO t_str SELECT s FROM ta UNION ALL SELECT s FROM tb");
+            execute("INSERT INTO t_varchar SELECT s FROM ta UNION ALL SELECT s FROM tb");
+            execute("INSERT INTO t_sym SELECT s FROM ta UNION ALL SELECT s FROM tb");
+
+            assertQuery("SELECT s FROM t_str").noLeakCheck().columnType(0, ColumnType.STRING).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_varchar").noLeakCheck().columnType(0, ColumnType.VARCHAR).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_sym").noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\n\nb\na\n");
+            // The NULL symbol survived as NULL on the SYMBOL target, not as an empty string.
+            assertQuery("SELECT count(*) c FROM t_sym WHERE s IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsInsertIntoWalTypedTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, ts TIMESTAMP)");
+            execute("CREATE TABLE tb (s SYMBOL, ts TIMESTAMP)");
+            execute("INSERT INTO ta VALUES ('a', 1::TIMESTAMP), (NULL, 2::TIMESTAMP)");
+            execute("INSERT INTO tb VALUES ('b', 3::TIMESTAMP), ('a', 4::TIMESTAMP)");
+            execute("CREATE TABLE t_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_varchar (s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_sym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Regression guard: pin the union SOURCE type. The target-table assertions below pass
+            // even with re-symbolisation reverted (target types are fixed and the values round-trip),
+            // so this SYMBOL assertion is the one that fails when the fix regresses.
+            assertQuery("SELECT s FROM (SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb) ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\na\n\nb\na\n");
+
+            // Exercise each SYMBOL-source WAL row-copy conversion, then apply all three
+            // target WALs before checking their persisted types and values.
+            execute("INSERT INTO t_str SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb");
+            execute("INSERT INTO t_varchar SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb");
+            execute("INSERT INTO t_sym SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb");
+            drainWalQueue();
+
+            assertQuery("SELECT s FROM t_str ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_varchar ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.VARCHAR).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_sym ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT count(*) c FROM t_str WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count(*) c FROM t_varchar WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count(*) c FROM t_sym WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsJoinKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("CREATE TABLE dim (s SYMBOL, label STRING)");
+            execute("INSERT INTO ta VALUES ('a'), ('b')");
+            execute("INSERT INTO tb VALUES ('c')");
+            execute("INSERT INTO dim VALUES ('a', 'AA'), ('c', 'CC')");
+
+            // The symbol union column is used as a join key. A non-static symbol join key is
+            // compared as a string, so it matches dim rows drawn from both union branches.
+            assertQuery("SELECT u.s, d.label FROM (ta UNION ALL tb) u JOIN dim d ON u.s = d.s ORDER BY u.s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\tlabel\na\tAA\nc\tCC\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsMixedSourcesPreferKeyAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL)");
+            execute("INSERT INTO tab VALUES ('stored')");
+
+            try (RecordCursorFactory factory = select("""
+                    SELECT s FROM tab
+                    UNION ALL
+                    SELECT x::STRING::SYMBOL s FROM long_sequence(2)
+                    """)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    Assert.assertTrue(symbolTable.supportsKeyValueAccess());
+                    Assert.assertTrue(cursor.newSymbolTable(0).supportsKeyValueAccess());
+
+                    final Record record = cursor.getRecord();
+                    final String[] expected = {"stored", "1", "2"};
+                    for (String value : expected) {
+                        Assert.assertTrue(cursor.hasNext());
+                        TestUtils.assertEquals(value, symbolTable.valueOf(record.getInt(0)));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsNullReadsBackAsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), (NULL), ('')");
+            execute("INSERT INTO tb VALUES ('b'), ('')");
+
+            // A NULL symbol survives re-symbolisation as a real NULL while actual empty symbols
+            // from both branches retain one shared, non-null dictionary key. The predicates
+            // disambiguate the three blank cells in the printed result.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\n\n\nb\n\n");
+            assertQuery("SELECT count(*) c FROM (SELECT s FROM ta UNION ALL SELECT s FROM tb) WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count(*) c FROM (SELECT s FROM ta UNION ALL SELECT s FROM tb) WHERE s = ''")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n2\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsPartialMask() throws Exception {
+        assertMemoryLeak(() -> {
+            // s1 is SYMBOL on every branch and is re-symbolised; s2 is SYMBOL on only one branch
+            // and stays STRING. Only the all-SYMBOL columns come back SYMBOL.
+            execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tb (s1 SYMBOL, s2 STRING)");
+            execute("INSERT INTO ta VALUES ('a', 'p')");
+            execute("INSERT INTO tb VALUES ('b', 'q')");
+            assertQuery("SELECT s1, s2 FROM ta UNION ALL SELECT s1, s2 FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.STRING)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\n");
+
+            // When every column is SYMBOL on every branch, all of them come back SYMBOL.
+            execute("CREATE TABLE tc (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE td (s1 SYMBOL, s2 SYMBOL)");
+            execute("INSERT INTO tc VALUES ('a', 'p')");
+            execute("INSERT INTO td VALUES ('b', 'q')");
+            assertQuery("SELECT s1, s2 FROM tc UNION ALL SELECT s1, s2 FROM td")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.SYMBOL)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsProjectionRequiresSerialBase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+
+            // maybeResymboliseUnion refuses to wrap a base reporting any of the three
+            // parallel-capable flags - "union symbol projection requires a serial base cursor" -
+            // because the re-symbolising function holds a lazily built, non-thread-safe dictionary
+            // that a worker cloning the projection would read half-formed. No set factory overrides
+            // those methods, so the guard is dead code today. Make one of them report true and this
+            // test does not merely fail an assertion - compilation itself raises the guard's own
+            // CairoException, because the query below is exactly the shape that reaches it. So this
+            // pins the guard's precondition without a test seam - the guard runs the moment its
+            // trigger exists. Deleting the guard body alone still leaves these assertions. Both
+            // union factories are covered - UNION ALL builds UnionAllRecordCursorFactory and a
+            // distinct UNION builds UnionRecordCursorFactory. The third construction site, a union
+            // finalised ahead of an EXCEPT, cannot be reached this way: a set factory does not
+            // expose its inputs through getBaseFactory(), so that projection is not walkable from
+            // the compiled tree. testUnionOfSymbolColumnsFollowedByNonUnionSetOperation pins that
+            // shape instead, through the SYMBOL result type the projection is what produces.
+            assertSerialProjectionBase("SELECT s FROM ta UNION ALL SELECT s FROM tb");
+            assertSerialProjectionBase("SELECT s FROM ta UNION SELECT s FROM tb");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // ta holds the earlier hour and tb the later one, so UNION ALL (ta rows then tb rows) is
+            // already ordered by ts - the order SAMPLE BY requires from its input.
+            execute("INSERT INTO ta VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('a', 2, '2024-01-01T00:30:00.000000Z')");
+            execute("INSERT INTO tb VALUES ('a', 4, '2024-01-01T02:00:00.000000Z')");
+
+            // SAMPLE BY ... FILL(...) over a union symbol key routes through the fill cursor factory.
+            // The empty 01:00 bucket is filled with NULL; the symbol key stays SYMBOL across the fill.
+            assertQuery("SELECT ts, s, sum(v) sm FROM (SELECT s, v, ts FROM ta UNION ALL SELECT s, v, ts FROM tb) timestamp(ts) SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().columnType(1, ColumnType.SYMBOL)
+                    .returns("ts\ts\tsm\n2024-01-01T00:00:00.000000Z\ta\t3\n2024-01-01T01:00:00.000000Z\ta\tnull\n2024-01-01T02:00:00.000000Z\ta\t4\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsScalarFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('apple'), (NULL), ('')");
+            execute("INSERT INTO tb VALUES ('banana'), ('avocado')");
+
+            // A union symbol is non-static, so LIKE, IN, ~ (regexp) and switch() all resolve it
+            // through the string path. Each must still work end to end over the re-symbolised column,
+            // which stays SYMBOL through the filter and ORDER BY.
+            assertQuery("SELECT s FROM (ta UNION ALL tb) WHERE s LIKE 'a%' ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\napple\navocado\n");
+            assertQuery("SELECT s FROM (ta UNION ALL tb) WHERE s IN ('apple', 'banana') ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\napple\nbanana\n");
+            assertQuery("SELECT s FROM (ta UNION ALL tb) WHERE s ~ '^a' ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\napple\navocado\n");
+            // switch() classifies by the string value; an unmatched value (avocado) hits the default.
+            assertQuery("SELECT s, switch(s, 'apple', 'A', 'banana', 'B', 'Z') k FROM (ta UNION ALL tb) WHERE s IN ('apple', 'avocado', 'banana') ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\tk\napple\tA\navocado\tZ\nbanana\tB\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsSkipRowsTranslatesNativeKeyFromSecondSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v INT)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            // ta's full dictionary assigns native key 1 to 'wrong', although the filter exposes
+            // only key 0. tb assigns the same native key 1 to 'keep'. Skipping the sole visible ta
+            // row and tb's first row lands directly on 'keep', without a preceding hasNext() that
+            // could update the projection's source tracker through the ordinary A-to-B transition.
+            execute("INSERT INTO ta VALUES ('a', 1), ('wrong', 0)");
+            execute("INSERT INTO tb VALUES ('drop'), ('keep')");
+
+            try (RecordCursorFactory factory = select(
+                    "SELECT s FROM ta WHERE v = 1 UNION ALL SELECT s FROM tb"
+            )) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    counter.set(2);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                    Assert.assertEquals(0, counter.get());
+
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    TestUtils.assertEquals("keep", resultTable.valueOf(record.getInt(0)));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsStatefulSourceResolvesKeyAndTextAlike() throws Exception {
+        // list() and the rnd_symbol_* generators draw a fresh value on EVERY accessor call, so
+        // getInt() and getSymbol() on one row are two independent draws. The projection reads the
+        // key off the leg record and the text through the union, so without memoization a row's
+        // key resolves to a different value than the row's own text - silently, and differently
+        // over QWP (key path) than over HTTP (text path). Memoizing pins one draw per row.
+        // The union column was STRING before it was re-symbolised, so there was only ever one
+        // read path and nothing to disagree.
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            assertUnionKeyResolvesToRowText(
+                    "SELECT list('a','b','c') s FROM long_sequence(6)" +
+                            " UNION ALL SELECT list('x','y','z') s FROM long_sequence(6)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol('a','b','c') s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol('x','y','z') s FROM long_sequence(16)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol_weighted('a', 2.5, 'b', 1.0) s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol_weighted('x', 2.5, 'y', 1.0) s FROM long_sequence(16)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol_zipf('a','b','c', 2.0) s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol_zipf('x','y','z', 2.0) s FROM long_sequence(16)"
+            );
+            assertUnionKeyResolvesToRowText(
+                    "SELECT rnd_symbol_zipf(5, 1.5) s FROM long_sequence(16)" +
+                            " UNION ALL SELECT rnd_symbol_zipf(5, 1.5) s FROM long_sequence(16)"
+            );
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsTranslatesNativeKeysAcrossThreeSources() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("CREATE TABLE tc (s SYMBOL)");
+            // Every leg assigns native key 0, each to different text, and every leg also carries
+            // 'a'. A flat three-leg chain nests the set cursors, so bindSymbolSourceTracker has to
+            // recurse and hand each leaf its own index. Were two leaves to share one translation
+            // cache, the later leg's key 0 would resolve to the earlier leg's text.
+            execute("INSERT INTO ta VALUES ('a'), ('a')");
+            execute("INSERT INTO tb VALUES ('b'), ('a')");
+            execute("INSERT INTO tc VALUES ('c'), ('a')");
+
+            final String sql = "SELECT s FROM ta UNION ALL SELECT s FROM tb UNION ALL SELECT s FROM tc";
+            try (RecordCursorFactory factory = select(sql)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+                    // Read keys, not text: getSymA() serves a re-symbolised column straight off the
+                    // base record, so only the integer path exercises the per-source translation.
+                    final String[] expected = {"a", "a", "b", "a", "c", "a"};
+                    final int[] keys = new int[expected.length];
+                    for (int i = 0; i < expected.length; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        keys[i] = record.getInt(0);
+                        TestUtils.assertEquals(expected[i], resultTable.valueOf(keys[i]));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // 'a' arrives under a different native key in each leg yet merges to one key.
+                    Assert.assertEquals(keys[0], keys[1]);
+                    Assert.assertEquals(keys[0], keys[3]);
+                    Assert.assertEquals(keys[0], keys[5]);
+                    // Distinct text never collides.
+                    Assert.assertNotEquals(keys[0], keys[2]);
+                    Assert.assertNotEquals(keys[0], keys[4]);
+                    Assert.assertNotEquals(keys[2], keys[4]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsTranslatesNativeKeysPerSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            // Both source dictionaries assign key 0, but to different text. The second row
+            // in tb then reuses ta's text under a different native key.
+            execute("INSERT INTO ta VALUES ('a', 1), ('a', 2)");
+            execute("INSERT INTO tb VALUES ('b', 3), ('a', 4)");
+
+            try (RecordCursorFactory factory = select("SELECT s, v FROM ta UNION ALL SELECT s, v FROM tb")) {
+                final UnionSymbolCastRecordCursorFactory projection = findUnionSymbolCastFactory(factory);
+                Assert.assertNotNull(projection);
+                Assert.assertEquals(
+                        "only the SYMBOL column should have a projection function",
+                        1,
+                        projection.getFunctions().size()
+                );
+                // The projection must stay off every parallel path: a worker that cloned or
+                // snapshotted it would read a half-built, non-thread-safe dictionary.
+                Assert.assertFalse(projection.supportsPageFrameCursor());
+                Assert.assertFalse(projection.supportsFilterStealing());
+                Assert.assertFalse(projection.supportsTimeFrameCursor());
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    Assert.assertTrue(resultTable.supportsKeyValueAccess());
+                    final Record record = cursor.getRecord();
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int aKey = record.getInt(0);
+                    TestUtils.assertEquals("a", resultTable.valueOf(aKey));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(aKey, record.getInt(0));
+                    Assert.assertTrue(cursor.hasNext());
+                    final int bKey = record.getInt(0);
+                    Assert.assertNotEquals(aKey, bKey);
+                    TestUtils.assertEquals("b", resultTable.valueOf(bKey));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(aKey, record.getInt(0));
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // Rewinding preserves both merged keys and the per-source translations.
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(aKey, record.getInt(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsWindowPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            execute("INSERT INTO ta VALUES ('a', 1), ('b', 2)");
+            execute("INSERT INTO tb VALUES ('a', 3), ('c', 4)");
+
+            // A window function partitions by the re-symbolised union column; the two 'a'
+            // rows (one per branch) share a partition, so row_number numbers them 1,2.
+            assertQuery("SELECT s, row_number() OVER (PARTITION BY s ORDER BY v) rn FROM (ta UNION ALL tb) ORDER BY s, v")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\trn\na\t1\na\t2\nb\t1\nc\t1\n");
+        });
+    }
+
+    @Test
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -9331,6 +10168,71 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
                             """);
         });
+    }
+
+    private static void assertSerialProjectionBase(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            final UnionSymbolCastRecordCursorFactory projection = findUnionSymbolCastFactory(factory);
+            Assert.assertNotNull(sql + " must build a symbol projection", projection);
+            final RecordCursorFactory base = projection.getBaseFactory();
+            Assert.assertNotNull(sql + " projection must expose its base", base);
+            Assert.assertFalse(sql + " base claims page frames", base.supportsPageFrameCursor());
+            Assert.assertFalse(sql + " base claims filter stealing", base.supportsFilterStealing());
+            Assert.assertFalse(sql + " base claims time frames", base.supportsTimeFrameCursor());
+        }
+    }
+
+    private static void assertUnionKeyResolvesToRowText(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(sql + " must return SYMBOL", ColumnType.SYMBOL, factory.getMetadata().getColumnType(0));
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                final Record record = cursor.getRecord();
+                for (int row = 0; cursor.hasNext(); row++) {
+                    // Read the key first: it is the accessor a key consumer would use, and reading
+                    // the text first would hide a divergence behind the memoizer's own cache.
+                    final int key = record.getInt(0);
+                    TestUtils.assertEquals(sql + " row " + row + " key " + key, symbolTable.valueOf(key), record.getSymA(0));
+                }
+            }
+        }
+    }
+
+    private static UnionSymbolCastRecordCursorFactory findUnionSymbolCastFactory(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof UnionSymbolCastRecordCursorFactory found) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static ObjList<CastStrToSymbolFunctionFactory.Func> findUnionSymbolCasts(RecordCursorFactory factory) {
+        final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = new ObjList<>();
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            final ObjList<Function> functions = projectionFunctions(current);
+            if (functions != null) {
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    if (functions.getQuick(i) instanceof CastStrToSymbolFunctionFactory.Func symbolCast) {
+                        symbolCasts.add(symbolCast);
+                    }
+                }
+            }
+            if (symbolCasts.size() > 0) {
+                return symbolCasts;
+            }
+        }
+        Assert.fail("could not find the union symbol casts in the factory chain");
+        return null;
+    }
+
+    // Both projection factories expose their functions the same way, so the caller does not have
+    // to know which one the compiler picked.
+    private static ObjList<Function> projectionFunctions(RecordCursorFactory factory) {
+        if (factory instanceof VirtualRecordCursorFactory virtualRecord) {
+            return virtualRecord.getFunctions();
+        }
+        return factory instanceof UnionSymbolCastRecordCursorFactory projection ? projection.getFunctions() : null;
     }
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
