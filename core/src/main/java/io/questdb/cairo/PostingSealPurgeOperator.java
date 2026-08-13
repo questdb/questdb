@@ -132,6 +132,12 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .$(", column=").$(task.getIndexColumnName())
                     .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
                     .$(", sealTxn=").$(task.getSealTxn())
+                    // The partition, so the sidecars this task will not unlink
+                    // can still be found by hand. recoverOpenTasks truncates the
+                    // log once it drains, so this line is the only record that
+                    // survives, and without the partition it names no path.
+                    .$(", partitionTimestamp=").$(task.getPartitionTimestamp())
+                    .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
                     .$(", form=").$(task.getArtifactForm())
                     .I$();
             return true;
