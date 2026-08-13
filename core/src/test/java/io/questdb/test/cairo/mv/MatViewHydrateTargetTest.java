@@ -83,8 +83,7 @@ public class MatViewHydrateTargetTest extends AbstractCairoTest {
     }
 
     /**
-     * Guards a bug that shipped on this branch (commit {@code 31404c9c9b}, "Enqueue hydration
-     * kickstart on the target store"): the no-persisted-state branch's
+     * Guards a bug that shipped on this branch: the no-persisted-state branch's
      * {@code enqueueIncrementalRefresh} kept targeting the engine's {@code matViewStateStore}
      * field while every sibling retarget had already moved to {@code target}. Boot hydration
      * hides the mistake because there the two are the same object; a role-promote rehydrate

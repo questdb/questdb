@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperation implements Operation {
@@ -60,7 +61,7 @@ public class CreateLiveViewOperation implements Operation {
             String baseTableName,
             int baseTableNamePosition,
             String selectSql,
-            String sqlText,
+            @NotNull String sqlText,
             long flushEveryInterval,
             char flushEveryIntervalUnit,
             long inMemoryInterval,
