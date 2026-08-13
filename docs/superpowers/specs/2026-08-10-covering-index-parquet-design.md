@@ -3,6 +3,13 @@
 Design spec. Branch `feat/covering-index-parquet`, worktree `~/claude/wt/pidx-parquet`,
 based on `origin/master` @ `12c2934052`.
 
+> **Status.** Written before Phase 2 execution. Where execution diverged from it, the
+> divergent passages carry an inline **(CORRECTED …)** note saying what was built and
+> why; the code is right and this document was stale. Five such notes exist: regime 3 of
+> "Version tokens", orphan reclamation, the seal/purge machinery, the `parquet -> native`
+> discriminator, and the payload arms. The normative on-disk descriptions live in
+> `docs/index-metadata.md` and `docs/parquet-metadata.md`, not here.
+
 ## Goal
 
 When a partition is converted to Parquet, store its covering POSTING indexes as
@@ -85,18 +92,20 @@ multi-key frame path in the factory.
 
 ### Configuration
 
-The Parquet index form is opt-in. Two properties, following the style of the
-existing `cairo.posting.index.row.id.encoding` enum (names provisional):
+The Parquet index form is opt-in. Two properties were specified, following the style
+of the existing `cairo.posting.index.row.id.encoding` enum (names provisional):
 
-| property | values | default |
-| --- | --- | --- |
-| `cairo.posting.index.parquet.partition.format` | `native`, `parquet` | `native` |
-| `cairo.posting.index.parquet.payload` | `row_per_posting`, `row_per_key` | `row_per_posting` |
+| property | values | default | status |
+| --- | --- | --- | --- |
+| `cairo.posting.index.parquet.partition.format` | `native`, `parquet` | `native` | delivered |
+| `cairo.posting.index.parquet.payload` | `row_per_posting`, `row_per_key` | `row_per_posting` | **NOT delivered** — see the payload-arms note below |
 
 `native` preserves today's behaviour exactly: `linkPartitionIndexFiles` hard-links
 `.pk`/`.pv`/`.pci`/`.pc*` into the Parquet partition directory. `parquet` produces
-`<col>.pidx.<indexTxn>.parquet` + `<col>.pidx.<indexTxn>._im` instead. The second property selects the
-payload shape and is meaningful only when the first is `parquet`.
+`<col>.pidx.<indexTxn>.parquet` + `<col>.pidx.<indexTxn>._im` instead. The second property
+would have selected the payload shape and been meaningful only when the first is
+`parquet`; it was implemented as a parsed-but-unread knob and has been removed until
+arm B has a writer.
 
 Three consequences follow, and they are load-bearing rather than incidental:
 
@@ -114,11 +123,12 @@ Three consequences follow, and they are load-bearing rather than incidental:
 3. Because both forms must coexist, the format is forced to be self-describing —
    which was already the goal, so the flag costs nothing architecturally.
 
-The flag also turns the payload bake-off into a genuine A/B: identical data,
+The format flag also turns the *form* comparison into a genuine A/B: identical data,
 identical queries, different on-disk artifacts and different reader code paths.
 Benchmarks must assert the *artifact* — that `<col>.pidx.<indexTxn>.parquet` exists in one arm
 and `<col>.pv.*` in the other — rather than trusting that setting the flag had any
-effect.
+effect. (The *payload* bake-off is deferred with arm B; there is no second arm to
+compare against.)
 
 ### Artifact set
 
@@ -169,23 +179,68 @@ change:
 | --- | --- | --- |
 | O3 rewrite mode | new partition dir, new name txn | partition name txn in `_txn` (already exists) |
 | O3 update mode | `data.parquet` mutated in place, `_pm` grows a footer, index rebuilt | parquet file size (`_txn` field 3); index token rides in the new `_pm` footer |
-| index-only change (`ADD`/`DROP INDEX`, `INCLUDE` change) | nothing in `data.parquet` | **force a new partition dir**, hard-linking `data.parquet` and `_pm` |
+| index-only change (`ADD`/`DROP INDEX`, `INCLUDE` change) | nothing in `data.parquet`; the `_pm` grows a **token-only footer** in the same directory | index token in the newest `_pm` footer *of the mapping the reader's own snapshot took* |
 
-The third regime is load-bearing, and getting it right is subtler than it first looks.
-If an index-only change merely appended a `_pm` footer, the parquet file size would be
-unchanged, so two footers would derive the same MVCC token; a reader pinned to the old
-snapshot walks to the newest matching footer and would silently observe the new index.
+#### Regime 3 (CORRECTED — this section prescribed the opposite of what was built)
 
-Forcing a new directory is necessary but **not sufficient on its own**, because
-`switchNativePartitionWithParquet` hard-links `_pm` (`TableWriter:3717`, `ff.hardLink`)
-— the same inode in both directories. Appending a footer would therefore mutate the file
-the *old* directory also names, and bump the `PARQUET_META_FILE_SIZE` that locates the
-latest footer. Since `data.parquet` is byte-identical in this regime, both footers derive
-the same token, and a reader pinned to the old partition resolves the **new** `index_txn`
-— naming a `<col>.pidx.<newTxn>._im` that does not exist in its directory.
+**What this section originally prescribed — forcing a new partition directory for an
+index-only change, and copying rather than hard-linking the `_pm` — is NOT what Phase 2
+built, and must not be re-derived from the hazard below.** The implementation appends a
+token-only footer into the *existing* directory
+(`TableWriter.publishParquetIndexTokens`, ~`:12399-12527`), moving no partition
+directory and no `_txn` partition record. The rest of this subsection says why that is
+safe, because the hazard the original prescription was derived from is real.
 
-**So in regime 3 `_pm` must be copied, not hard-linked.** It is kilobytes; `data.parquet`
-still hard-links. Phase 2's `linkPartitionIndexFiles` gating must reflect that.
+The hazard, restated and still true: a token-only append restates the same
+`PARQUET_FOOTER_OFFSET`/`PARQUET_FOOTER_LENGTH`, so the new footer derives the **same**
+parquet file size as the one it replaces. `resolveFooter(parquetFileSize)` walks back
+from the mapped tail and returns the **newest** match, so the prior footer is *shadowed*:
+physically present, but unreachable through any mapping made after the header patch. A
+reader that resolved through a freshly opened `_pm` would silently observe the new index
+version, naming a `<col>.pidx.<newTxn>._im` its snapshot is not entitled to — or, after
+the purge, one that no longer exists.
+
+Forcing a new directory is one way to close that. It is not the way this branch closes
+it, and it is the more expensive one: it would make every `ADD`/`DROP INDEX` a partition
+rewrite. Instead, three mechanisms close it together, and all three are load-bearing —
+removing any one reopens the hazard:
+
+1. **The reader resolves through its own snapshot's `_pm` mapping, never a fresh open.**
+   `TableReader` maps the `_pm` at the size its snapshot's header named and resolves from
+   that tail, so a reader that mapped before the header patch cannot see the appended
+   footer at all. This is the primary mechanism, and it is normative in
+   `docs/parquet-metadata.md` and `docs/index-metadata.md`.
+2. **The publish bumps the partition table version** (`txWriter.bumpPartitionTableVersion()`
+   at the tail of `publishParquetIndexTokens`, plus a squash-counter stamp on the
+   published partition). A token-only append leaves the partition's name txn, row count
+   and `data.parquet` size all unchanged, so without this bump `reconcileOpenPartitions`
+   takes its fast path and a reader can advance past the seal's txn while still holding
+   the pre-publish mapping — i.e. outside the purge window while still able to reach the
+   superseded artifacts. With it, a reader either still holds the old mapping and is
+   still pinned below the supersession txn, or re-maps and reads the new footer.
+3. **The superseded pair's purge window is reader-gated and bounded by the index txn of
+   the seal that replaced it** — the txn at which the supersession becomes visible, a
+   half-open bound carried explicitly (`supersededVisibleAtTxns`) rather than recomputed.
+   The artifacts a shadowed footer names therefore outlive every reader that could still
+   resolve them.
+
+A fourth, temporary mechanism exists until the Phase 2C parquet-form reader lands:
+`TableReader.checkPostingIndexIsReadable` reads *the reader's own* `_pm` mapping and
+refuses the query outright when the column's index is sealed in parquet form, rather than
+serving it through the native reader. It is a refusal, not a resolution, and it is
+removed when 2C lands; the three mechanisms above are the ones that survive it.
+
+One half of the original prescription did survive, in a different place. Wherever a
+partition directory *is* re-versioned while its `_pm` can still grow, the `_pm` is
+**copied, not hard-linked** — `switchNativePartitionWithParquet`
+(`TableWriter.java:3786-3803`, `ff.copy`) does exactly that, and for exactly the reason
+given above: a shared inode would make a later token append mutate the file the old
+directory also names, and with `data.parquet` byte-identical both directories' footers
+resolve for the same parquet size. (That copy is presently unconditional and has no OSS
+production caller — the path is enterprise-only — so under the default it is pure I/O.)
+What did *not* survive is the requirement that an index-only change create such a
+directory in the first place: `linkPartitionIndexFiles` needs no regime-3 gating, because
+regime 3 does not move a directory at all.
 
 The `_pm` addition is a **footer** feature bit. Footer bits 0–31 are optional, so
 existing readers ignore it. The section holds per-indexed-column
@@ -203,8 +258,15 @@ write <col>.pidx.<indexTxn>.parquet
 ```
 
 A crash at any point leaves an orphan index version that no committed `_pm` footer
-references; it is reclaimed by the same GC pass that handles orphan partition
-directories.
+references.
+
+**(CORRECTED — orphan reclamation is neither the partition-directory GC pass nor that
+predicate.)** What was built is a bespoke sweep, `sweepOrphanParquetIndexArtifacts`, run
+at seal-batch head (`TableWriter.java:8251`). Its predicate is deliberately *not* "no
+committed footer references it": it is a union over the whole `prev` footer chain, not
+the resolved footer alone, because the simpler predicate licensed deletion of
+reader-reachable data twice during review. Do not simplify it back — see the reasoning at
+the sweep itself and in `docs/parquet-metadata.md`.
 
 ### Index file layout
 
@@ -276,8 +338,15 @@ index a free correctness oracle.
 
 Arm N puts one row per posting; arm B puts one row per key. Parquet allows one
 schema per file, so these are two file shapes selected by a format code in `_im`.
-Both are built; the choice is made on measured size and query latency, not
-argument.
+
+**(CORRECTED — only arm N is built.)** The original text read "Both are built; the choice
+is made on measured size and query latency, not argument." Phase 2 built arm N only:
+`ParquetIndexSeal` hard-codes `IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING`. The *format*
+supports arm B end to end (`IM_PAYLOAD_ROW_PER_KEY` in `index_meta.rs`), so what is
+missing is the writer arm and its selection, not the on-disk encoding. The
+`cairo.posting.index.parquet.payload` property that was to select it has been removed
+until something reads it — a knob that silently does nothing is worse than no knob — and
+must be reintroduced with arm B. The bake-off below therefore cannot be run yet.
 
 ```
 Arm N ("Parquet-native")  -- one row per posting, ~partitionRowCount rows
@@ -317,9 +386,22 @@ write _im (directory, zone maps, byte ranges), patch IM_FILE_SIZE last
 The scatter-gather from row-ordered temp mmaps into posting order is not new cost:
 `.pc` files are already in posting order, so the same access pattern happens today.
 
-`discardForRebuild()` and the seal/purge machinery drop out on the Parquet path.
-A previous index version dies with its partition directory or its superseded `_pm`
-footer, so `PostingSealPurgeJob` has nothing to do there.
+**(CORRECTED — the purge machinery did not drop out; it grew a second artifact form.)**
+This section originally read "`discardForRebuild()` and the seal/purge machinery drop out
+on the Parquet path. A previous index version dies with its partition directory or its
+superseded `_pm` footer, so `PostingSealPurgeJob` has nothing to do there." That is false
+on both counts. A superseded `_pm` footer does not take its artifacts with it — it is
+shadowed, and the pair it named is still on disk and still reachable by any reader holding
+a pre-publish mapping (see regime 3 above). Reader-gated retirement is therefore the core
+of the phase, not a thing that drops out. What was built:
+
+- `PostingSealPurgeTask` carries an `artifactForm` discriminator
+  (`ARTIFACT_FORM_UNKNOWN`/`_NATIVE`/`_PARQUET`);
+- the purge log gained a persisted format change — spill word 1 → 2 and an
+  `artifact_form` column on `sys.posting_seal_purge_log`, backward-compatible by
+  construction;
+- `PostingSealPurgeOperator` gained an `ARTIFACT_FORM_PARQUET` route (`:216`) whose
+  safety argument is precisely that a native task must never reach it.
 
 Note that `master` has three `discardForRebuild()` call sites
 (`TableWriter:7977`, `:13909`, `:13981`); all rebuild entry points that can target
@@ -379,11 +461,22 @@ oracle for the directory fast path in tests.
 index files out of the Parquet partition directory and falls back to
 `rebuildColumnIndex` when the key file is absent (`:13460`–`:13466`).
 
-That existing `ff.exists` probe is exactly the right discriminator for mixed state
-and needs no change: a partition still carrying native sidecars takes the link fast
-path, and one carrying `pidx` artifacts falls through to the rebuild. The fallback
-is complete — `rebuildColumnIndex` calls `configureCoveringIfNeeded`
-(`TableWriter:12662`) so it rebuilds `.pci`/`.pc*` as well as `.pv`.
+**(CORRECTED — the `ff.exists` probe was NOT the right discriminator and did need
+changing.)** This section originally claimed the probe "needs no change". It does: a
+POSTING index sealed in parquet form still leaves a `.pk` behind, because the seal feeds
+the native index writer to count keys, while leaving no sealed `.pv` generation and no
+`.pc*` covers. The `ff.exists` fast path therefore fires and links a key file whose chain
+has no visible generation — the converted native partition then answers "no keys, no
+rows", silently, on a path the reader's refusal probe cannot observe because it returns
+early for a partition that is no longer parquet. `f69e7ec314` re-keyed
+`restoreIndexFilesAfterParquetToNative` on the **published token** read off the
+partition's own `_pm` (`readPublishedParquetIndexColumnIds`), not on the configured
+format and not on `ff.exists` alone; the `ff.exists` probe remains only as the second
+half of the link condition. Keying on the configured format would be wrong for the same
+reason: seal as parquet, flip the property back to `native`, then convert.
+
+The fallback itself is complete as described — `rebuildColumnIndex` calls
+`configureCoveringIfNeeded` so it rebuilds `.pci`/`.pc*` as well as `.pv`.
 
 The cost regression is therefore scoped to partitions written in `parquet` mode,
 not to the feature being present. It remains real for those partitions — a rebuild
@@ -492,13 +585,18 @@ key by key.
 - **`touch_table()`** on a Parquet-backed covering index.
 - **Bake-off harness.** Arm N against arm B on size and query latency, over both a
   low-cardinality hot-key shape and a 110k-symbol shape. Each arm asserts the
-  on-disk artifact it actually produced before recording a number.
+  on-disk artifact it actually produced before recording a number. *(NOT BUILT — arm B
+  has no writer, so there is nothing to bake off. Deferred with arm B.)*
 
 ## Scope
 
-**In scope:** the two configuration properties and on-disk-form dispatch, the
+**In scope:** the on-disk-form configuration property and on-disk-form dispatch, the
 on-disk format, `_im`, the `_pm` footer section, the write path, the Parquet-backed
-`IndexReader`, pruning levels 1–3, `parquet -> native`, and the two-arm bake-off.
+`IndexReader`, pruning levels 1–3, and `parquet -> native`.
+
+**(CORRECTED — scope as delivered.)** The second configuration property (payload arm)
+and the two-arm bake-off are not delivered; the Parquet-backed `IndexReader` is Phase 2C,
+and until it lands `TableReader` refuses rather than mis-serves a parquet-form index.
 
 **Out of scope, enabled but not built:** cold storage upload, replication, S3
 pull-back, filter pushdown (pruning level 4), incremental index append.
