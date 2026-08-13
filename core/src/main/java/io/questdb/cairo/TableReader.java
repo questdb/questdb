@@ -102,13 +102,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TxnScoreboard txnScoreboard;
     private int columnCount;
     private int columnCountShl;
-    // Memo for hasPostingIndexedColumn, keyed on the metadata version it was
-    // computed from. -1 means "not computed".
-    private boolean hasPostingIndexedColumn;
-    private long postingIndexedColumnMetadataVersion = -1;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
+    // Memo for hasPostingIndexedColumn, keyed on the metadata version it was
+    // computed from. -1 means "not computed".
+    private boolean hasPostingIndexedColumn;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
     private LongList openPartitionInfo;
@@ -120,6 +119,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long parquetPartitionsPartitionTableVersion = -1;
     private boolean parquetPartitionsPresent;
     private int partitionCount;
+    private long postingIndexedColumnMetadataVersion = -1;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -1162,86 +1162,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    /**
-     * Identifies the partition list by the only two things an O3 partition purge
-     * can act on: which partitions are attached and which directory version each
-     * one names. A bump that leaves both alone -- a token publish, a data-changed
-     * mark, a squash-counter increment -- produces the same value, and a purge
-     * scheduled for it could only find nothing.
-     * <p>
-     * Deliberately not a proxy for "did anything change": it answers the
-     * narrower question the purge task exists to act on, and it is compared
-     * against the same reader's own pre-reload snapshot rather than against a
-     * latched version word.
-     * <p>
-     * It is a 64-bit hash, not the list, so a collision is possible and would
-     * make a needed schedule look unnecessary. It does not matter: the effect is
-     * that this ONE reader release does not queue a discovery task, and the
-     * directories stay on disk until the next release, the next partition change
-     * or any other reader's release schedules one. A collision delays a purge,
-     * it cannot lose data or free something still referenced -- and it takes
-     * two distinct partition lists agreeing in all 64 bits.
-     */
-    private long partitionListFingerprint() {
-        final int n = txFile.getPartitionCount();
-        long h = n;
-        for (int i = 0; i < n; i++) {
-            h = h * 31 + txFile.getPartitionTimestampByIndex(i);
-            h = h * 31 + txFile.getPartitionNameTxn(i);
-        }
-        return h;
-    }
-
-    /**
-     * Whether this table has a POSTING-indexed column, i.e. whether it can
-     * produce the covering-index token publish that
-     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
-     * suppress. Cached against the metadata version so the walk is paid once per
-     * metadata change rather than once per reader release; see the call site for
-     * why a stale answer in either direction is harmless.
-     */
-    private boolean hasPostingIndexedColumn() {
-        final long metadataVersion = metadata.getMetadataVersion();
-        if (postingIndexedColumnMetadataVersion != metadataVersion) {
-            boolean found = false;
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
-                    found = true;
-                    break;
-                }
-            }
-            hasPostingIndexedColumn = found;
-            postingIndexedColumnMetadataVersion = metadataVersion;
-        }
-        return hasPostingIndexedColumn;
-    }
-
-    /**
-     * Whether this reader's snapshot has any parquet partition, i.e. whether the
-     * covering-index token publish that
-     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
-     * suppress has anywhere to publish INTO -- the token lives in a partition's
-     * {@code _pm}, so a table with no parquet partition can never produce one.
-     * <p>
-     * Cached against the partition table version, which every path that turns a
-     * partition into parquet or back bumps ({@code TableWriter} at the tail of
-     * both conversions), so the walk is paid once per partition-list change
-     * rather than once per reader release. Under continuous append-only ingest
-     * that version does not move, so this is O(1) in the case the gate exists
-     * for. See the call site for why a stale answer in either direction is
-     * harmless -- which is what makes caching it safe at all.
-     *
-     * @param partitionTableVersion this reader's own snapshot's version, read by
-     *                              the caller before {@code unsafeLoadAll}
-     */
-    private boolean hasParquetPartitions(long partitionTableVersion) {
-        if (parquetPartitionsPartitionTableVersion != partitionTableVersion) {
-            parquetPartitionsPresent = hasParquetPartitions();
-            parquetPartitionsPartitionTableVersion = partitionTableVersion;
-        }
-        return parquetPartitionsPresent;
-    }
-
     private void closeDeletedPartition(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
@@ -1592,6 +1512,56 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private long getPartitionTimestamp(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+    }
+
+    /**
+     * Whether this reader's snapshot has any parquet partition, i.e. whether the
+     * covering-index token publish that
+     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
+     * suppress has anywhere to publish INTO -- the token lives in a partition's
+     * {@code _pm}, so a table with no parquet partition can never produce one.
+     * <p>
+     * Cached against the partition table version, which every path that turns a
+     * partition into parquet or back bumps ({@code TableWriter} at the tail of
+     * both conversions), so the walk is paid once per partition-list change
+     * rather than once per reader release. Under continuous append-only ingest
+     * that version does not move, so this is O(1) in the case the gate exists
+     * for. See the call site for why a stale answer in either direction is
+     * harmless -- which is what makes caching it safe at all.
+     *
+     * @param partitionTableVersion this reader's own snapshot's version, read by
+     *                              the caller before {@code unsafeLoadAll}
+     */
+    private boolean hasParquetPartitions(long partitionTableVersion) {
+        if (parquetPartitionsPartitionTableVersion != partitionTableVersion) {
+            parquetPartitionsPresent = hasParquetPartitions();
+            parquetPartitionsPartitionTableVersion = partitionTableVersion;
+        }
+        return parquetPartitionsPresent;
+    }
+
+    /**
+     * Whether this table has a POSTING-indexed column, i.e. whether it can
+     * produce the covering-index token publish that
+     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
+     * suppress. Cached against the metadata version so the walk is paid once per
+     * metadata change rather than once per reader release; see the call site for
+     * why a stale answer in either direction is harmless.
+     */
+    private boolean hasPostingIndexedColumn() {
+        final long metadataVersion = metadata.getMetadataVersion();
+        if (postingIndexedColumnMetadataVersion != metadataVersion) {
+            boolean found = false;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    found = true;
+                    break;
+                }
+            }
+            hasPostingIndexedColumn = found;
+            postingIndexedColumnMetadataVersion = metadataVersion;
+        }
+        return hasPostingIndexedColumn;
     }
 
     private void init() {
@@ -1969,6 +1939,36 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.set(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
         }
+    }
+
+    /**
+     * Identifies the partition list by the only two things an O3 partition purge
+     * can act on: which partitions are attached and which directory version each
+     * one names. A bump that leaves both alone -- a token publish, a data-changed
+     * mark, a squash-counter increment -- produces the same value, and a purge
+     * scheduled for it could only find nothing.
+     * <p>
+     * Deliberately not a proxy for "did anything change": it answers the
+     * narrower question the purge task exists to act on, and it is compared
+     * against the same reader's own pre-reload snapshot rather than against a
+     * latched version word.
+     * <p>
+     * It is a 64-bit hash, not the list, so a collision is possible and would
+     * make a needed schedule look unnecessary. It does not matter: the effect is
+     * that this ONE reader release does not queue a discovery task, and the
+     * directories stay on disk until the next release, the next partition change
+     * or any other reader's release schedules one. A collision delays a purge,
+     * it cannot lose data or free something still referenced -- and it takes
+     * two distinct partition lists agreeing in all 64 bits.
+     */
+    private long partitionListFingerprint() {
+        final int n = txFile.getPartitionCount();
+        long h = n;
+        for (int i = 0; i < n; i++) {
+            h = h * 31 + txFile.getPartitionTimestampByIndex(i);
+            h = h * 31 + txFile.getPartitionNameTxn(i);
+        }
+        return h;
     }
 
     private Path pathGenNativePartition(int partitionIndex, long nameTxn) {
