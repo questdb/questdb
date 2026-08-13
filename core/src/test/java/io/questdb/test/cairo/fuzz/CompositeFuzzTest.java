@@ -60,8 +60,8 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             runner.createTables("shapes");
             runner.applyGeneratedTransactions(500, 30);
             runner.assertTwinEqual();
-            org.junit.Assert.assertEquals("all eight shapes must be compared",
-                    8, runner.comparedShapeCount());
+            org.junit.Assert.assertEquals("all ten shapes must be compared",
+                    10, runner.comparedShapeCount());
         });
     }
 

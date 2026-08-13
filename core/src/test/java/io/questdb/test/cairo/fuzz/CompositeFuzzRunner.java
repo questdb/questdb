@@ -271,6 +271,13 @@ public class CompositeFuzzRunner {
      */
     private static final int POINT_TIMESTAMP_PROBES = 8;
 
+    /**
+     * How many dimension values {@link #compareCellBoundaryIntervals} derives probe windows from. Each
+     * one costs several comparisons, and the busiest values (taken first) are the ones spanning the most
+     * cells.
+     */
+    private static final int CELL_BOUNDARY_PROBES = 4;
+
     public Axes axes() {
         return axes;
     }
@@ -340,8 +347,48 @@ public class CompositeFuzzRunner {
      * twins.
      */
     public void applyGeneratedTransactions(int rowCount, int transactionCount) throws Exception {
+        // A cell whose rows cover only PART of the time window, created BEFORE the generated traffic so
+        // it takes a LOW cellKey. See insertTimeSkewedCell for why this is here.
+        insertTimeSkewedCell("SKEWLATE", "2023-01-02T21:", 6);
         ObjList<FuzzTransaction> transactions = generate(rowCount, transactionCount);
         applyToBoth(transactions);
+        // ... and one created AFTER, so it takes a HIGH cellKey while its rows sit early in the window.
+        insertTimeSkewedCell("SKEWEARLY", "2023-01-02T00:", 6);
+        TestUtils.drainWalQueue(engine);
+    }
+
+    /**
+     * Inserts a handful of rows for ONE dimension value confined to a narrow time window, into both
+     * twins.
+     * <p>
+     * The generator cannot produce this shape, and the shape is where these cursors break. It draws
+     * dimension values uniformly across the whole time window, so every cell ends up spanning the whole
+     * window — and a cell that spans the window is never "wholly above" or "wholly below" a sub-day
+     * interval. That is precisely the state an interval scan mishandles, and precisely why 24 seeds
+     * could not reproduce a defect that a three-row hand-written test reproduces every time.
+     * <p>
+     * Real data looks like this constantly: an instrument that only trades in the morning, a sensor that
+     * comes online late, a symbol retired half-way through the day.
+     * <p>
+     * WHEN this is called decides the cellKey, which decides which cursor it stresses. Called BEFORE the
+     * generated traffic, the value interns first and takes a LOW cellKey; give it LATE rows and the
+     * FORWARD scan meets a cell wholly above an early interval. Called AFTER, it takes a HIGH cellKey;
+     * give it EARLY rows and the BACKWARD scan (which visits highest cellKey first) meets a cell wholly
+     * below a later interval.
+     */
+    private void insertTimeSkewedCell(String dimensionValue, String hourPrefix, int rows) throws SqlException {
+        final StringBuilder values = new StringBuilder();
+        for (int i = 0; i < rows; i++) {
+            if (i > 0) {
+                values.append(',');
+            }
+            values.append("('").append(hourPrefix).append(String.format("%02d", i * 7 % 60))
+                    .append(":00.000000Z','").append(dimensionValue).append("','")
+                    .append(dimensionValue).append("',").append(i).append(".5,").append(i).append(')');
+        }
+        engine.execute("INSERT INTO " + compositeName + " VALUES " + values, sqlExecutionContext);
+        engine.execute("INSERT INTO " + plainName + " VALUES " + values, sqlExecutionContext);
+        TestUtils.drainWalQueue(engine);
     }
 
     /**
@@ -404,7 +451,7 @@ public class CompositeFuzzRunner {
      * The full comparison oracle: every shape in spec Sec 4.4 ("Verifying the Supported Surface")
      * must be identical between subject and reference. Each of the seven {@code compare*} helpers
      * below increments {@link #comparedShapeCount} exactly once, even where it issues more than one
-     * query, so {@link #comparedShapeCount()} always reads 8 after a full, uninterrupted run.
+     * query, so {@link #comparedShapeCount()} always reads 10 after a full, uninterrupted run.
      * <p>
      * EVERY query issued by every shape orders by every selected column (or is a single-row
      * aggregate, which needs no ordering at all) for the reason Task 1 established: the generator
@@ -433,6 +480,8 @@ public class CompositeFuzzRunner {
         compareDimensionFiltered(); // 5: dimension = / IN, present and absent
         compareIntervalScan();      // 6: interval crossing a partition boundary
         comparePointTimestampScans(); // 6b: WHERE ts = <t>, point intervals over multi-cell days
+        compareBackwardIntervalScan(); // 9: filtered scan read BACKWARDS (interval backward cursor)
+        compareCellBoundaryIntervals(); // 10: intervals just outside each cell's own time range
         compareWindowJoinSlave();   // 7: window-join, table as slave
     }
 
@@ -668,12 +717,207 @@ public class CompositeFuzzRunner {
      */
     private void compareFullScan() throws SqlException {
         final String orderAsc = " ORDER BY ts, exch, sym, px, qty";
-        final String orderDesc = " ORDER BY ts DESC, exch DESC, sym DESC, px DESC, qty DESC";
         TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                 "SELECT * FROM " + plainName + orderAsc, "SELECT * FROM " + compositeName + orderAsc, LOG);
-        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                "SELECT * FROM " + plainName + orderDesc, "SELECT * FROM " + compositeName + orderDesc, LOG);
+        // Backward scan. The obvious way to write this -- ORDER BY ts DESC, exch DESC, ... -- does NOT
+        // exercise a backward scan at all: a MULTI-KEY sort makes the optimiser SORT over a FORWARD
+        // scan, so for the whole life of this harness the "backward" half of shape 1 was running the
+        // forward cursor twice. The single-key inner ORDER BY ts DESC is what selects the backward
+        // cursor; the outer deterministic sort is what keeps the COMPARISON well-defined despite
+        // duplicate timestamps (the generator emits them, and tied rows may legitimately come back in
+        // different orders from the two tables).
+        assertBackwardScanUsed("SELECT ts FROM " + compositeName + " ORDER BY ts DESC", "Frame backward scan");
+        assertBackwardTimestampsEqual("");
         comparedShapeCount++;
+    }
+
+    /**
+     * Shape 9: a timestamp-filtered scan read BACKWARDS, i.e. the interval BACKWARD cursor.
+     * <p>
+     * This shape exists because its absence let a severe defect through. {@code
+     * IntervalBwdPartitionFrameCursor} retired an interval at the first cell of a multi-cell day that
+     * failed to match it, so an {@code ORDER BY ts DESC} with a timestamp filter returned NO rows where
+     * the same filter forward returned them. Every other shape here reads forward, and shape 1's
+     * "backward" half was silently sorting over a forward scan (see {@link #compareFullScan}), so
+     * nothing in this harness could see it.
+     * <p>
+     * The inner query is single-key {@code ORDER BY ts DESC} so the backward cursor is genuinely used --
+     * asserted via the plan, because a query that quietly stops using it would make this shape vacuous
+     * exactly the way shape 1 was. The outer sort makes the comparison deterministic under tied
+     * timestamps.
+     */
+    private void compareBackwardIntervalScan() throws SqlException {
+        final String where = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'";
+        assertBackwardScanUsed("SELECT ts FROM " + compositeName + where + " ORDER BY ts DESC", "Interval backward scan");
+        assertBackwardTimestampsEqual(where);
+        final String outerAsc = " ORDER BY ts, exch, sym, px, qty";
+        // A point interval too: [t, t] is the interval most cells of a day fail to match, which is the
+        // shape that breaks.
+        final LongList timestamps = new LongList();
+        collectLongs("SELECT ts FROM (SELECT ts, count() c FROM " + plainName
+                + " GROUP BY ts ORDER BY c DESC, ts) LIMIT " + POINT_TIMESTAMP_PROBES, timestamps);
+        for (int i = 0, n = timestamps.size(); i < n; i++) {
+            assertBackwardTimestampsEqual(" WHERE ts = cast(" + timestamps.getQuick(i) + " AS TIMESTAMP)");
+        }
+        comparedShapeCount++;
+    }
+
+    /**
+     * Shape 10: intervals aimed at each CELL's own time boundaries, forward and backward.
+     * <p>
+     * Shapes 6/6b/9 probe fixed windows and timestamps that exist in the data. Neither reliably produces
+     * the state that actually breaks these cursors: a cell lying WHOLLY OUTSIDE the interval while a
+     * sibling cell of the same day lies inside it. The generator spreads every dimension value across
+     * the whole time window, so cells almost always overlap any interval -- which is why the forward
+     * defect showed up on 1 seed in 40 and the backward one on none at all.
+     * <p>
+     * So this shape derives its intervals FROM THE DATA: for the busiest dimension values it takes that
+     * value's own first and last timestamp and probes just outside each end. An interval just above a
+     * cell's last row is, for that cell, exactly "wholly above"; just below its first row is "wholly
+     * below". Whichever cell the scan reaches first, one of them is outside the interval while others
+     * are not.
+     * <p>
+     * Both scan directions are compared, since the two cursors fail on opposite ends: the forward cursor
+     * on cells above the interval, the backward cursor on cells below it.
+     */
+    private void compareCellBoundaryIntervals() throws SqlException {
+        final LongList bounds = new LongList();
+        // Per-CELL bounds, straight off the subject's own partition list, flattened as
+        // [min, max, min, max, ...]. An earlier version of this took min(ts)/max(ts) GROUP BY exch over
+        // the whole table, which was useless: those bounds span every day, so "just above the last row"
+        // landed past the end of the data and matched nothing in either table.
+        //
+        // Ordered by maxTimestamp ASCENDING on purpose. A cell that ends EARLY is the one whose
+        // same-day siblings still have rows after it, which is exactly the state that breaks the
+        // cursors -- the cell is outside the interval while its siblings are inside it.
+        //
+        // Reading the SUBJECT's structure to choose probe windows is deliberate (it is what makes them
+        // land on real cell boundaries); the assertion itself still compares subject against reference,
+        // so the oracle is unaffected.
+        collectLongPairs("SELECT minTimestamp, maxTimestamp FROM table_partitions('" + compositeName + "')"
+                + " WHERE minTimestamp IS NOT NULL ORDER BY maxTimestamp LIMIT " + CELL_BOUNDARY_PROBES, bounds);
+        final String outerAsc = " ORDER BY ts, exch, sym, px, qty";
+        for (int i = 0, n = bounds.size(); i < n; i += 2) {
+            final long cellMin = bounds.getQuick(i);
+            final long cellMax = bounds.getQuick(i + 1);
+            // Six hours, in the generator's microsecond timestamps: wide enough to reach the sibling
+            // rows that follow an early-ending cell within the same day, narrow enough to stay a
+            // sub-day interval (which is the interesting case -- a whole-day interval matches every
+            // cell and cannot expose a wrongly-retired one).
+            final long hour = 6 * 3_600_000_000L;
+            final String[] windows = {
+                    // just ABOVE this cell's last row -- "wholly above" for it, live for siblings
+                    " WHERE ts > cast(" + cellMax + " AS TIMESTAMP) AND ts <= cast(" + (cellMax + hour) + " AS TIMESTAMP)",
+                    // just BELOW this cell's first row -- "wholly below" for it
+                    " WHERE ts >= cast(" + (cellMin - hour) + " AS TIMESTAMP) AND ts < cast(" + cellMin + " AS TIMESTAMP)",
+                    // straddling its last row
+                    " WHERE ts >= cast(" + (cellMax - hour) + " AS TIMESTAMP) AND ts <= cast(" + (cellMax + hour) + " AS TIMESTAMP)",
+            };
+            for (String where : windows) {
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                        "SELECT * FROM " + plainName + where + outerAsc,
+                        "SELECT * FROM " + compositeName + where + outerAsc, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                        "SELECT count() FROM " + plainName + where,
+                        "SELECT count() FROM " + compositeName + where, LOG);
+                // ... and the same window read BACKWARDS, where the mirrored defect lives
+                assertBackwardTimestampsEqual(where);
+            }
+        }
+        // Targeted probes for the two deliberately time-skewed cells (see insertTimeSkewedCell). The
+        // generic probes above cannot be relied on to reach them: they take the cells with the smallest
+        // maxTimestamp, and every day-1 cell ends before any day-2 cell, so the slots fill up with day-1
+        // cells before reaching the skewed ones. These two windows are the trigger states by
+        // construction -- just after the early-only cell (wholly below it, and that cell is visited
+        // FIRST by a backward scan) and just before the late-only cell (wholly above it, and that cell
+        // is visited FIRST by a forward scan).
+        //
+        // Computed from the reference table's data rather than from partition names, so they still work
+        // when the dimension is a hash or truncate transform and the value has no cell of its own.
+        assertSkewedCellWindow("SKEWEARLY", true);
+        assertSkewedCellWindow("SKEWLATE", false);
+        comparedShapeCount++;
+    }
+
+    /**
+     * Probes the window immediately after ({@code above == true}) or before a time-skewed cell's own
+     * rows -- the window in which that cell is wholly outside the interval while its same-day siblings
+     * are inside it.
+     */
+    private void assertSkewedCellWindow(String dimensionValue, boolean above) throws SqlException {
+        final LongList bounds = new LongList();
+        collectLongPairs("SELECT min(ts), max(ts) FROM " + plainName + " WHERE exch = '" + dimensionValue + "'", bounds);
+        if (bounds.size() < 2) {
+            return; // the skewed value did not land (e.g. removed by a generated truncate) -- nothing to probe
+        }
+        // Anchored on the skewed cell's own edge and left OPEN at the other end, on purpose. A fixed
+        // +/-6h window was measured to be EMPTY for both tables at ordinary row counts -- the generated
+        // rows cluster far more tightly than the two-day window suggests, so a window six hours past a
+        // cell's last row contained nothing at all and could not disagree about anything. Half-bounding
+        // it guarantees the interval spans whatever sibling rows exist on the far side, which is the
+        // whole point: the skewed cell is outside the interval, its siblings are inside it.
+        final String where = above
+                ? " WHERE ts > cast(" + bounds.getQuick(1) + " AS TIMESTAMP)"
+                : " WHERE ts < cast(" + bounds.getQuick(0) + " AS TIMESTAMP)";
+        final String outerAsc = " ORDER BY ts, exch, sym, px, qty";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT * FROM " + plainName + where + outerAsc,
+                "SELECT * FROM " + compositeName + where + outerAsc, LOG);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT count() FROM " + plainName + where,
+                "SELECT count() FROM " + compositeName + where, LOG);
+        assertBackwardTimestampsEqual(where);
+    }
+
+    /**
+     * Compares {@code SELECT ts ... ORDER BY ts DESC} between the twins -- the only shape here that
+     * genuinely reads through the BACKWARD cursor.
+     * <p>
+     * Two earlier attempts at this were VACUOUS, both for the same underlying reason, and the second is
+     * why this helper exists rather than an inline query:
+     * <ol>
+     *     <li>{@code ORDER BY ts DESC, exch DESC, ...} -- a MULTI-KEY sort makes the optimiser sort over
+     *     a FORWARD scan.</li>
+     *     <li>{@code SELECT * FROM (... ORDER BY ts DESC) ORDER BY ts, exch, ...} -- wrapping in an outer
+     *     sort (added to make tied timestamps deterministic) lets the optimiser DROP the inner sort, and
+     *     the backward cursor goes unused again. Measured: with the backward fix reverted, the raw DESC
+     *     query returned no rows while this wrapped form still passed.</li>
+     * </ol>
+     * Projecting ONLY {@code ts} solves what the wrapping was for without defeating the plan: rows tied
+     * on timestamp are IDENTICAL in this projection, so their relative order cannot make the comparison
+     * flap, and no outer sort is needed.
+     */
+    private void assertBackwardTimestampsEqual(String where) throws SqlException {
+        final String desc = " ORDER BY ts DESC";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                "SELECT ts FROM " + plainName + where + desc,
+                "SELECT ts FROM " + compositeName + where + desc, LOG);
+    }
+
+    private void collectLongPairs(String sql, LongList out) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    out.add(record.getLong(0));
+                    out.add(record.getLong(1));
+                }
+            }
+        }
+    }
+
+    /**
+     * Fails if {@code sql} does not plan to the named backward scan. Guards against the failure mode that
+     * hid the backward defect: a query that looks like it reads backwards but does not.
+     */
+    private void assertBackwardScanUsed(String sql, String expectedPlanFragment) throws SqlException {
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + sql, plan);
+        if (!Chars.contains(plan, expectedPlanFragment)) {
+            throw new AssertionError("this shape must exercise the backward cursor, but the plan does not"
+                    + " contain \"" + expectedPlanFragment + "\" -- the shape would be vacuous.\nQuery: "
+                    + sql + "\nPlan: " + plan);
+        }
     }
 
     /**
