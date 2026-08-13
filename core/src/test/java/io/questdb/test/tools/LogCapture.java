@@ -106,13 +106,18 @@ public class LogCapture {
         // successful one.
         final long maxWait = 120_000;
         final long start = clockMillis.getAsLong();
-        final Matcher m = Pattern.compile(regex).matcher(sink);
+        final Pattern pattern = Pattern.compile(regex);
+        // Snapshot the sink into an immutable String before matching, like the synchronized
+        // indexOf() reads in waitFor(CharSequence, long) -- matching a Matcher directly against
+        // the live SynchronizedSink races an in-flight put() because CharSequence#charAt() isn't
+        // one of the methods SynchronizedSink guards.
+        Matcher m = pattern.matcher(sink.toString());
         while (!m.find()) {
             if ((clockMillis.getAsLong() - start) >= maxWait) {
                 throw new AssertionError("timed out waiting for log to match '" + regex + "', captured log: " + sink);
             }
             sleeper.accept(1);
-            m.reset(sink);
+            m = pattern.matcher(sink.toString());
         }
     }
 

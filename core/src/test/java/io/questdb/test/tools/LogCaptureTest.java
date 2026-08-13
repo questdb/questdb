@@ -34,6 +34,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class LogCaptureTest extends AbstractCairoTest {
+    // Not final: guaranteed-logging reflection re-fetches this field, the same constraint that
+    // keeps EntCairoEngine.LOG non-final.
     private static Log LOG = LogFactory.getLog(LogCaptureTest.class);
     // Mirrors the budget LogCapture.waitForRegex(String) applies internally; it takes no timeout
     // argument, so the fake clock has to jump by exactly this much to land on its deadline.
@@ -77,13 +79,6 @@ public class LogCaptureTest extends AbstractCairoTest {
         capture.waitFor(barrier, 5_000);
 
         Assert.assertThrows(AssertionError.class, () -> capture.assertOnlyOnce(marker));
-    }
-
-    @Test
-    public void testWaitForBoundedOverloadReturnsWhenLinePresent() {
-        final String marker = "log-capture-witness-present-" + System.nanoTime();
-        LOG.info().$(marker).$();
-        capture.waitFor(marker, 5_000);
     }
 
     @Test

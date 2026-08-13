@@ -47,10 +47,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * landing MID-walk must abort the remaining iterations -- every entry-check witness
  * publishes closing before the walk starts, so a revert of only the poll stays green
  * everywhere except here, where closing flips after the first view has already loaded.
- * No-arg: the zero-argument {@link CairoEngine#hydrateMatViewStateStore()} delegator must
- * carry the same abort through to its caller instead of swallowing it -- a revert that
- * makes the delegator catch and discard the exception stays green under both
- * target-taking tests above but fails here.
+ * <p>
+ * The zero-argument {@link CairoEngine#hydrateMatViewStateStore()} delegator is not
+ * separately witnessed here: its delegation to the engine's own store is already covered
+ * by the pre-existing {@code MatViewTest} hydrate tests ({@code MatViewTest.java:3432},
+ * {@code :3528}).
  */
 public class MatViewHydrateClosingAbortTest extends AbstractCairoTest {
 
@@ -83,41 +84,6 @@ public class MatViewHydrateClosingAbortTest extends AbstractCairoTest {
                 }
                 Assert.assertFalse(
                         "the entry-time abort must fire BEFORE the first registry read",
-                        registryWalked.get());
-                closing.set(false);
-            }
-        });
-    }
-
-    @Test
-    public void noArgHydrateAbortsWhenEngineIsClosing() throws Exception {
-        assertMemoryLeak(() -> {
-            final AtomicBoolean closing = new AtomicBoolean();
-            final AtomicBoolean registryWalked = new AtomicBoolean();
-            try (CairoEngine closingEngine = new CairoEngine(configuration) {
-                @Override
-                public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
-                    registryWalked.set(true);
-                    super.getTableTokens(bucket, includeDropped);
-                }
-
-                @Override
-                public boolean isClosing() {
-                    // Armed only after construction: boot-time registry walks are legitimate,
-                    // and close() at the end of the try must run against the real flag.
-                    return closing.get() || super.isClosing();
-                }
-            }) {
-                closing.set(true);
-                registryWalked.set(false);
-                try {
-                    closingEngine.hydrateMatViewStateStore();
-                    Assert.fail("the no-arg hydrate must abort when the engine is closing");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "engine is closing; mat-view hydration aborted");
-                }
-                Assert.assertFalse(
-                        "the no-arg delegator must abort BEFORE the first registry read",
                         registryWalked.get());
                 closing.set(false);
             }

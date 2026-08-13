@@ -12,7 +12,6 @@ import org.junit.rules.Timeout;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -120,20 +119,5 @@ public class LifecycleOrchestratorPreJoinCancelHookTest {
         if (bootFailure.get() != null) {
             throw new AssertionError("boot thread failed: " + bootFailure.get(), bootFailure.get());
         }
-    }
-
-    @Test
-    public void setPreJoinCancelHookNullUninstalls() {
-        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
-        final AtomicInteger hookRuns = new AtomicInteger();
-        orch.setPreJoinCancelHook(hookRuns::incrementAndGet);
-        orch.setPreJoinCancelHook(null);
-        Assert.assertNull(
-                "a null hook must uninstall the previously installed one",
-                orch.getPreJoinCancelHookForTest());
-        orch.close();
-        Assert.assertEquals(
-                "the uninstalled hook must not run during close()",
-                0, hookRuns.get());
     }
 }

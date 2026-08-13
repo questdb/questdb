@@ -58,6 +58,9 @@ public class MetricsRegistryImpl implements MetricsRegistry {
         }
     }
 
+    /**
+     * No OSS caller; downstream (enterprise) target-leak tests are the consumers.
+     */
     @TestOnly
     public int getTargetCount() {
         return targets.length;
