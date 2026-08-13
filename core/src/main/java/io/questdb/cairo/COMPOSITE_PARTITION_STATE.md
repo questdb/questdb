@@ -45,7 +45,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
 | 12 | Var-size column merge | **BUILT**, all four var types |
 | 13 | Index maintenance for merged rows | **BUILT**, BITMAP; read path is piece-aware |
-| 14 | In-order append into a COMPOSITE last partition | **BROKEN** - see below |
+| 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet** - see below |
 | 15 | Merge that reads below a column top | **NOT BUILT** - see below |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
@@ -243,7 +243,7 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. 13 run and pass; 23 carry an `@Ignore`
+there that does not turn on a replace commit or on compaction. 15 run and pass; 21 carry an `@Ignore`
 naming the gap that blocks them, so the ignored list IS the to-do list and the suite stays runnable.
 
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
@@ -252,19 +252,32 @@ this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 The port is what found gaps 14 and 15. Three of the ignored tests do not merely fail, they take the JVM
 down with a SIGSEGV, which is why they are marked rather than left red.
 
-### 14. The ACTIVE partition is written at its LIVE row count, not at `E`
+### 14. The ACTIVE partition is written at its LIVE row count, not at `E` - LARGELY FIXED
 
-`openLastPartitionAndSetAppendPosition`, `setAppendPosition` and `closeActivePartition` all place the last
-partition's column files at `txWriter.getTransientRowCount()`. That is the partition's LIVE row count, and
-a composite partition's files run to `E`. So an in-order append writes straight over a piece that a merge
-relocated above the last one, and closing the writer truncates that piece away.
+Every in-place write into the last partition takes its file position from
+`txWriter.getTransientRowCount()`, the partition's LIVE row count. A composite partition's files run to
+`E`, and a merge that relocated a piece to the tail put live rows between the two - so the write landed
+inside that piece and the close that followed truncated whatever it did not reach.
 
-Proven rather than inferred: `testPreSplitsLastLogicalPartition` loses rows, and the identical scenario
-passes once a later day is added so the cut day is no longer the active partition.
+A composite last partition now refuses those writes exactly as a PARQUET one does, through
+`isLastPartitionAppendBlocked()`. Two of the three sites matter:
 
-Fixing it is two halves. The file position has to come from `getPartitionPhysicalRowCount`, and the rows an
-append lands at `E` have to reach the geometry - either by growing the last piece when it already ends at
-`E`, or by recording a new piece at `[E, E + n)` when a relocated sibling sits between.
+- **`noLag`**. The WAL LAG lives INSIDE the last partition's column files, appended past the live row count
+  and committed in place later. This is the one that was doing the damage; blocking it is what turned
+  `testPreSplitsLastLogicalPartition` and `testTailPiecePublishesGeometryOnceALaterPartitionArrives` green.
+- **the per-partition `append` flag** in the O3 fan-out, beside `!isParquet`. `srcDataMax` is the live row
+  count and would be the append's file row.
+- plus the drop-partition reopen, the end-of-O3-commit `setAppendPosition`, and the column-file reopen
+  after a metadata change.
+
+**`openLastPartitionAndSetAppendPosition` and `txWriter.initLastPartition` are deliberately NOT blocked.**
+Mirroring parquet there loses rows: `testMergeAppendsActivePartition` regressed, because a partition that
+is never opened leaves the writer's own state stale. The truncation-on-close that motivated blocking them
+no longer reproduces anyway.
+
+Three scenarios are still blocked behind narrower defects - ADD COLUMN leaving a zero-length aux file, a
+dedup commit of one timestamp reading past the mapping, and a second cut taken while the writer holds the
+partition open. Their `@Ignore` reasons say which.
 
 ### 15. A merge that reads below a column top is refused, and the refusal is swallowed
 

@@ -83,10 +83,11 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * surfaces that first - its jump asserts on a negative offset - while a var-size driver folds it to
      * zero, so one of each is added.
      */
-    @Ignore("The writer positions and truncates the ACTIVE partition's column files at its LIVE row count,"
-            + "while a composite partition's files run to E. An in-order append therefore writes over a piece a"
-            + "rewrite relocated above the last one, and closing the writer truncates it away. Proven by moving"
-            + "the same scenario off the active partition, where it passes.")
+    @Ignore("ADD COLUMN on a table whose last partition is COMPOSITE leaves the new var-size column's aux"
+            + "file at zero length, so the reader fails with 'Invalid column size ... s.i, size=0'. Unchanged"
+            + "by the append-blocked exclusion, so it is a separate gap: a composite partition still needs its"
+            + "new column files created and sized over [columnTop, E), which the parquet arm has no equivalent"
+            + "of.")
     @Test
     public void testAddColumnAfterMergeAppendRelocatedAPiece() throws Exception {
         assertMemoryLeak(() -> {
@@ -665,10 +666,9 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * Both shapes are here: the single row, and several rows at one timestamp that dedup must collapse
      * onto the last of them.
      */
-    @Ignore("The writer positions and truncates the ACTIVE partition's column files at its LIVE row count,"
-            + "while a composite partition's files run to E. An in-order append therefore writes over a piece a"
-            + "rewrite relocated above the last one, and closing the writer truncates it away. Proven by moving"
-            + "the same scenario off the active partition, where it passes. Kills the JVM.")
+    @Ignore("A dedup commit of a single timestamp into a COMPOSITE active partition reads a row past the"
+            + "mapping - SIGSEGV in Record.getTimestamp. Kills the JVM. Still reached with the append-blocked"
+            + "exclusion in place, so it is neither the LAG nor the in-place append.")
     @Test
     public void testDedupCommitOfOneTimestampAppliesAsABlock() throws Exception {
         assertMemoryLeak(() -> {
@@ -1355,10 +1355,9 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * Either one lops the relocated sibling off the end of the shared files, leaving its rows reading back
      * as zeroes - a VARCHAR aux entry of 0 is an unset entry, which is where it surfaces first.
      */
-    @Ignore("The writer positions and truncates the ACTIVE partition's column files at its LIVE row count,"
-            + "while a composite partition's files run to E. An in-order append therefore writes over a piece a"
-            + "rewrite relocated above the last one, and closing the writer truncates it away. Proven by moving"
-            + "the same scenario off the active partition, where it passes. Kills the JVM.")
+    @Ignore("The first cut and the writer reopen now survive - the truncation this test is named for is"
+            + "fixed. What is left is narrower: the SECOND cut, taken into the cold tail piece while the writer"
+            + "holds the partition open, comes back with the wrong rows.")
     @Test
     public void testMergeAppendedPieceSurvivesActivePartitionClose() throws Exception {
         assertMemoryLeak(() -> {
@@ -2067,10 +2066,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * piece is still where in-order rows land, so a later append must reach it without disturbing its
      * siblings.
      */
-    @Ignore("The writer positions and truncates the ACTIVE partition's column files at its LIVE row count,"
-            + "while a composite partition's files run to E. An in-order append therefore writes over a piece a"
-            + "rewrite relocated above the last one, and closing the writer truncates it away. Proven by moving"
-            + "the same scenario off the active partition, where it passes.")
     @Test
     public void testPreSplitsLastLogicalPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -2197,10 +2192,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * count that only ever lived in the transient slot comes back as whatever the last record said - and
      * every row written into the piece while it was the tail disappears.
      */
-    @Ignore("The writer positions and truncates the ACTIVE partition's column files at its LIVE row count,"
-            + "while a composite partition's files run to E. An in-order append therefore writes over a piece a"
-            + "rewrite relocated above the last one, and closing the writer truncates it away. Proven by moving"
-            + "the same scenario off the active partition, where it passes.")
     @Test
     public void testTailPiecePublishesGeometryOnceALaterPartitionArrives() throws Exception {
         assertMemoryLeak(() -> {

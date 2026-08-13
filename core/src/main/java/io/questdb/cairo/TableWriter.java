@@ -1406,7 +1406,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                 boolean skipForPosting = metadata.isIndexed(columnIndex)
                         && IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
-                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
+                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0 && !isLastPartitionAppendBlocked()) {
                     long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                     long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
@@ -4651,7 +4651,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // For native last partition: use the partition's max timestamp, so only appending data is optimized.
         // For parquet last partition: use Long.MAX_VALUE to disable optimization entirely,
         // batching more transactions to reduce the number of expensive parquet O3 merges.
-        long inOrderMinTimestamp = isLastPartitionParquet() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
+        // A COMPOSITE last partition disables it for the same reason a parquet one does - there is no
+        // in-place append to optimize into. Its files run to E while the append base every in-order site
+        // takes is the live row count, so the rows have to go through the O3 path, which writes at E and
+        // records what it wrote in the geometry.
+        long inOrderMinTimestamp = isLastPartitionAppendBlocked() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
         return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
     }
 
@@ -6570,7 +6574,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
 
             if (index != 0) {
-                if (!isLastPartitionParquet()) {
+                if (!isLastPartitionAppendBlocked()) {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
@@ -6765,7 +6769,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 // Set append position if this commit did not result in full table truncate
                 // which is possible with replace commits.
-                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
+                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionAppendBlocked()) {
                     setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
                 }
             } catch (Throwable e) {
@@ -7524,6 +7528,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
 
+    /**
+     * Whether the last partition refuses to be opened and positioned for an in-place append, so every
+     * commit into it has to go through the O3 path instead.
+     * <p>
+     * Two kinds of partition refuse, for the same reason at different scales. A PARQUET partition holds no
+     * native column files to append to at all. A COMPOSITE one holds files whose furthest row is {@code E},
+     * while the number every append site here reaches for is the partition's LIVE row count - and the two
+     * differ the moment a merge relocates a piece to the tail. Positioning at the live count then puts the
+     * append inside that piece's rows and makes the close truncate it away, so the whole class of "open the
+     * last partition and set its append position" is denied to both.
+     */
+    private boolean isLastPartitionAppendBlocked() {
+        return isLastPartitionParquet() || isLastPartitionComposite();
+    }
+
     private boolean isLastPartitionClosed() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0) {
@@ -7532,6 +7551,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // No columns, doesn't matter
         return false;
+    }
+
+    private boolean isLastPartitionComposite() {
+        int partitionCount = txWriter.getPartitionCount();
+        return partitionCount > 0 && txWriter.hasGeometryChain(partitionCount - 1);
     }
 
     private boolean isLastPartitionParquet() {
@@ -9434,9 +9458,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
                             : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
+                    // A COMPOSITE partition is excluded for the same reason a parquet one is, and the
+                    // exclusion is worth just as much. srcDataMax is the partition's LIVE row count, and
+                    // that is the file row this append would write at - but a composite partition's files
+                    // run to E, and a merge that relocated a piece to the tail put live rows between the
+                    // two. Appending at srcDataMax overwrites them, and the close that follows truncates
+                    // whatever the append did not reach.
+                    final boolean isComposite = partitionIndexRaw > -1
+                            && txWriter.hasGeometryChainByRawIndex(partitionIndexRaw);
+
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions — they must go through the O3 merge path.
-                    final boolean append = last && !isParquet && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
+                    final boolean append = last && !isParquet && !isComposite && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
                             // If it's replace commit, the append is only possible if the last partition data is
                             // before the replace range.
                             && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
@@ -9850,7 +9883,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
-                boolean lastPartitionIsParquet = isLastPartitionParquet();
+                // The LAG lives INSIDE the last partition's column files, appended past its live row count
+                // and committed in place later. A composite last partition has live rows past that point,
+                // so it refuses the LAG for the same reason a parquet one does - see
+                // isLastPartitionAppendBlocked.
+                boolean lastPartitionBlocksAppend = isLastPartitionAppendBlocked();
                 // On a FORMAT PARQUET table with no committed rows yet, the only
                 // partition is the native placeholder that openPartition above
                 // creates for empty tables. processWalCommitFinishApply deletes
@@ -9861,7 +9898,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // unaffected: those partitions accept LAG normally.
                 boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
                         && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder;
+                boolean noLag = lastPartitionBlocksAppend || isParquetTableEmptyPlaceholder;
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
                         || noLag

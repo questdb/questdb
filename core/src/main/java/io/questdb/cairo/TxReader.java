@@ -514,7 +514,10 @@ public class TxReader implements Closeable, Mutable {
      * That costs one read, never a wrong answer.
      */
     public boolean hasGeometryChain(int partitionIndex) {
-        final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        return hasGeometryChainByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean hasGeometryChainByRawIndex(int indexRaw) {
         if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
             return false;
         }
