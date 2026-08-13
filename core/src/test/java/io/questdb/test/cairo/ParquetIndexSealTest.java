@@ -2848,26 +2848,34 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs a query over the emitted index parquet on the non-parallel
-     * {@code read_parquet} path.
+     * Runs a query over the emitted index parquet on BOTH {@code read_parquet}
+     * paths, which project the file by different means: the serial cursor by
+     * parquet index, the parallel page-frame cursor by field id through a
+     * {@code ColumnMapping}.
      * <p>
-     * The parallel page-frame path cannot read this file: it projects columns by
-     * QuestDB column id and, in
-     * {@code ReadParquetRecordCursor.canProjectMetadata}, substitutes the
-     * parquet column index for any negative id. The index parquet's synthetic
-     * {@code key_id} and {@code row_id} carry id -1 (the {@code _im} writer
-     * requires exactly that to tell them from the covered columns), so
-     * {@code key_id} is remapped to id 0 and collides with any covered column
-     * whose writer index is 0 - the designated timestamp, here. {@code key_id}
-     * then serves the timestamp's page truncated to 32 bits. The file itself is
-     * correct; only that projection is wrong, and it is out of this task's
-     * scope.
+     * Only the second can be wrong about the synthetic {@code key_id} and
+     * {@code row_id}, whose field id is -1 because the {@code _im} writer
+     * requires exactly that to tell them from the covered columns, and it once
+     * was: both it and the map it resolves ids through substituted the parquet
+     * POSITION for a negative id, so {@code key_id} (parquet column 0) took id 0
+     * and aliased onto the covered column whose writer index is 0 - the
+     * designated timestamp, here - serving its page truncated to 32 bits. These
+     * oracles ran on the serial path alone to route around that, which made them
+     * depend on {@code cairo.sql.parallel.read.parquet.enabled}, a config a user
+     * can flip. Both paths are asserted now.
      */
     private void assertIndexParquetQuery(String sql, String expected) throws Exception {
         final boolean wasParallel = sqlExecutionContext.isParallelReadParquetEnabled();
         try {
-            sqlExecutionContext.setParallelReadParquetEnabled(false);
-            assertQuery(sql).inferRandomAccess().expectSize().returns(expected);
+            for (int i = 0; i < 2; i++) {
+                final boolean parallel = i == 0;
+                sqlExecutionContext.setParallelReadParquetEnabled(parallel);
+                try {
+                    assertQuery(sql).inferRandomAccess().expectSize().returns(expected);
+                } catch (AssertionError e) {
+                    throw new AssertionError("[parallelReadParquet=" + parallel + "] " + e.getMessage(), e);
+                }
+            }
         } finally {
             sqlExecutionContext.setParallelReadParquetEnabled(wasParallel);
         }
