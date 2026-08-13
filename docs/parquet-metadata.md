@@ -208,9 +208,11 @@ bytes (still CRC-covered).
 | 0   | BLOOM_FILTERS          | none       | `4 + bloom_col_count * 4` bytes: `[u32 bloom_col_count][u32; bloom_col_count]` column indices (sorted ascending, unique) | `row_group_count * bloom_col_count * 4` bytes: inlined offsets (`>>3`) into `_pm`; `0` = absent                                                |
 | 1   | BLOOM_FILTERS_EXTERNAL | bit 0      | none (shares bit 0 header section)                                                                                       | entry width grows from 4 to 16 bytes: `[(u64 offset, u64 length); row_group_count * bloom_col_count]` into the parquet file; `(0, 0)` = absent |
 | 2   | SORTING_IS_DTS_ASC     | none       | none                                                                                                                     | none                                                                                                                                           |
+| 3   | SQUASH_TRACKER         | none       | 8 bytes: a single `i64`, no count and no length prefix                                                                   | none                                                                                                                                           |
 
 Bit 0 is only set when at least one column has a bloom filter. Bit 1 cannot be set without bit 0; the reader rejects the
-file otherwise. Feature sections are ordered by bit position.
+file otherwise. Bit 3 has no dependency and coexists with bit 0. Feature sections are ordered by bit position, so when
+both bit 0 and bit 3 are set the squash tracker's 8 bytes follow the bloom column-index section.
 
 **Footer flag bits:**
 
@@ -246,6 +248,34 @@ partition's sorting order is implicitly the designated timestamp column in ascen
 by `[DESIGNATED_TIMESTAMP]` ascending. The designated timestamp column's DESCENDING flag must not be set. This flag is
 only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIGNATED_TIMESTAMP` is -1.
 
+**Squash tracker, header flag bit 3:**
+
+| offset                | size | field          | type | description                                    |
+| --------------------- | ---- | -------------- | ---- | ---------------------------------------------- |
+| after the bit 0 section | 8    | SQUASH_TRACKER | i64  | partition squash tracker, little-endian |
+
+The whole section is those 8 bytes. Unlike footer bit 1 it carries no length header, and unlike footer bit 2 it carries
+no entry count — the width is implied by the bit, so a reader that knows the bit advances its cursor by exactly 8 and a
+reader that does not know it stops before the section. Being a HEADER flag it is file-wide: it applies to every footer
+in the MVCC chain, which is the whole reason it does not live in a footer.
+
+Writers must clear the bit rather than write the unset sentinel: `set_squash_tracker(-1)` writes NOTHING and leaves bit
+3 clear, so `-1` and "absent" are the same state on disk and never both representable. Set the bit only when the value
+is meaningful.
+
+A reader that finds bit 3 set must find 8 readable bytes at the cursor or reject the file as truncated. The parsed
+value is exposed as `Option<i64>` (`ParquetMetaReader::squash_tracker`, `FileHeader::squash_tracker`) — `None` when the
+bit is clear. **The OSS build parses it and does not act on it; it is consumed by the enterprise build**, which is why
+nothing in this repository reads a non-`None` value.
+
+Being in the optional range (bits 0-31), an older reader that does not know bit 3 ignores it. That is safe only because
+bit 3 is the highest header bit that has a section: such a reader's cursor stops after the bit 0 section and the
+trailing 8 bytes are never mistaken for something else. Bits 0-3 are all defined, so the next header bit necessarily
+sits above 3 and its section behind the squash tracker's — but the property that makes this work is the ascending
+bit-order layout, not the bit number. **A section attached to a bit below the highest one already carrying a section
+would shift every section after it**, and there is no version word to detect that; the only safe direction for new
+header sections is upwards.
+
 QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are
 materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than
 file-level `column_top` metadata.
@@ -255,7 +285,7 @@ file-level `column_top` metadata.
 | offset | size | field                   | type | description                                                                                                         |
 | ------ | ---- | ----------------------- | ---- | ------------------------------------------------------------------------------------------------------------------- |
 | 0      | 8    | PARQUET_META_FILE_SIZE  | u64  | total committed `_pm` file size; patched last by the writer and acts as the MVCC commit signal (not covered by CRC) |
-| 8      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0                                                           |
+| 8      | 8    | FEATURE_FLAGS           | u64  | file-wide `HeaderFeatureFlags`. NOT reserved and NOT always 0: four bits are defined, parsed and branched on — see **Defined feature flags** above |
 | 16     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                                                            |
 | 20     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                                                                     |
 | 24     | 4    | COLUMN_COUNT            | u32  |                                                                                                                     |
