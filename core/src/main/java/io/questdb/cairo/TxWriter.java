@@ -442,6 +442,27 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Publishes a partition's geometry pointer into its {@code _txn} record - slot 3, the same word that
+     * holds a parquet file size for a parquet partition. The value comes from the composite write path and
+     * is opaque here: this class stores it, and only {@link TxReader#hasGeometryChain} and the resolver
+     * take it apart.
+     * <p>
+     * Ordering is the crash-consistency contract and belongs to the caller: the {@code _geometry} record
+     * must be durable BEFORE the {@code _txn} that points at it, the same ordering {@code _cv} obeys. A
+     * crash between the two leaves an unreferenced record, which is harmless; the reverse is durably
+     * inconsistent.
+     */
+    public void setPartitionGeometryRef(long timestamp, long geometryRef) {
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
+        if (indexRaw > -1) {
+            assert !isPartitionParquetByRawIndex(indexRaw) : "slot 3 of a parquet partition is its file size";
+            attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, geometryRef);
+            recordStructureVersion++;
+            partitionTableVersion++;
+        }
+    }
+
     public void setPartitionParquetFormat(long timestamp, long fileLength) {
         setPartitionParquetFormat(timestamp, fileLength, true);
     }

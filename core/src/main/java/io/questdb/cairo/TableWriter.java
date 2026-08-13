@@ -171,9 +171,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
     // 6. original partition timestamp (before the split)
     // 7. parquet partition file size
+    // 8. geometry ref: the _txn slot-3 word a COMPOSITE write published, or NO_GEOMETRY_REF when the
+    //    partition's geometry did not change. Deliberately OPAQUE - the composite write path is the only
+    //    thing that knows a _geometry file exists, and everything between it and _txn just carries the
+    //    word across.
     // ... column top for every column
-    public static final int PARTITION_SINK_SIZE_LONGS = 8;
+    public static final int PARTITION_SINK_SIZE_LONGS = 9;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    /**
+     * Sink slot 8 when the write left the partition's geometry alone. Not {@code -1}: that is a legal
+     * geometry ref, and not 0 either, which is a legal offset into a geometry file.
+     */
+    public static final long NO_GEOMETRY_REF = Long.MIN_VALUE;
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
@@ -8041,6 +8050,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
+                // Whatever the composite write published, carried across without being looked into.
+                final long geometryRef = Unsafe.getLong(blockAddress + 8 * Long.BYTES);
                 if (!partitionMutates && srcDataNewPartitionSize < 0) {
                     // noop
                     continue;
@@ -8259,6 +8270,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.bumpPartitionTableVersion();
                         }
                     }
+                }
+
+                // Last, so it survives whichever size update ran above - several of those rewrite slot 3,
+                // which is where the pointer lives. A composite write has already made its _geometry record
+                // durable, so publishing the pointer here puts it in the same _txn as the row count it
+                // belongs with.
+                if (geometryRef != NO_GEOMETRY_REF) {
+                    txWriter.setPartitionGeometryRef(partitionTimestamp, geometryRef);
                 }
             }
         }
@@ -9368,6 +9387,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+                    // Only the composite write path writes slot 8, so a reused block would otherwise carry
+                    // the previous partition's geometry pointer into this one's _txn record.
+                    Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, NO_GEOMETRY_REF);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
                     Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
