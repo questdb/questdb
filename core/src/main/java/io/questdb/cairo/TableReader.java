@@ -566,6 +566,22 @@ public class TableReader implements Closeable, SymbolTableSource {
      * of a chain the seal left with no visible generation, which answers "no
      * keys, no rows": a silent empty result rather than an error. Dispatch on
      * this method, not on the property.
+     * <p>
+     * <b>The answer is exactly as pinned as the mapping, and no more.</b> Two
+     * bounds a dispatch must not assume away. Both are older than this cache and
+     * neither is changed by it, but both survive it:
+     * <ul>
+     *     <li>A partition opened LAZILY, after a token publish, maps the current
+     *     {@code _pm}. A token-only publish restates the same
+     *     {@code data.parquet} size, so {@code resolveFooter} matches the newest
+     *     footer and such a reader gets the writer's latest {@code index_txn}
+     *     even though its {@code _txn} is older. Only a mapping taken BEFORE the
+     *     header patch still selects the older footer.</li>
+     *     <li>{@link #closeExcessPartitions()} -- max-open-partition eviction,
+     *     and {@link #goPassive()} -- can close and re-open a partition inside
+     *     ONE txn, which re-resolves the mapping and this cache with it. A
+     *     reader holding one txn is not thereby holding one answer.</li>
+     * </ul>
      */
     public byte getPartitionIndexForm(int partitionIndex, int columnIndex) {
         return indexFormEntryOffset(partitionIndex, columnIndex) < 0
@@ -791,8 +807,12 @@ public class TableReader implements Closeable, SymbolTableSource {
      * dropped or replaced -- the cache is a projection of that mapping's
      * resolved footer and means nothing without it. Repopulated by
      * {@link #cacheParquetIndexForms} the next time the partition is opened.
+     * <p>
+     * Private on purpose: the cache is a projection of a mapping this class
+     * owns, and every site that drops or replaces that mapping is in this file.
+     * An external lever to drop it is only ever a way to desynchronise the two.
      */
-    public void invalidateIndexFormCache(int partitionIndex) {
+    private void invalidateIndexFormCache(int partitionIndex) {
         final LongList forms = parquetIndexForms.getQuick(partitionIndex);
         if (forms != null) {
             // Kept rather than nulled: the same partition slot is reopened over
@@ -1571,6 +1591,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.freeObjList(indexes);
     }
 
+    /**
+     * Deliberately does NOT invalidate the index form cache, unlike every other
+     * site that drops a {@code _pm} mapping. Both callers make that safe by
+     * construction rather than by luck: {@code close()} is the end of the
+     * reader, and {@code goActiveAtTxn}'s downgrade branch calls {@code init()}
+     * immediately after, which reallocates {@code parquetIndexForms} outright.
+     * A third caller would have to invalidate.
+     */
     private void freeParquetPartitions() {
         Misc.freeObjList(parquetMetaDecoders);
         Misc.freeObjList(parquetMetadataPartitions);

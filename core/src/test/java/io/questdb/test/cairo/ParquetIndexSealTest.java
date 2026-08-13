@@ -1983,35 +1983,6 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
-     * The refusal probe's memo lives in two words of the partition's
-     * {@code openPartitionInfo} slot, and the SLOT OUTLIVES THE PARTITION it
-     * describes. A new incarnation -- an O3 full rewrite into a new directory, a
-     * split, a squash, a {@code CONVERT PARTITION} -- reuses the same slot, so
-     * unless the close path drops the memo, the new incarnation starts life
-     * carrying the old one's answer.
-     * <p>
-     * <b>What this asserts, and what it deliberately does not.</b> It asserts the
-     * memo is CLEARED, by reading the two slot words directly, and it asserts
-     * first that the new incarnation would otherwise HIT that memo -- both key
-     * words repeat exactly across the round trip, measured below.
-     * <p>
-     * It does not assert a wrong query ANSWER. That needs one more thing on top
-     * of the key collision: the new incarnation must carry a covering entry the
-     * memo says is absent. A non-empty covering section is 24 bytes of footer
-     * that an empty one does not have, so it moves the {@code _pm} size and the
-     * memo misses again; and the only DDL lever on {@code _pm} size is the number
-     * of appended footers, whose granularity is a whole footer, far coarser than
-     * 24 bytes. No sequence of statements cancels the two. So the wrong answer is
-     * not reachable from SQL, and manufacturing it by writing the slot by hand
-     * would prove nothing about this code. Note what is left: the safety margin
-     * is that 24-byte difference, NOT the two-word key -- the key collides.
-     * <p>
-     * The reader is held across the whole DDL sequence for the same reason as
-     * {@link #testTheRefusalProbeIsNotSuppressedByAnEarlierNativeFormAnswer()}:
-     * a pooled reader is evicted by the DDL and comes back with a fresh
-     * {@code openPartitionInfo}, which makes the shape vacuous.
-     */
-    /**
      * A partition slot outlives the partition it describes, so the cached index
      * forms must not.
      * <p>
@@ -2158,46 +2129,45 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
-     * The hazard the refusal probe's per-partition memo introduces.
-     * {@code checkPostingIndexIsReadable} caches "this partition's {@code _pm}
-     * names no covering index" against the size of the mapping it read and the
-     * committed {@code data.parquet} size, because otherwise every
-     * {@code getIndexReader} call -- per page frame, per column and per KEY --
-     * pays a full {@code _pm} CRC32 plus three JNI crossings, on the DEFAULT
-     * format.
+     * The index form cache must not survive the mapping it was resolved from,
+     * across a reseal that changes the answer without changing anything else
+     * about the partition.
      * <p>
-     * A memo that outlived the mapping it describes would be a silent wrong
-     * answer, not an error: the read would be served by the native reader off a
-     * chain with no visible generation, i.e. answered "no keys, no rows" instead
+     * The first seal is native, so the {@code _pm} names no covering index and
+     * the cached answer for {@code sym} is "native". The reseal is a token-only
+     * append: same directory, same name txn, same row count, same
+     * {@code data.parquet}. Only the {@code _pm} grows. A cache that outlived
+     * its mapping would be a silent wrong answer rather than an error -- the
+     * read would be served by the native reader off a chain the parquet seal
+     * left with no visible generation, i.e. answered "no keys, no rows" instead
      * of refused.
      * <p>
-     * It must therefore be the SAME reader instance on both sides of the
-     * publish, which is why this drives {@code TableReader} directly rather than
-     * running two queries. Two queries do not test the memo at all: the DDL
-     * between them evicts the pooled reader, and the second query gets a fresh
-     * {@code openPartitionInfo} with no memo in it -- that shape passes even with
-     * the memo's key removed, which is how this test was first written and how
-     * the negative control caught it.
+     * It must be the SAME reader instance on both sides of the publish, which is
+     * why this drives {@code TableReader} directly rather than running two
+     * queries. Two queries do not test the cache at all: the DDL between them
+     * evicts the pooled reader, and the second query gets a fresh reader with an
+     * empty cache -- that shape passes with the invalidation removed, which is
+     * how this test was first written and how the negative control caught it.
      */
     @Test
     public void testTheRefusalProbeIsNotSuppressedByAnEarlierNativeFormAnswer() throws Exception {
         assertMemoryLeak(() -> {
             // Default format: the seal is native and its sidecars are linked
             // into the parquet partition directory, so the _pm names no covering
-            // index and the probe memoises exactly that.
+            // index and the partition open caches exactly that.
             createIndexedSparseKeyTable();
             try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
                 Assert.assertTrue(reader.openPartition(0) > 0);
                 final long mappedSize = reader.getParquetMetadataSize(0);
                 Assert.assertTrue("the reader must hold a _pm mapping", mappedSize > 0);
                 final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
-                // Answers, and in answering populates the memo.
+                // Answers, off the form the partition open resolved.
                 Assert.assertNotNull(reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD));
 
                 // Re-seal the same partition in parquet form. A token-only
                 // append: the partition directory, its name txn, its row count
                 // and its data.parquet size are all unchanged, so the _pm's own
-                // growth is the only thing that can invalidate the memo.
+                // growth is the only thing that distinguishes the two answers.
                 node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
                 execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
                 drainWalQueue();
@@ -2207,14 +2177,14 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 Assert.assertTrue("the reader must have something to reload", reader.reload());
                 Assert.assertTrue(reader.openPartition(0) > 0);
                 Assert.assertNotEquals(
-                        "the fixture must move the mapped _pm size, or the memo's key is not exercised",
+                        "the fixture must move the mapped _pm size, or the reseal appended nothing",
                         mappedSize,
                         reader.getParquetMetadataSize(0)
                 );
 
                 try {
                     reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused, memo or no memo");
+                    Assert.fail("the parquet-form posting index must be refused");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "has no reader yet");
                 }
