@@ -296,6 +296,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         private long crcBuf;
         private long crcFd = -1;
         private long crcFirstCoveredTxn = Long.MAX_VALUE;
+        // Highest txn with a NON-ZERO CRC entry. A zero at or below this is a real gap; a zero above it
+        // is simply an entry that never reached the device, which a crash produces routinely.
+        private long crcHighWaterTxn = -1;
         private long fd;
         private FilesFacade ff;
         private long txn;
@@ -319,6 +322,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 crcFd = -1;
             }
             crcFirstCoveredTxn = Long.MAX_VALUE;
+            crcHighWaterTxn = -1;
             if (crcBuf != 0) {
                 Unsafe.free(crcBuf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 crcBuf = 0;
@@ -466,14 +470,46 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
          * on the other.
          */
         private void verifyRecordChecksum() {
+            final long stored = readStoredCrc(txn);
+            if (stored == 0 && txn > crcHighWaterTxn) {
+                // Zero at the TAIL of the sidecar. The body is append-only and indexed by txn, so a
+                // hole with nothing written after it means the entry never reached the device -- which
+                // a crash produces routinely, since the sidecar and the txnlog header are separate
+                // files and only one of them may have been flushed. Treating that as torn condemns a
+                // perfectly intact record, which is strictly worse than not checking it. A zero at or
+                // BELOW the high-water mark still is a gap, and still fails below.
+                return;
+            }
             TxnLogRecordVerifier.verify(
                     txn,
                     address + txnOffset,
                     RECORD_SIZE,
-                    readStoredCrc(txn),
+                    stored,
                     crcFirstCoveredTxn,
                     txnOffset
             );
+        }
+
+        /**
+         * Highest txn whose CRC entry is non-zero, found by scanning back from the end of the sidecar.
+         * Bounded by the file's own length, and run once per cursor open.
+         */
+        private long computeCrcHighWaterTxn(FilesFacade ff) {
+            if (crcFd <= -1) {
+                return -1;
+            }
+            final long len = ff.length(crcFd);
+            if (len <= TxnLogCrcSidecar.BODY_OFFSET) {
+                return -1;
+            }
+            final long entries = (len - TxnLogCrcSidecar.BODY_OFFSET) / TxnLogCrcSidecar.ENTRY_SIZE;
+            for (long i = entries - 1; i >= 0; i--) {
+                final long off = TxnLogCrcSidecar.BODY_OFFSET + i * TxnLogCrcSidecar.ENTRY_SIZE;
+                if (readSidecarLong(ff, off) != 0) {
+                    return crcFirstCoveredTxn + i;
+                }
+            }
+            return -1;
         }
 
         private long readStoredCrc(long txn) {
@@ -516,6 +552,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                             && readSidecarInt(ff, 8) == TxnLogCrcSidecar.FILE_VERSION
                             && readSidecarInt(ff, 12) == TxnLogCrcSidecar.ENTRY_SIZE) {
                         crcFirstCoveredTxn = readSidecarLong(ff, 16);
+                        crcHighWaterTxn = computeCrcHighWaterTxn(ff);
                     } else {
                         // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
                         // durability claim, so the cost is lost detection, never a failed read.

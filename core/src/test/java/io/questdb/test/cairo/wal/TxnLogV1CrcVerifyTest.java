@@ -76,6 +76,32 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testZeroedCrcBelowTheHighWaterMarkIsStillTorn() throws Exception {
+        // The crash fix classifies a zero at the TAIL as "never reached the device" rather than torn.
+        // This pins the other side of that line: a hole with later entries still written after it
+        // cannot be explained by an unflushed tail, so it must still be caught. Without this, the
+        // crash fix would have quietly turned every missing CRC into "fine".
+        assertMemoryLeak(() -> {
+            execute("create table v1_gap (ts timestamp, v long) timestamp(ts) partition by day wal");
+            for (int i = 0; i < 6; i++) {
+                execute("insert into v1_gap values ('2024-01-0" + (i + 1) + "T00:00:00.000000Z', " + i + ")");
+            }
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("v1_gap");
+            // Zero the CRC for txn 2 while later entries stay populated.
+            zeroSidecarEntry(token, 2L);
+
+            try {
+                replayFromScratch(token);
+                Assert.fail("a CRC hole below the high-water mark must still be reported as torn");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "sequencer txnlog record");
+            }
+        });
+    }
+
+    @Test
     public void testPreSidecarV1RecordsStillReplay() throws Exception {
         // The false-positive control: records written before the sidecar existed carry no CRC and MUST
         // still replay. Without the capability watermark this is the case that would throw on every
@@ -131,6 +157,31 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
             try {
                 Assert.assertEquals("this test requires the V1 txnlog",
                         WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1, ff.readNonNegativeInt(fd, 0));
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    private void zeroSidecarEntry(TableToken token, long txn) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(token)
+                    .concat(WalUtils.SEQ_DIR)
+                    .concat(WalUtils.TXNLOG_CRC_FILE_NAME);
+            final long fd = ff.openRW(path.$(), io.questdb.cairo.CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            try {
+                final long buf = io.questdb.std.Unsafe.malloc(Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                try {
+                    // watermark is 1 for a table created by this binary, so entry index == txn - 1
+                    final long offset = 24 + (txn - 1) * 8;
+                    io.questdb.std.Unsafe.getUnsafe().putLong(buf, 0L);
+                    Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
+                } finally {
+                    io.questdb.std.Unsafe.free(buf, Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                }
             } finally {
                 ff.close(fd);
             }
