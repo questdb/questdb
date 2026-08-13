@@ -869,11 +869,22 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int timestampIndex = metadata.getTimestampIndex();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
 
-        // A COMPOSITE partition is handed over WHOLE, exactly as a parquet one is on the branch below: one
-        // task, one partition, and it works out its own internal structure. Nothing here dispatches to a
-        // piece. Unreachable until the executor exists, since nothing yet produces a composite partition.
+        // The partition is handed over WHOLE, exactly as a parquet one is on the branch below: one task,
+        // one partition, and it works out its own internal structure. Nothing here dispatches to a piece.
+        //
+        // COMPOSITE OR NOT. A partition with no geometry is not a special case, it is the one-piece case -
+        // the piece starts at the partition's own timestamp, at file row 0, and spans every row it holds.
+        // So the plan treats it like any other, and the moment the plan cuts it, it BECOMES composite: the
+        // cut costs nothing but a second entry over files that do not move. That is what makes the promotion
+        // happen in flight rather than needing a separate conversion step.
+        //
+        // Parquet is excluded because it keeps no piece geometry at all - slot 3 is its file size - and it
+        // is materialized whole by definition.
         final int compositeIndex = tableWriter.getTxReader().getPartitionIndex(partitionTimestamp);
-        if (compositeIndex > -1 && tableWriter.getTxReader().hasGeometryChain(compositeIndex)) {
+        if (!isParquet
+                && srcDataMax > 0
+                && compositeIndex > -1
+                && tableWriter.getConfiguration().isO3PartitionMergeAppendEnabled()) {
             processCompositePartition(
                     compositeIndex,
                     srcOooLo,

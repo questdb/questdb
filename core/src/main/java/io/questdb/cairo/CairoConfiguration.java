@@ -1077,6 +1077,14 @@ public interface CairoConfiguration {
 
     boolean isMultiKeyDedupEnabled();
 
+    /**
+     * Whether a partition may be written as a COMPOSITE - several pieces over one set of column files,
+     * with the incoming rows appended at the tail and the untouched pieces left exactly where they are.
+     * <p>
+     * With it off, every write of a partition rewrites the whole partition, which is what master does.
+     */
+    boolean isO3PartitionMergeAppendEnabled();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();

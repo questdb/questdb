@@ -1623,6 +1623,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isO3PartitionMergeAppendEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return false;
     }
