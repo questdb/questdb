@@ -1028,18 +1028,27 @@ public class TableReader implements Closeable, SymbolTableSource {
      * hypothetical malformed footer into a refusal.
      */
     private void cacheParquetIndexForms(int partitionIndex) {
-        // Clear before anything else, including the n == 0 exit. Callers are NOT
-        // required to have invalidated first: openMissingColumnsInPartition and
-        // createNewColumnList both leave a parquet partition with SIZE = -1 from
-        // their catch blocks WITHOUT going through closeParquetPartition, and
-        // neither closeExcessPartitions nor reconcileOpenPartitions0 collects
-        // such a slot afterwards -- both guard on openPartitionSize > -1. The
-        // next openPartition therefore re-enters here with the old list still
-        // populated. Since this method appends and indexFormEntryOffset returns
-        // the FIRST match, a survivor would win over the entry just resolved and
-        // hand out a stale index_txn. Clearing here makes the invariant hold
-        // whatever the caller did, so a future path that skips the invalidate
-        // cannot reintroduce it.
+        // Clear before anything else, including the n == 0 exit.
+        //
+        // This is defence in depth, NOT a fix for a reachable bug: the sole call
+        // site is openParquetMetadata, which calls invalidateIndexFormCache
+        // unconditionally a few lines above with nothing in between, so every
+        // route arrives here already clear. Removing this clear alone breaks no
+        // test, and testATornPartitionOpenDoesNotStrandTheCachedIndexForm fails
+        // only when BOTH this and that invalidate are gone -- they are mutually
+        // redundant for everything that reaches this method.
+        //
+        // It is kept because the redundancy is the caller's property, not this
+        // method's. A second call site, or a reordering that moves the
+        // invalidate, would otherwise reintroduce a stale answer silently: this
+        // method appends and indexFormEntryOffset returns the FIRST match, so a
+        // survivor would outrank the entry just resolved and hand out a
+        // superseded index_txn. The n == 0 exit is the worse shape -- a
+        // partition that stops publishing would keep its stale answer whole
+        // rather than merely have it shadowed.
+        //
+        // The two are not redundant everywhere: the invalidate also covers a
+        // throw out of ofWithSizeFromHeader, where this method never runs.
         final LongList existing = parquetIndexForms.getQuick(partitionIndex);
         if (existing != null) {
             existing.clear();
