@@ -12637,7 +12637,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetIndexPublishedPartitions.clear();
             parquetIndexPublishBaseTxn = txWriter.getTxn();
         }
-        parquetIndexPublishedPartitions.add(partitionTimestamp, partitionNameTxn);
+        // Deduplicated, because the stamp the rollback re-applies is an
+        // increment of the same 16-bit counter the skip above exists to keep off
+        // its cliff. One partition can be published twice inside one uncommitted
+        // window -- resealParquetIndexesAfterSwitch followed by
+        // resealParquetCoveringForPartition on the same partition -- and a
+        // rollback would then advance the counter by two for one publish window.
+        // Linear scan: the list holds the partitions published since the last
+        // commit, which is one or a handful.
+        boolean alreadyRecorded = false;
+        for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i += 2) {
+            if (parquetIndexPublishedPartitions.getQuick(i) == partitionTimestamp
+                    && parquetIndexPublishedPartitions.getQuick(i + 1) == partitionNameTxn) {
+                alreadyRecorded = true;
+                break;
+            }
+        }
+        if (!alreadyRecorded) {
+            parquetIndexPublishedPartitions.add(partitionTimestamp, partitionNameTxn);
+        }
         for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
             purgeSupersededParquetIndexArtifacts(
                     supersededColumnIds.getQuick(i),
