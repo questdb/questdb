@@ -1177,11 +1177,11 @@ public class CairoEngine implements Closeable, WriterSource {
      * poll below is the promptness half of that contract.
      *
      * @throws NullPointerException if {@code target} is null. Checked up front rather than left
-     *                               to fail implicitly: with zero views on disk nothing ever
-     *                               dereferences {@code target}, and with any view present the
-     *                               per-view {@code catch (Throwable)} further down would swallow
-     *                               the resulting NPE, so a null target could otherwise look like
-     *                               a silent no-op hydrate.
+     *                              to fail implicitly: with zero views on disk nothing ever
+     *                              dereferences {@code target}, and with any view present the
+     *                              per-view {@code catch (Throwable)} further down would swallow
+     *                              the resulting NPE, so a null target could otherwise look like
+     *                              a silent no-op hydrate.
      */
     public void hydrateMatViewStateStore(MatViewStateStore target) {
         Objects.requireNonNull(target, "target");
