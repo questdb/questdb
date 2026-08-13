@@ -451,7 +451,7 @@ public class CompositeFuzzRunner {
      * The full comparison oracle: every shape in spec Sec 4.4 ("Verifying the Supported Surface")
      * must be identical between subject and reference. Each of the seven {@code compare*} helpers
      * below increments {@link #comparedShapeCount} exactly once, even where it issues more than one
-     * query, so {@link #comparedShapeCount()} always reads 10 after a full, uninterrupted run.
+     * query, so {@link #comparedShapeCount()} always reads 11 after a full, uninterrupted run.
      * <p>
      * EVERY query issued by every shape orders by every selected column (or is a single-row
      * aggregate, which needs no ordering at all) for the reason Task 1 established: the generator
@@ -482,6 +482,7 @@ public class CompositeFuzzRunner {
         comparePointTimestampScans(); // 6b: WHERE ts = <t>, point intervals over multi-cell days
         compareBackwardIntervalScan(); // 9: filtered scan read BACKWARDS (interval backward cursor)
         compareCellBoundaryIntervals(); // 10: intervals just outside each cell's own time range
+        compareLimitedScans();          // 11: LIMIT over a filtered scan (skipTarget), both directions
         compareWindowJoinSlave();   // 7: window-join, table as slave
     }
 
@@ -859,6 +860,34 @@ public class CompositeFuzzRunner {
                 "SELECT count() FROM " + plainName + where,
                 "SELECT count() FROM " + compositeName + where, LOG);
         assertBackwardTimestampsEqual(where);
+    }
+
+    /**
+     * Shape 11: {@code LIMIT} over a filtered scan, forward and backward.
+     * <p>
+     * LIMIT is not decoration here: it becomes the {@code skipTarget} argument of the very method the
+     * sibling-cell fixes changed ({@code next(long skipTarget)}), telling the cursor how many rows it
+     * may skip before producing. Skipping and the sibling-cell advance both move {@code partitionLo},
+     * so they interact, and a small LIMIT is the most likely thing to MASK rows left unvisited by a
+     * wrongly-retired interval -- the scan stops before it would have noticed.
+     * <p>
+     * The offset form is included because {@code LIMIT lo,hi} is what actually produces a non-zero
+     * skipTarget; a bare {@code LIMIT n} often does not.
+     */
+    private void compareLimitedScans() throws SqlException {
+        final String where = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'";
+        final String orderAsc = " ORDER BY ts, exch, sym, px, qty";
+        for (String limit : new String[]{" LIMIT 1", " LIMIT 5", " LIMIT 100", " LIMIT 2,10", " LIMIT -3"}) {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM " + plainName + where + orderAsc + limit,
+                    "SELECT * FROM " + compositeName + where + orderAsc + limit, LOG);
+            // backward: single sort key so the backward cursor is genuinely used, ts-only so ties
+            // cannot make the comparison flap
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT ts FROM " + plainName + where + " ORDER BY ts DESC" + limit,
+                    "SELECT ts FROM " + compositeName + where + " ORDER BY ts DESC" + limit, LOG);
+        }
+        comparedShapeCount++;
     }
 
     /**
