@@ -667,7 +667,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
-            Assert.assertEquals("W=0 convert atomic boundary drifted", 11, r.atomicCommitDurabilityOpCount);
+            Assert.assertEquals("W=0 convert atomic boundary drifted", 13, r.atomicCommitDurabilityOpCount);
             Assert.assertFalse("convert-partition sweep truncated (atomic ops > cap) — raise the cap", r.truncated);
         });
     }
@@ -772,14 +772,15 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int atomicCommitDurabilityOpCount(int countedOps) {
-            // Both W=0 and the safe W>0 fallback have N=26: ops 1-6 the WAL event msync/fdatasync pairs,
-            // 7-8 the sequencer txn-log entry (msync + fdatasync) -- where the transaction becomes DURABLE --
-            // 9-11 parquet production (data.parquet, _pm, the partition dir), 12-13 the apply's async
-            // column-flush kicks, then 14-26 the epoch tail (syncfs, _cv, _txn, the three .epoch copies,
-            // the manifest, the table-dir fsync, _snapshot).
-            // Everything from op 9 on is MATERIALIZATION, re-derivable from the WAL that op 8 made durable;
-            // ops 1-11 must nevertheless fail loudly, so the boundary is the last parquet-production op.
-            // Op 12 starts the explicitly best-effort tail: a fault there is allowed to be consumed because
+            // Both W=0 and the safe W>0 fallback have N=28: ops 1-6 the WAL event msync/fdatasync pairs,
+            // 7-8 the V1 sequencer CRC sidecar (_txnlog.c msync + fdatasync), 9-10 the sequencer txn-log
+            // entry (msync + fdatasync) -- where the transaction becomes DURABLE -- 11-13 parquet
+            // production (data.parquet, _pm, the partition dir), 14-15 the apply's async column-flush
+            // kicks, then 16-28 the epoch tail (syncfs, _cv, _txn, the three .epoch copies, the
+            // manifest, the table-dir fsync, _snapshot).
+            // Everything from op 11 on is MATERIALIZATION, re-derivable from the WAL that op 10 made
+            // durable; ops 1-13 must nevertheless fail loudly, so the boundary is the last
+            // parquet-production op. Op 14 starts the explicitly best-effort tail: a fault there is allowed to be consumed because
             // the conversion transaction and logical rows are already durable, and the oracle still verifies
             // no suspension or data change after reboot.
             // Drift history: N was 26, then 27 when metadata-bound epochs added a third writeEpochCopy to the
@@ -787,14 +788,20 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // ADAPTIVE the apply's _txn commit is lazy and the epoch covers it, so its msync, which used to
             // sit between parquet production and the tail, is correctly gone. The boundary moved with it
             // (12 -> 11): one fewer op before the tail, the same op SET.
+            // Then 26 -> 28 when the V1 sequencer gained its per-record CRC sidecar: recordCrcBeforePublish
+            // makes _txnlog.c durable BEFORE the header advertises the txn, so its msync + fdatasync sit
+            // at 7-8 and shift everything after them by two. The boundary moved 11 -> 13 for the same
+            // reason -- the added ops are ordered ahead of the durable-transaction pair, so the
+            // fail-loud region grew by exactly those two ops rather than changing shape. Verified
+            // against the printed op log, not inferred: 77/78 are the sidecar, 79/80 the header.
             // This equality is a drift tripwire, not the load-bearing bound. The message prints the phase's
             // ops so the next drift says WHICH barrier moved instead of just a number.
             Assert.assertEquals(
                     "unexpected convert durability-op count; this phase's ops were:\n" + phaseDurabilityOps(),
-                    26,
+                    28,
                     countedOps
             );
-            return 11;
+            return 13;
         }
 
         @Override

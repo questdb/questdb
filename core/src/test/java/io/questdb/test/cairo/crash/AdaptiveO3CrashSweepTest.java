@@ -107,7 +107,19 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      * partial result ({@code [0,1,2,3,4]}: the LAZY_K durable rows plus exactly one lazily-applied row
      * that had already reached the durable WAL) so the comparison below is non-trivial in both arms.
      */
-    private static final int LAZY_GAP_CRASH_K = 12;
+    // Was 12. Re-pinned to 14 when the V1 sequencer gained its per-record CRC sidecar:
+    // recordCrcBeforePublish adds one durability op to every WAL commit, so the LAZY_M batch's ops sit
+    // two positions later in the sequence and k=12 stopped landing inside it (it returned the complete
+    // LAZY_K result, making the comparison below vacuous rather than wrong).
+    //
+    // Re-measured rather than bumped by guess -- a pinned crash point is a tripwire, and moving one
+    // without naming the barrier that moved it can hide a REMOVED barrier inside a number that drifts
+    // legitimately. Sweeping every k: 1-12 all return the complete LAZY_K result (size 4), 14-16 return
+    // a genuine partial (size 5 = the LAZY_K durable rows plus exactly one lazily-applied row, the same
+    // shape k=12 used to produce), and 17+ throw before the batch. Both arms remained a valid identity
+    // prefix at every k sampled, and recovery matched no-recovery throughout -- so the SAFETY invariant
+    // never moved; only this non-degeneracy precondition did.
+    private static final int LAZY_GAP_CRASH_K = 14;
 
     /**
      * The headline O3 sweep: every commit-phase durability op is crashed at least once; recovery must

@@ -301,10 +301,24 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
      * record written but volatile". Located by scanning the op log rather than pinned to a number, so the
      * case does not silently target the wrong op when the schema or the barrier set changes.
      */
+    /**
+     * True when the op's PATH ends with {@code marker}. The op log lines are "&lt;kind&gt; &lt;path&gt;", so the
+     * path is the last whitespace-separated field.
+     */
+    private static boolean endsWithOp(String op, String marker) {
+        final int sp = op.lastIndexOf(' ');
+        final String path = sp < 0 ? op : op.substring(sp + 1);
+        return path.endsWith(marker);
+    }
+
     private int firstSequencerOp(List<String> phaseOps) {
+        // endsWith, NOT contains: the V1 sequencer's CRC sidecar is "_txnlog.c", whose path CONTAINS
+        // "txn_seq/_txnlog". A contains-match therefore locks onto the sidecar op -- which is ordered
+        // deliberately BEFORE the header -- and identifies the wrong barrier, crashing an op early.
+        // The barrier this test is about is the header write that publishes the txn.
         final String marker = WalUtils.SEQ_DIR + "/" + WalUtils.TXNLOG_FILE_NAME;
         for (int i = 0; i < phaseOps.size(); i++) {
-            if (phaseOps.get(i).contains(marker)) {
+            if (endsWithOp(phaseOps.get(i), marker)) {
                 Assert.assertTrue(
                         "the sequencer barrier must not be the commit's first durability op — this case needs "
                                 + "the column/event barriers to run first:\n" + String.join("\n", phaseOps),

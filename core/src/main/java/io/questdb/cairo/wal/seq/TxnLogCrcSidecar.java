@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
@@ -68,8 +69,12 @@ public class TxnLogCrcSidecar implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TxnLogCrcSidecar.class);
     /** Body starts here; the header is fixed-size. */
     public static final int BODY_OFFSET = 24;
-    public static final int ENTRY_SIZE = Long.BYTES;
-    public static final int FILE_VERSION = 1;
+    /** Entry = [crc:8][stamp:8]. The stamp is the txn the CRC describes; see append(). */
+    public static final int ENTRY_SIZE = 2 * Long.BYTES;
+    /** 2, not 1: the entry grew a stamp, so a v1 sidecar is not readable by this code. */
+    public static final int FILE_VERSION = 2;
+    /** Offset of the stamp within an entry. */
+    public static final int ENTRY_STAMP_OFFSET = Long.BYTES;
     /** Spells " TLCHKSM" on disk (LE), matching the shape of CV_CHECKSUM_MAGIC / TX_CHECKSUM_CAPABILITY_MAGIC. */
     public static final long MAGIC = 0x4D534B48434C5420L;
     private static final int OFFSET_ENTRY_SIZE = 12;
@@ -144,10 +149,21 @@ public class TxnLogCrcSidecar implements QuietCloseable {
             return;
         }
         final long offset = crcOffset(txn);
+        // Seqlock discipline, and the reason an entry carries a stamp at all.
+        //
+        // This sidecar is a SEPARATE mmap'd file from _txnlog, so its pages are written back
+        // independently: after a crash an entry can be missing at ANY txn, not just the tail. Inferring
+        // "missing entry => torn record" is therefore unsound, and a crash sweep proved it -- it
+        // SUSPENDED tables whose records were perfectly intact.
+        //
+        // So the entry says which record it describes instead of the reader guessing. The CRC is written
+        // first and the stamp published LAST behind a store fence, so an entry that only partly landed
+        // has no matching stamp and is simply not applicable. A stamp that DOES match is proof the pair
+        // was written whole, and its CRC is then authoritative: a mismatch there is real corruption.
         mem.jumpTo(offset);
-        // calculateCvAreaChecksum never returns 0, so a zero slot is unambiguously "nothing written
-        // here" rather than "hashed to zero".
         mem.putLong(TableUtils.calculateCvAreaChecksum(recordBaseAddr, recordSize));
+        Unsafe.storeFence();
+        mem.putLong(txn);
     }
 
     @Override
@@ -171,6 +187,11 @@ public class TxnLogCrcSidecar implements QuietCloseable {
         }
         final long offset = crcOffset(txn);
         if (offset + ENTRY_SIZE > mem.size()) {
+            return 0;
+        }
+        // Not applicable unless the stamp names this exact txn: an unstamped, half-landed or
+        // stale-lineage entry says nothing about this record.
+        if (mem.getLong(offset + ENTRY_STAMP_OFFSET) != txn) {
             return 0;
         }
         return mem.getLong(offset);

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TxnLogCrcSidecar;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
@@ -76,11 +77,12 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testZeroedCrcBelowTheHighWaterMarkIsStillTorn() throws Exception {
-        // The crash fix classifies a zero at the TAIL as "never reached the device" rather than torn.
-        // This pins the other side of that line: a hole with later entries still written after it
-        // cannot be explained by an unflushed tail, so it must still be caught. Without this, the
-        // crash fix would have quietly turned every missing CRC into "fine".
+    public void testStampedButWrongCrcIsStillTorn() throws Exception {
+        // The other side of the seqlock line. A missing or unstamped entry is "not applicable" and the
+        // record is read unverified -- that is what stops a crash-truncated sidecar from condemning
+        // intact records. But an entry whose STAMP names this txn is proof the pair landed whole, so
+        // its CRC is authoritative and a disagreement is real corruption. Without this test, the crash
+        // fix would have quietly turned every bad CRC into "fine".
         assertMemoryLeak(() -> {
             execute("create table v1_gap (ts timestamp, v long) timestamp(ts) partition by day wal");
             for (int i = 0; i < 6; i++) {
@@ -175,8 +177,10 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
             try {
                 final long buf = io.questdb.std.Unsafe.malloc(Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 try {
-                    // watermark is 1 for a table created by this binary, so entry index == txn - 1
-                    final long offset = 24 + (txn - 1) * 8;
+                    // Entry is [crc:8][stamp:8]; watermark is 1, so entry index == txn - 1. Zero the
+                    // CRC only, LEAVING the stamp, so the entry still claims to describe this txn.
+                    final long offset = TxnLogCrcSidecar.BODY_OFFSET
+                            + (txn - 1) * TxnLogCrcSidecar.ENTRY_SIZE;
                     io.questdb.std.Unsafe.getUnsafe().putLong(buf, 0L);
                     Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
                 } finally {
