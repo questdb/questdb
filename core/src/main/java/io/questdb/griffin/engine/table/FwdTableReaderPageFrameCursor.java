@@ -180,6 +180,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.partitionIndex = reenterPartitionIndex;
                     frame.partitionLo = lo;
                     frame.partitionHi = hi;
+                    frame.pieceShift = 0;
                     frame.format = partitionFrame.getPartitionFormat();
                     frame.rowGroupIndex = -1;
                     frame.rowGroupLo = -1;
@@ -361,6 +362,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
+        frame.pieceShift = pieceShift;
         frame.format = PartitionFormat.NATIVE;
         frame.parquetMetaDecoder = null;
         frame.rowGroupIndex = -1;
@@ -421,6 +423,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.parquetMetaDecoder = reenterParquetDecoder;
                 frame.partitionLo = partitionLo;
                 frame.partitionHi = adjustedHi;
+                frame.pieceShift = 0;
                 frame.format = PartitionFormat.PARQUET;
                 frame.rowGroupIndex = i;
                 frame.rowGroupLo = (int) (partitionLo - rowGroupStartRow);
@@ -532,6 +535,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
+        private long pieceShift;
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
@@ -590,6 +594,16 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getParquetRowGroupLo() {
             return rowGroupLo;
+        }
+
+        @Override
+        public long getIndexRowHi() {
+            return partitionHi + pieceShift;
+        }
+
+        @Override
+        public long getIndexRowLo() {
+            return partitionLo + pieceShift;
         }
 
         @Override

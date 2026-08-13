@@ -179,6 +179,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.partitionIndex = reenterPartitionIndex;
                     frame.partitionLo = lo;
                     frame.partitionHi = hi;
+                    frame.pieceShift = 0;
                     frame.format = partitionFrame.getPartitionFormat();
                     frame.rowGroupIndex = -1;
                     frame.rowGroupLo = -1;
@@ -352,6 +353,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
+        frame.pieceShift = pieceShift;
         frame.format = PartitionFormat.NATIVE;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
@@ -455,6 +457,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
             frame.partitionLo = adjustedLo;
             frame.partitionHi = partitionHi;
+            frame.pieceShift = 0;
             frame.format = PartitionFormat.PARQUET;
             frame.rowGroupIndex = targetGroup;
             frame.rowGroupLo = (int) (adjustedLo - targetGroupStart);
@@ -506,6 +509,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
+        private long pieceShift;
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
@@ -564,6 +568,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getParquetRowGroupLo() {
             return rowGroupLo;
+        }
+
+        @Override
+        public long getIndexRowHi() {
+            return partitionHi + pieceShift;
+        }
+
+        @Override
+        public long getIndexRowLo() {
+            return partitionLo + pieceShift;
         }
 
         @Override

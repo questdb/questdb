@@ -133,6 +133,27 @@ file row 0, and spans every row it holds. The plan takes that as input like any 
 cuts, the partition IS composite. The cut costs one extra entry over files that never move. So promotion
 happens in flight, and there is no conversion step and no code that exists only to perform one.
 
+### A cut lands where the DATA says, not where the timestamps suggest
+
+`rowsBelow` apportions a piece's rows evenly across its timestamp range. That is fine for deciding whether
+a cut is worth proposing and useless for deciding where it lands: any gap in the data makes it wrong, and
+a gap is exactly the shape a cut aims at. `applyCut` used it for both, so a cut at a hole's edge landed
+hundreds of rows inside real data.
+
+So the caller resolves every cut against the partition's designated-timestamp column - one `SCAN_UP`
+binary search over the piece's own file rows - and hands `applyCut` the row plus each half's own bound.
+The column is mapped ONCE per partition and serves the missing-`tsHi` reads as well.
+
+The search is bounded to `[rowOffset, rowOffset + rowCount)` deliberately. A merge-append relocates a
+piece to the tail of the shared files, so file order is not timestamp order across the partition and a
+search over the whole column would cross into another piece's rows.
+
+**A piece's bounds describe the rows it holds, not the range it routes.** The halves of a cut taken across
+a data gap are bounded by their own last and first rows, so the gap belongs to neither, and a later batch
+landing in it founds a piece of its own instead of merging into a neighbour that holds nothing near it.
+Recording `cutTs - 1` and `cutTs` instead makes the lower half claim a hole it has no rows in, and the
+batch merges into it - rewriting the whole piece to add rows sitting hours above everything it holds.
+
 ### Two cut sources, different questions
 
 Transaction clustering (`WalTxnClusterer`) bins the partition's range into strides, marks every bin an
@@ -210,6 +231,11 @@ so a column that came back empty could not pass.
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.
 - **Dedup**: the plan has no dedup term at all. `liveRows` is the plain sum of piece rows.
+- **Transaction clustering is not wired in.** `WalTxnClusterer` exists and is unit-tested, and
+  `processCompositePartition` takes a cut list, but the live caller passes `null`: only BATCH EDGE cuts
+  fire. The earlier tree ran clustering on the writer thread over the whole WAL block
+  (`preSplitClusteredPartitions`), binning the partition's range with a 1-minute floor and cutting at the
+  cold gaps, which is what spares data no single batch straddles.
 - **A merge below a column top throws**, for var-size columns as well as fixed. Each source offsets by its
   own top, but a row BELOW a top is not in the file at all and has to be written as a null, which needs a
   kernel neither merge has. `rowZeroAddr` / `rowZeroAuxAddr` refuse rather than reading the wrong bytes.

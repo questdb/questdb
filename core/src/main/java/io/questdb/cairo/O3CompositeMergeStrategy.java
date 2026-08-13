@@ -76,54 +76,46 @@ public class O3CompositeMergeStrategy {
     }
 
     /**
-     * Cuts the piece at {@code piece} in two at {@code cutTs}, in place. The lower half keeps
-     * {@code [tsLo, cutTs - 1]}, the upper half takes {@code [cutTs, tsHi]}, and the rows are apportioned
-     * by timestamp position - the same estimate {@link #computeCuts} decides on. Declines, leaving the
-     * list untouched, when the cut falls outside the piece's range or would leave either half empty.
+     * Cuts the piece at {@code piece} in two, in place: the lower half keeps the first {@code below} rows
+     * and the upper half takes the rest. Declines, leaving the list untouched, when either half would be
+     * empty or the piece's data is unbounded.
+     * <p>
+     * All three numbers are RESOLVED AGAINST THE DATA by the caller, which searches the piece's own
+     * timestamp column; none can be derived here, because a timestamp range says nothing about where
+     * inside it the rows sit and this class reads no files. {@link #rowsBelow} apportions rows evenly and
+     * is only good enough to decide whether a cut is worth proposing.
+     * <p>
+     * A piece's bounds describe THE ROWS IT HOLDS, not the range it routes: the halves of a cut across a
+     * data gap end up bounded by their own last and first rows, leaving the gap between them owned by
+     * neither. That is what lets a later batch landing in the gap become a piece of its own instead of
+     * merging into a neighbour that holds nothing near it.
      * <p>
      * Cutting a piece moves no bytes: both halves address the same column files at the same offsets, so
      * this is the whole of what a pre-split does to the geometry.
      *
+     * @param below      rows of the piece below the cut
+     * @param lowerTsHi  timestamp of the lower half's LAST row
+     * @param upperTsLo  timestamp of the upper half's FIRST row
      * @return true when the cut was applied
      */
-    public static boolean applyCut(LongList bounds, int piece, long cutTs) {
-        final long tsLo = getTsLo(bounds, piece);
+    public static boolean applyCut(LongList bounds, int piece, long below, long lowerTsHi, long upperTsLo) {
         final long tsHi = getTsHi(bounds, piece);
         final long rows = getRowCount(bounds, piece);
-        if (tsHi == Numbers.LONG_NULL || cutTs <= tsLo || cutTs > tsHi) {
-            return false;
-        }
-        final long below = rowsBelow(tsLo, tsHi, rows, cutTs);
-        if (below <= 0 || below >= rows) {
+        if (tsHi == Numbers.LONG_NULL || below <= 0 || below >= rows) {
             return false;
         }
         final int at = piece * LONGS_PER_BOUND;
         // Both halves address the SAME files at the same places - that is what makes a cut free. The lower
         // half keeps the row offset it had; the upper half starts that many rows further in.
         final long rowOffset = getRowOffset(bounds, piece);
-        bounds.setQuick(at + BOUND_TS_HI, cutTs - 1);
+        bounds.setQuick(at + BOUND_TS_HI, lowerTsHi);
         bounds.setQuick(at + BOUND_ROW_COUNT, below);
         bounds.insert(at + LONGS_PER_BOUND, LONGS_PER_BOUND);
-        bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_LO, cutTs);
+        bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_LO, upperTsLo);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_HI, tsHi);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_OFFSET, rowOffset + below);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_COUNT, rows - below);
         return true;
-    }
-
-    /**
-     * Cuts whichever piece CONTAINS {@code cutTs}, wherever it now sits. The timestamp-addressed form of
-     * {@link #applyCut}, for a cut chosen from something other than the batch - transaction clustering
-     * picks its cuts from the shape of the incoming work, not from any one batch, so it has a timestamp
-     * and no piece index.
-     * <p>
-     * Because the piece is located afresh each time, cuts may be applied in any order.
-     *
-     * @return true when the cut was applied
-     */
-    public static boolean applyCutAt(LongList bounds, long cutTs) {
-        final int piece = findPieceContaining(bounds, cutTs);
-        return piece > -1 && applyCut(bounds, piece, cutTs);
     }
 
     /**

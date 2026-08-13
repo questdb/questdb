@@ -67,6 +67,17 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
      */
     private static final String STRING_EXPR = "(CASE WHEN x % 5 = 0 THEN NULL ELSE 's-' || x END)::STRING";
     /**
+     * An INDEXED SYMBOL. On top of the 32-bit key in the partition it carries a bitmap index, which lists
+     * the rows each key appears at - so a merge has to publish index entries for the rows it writes, not
+     * just the rows themselves.
+     */
+    private static final String SYMBOL_INDEXED_EXPR = "('i-' || (x % 3))::SYMBOL";
+    /**
+     * A SYMBOL. In the partition it is a 32-bit key like any other fixed-width column, but the value behind
+     * that key lives in the table's symbol map, and a WAL commit remaps its keys on the way in.
+     */
+    private static final String SYMBOL_EXPR = "('sym-' || (x % 7))::SYMBOL";
+    /**
      * A VARCHAR of values too long to inline, so every one of them is held in the data vector and every aux
      * entry is a pointer that a merge has to rewrite.
      */
@@ -84,12 +95,18 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
      */
     private static final String VARCHAR_SHORT_EXPR = "('v' || x)::VARCHAR";
     /**
-     * The var-size projection every one of the three batches shares. The values are functions of {@code x}
+     * The oracle's outer projection. UNION ALL widens a SYMBOL to a STRING, so the column has to be put back
+     * to the type the table under test declares before the two can be compared.
+     */
+    private static final String ORACLE_PROJECTION = "i, j, vs, vl, vm, s, b, a, sym::SYMBOL sym, symi::SYMBOL symi, ts";
+    /**
+     * The projection every one of the three batches shares. The values are functions of {@code x}
      * alone, so they are deterministic: the oracle table runs the same text a second time and has to get the
      * same bytes back.
      */
-    private static final String VAR_COLUMNS = VARCHAR_SHORT_EXPR + " vs, " + VARCHAR_LONG_EXPR + " vl, " +
-            VARCHAR_MIXED_EXPR + " vm, " + STRING_EXPR + " s, " + BINARY_EXPR + " b, " + ARRAY_EXPR + " a";
+    private static final String WIDE_COLUMNS = VARCHAR_SHORT_EXPR + " vs, " + VARCHAR_LONG_EXPR + " vl, " +
+            VARCHAR_MIXED_EXPR + " vm, " + STRING_EXPR + " s, " + BINARY_EXPR + " b, " + ARRAY_EXPR + " a, " +
+            SYMBOL_EXPR + " sym, " + SYMBOL_INDEXED_EXPR + " symi";
 
     /**
      * The shape the design exists for: a narrow backdated batch landing inside a day. The rows either side
@@ -106,20 +123,20 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
             // One day at 15s, so the partition holds 5760 rows.
-            final String base = "SELECT x::INT i, -x j, " + VAR_COLUMNS + "," +
+            final String base = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
                     " FROM long_sequence(5760)";
             // A later day, so 2020-02-03 is never the active partition and the write goes through the O3
             // path rather than an append to the open one.
-            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + VAR_COLUMNS + "," +
+            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
-            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE x AS (" + base + "), INDEX(symi CAPACITY 32) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x " + nextDay);
             drainWalQueue();
 
             final TableToken xt = engine.verifyTableName("x");
 
-            final String backfill = "SELECT x::INT + 70000 i, -x - 70000L j, " + VAR_COLUMNS + "," +
+            final String backfill = "SELECT x::INT + 70000 i, -x - 70000L j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
             execute("INSERT INTO x " + backfill);
             drainWalQueue();
@@ -149,8 +166,9 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                     .returns("vs\tvl\tvm\tdvl\ts\tb\ta\n5960\t5960\t5110\t5760\t4768\t31973\t1.5331722E7\n");
 
             // The oracle: the same rows, assembled without ever touching the composite machinery.
-            execute("CREATE TABLE o AS (" + base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
-                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE o AS (SELECT " + ORACLE_PROJECTION + " FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             assertSameRows();
 
             // ...and again with no reader or writer cached, so the read comes off _txn and _geometry as
@@ -176,16 +194,16 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
             // 10s apart, so 5760 rows reach 15:59:50 and leave the rest of the day empty for the tail.
-            final String base = "SELECT x::INT i, -x j, " + VAR_COLUMNS + "," +
+            final String base = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03', 10*1000000L) ts" +
                     " FROM long_sequence(5760)";
-            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + VAR_COLUMNS + "," +
+            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
-            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE x AS (" + base + "), INDEX(symi CAPACITY 32) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x " + nextDay);
             drainWalQueue();
 
-            final String tail = "SELECT x::INT + 80000 i, -x - 80000L j, " + VAR_COLUMNS + "," +
+            final String tail = "SELECT x::INT + 80000 i, -x - 80000L j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03T20:00:00', 1000000L) ts FROM long_sequence(100)";
             execute("INSERT INTO x " + tail);
             drainWalQueue();
@@ -201,8 +219,9 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 Assert.assertEquals(5860, reader.getPartitionPhysicalRowCount(0));
             }
 
-            execute("CREATE TABLE o AS (" + base + " UNION ALL " + nextDay + " UNION ALL " + tail +
-                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE o AS (SELECT " + ORACLE_PROJECTION + " FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + tail +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             assertSameRows();
 
             engine.releaseAllReaders();
@@ -217,6 +236,16 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 sqlExecutionContext,
                 "SELECT * FROM o ORDER BY ts, i",
                 "SELECT * FROM x ORDER BY ts, i",
+                LOG
+        );
+        // The same rows again, this time reached through the BITMAP INDEX on symi. The oracle has no index
+        // on that column, so it answers by scanning; a merge that wrote its rows but not their index entries
+        // would show up here and nowhere else.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "SELECT * FROM o WHERE symi = 'i-1' ORDER BY ts, i",
+                "SELECT * FROM x WHERE symi = 'i-1' ORDER BY ts, i",
                 LOG
         );
     }

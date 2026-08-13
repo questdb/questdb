@@ -75,6 +75,26 @@ public interface PageFrame {
     IndexReader getIndexReader(int columnIndex, int direction);
 
     /**
+     * Returns the high row, exclusive, to ask this frame's INDEX for. See {@link #getIndexRowLo()}.
+     */
+    default long getIndexRowHi() {
+        return getPartitionHi();
+    }
+
+    /**
+     * Returns the low row, inclusive, to ask this frame's INDEX for.
+     * <p>
+     * An index lists the FILE rows a key appears at. For a COMPOSITE partition - several pieces over one set
+     * of column files - a file row is the partition row plus the piece's shift, so the two differ for every
+     * piece that has been moved. Everything else about a frame speaks in partition rows, and this is the one
+     * place the two spaces meet: an index cursor returns rows relative to the low bound it was given, which
+     * lines up with the frame's page addresses because those carry the same shift.
+     */
+    default long getIndexRowLo() {
+        return getPartitionLo();
+    }
+
+    /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already
      * had data) then return 0.

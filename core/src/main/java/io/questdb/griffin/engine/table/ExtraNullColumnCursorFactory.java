@@ -348,6 +348,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getIndexRowHi() {
+            return baseFrame.getIndexRowHi();
+        }
+
+        @Override
+        public long getIndexRowLo() {
+            return baseFrame.getIndexRowLo();
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             return columnIndex < columnSplit ? baseFrame.getPageAddress(columnIndex) : 0;
         }

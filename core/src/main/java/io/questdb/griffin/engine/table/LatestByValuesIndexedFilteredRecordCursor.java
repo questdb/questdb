@@ -134,15 +134,15 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         filter.toTop();
     }
 
-    private void addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
+    private void addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long indexRowLo, long indexRowHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+            try (RowCursor cursor = indexReader.getCursor(symbolKey, indexRowLo, indexRowHi)) {
                 while (cursor.hasNext()) {
                     final long row = cursor.next();
-                    recordA.setRowIndex(row - partitionLo);
+                    recordA.setRowIndex(row - indexRowLo);
                     if (filter.getBool(recordA)) {
-                        rows.add(Rows.toRowID(frameIndex, row - partitionLo));
+                        rows.add(Rows.toRowID(frameIndex, row - indexRowLo));
                         found.addAt(index, symbolKey);
                         break;
                     }
@@ -164,8 +164,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
@@ -175,13 +175,13 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
+                addFoundKey(symbolKey, indexReader, invertedFrameIndex, indexRowLo, indexRowHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
+                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, indexRowLo, indexRowHi);
                     }
                 }
             }

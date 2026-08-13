@@ -156,70 +156,88 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final PartitionGeometry geometry = tableWriter.getGeometry();
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+        final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
+        final FilesFacade ff = tableWriter.getFilesFacade();
 
-        // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
-        boundsOut.clear();
-        final int pieceCount = geometry.getPieceCount(partitionIndex);
-        for (int p = 0; p < pieceCount; p++) {
-            final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
-            final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
-            long tsHi = geometry.getPieceTimestampHi(partitionIndex, p);
-            if (tsHi == Numbers.LONG_NULL && rowCount > 0) {
-                // A partition that has never been written as a composite records no upper bound - _txn
-                // holds a row count and nothing about timestamps - and an unbounded piece claims every
-                // incoming row, so it can be neither cut nor kept. That would make the FIRST write to any
-                // partition rewrite the whole of it, which is the one case the design has to get right, so
-                // the bound is read from the piece's last row. One 8-byte read, and only for a piece the
-                // geometry does not already describe.
-                tsHi = readPieceTimestampHi(
-                        pathToTable,
-                        partitionTimestamp,
-                        srcNameTxn,
-                        rowOffset + rowCount - 1,
-                        tableWriter
+        // Steps 1 and 2 both read the partition's designated-timestamp column - one to learn a piece's
+        // upper bound, the other to resolve a cut timestamp to the row it actually falls at - so it is
+        // mapped ONCE, over the whole physical extent. Both answers have to come from the data: a
+        // timestamp range says nothing about where inside it the rows sit.
+        final long e = geometry.getE(partitionIndex);
+        final long tsMapSize = e * Long.BYTES;
+        final long tsFd = openTimestampColumnRO(pathToTable, partitionTimestamp, srcNameTxn, tableWriter);
+        long tsAddr = 0;
+        try {
+            tsAddr = TableUtils.mapRO(ff, tsFd, tsMapSize, MemoryTag.MMAP_O3);
+
+            // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
+            boundsOut.clear();
+            final int pieceCount = geometry.getPieceCount(partitionIndex);
+            for (int p = 0; p < pieceCount; p++) {
+                final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+                final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+                long tsHi = geometry.getPieceTimestampHi(partitionIndex, p);
+                if (tsHi == Numbers.LONG_NULL && rowCount > 0) {
+                    // A partition that has never been written as a composite records no upper bound - _txn
+                    // holds a row count and nothing about timestamps - and an unbounded piece claims every
+                    // incoming row, so it can be neither cut nor kept. That would make the FIRST write to
+                    // any partition rewrite the whole of it, which is the one case the design has to get
+                    // right, so the bound is read from the piece's last row.
+                    tsHi = Unsafe.getLong(tsAddr + (rowOffset + rowCount - 1) * Long.BYTES);
+                }
+                O3CompositeMergeStrategy.addPieceBounds(
+                        boundsOut,
+                        geometry.getPieceTimestampLo(partitionIndex, p),
+                        tsHi,
+                        rowOffset,
+                        rowCount
                 );
             }
-            O3CompositeMergeStrategy.addPieceBounds(
-                    boundsOut,
-                    geometry.getPieceTimestampLo(partitionIndex, p),
-                    tsHi,
-                    rowOffset,
-                    rowCount
-            );
-        }
 
-        // 2. The pre-split, applied in memory. A cut moves no bytes, so the plan can refine the partition's
-        // structure before deciding anything else. Cuts come from two places, and they answer different
-        // questions:
-        //
-        //   - TRANSACTION CLUSTERING (clusterCutTimestamps, decided on the writer thread, which is where
-        //     the incoming transactions are known) cuts at the edges of the COLD GAPS between the strides
-        //     the incoming work is dense in. It looks at the shape of the whole block, so it can spare
-        //     data no single batch happens to straddle;
-        //   - the BATCH EDGES below cut around where THIS batch lands inside a piece, sparing the rows on
-        //     either side of it.
-        //
-        // Clustering goes first: it is the coarser division, and the batch-edge cuts then refine whichever
-        // piece the batch actually lands in.
-        final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
-        if (clusterCutTimestamps != null) {
-            for (int i = 0, n = clusterCutTimestamps.size(); i < n; i++) {
-                O3CompositeMergeStrategy.applyCutAt(boundsOut, clusterCutTimestamps.getQuick(i));
+            // 2. The pre-split, applied in memory. A cut moves no bytes, so the plan can refine the
+            // partition's structure before deciding anything else. Cuts come from two places, and they
+            // answer different questions:
+            //
+            //   - TRANSACTION CLUSTERING (clusterCutTimestamps, decided on the writer thread, which is
+            //     where the incoming transactions are known) cuts at the edges of the COLD GAPS between the
+            //     strides the incoming work is dense in. It looks at the shape of the whole block, so it
+            //     can spare data no single batch happens to straddle;
+            //   - the BATCH EDGES below cut around where THIS batch lands inside a piece, sparing the rows
+            //     on either side of it.
+            //
+            // Clustering goes first: it is the coarser division, and the batch-edge cuts then refine
+            // whichever piece the batch actually lands in.
+            if (clusterCutTimestamps != null) {
+                for (int i = 0, n = clusterCutTimestamps.size(); i < n; i++) {
+                    // A clustering cut is a TIMESTAMP and no piece index - it was chosen from the incoming
+                    // work, not from the piece list - so the piece is located afresh, which is also what
+                    // makes these cuts order-independent.
+                    final long cutTs = clusterCutTimestamps.getQuick(i);
+                    final int piece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, cutTs);
+                    if (piece > -1) {
+                        applyCutResolved(boundsOut, piece, cutTs, tsAddr);
+                    }
+                }
             }
-        }
-        O3CompositeMergeStrategy.computeCuts(
-                boundsOut,
-                sortedTimestampsAddr,
-                srcOooLo,
-                srcOooHi,
-                minPieceRows,
-                tableWriter.getConfiguration().getO3PartitionPreSplitMaxCuts(),
-                cutsOut
-        );
-        // Right to left: a cut inserts a piece and shifts every index above it, so applying the highest
-        // first leaves the lower cuts' indices valid.
-        for (int c = cutsOut.size() - 2; c >= 0; c -= 2) {
-            O3CompositeMergeStrategy.applyCut(boundsOut, (int) cutsOut.getQuick(c), cutsOut.getQuick(c + 1));
+            O3CompositeMergeStrategy.computeCuts(
+                    boundsOut,
+                    sortedTimestampsAddr,
+                    srcOooLo,
+                    srcOooHi,
+                    minPieceRows,
+                    tableWriter.getConfiguration().getO3PartitionPreSplitMaxCuts(),
+                    cutsOut
+            );
+            // Right to left: a cut inserts a piece and shifts every index above it, so applying the highest
+            // first leaves the lower cuts' indices valid.
+            for (int c = cutsOut.size() - 2; c >= 0; c -= 2) {
+                applyCutResolved(boundsOut, (int) cutsOut.getQuick(c), cutsOut.getQuick(c + 1), tsAddr);
+            }
+        } finally {
+            if (tsAddr != 0) {
+                ff.munmap(tsAddr, tsMapSize, MemoryTag.MMAP_O3);
+            }
+            ff.close(tsFd);
         }
 
         // 3. Every O3 row assigned to a piece or to a gap between pieces.
@@ -486,21 +504,58 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * The timestamp at one FILE row of a partition's designated-timestamp column.
+     * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp
+     * column, then cuts there.
      * <p>
-     * The same read {@link #processPartition} performs on an archive partition to learn its upper bound,
-     * narrowed to a single row: a piece's bound is its last row, and every other row of the column is of no
-     * interest here.
+     * A piece's rows are {@code [rowOffset, rowOffset + rowCount)} of the FILE, and only that slice may be
+     * searched: a merge-append relocates a piece to the tail of the shared files, so file order is not
+     * timestamp order across the partition, and a search over the whole column would cross into another
+     * piece's rows.
+     *
+     * @return true when the cut was applied
      */
-    private static long readPieceTimestampHi(
+    private static boolean applyCutResolved(LongList bounds, int piece, long cutTs, long tsAddr) {
+        final long rowOffset = O3CompositeMergeStrategy.getRowOffset(bounds, piece);
+        final long rowCount = O3CompositeMergeStrategy.getRowCount(bounds, piece);
+        if (rowCount < 2) {
+            return false;
+        }
+        // SCAN_UP answers with the FIRST row at or above cutTs, which is where the upper half begins:
+        // on a miss the bounded form returns the insertion point, and on a hit the lowest equal row, so
+        // rows sharing the cut's timestamp are never split across the two halves. A cut every row sits
+        // above or below resolves to 0 or rowCount, and applyCut declines it.
+        final long row = Vect.boundedBinarySearch64Bit(
+                tsAddr,
+                cutTs,
+                rowOffset,
+                rowOffset + rowCount - 1,
+                Vect.BIN_SEARCH_SCAN_UP
+        );
+        if (row <= rowOffset || row >= rowOffset + rowCount) {
+            return false;
+        }
+        // Each half is bounded by its OWN rows rather than by the cut, so a cut taken across a data gap
+        // leaves that gap owned by neither half.
+        return O3CompositeMergeStrategy.applyCut(
+                bounds,
+                piece,
+                row - rowOffset,
+                Unsafe.getLong(tsAddr + (row - 1) * Long.BYTES),
+                Unsafe.getLong(tsAddr + row * Long.BYTES)
+        );
+    }
+
+    /**
+     * Opens a partition's designated-timestamp column for reading. The caller maps it over the extent it
+     * needs and closes the fd.
+     */
+    private static long openTimestampColumnRO(
             Path pathToTable,
             long partitionTimestamp,
             long srcNameTxn,
-            long fileRow,
             TableWriter tableWriter
     ) {
         final RecordMetadata metadata = tableWriter.getMetadata();
-        final FilesFacade ff = tableWriter.getFilesFacade();
         final Path path = Path.getThreadLocal2(pathToTable);
         TableUtils.setPathForNativePartition(
                 path,
@@ -509,18 +564,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partitionTimestamp,
                 srcNameTxn
         );
-        final long fd = TableUtils.openRO(ff, dFile(path, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE), LOG);
-        try {
-            final long size = (fileRow + 1) * Long.BYTES;
-            final long addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_O3);
-            try {
-                return Unsafe.getLong(addr + size - Long.BYTES);
-            } finally {
-                ff.munmap(addr, size, MemoryTag.MMAP_O3);
-            }
-        } finally {
-            ff.close(fd);
-        }
+        return TableUtils.openRO(
+                tableWriter.getFilesFacade(),
+                dFile(path, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE),
+                LOG
+        );
     }
 
     /**

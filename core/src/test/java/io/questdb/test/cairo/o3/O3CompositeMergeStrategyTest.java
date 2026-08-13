@@ -45,25 +45,25 @@ public class O3CompositeMergeStrategyTest {
         // the list untouched - the caller applies cuts blind and reads the answer off the list.
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 100);
-        Assert.assertFalse(O3CompositeMergeStrategy.applyCut(bounds, 0, 100));
-        Assert.assertFalse(O3CompositeMergeStrategy.applyCut(bounds, 0, 99));
-        Assert.assertFalse(O3CompositeMergeStrategy.applyCut(bounds, 0, 200));
+        Assert.assertFalse(applyCut(bounds, 0, 100));
+        Assert.assertFalse(applyCut(bounds, 0, 99));
+        Assert.assertFalse(applyCut(bounds, 0, 200));
         Assert.assertEquals("P0(tsLo=100,tsHi=199,rows=100)", formatBounds(bounds));
 
         final LongList unbounded = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(unbounded, 100, Numbers.LONG_NULL, 0, 100);
-        Assert.assertFalse(O3CompositeMergeStrategy.applyCut(unbounded, 0, 150));
+        Assert.assertFalse(applyCut(unbounded, 0, 150));
     }
 
     @Test
     public void testApplyCutSplitsAPieceInTwo() {
         // Both halves address the same files at the same offsets, so this is the whole of what a pre-split
-        // does to the geometry. Rows are apportioned by timestamp position, the same estimate computeCuts
-        // decided on.
+        // does to the geometry. The row the cut lands on is resolved against the data by the caller; these
+        // fixtures hold one row per timestamp tick, so it is the offset of the cut into the piece.
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
         O3CompositeMergeStrategy.addPieceBounds(bounds, 1000, 1999, 0, 500);
-        Assert.assertTrue(O3CompositeMergeStrategy.applyCut(bounds, 0, 400));
+        Assert.assertTrue(applyCut(bounds, 0, 400));
         Assert.assertEquals(
                 "P0(tsLo=0,tsHi=399,rows=400) P1(tsLo=400,tsHi=999,rows=600) P2(tsLo=1000,tsHi=1999,rows=500)",
                 formatBounds(bounds)
@@ -76,8 +76,8 @@ public class O3CompositeMergeStrategyTest {
         // piece holds. It is dropped, not guessed at.
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 100);
-        Assert.assertFalse(O3CompositeMergeStrategy.applyCutAt(bounds, 50));
-        Assert.assertFalse(O3CompositeMergeStrategy.applyCutAt(bounds, 500));
+        Assert.assertFalse(applyCutAt(bounds, 50));
+        Assert.assertFalse(applyCutAt(bounds, 500));
         Assert.assertEquals("P0(tsLo=100,tsHi=199,rows=100)", formatBounds(bounds));
     }
 
@@ -97,7 +97,7 @@ public class O3CompositeMergeStrategyTest {
         clusterCuts.add(300);  // start of the cold gap
         clusterCuts.add(700);  // end of the cold gap
         for (int i = 0, n = clusterCuts.size(); i < n; i++) {
-            Assert.assertTrue(O3CompositeMergeStrategy.applyCutAt(bounds, clusterCuts.getQuick(i)));
+            Assert.assertTrue(applyCutAt(bounds, clusterCuts.getQuick(i)));
         }
         Assert.assertEquals(
                 "P0(tsLo=0,tsHi=299,rows=300) P1(tsLo=300,tsHi=699,rows=400) P2(tsLo=700,tsHi=999,rows=300)",
@@ -108,7 +108,7 @@ public class O3CompositeMergeStrategyTest {
             final LongList cuts = new LongList();
             final int cutCount = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 50, 8, cuts);
             for (int c = cutCount - 1; c >= 0; c--) {
-                O3CompositeMergeStrategy.applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1));
+                applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1));
             }
             Assert.assertEquals(
                     "P0(tsLo=0,tsHi=99,rows=100) P1(tsLo=100,tsHi=110,rows=11) P2(tsLo=111,tsHi=299,rows=189)"
@@ -222,7 +222,7 @@ public class O3CompositeMergeStrategyTest {
             final int cutCount = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
             // Right to left: a cut inserts a piece and shifts every index above it.
             for (int c = cutCount - 1; c >= 0; c--) {
-                Assert.assertTrue(O3CompositeMergeStrategy.applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1)));
+                Assert.assertTrue(applyCut(bounds, (int) cuts.getQuick(c * 2), cuts.getQuick(c * 2 + 1)));
             }
             Assert.assertEquals(
                     "P0(tsLo=0,tsHi=499,rows=500) P1(tsLo=500,tsHi=510,rows=11) P2(tsLo=511,tsHi=999,rows=489)",
@@ -319,6 +319,31 @@ public class O3CompositeMergeStrategyTest {
             Assert.assertEquals("MERGE(p=0, o3=[0,1])", actions.getQuick(0).toString());
             Assert.assertEquals("KEEP(p=1)", actions.getQuick(1).toString());
         });
+    }
+
+    /**
+     * {@link O3CompositeMergeStrategy#applyCut} takes the row a cut resolves to and each half's own
+     * bound, because a timestamp range says nothing about where inside it the rows sit - the caller
+     * searches the piece's timestamp column for all three. Every fixture here holds one row per timestamp
+     * tick, so they follow from the cut, and spelling them out keeps this class free of files.
+     */
+    private static boolean applyCut(LongList bounds, int piece, long cutTs) {
+        final long tsLo = O3CompositeMergeStrategy.getTsLo(bounds, piece);
+        if (cutTs <= tsLo || cutTs > O3CompositeMergeStrategy.getTsHi(bounds, piece)) {
+            return false;
+        }
+        // One row per tick, so the cut's offset into the piece is the row, the lower half's last row is
+        // the tick below the cut, and the upper half's first row is the cut itself.
+        return O3CompositeMergeStrategy.applyCut(bounds, piece, cutTs - tsLo, cutTs - 1, cutTs);
+    }
+
+    /**
+     * Cuts whichever piece contains {@code cutTs}, as the composite dispatch does for a cut that came from
+     * transaction clustering and so carries a timestamp and no piece index.
+     */
+    private static boolean applyCutAt(LongList bounds, long cutTs) {
+        final int piece = O3CompositeMergeStrategy.findPieceContaining(bounds, cutTs);
+        return piece > -1 && applyCut(bounds, piece, cutTs);
     }
 
     private static String formatBounds(LongList bounds) {
