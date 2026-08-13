@@ -964,6 +964,13 @@ public class TableReader implements Closeable, SymbolTableSource {
      *     shift whole {@code PARTITIONS_SLOT_SIZE} blocks), so a memo cannot be
      *     read against a different partition. Both words are initialised to -1
      *     wherever a block is created, so a block never inherits one.</li>
+     *     <li>Both words are reset to -1 wherever a partition is closed
+     *     ({@code closePartitionResources}, and {@code closeRewrittenPartitionFiles}
+     *     for the name-txn-moved arm that does not route through it), so a slot
+     *     whose partition is replaced by a NEW INCARNATION -- an O3 full rewrite
+     *     into a new directory, a split, a squash, a {@code CONVERT PARTITION} --
+     *     starts that incarnation with no memo. Without this the clause below
+     *     would hold only for rewrites of the SAME file.</li>
      * </ul>
      * The one thing that would break it is a {@code _pm} rewritten to exactly
      * its previous length with different covering entries for the same parquet
@@ -1322,6 +1329,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        // The slot outlives the partition it described. Drop the refusal memo
+        // with the mapping it was computed from, so a NEW incarnation of this
+        // partition -- an O3 full rewrite into a new directory, a split, a
+        // squash, a CONVERT -- cannot inherit the previous one's answer. See
+        // checkPostingIndexIsReadable for why the memo is only ever as good as
+        // the (_pm size, data.parquet size) pair it was keyed on.
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE, -1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE, -1);
     }
 
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase) {
@@ -1343,6 +1358,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            // Same obligation as closePartitionResources: this arm is reached
+            // precisely BECAUSE the name txn moved, i.e. it is the partition
+            // incarnation change. It does not route through
+            // closePartitionResources, so it must drop the memo itself.
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE, -1);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE, -1);
             openPartitionCount--;
             return -1;
         }

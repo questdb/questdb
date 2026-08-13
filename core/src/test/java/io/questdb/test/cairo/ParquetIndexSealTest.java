@@ -45,6 +45,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -61,6 +62,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.lang.reflect.Field;
 
 /**
  * Covers the covering-index seal that emits {@code <col>.pidx.<indexTxn>.parquet}
@@ -1976,6 +1978,114 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * The refusal probe's memo lives in two words of the partition's
+     * {@code openPartitionInfo} slot, and the SLOT OUTLIVES THE PARTITION it
+     * describes. A new incarnation -- an O3 full rewrite into a new directory, a
+     * split, a squash, a {@code CONVERT PARTITION} -- reuses the same slot, so
+     * unless the close path drops the memo, the new incarnation starts life
+     * carrying the old one's answer.
+     * <p>
+     * <b>What this asserts, and what it deliberately does not.</b> It asserts the
+     * memo is CLEARED, by reading the two slot words directly, and it asserts
+     * first that the new incarnation would otherwise HIT that memo -- both key
+     * words repeat exactly across the round trip, measured below.
+     * <p>
+     * It does not assert a wrong query ANSWER. That needs one more thing on top
+     * of the key collision: the new incarnation must carry a covering entry the
+     * memo says is absent. A non-empty covering section is 24 bytes of footer
+     * that an empty one does not have, so it moves the {@code _pm} size and the
+     * memo misses again; and the only DDL lever on {@code _pm} size is the number
+     * of appended footers, whose granularity is a whole footer, far coarser than
+     * 24 bytes. No sequence of statements cancels the two. So the wrong answer is
+     * not reachable from SQL, and manufacturing it by writing the slot by hand
+     * would prove nothing about this code. Note what is left: the safety margin
+     * is that 24-byte difference, NOT the two-word key -- the key collides.
+     * <p>
+     * The reader is held across the whole DDL sequence for the same reason as
+     * {@link #testTheRefusalProbeIsNotSuppressedByAnEarlierNativeFormAnswer()}:
+     * a pooled reader is evicted by the DDL and comes back with a fresh
+     * {@code openPartitionInfo}, which makes the shape vacuous.
+     */
+    @Test
+    public void testAPartitionIncarnationChangeDropsTheRefusalProbeMemo() throws Exception {
+        assertMemoryLeak(() -> {
+            // Default format: the seal is native, so the _pm names no covering
+            // index and the probe memoises exactly that.
+            createIndexedSparseKeyTable();
+            final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
+                // Answers, and in answering populates the memo.
+                Assert.assertNotNull(reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD));
+
+                final long memoMetaSize = probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE");
+                final long memoParquetSize = probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE");
+                // Fixture guard: with no memo to survive, the assertion below is
+                // true before the DDL and proves nothing.
+                Assert.assertEquals(
+                        "the fixture must populate the memo's _pm word, or nothing is being invalidated",
+                        reader.getParquetMetadataSize(0),
+                        memoMetaSize
+                );
+                Assert.assertTrue("the fixture must populate the memo's parquet word", memoParquetSize > 0);
+
+                final long nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+
+                // Two CONVERTs, each of which writes the partition into a NEW
+                // directory under a new name txn. The slot index does not move
+                // (same timestamp, same partition count) and the partition is
+                // parquet again at the end, so this is the same slot describing a
+                // third incarnation of the same partition.
+                execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO NATIVE LIST '" + INDEXED_PARTITION + "'");
+                drainWalQueue();
+                Assert.assertTrue("the reader must have something to reload", reader.reload());
+                execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+                drainWalQueue();
+                Assert.assertTrue("the reader must have something to reload", reader.reload());
+
+                // Fixture guard: a new incarnation is exactly a new name txn.
+                Assert.assertNotEquals(
+                        "the fixture must change the partition incarnation",
+                        nameTxnBefore,
+                        reader.getTxFile().getPartitionNameTxn(0)
+                );
+                // The sharp part. Both key words repeat EXACTLY across this
+                // incarnation change: the round trip re-encodes the same rows to
+                // a byte-identical data.parquet length and writes a _pm of the
+                // same length. So the surviving memo would not merely sit in the
+                // slot, it would be HIT by a partition it was never computed
+                // from. Measured, not assumed -- if a future encoder change
+                // breaks the repeat, this fails and the test below degrades from
+                // "the memo would be served" to "the memo is retained", which is
+                // a weaker thing to be asserting; rebuild the fixture rather than
+                // relaxing these two.
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                Assert.assertEquals(
+                        "the fixture must reproduce the _pm size, or the memo would miss anyway",
+                        memoMetaSize,
+                        reader.getParquetMetadataSize(0)
+                );
+                Assert.assertEquals(
+                        "the fixture must reproduce the data.parquet size, or the memo would miss anyway",
+                        memoParquetSize,
+                        reader.getTxFile().getPartitionParquetFileSize(0)
+                );
+                Assert.assertEquals(
+                        "the memo's _pm word must not survive a partition incarnation change",
+                        -1,
+                        probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE")
+                );
+                Assert.assertEquals(
+                        "the memo's data.parquet word must not survive a partition incarnation change",
+                        -1,
+                        probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE")
+                );
+            }
+        });
+    }
+
+    /**
      * The hazard the refusal probe's per-partition memo introduces.
      * {@code checkPostingIndexIsReadable} caches "this partition's {@code _pm}
      * names no covering index" against the size of the mapping it read and the
@@ -2421,6 +2531,30 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 files.length
         );
         return files[0].getName();
+    }
+
+    /**
+     * Reads one word of {@code checkPostingIndexIsReadable}'s per-partition memo
+     * out of the reader's {@code openPartitionInfo} slot. Reflective because the
+     * memo has no reader-facing accessor and should not grow one: it is interim
+     * state that Phase 2C Task 2 replaces with a per-(partition, column) form
+     * cache. The slot geometry is read from the class's own constants rather than
+     * hardcoded, so a slot-layout change fails here loudly instead of silently
+     * reading the wrong word.
+     */
+    private static long probeMemoWord(TableReader reader, int partitionIndex, String offsetConstantName) throws Exception {
+        final Field infoField = TableReader.class.getDeclaredField("openPartitionInfo");
+        infoField.setAccessible(true);
+        final LongList openPartitionInfo = (LongList) infoField.get(reader);
+        return openPartitionInfo.getQuick(
+                partitionIndex * intConstant("PARTITIONS_SLOT_SIZE") + intConstant(offsetConstantName)
+        );
+    }
+
+    private static int intConstant(String name) throws Exception {
+        final Field field = TableReader.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.getInt(null);
     }
 
     private static String onlyFileNamed(Path partitionPath, String prefix, String suffix) {
