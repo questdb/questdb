@@ -867,6 +867,8 @@ public class PostingIndexWriter implements IndexWriter {
                         indexName,
                         entry.postingColumnNameTxn,
                         entry.sealTxn,
+                        // The chain's own generation counter names these files.
+                        PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                         entry.partitionTimestamp,
                         entry.partitionNameTxn,
                         partitionBy,
@@ -1428,6 +1430,8 @@ public class PostingIndexWriter implements IndexWriter {
                         indexName,
                         entry.postingColumnNameTxn,
                         entry.sealTxn,
+                        // The chain's own generation counter names these files.
+                        PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                         entry.partitionTimestamp,
                         entry.partitionNameTxn,
                         partitionBy,

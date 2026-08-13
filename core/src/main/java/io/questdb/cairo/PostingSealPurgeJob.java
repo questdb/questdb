@@ -53,6 +53,7 @@ import java.util.PriorityQueue;
 
 public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
+    private static final String ARTIFACT_FORM_COLUMN_NAME = "artifact_form";
     private static final int COLUMN_NAME_COLUMN = 3;
     // Hitting this many consecutive errors switches the job into throttled
     // mode: subsequent iterations are skipped until ERROR_BACKOFF_MICROS
@@ -121,6 +122,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                 this.tableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
             this.writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            ensureArtifactFormColumn(this.writer);
             this.completedWriterIndex = writer.getMetadata().getColumnIndex("completed");
             this.operator = new PostingSealPurgeOperator(engine);
             recoverOpenTasks(engine);
@@ -206,6 +208,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     private static long appendTask(TableWriter writer, PostingSealPurgeTask task, long scheduledAt) {
         TableToken tok = task.getTableToken();
+        final int artifactFormColumn = writer.getMetadata().getColumnIndexQuiet(ARTIFACT_FORM_COLUMN_NAME);
         TableWriter.Row row = writer.newRow(scheduledAt);
         row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
         row.putInt(TABLE_ID_COLUMN, tok.getTableId());
@@ -218,6 +221,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         row.putLong(FROM_TABLE_TXN_COLUMN, task.getFromTableTxn());
         row.putLong(TO_TABLE_TXN_COLUMN, task.getToTableTxn());
         row.putInt(TIMESTAMP_TYPE_COLUMN, task.getTimestampType());
+        if (artifactFormColumn > -1) {
+            row.putInt(artifactFormColumn, task.getArtifactForm());
+        }
         row.append();
         return Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
     }
@@ -258,10 +264,37 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                         "from_table_txn long, " +
                         "to_table_txn long, " +
                         "timestamp_type int, " +
-                        "completed timestamp" +
+                        "completed timestamp, " +
+                        // Appended last on purpose: a log table created by an
+                        // older build is upgraded with ADD COLUMN, which also
+                        // appends, so both layouts agree.
+                        "artifact_form int" +
                         ") timestamp(ts) partition by MONTH BYPASS WAL"
                 )
                 .createTable(sqlExecutionContext);
+    }
+
+    /**
+     * Adds {@code artifact_form} to a purge log table created by a build that
+     * did not record it. The column is appended, so every positional column
+     * constant above stays valid and an upgraded table has the same layout as a
+     * freshly created one. Rows written before the upgrade keep a NULL form,
+     * which {@link #recoverOpenTasks} turns into
+     * {@link PostingSealPurgeTask#ARTIFACT_FORM_UNKNOWN} and the operator drops
+     * without unlinking anything.
+     */
+    private static void ensureArtifactFormColumn(TableWriter writer) {
+        if (writer == null || writer.getMetadata().getColumnIndexQuiet(ARTIFACT_FORM_COLUMN_NAME) > -1) {
+            return;
+        }
+        try {
+            writer.addColumn(ARTIFACT_FORM_COLUMN_NAME, ColumnType.INT, null);
+            LOG.info().$("posting seal purge: upgraded the purge log with the artifact_form column").$();
+        } catch (Throwable th) {
+            // Not fatal: appendTask writes the column only when it resolves, and
+            // recovery treats an absent column as an unattributed task.
+            LOG.error().$("posting seal purge: could not add the artifact_form column to the purge log [err=").$(th).I$();
+        }
     }
 
     private static void logUnclampedSentinel(PostingSealPurgeTask task) {
@@ -294,6 +327,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                 logTableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
             logWriter = engine.getWriter(logTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            ensureArtifactFormColumn(logWriter);
             long scheduledAt = configuration.getMicrosecondClock().getTicks();
             for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
                 PostingSealPurgeTask task = tasks.getQuick(i);
@@ -494,6 +528,8 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
         int succeeded = 0;
         int failed = 0;
+        int unattributed = 0;
+        final int artifactFormColumn = factory.getMetadata().getColumnIndexQuiet(ARTIFACT_FORM_COLUMN_NAME);
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Record rec = cursor.getRecord();
             RetryEntry entry = taskPool.pop();
@@ -506,11 +542,24 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                         continue;
                     }
                     String columnName = io.questdb.std.Chars.toString(rec.getSymA(COLUMN_NAME_COLUMN));
+                    // A log row written before artifact_form existed reads back as
+                    // NULL (or the column is missing entirely on a table the ADD
+                    // COLUMN upgrade could not reach). Either way the sealTxn is
+                    // unattributed, so the task is replayed as UNKNOWN and the
+                    // operator drops it without touching a file.
+                    int artifactForm = artifactFormColumn > -1
+                            ? rec.getInt(artifactFormColumn)
+                            : PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN;
+                    if (!PostingSealPurgeTask.isValidArtifactForm(artifactForm)) {
+                        artifactForm = PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN;
+                        unattributed++;
+                    }
                     entry.of(
                             token,
                             columnName,
                             rec.getLong(POSTING_COLUMN_NAME_TXN_COLUMN),
                             rec.getLong(SEAL_TXN_COLUMN),
+                            artifactForm,
                             rec.getTimestamp(PARTITION_TIMESTAMP_COLUMN),
                             rec.getLong(PARTITION_NAME_TXN_COLUMN),
                             rec.getInt(PARTITION_BY_COLUMN),
@@ -537,7 +586,12 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             }
             if (succeeded + failed > 0) {
                 LOG.info().$("posting seal purge: recovery done [succeeded=").$(succeeded)
-                        .$(", failed=").$(failed).I$();
+                        .$(", failed=").$(failed)
+                        .$(", unattributed=").$(unattributed).I$();
+            }
+            if (unattributed > 0) {
+                LOG.critical().$("posting seal purge: recovered purge-log rows predate artifact-form tagging and were dropped without unlinking; the superseded sidecars they named stay on disk [rows=")
+                        .$(unattributed).I$();
             }
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: recovery cursor failed [err=").$(th).I$();
@@ -617,6 +671,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                     src.getIndexColumnName(),
                     src.getPostingColumnNameTxn(),
                     src.getSealTxn(),
+                    src.getArtifactForm(),
                     src.getPartitionTimestamp(),
                     src.getPartitionNameTxn(),
                     src.getPartitionBy(),

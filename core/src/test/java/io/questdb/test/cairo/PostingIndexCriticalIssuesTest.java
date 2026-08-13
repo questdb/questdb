@@ -10937,6 +10937,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         "missing_col",
                         COLUMN_NAME_TXN_NONE,
                         published,
+                        PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                         0L,
                         -1L,
                         PartitionBy.NONE,

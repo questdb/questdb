@@ -315,10 +315,22 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 );
 
                 // A routine native purge for a chain generation that happens to
-                // carry the same number. PostingSealPurgeTask has one integer for
-                // both namespaces, so the operator cannot tell this apart by the
-                // number alone -- it has to ask the _pm whether that index txn is
-                // still the published one.
+                // carry the same number. PostingSealPurgeTask's sealTxn alone
+                // cannot tell the two namespaces apart, so the task carries the
+                // artifact form it was produced for and the operator acts only on
+                // that form.
+                //
+                // LIMITATION, stated rather than implied: the task is published
+                // straight into the ring queue. The numeric collision itself
+                // cannot be forced through production SQL -- a native chain
+                // generation is counted by PostingIndexChainWriter's per-column
+                // genCounter and a covering index txn is a table txn, and nothing
+                // in the SQL surface steers either to a chosen value -- so the
+                // arithmetic coincidence has to be arranged. What the fixture
+                // above DOES establish through production SQL is the part that
+                // could otherwise be doubted: that one partition directory really
+                // does carry both forms for one column at once, which is what
+                // makes the coincidence reachable at all.
                 final TableToken token = engine.verifyTableName(TABLE_NAME);
                 final long partitionTs;
                 final long partitionNameTxn;
@@ -337,6 +349,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 try {
                     queue.get(cursor).of(
                             token, "sym", TableUtils.COLUMN_NAME_TXN_NONE, liveIndexTxn,
+                            PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                             partitionTs, partitionNameTxn, PartitionBy.DAY, ColumnType.TIMESTAMP,
                             0L, committedTxn(TABLE_NAME)
                     );

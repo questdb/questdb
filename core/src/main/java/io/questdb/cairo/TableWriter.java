@@ -196,7 +196,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
-    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 1;
+    // v1 carried no artifact form. v2 adds one int after sealTxn. A v1 file is
+    // still parsed -- so the entries are counted and logged rather than silently
+    // vanishing -- but each entry is replayed with
+    // PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN, which the operator drops
+    // without unlinking: a v1 sealTxn cannot be attributed to a namespace, and
+    // guessing wrong deletes a live file in the other one.
+    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 2;
+    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT_V1 = 1;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
@@ -12118,11 +12125,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long currentTableTxn,
             LongList orphanSealTxns
     ) {
+        // These sealTxns come off the native chain's own recovery trim, so they
+        // name .pv/.pc* generations.
         publishAbandonedPostingSealPurges(
                 columnName,
                 columnNameTxn,
                 partitionTimestamp,
                 partitionNameTxn,
+                PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                 currentTableTxn,
                 currentTableTxn,
                 orphanSealTxns
@@ -12144,6 +12154,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             long partitionTimestamp,
             long partitionNameTxn,
+            int artifactForm,
             long currentTableTxn,
             long toTableTxn,
             LongList orphanSealTxns
@@ -12154,6 +12165,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnNameTxn,
                     partitionTimestamp,
                     partitionNameTxn,
+                    artifactForm,
                     currentTableTxn,
                     toTableTxn,
                     orphanSealTxns
@@ -12166,6 +12178,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             long partitionTimestamp,
             long partitionNameTxn,
+            int artifactForm,
             long currentTableTxn,
             long toTableTxn,
             LongList orphanSealTxns
@@ -12180,6 +12193,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnName,
                     columnNameTxn,
                     orphanSealTxns.getQuick(i),
+                    artifactForm,
                     partitionTimestamp,
                     partitionNameTxn,
                     partitionBy,
@@ -12258,6 +12272,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         deferredTask.getIndexColumnName(),
                         deferredTask.getPostingColumnNameTxn(),
                         deferredTask.getSealTxn(),
+                        deferredTask.getArtifactForm(),
                         deferredTask.getPartitionTimestamp(),
                         deferredTask.getPartitionNameTxn(),
                         deferredTask.getPartitionBy(),
@@ -12674,6 +12689,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     getColumnNameTxn(partitionTimestamp, columnIndex),
                     partitionTimestamp,
                     partitionNameTxn,
+                    PostingSealPurgeTask.ARTIFACT_FORM_PARQUET,
                     txWriter.getTxn(),
                     visibleAtTxn,
                     sealTxns
@@ -13192,10 +13208,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             if (fileSize >= 2L * Integer.BYTES) {
                 mem = Vm.getCMRInstance(ff, path.$(), fileSize, MemoryTag.MMAP_TABLE_WRITER);
-                if (mem.getInt(0) == POSTING_SEAL_PURGE_PENDING_FORMAT) {
+                final int format = mem.getInt(0);
+                if (format == POSTING_SEAL_PURGE_PENDING_FORMAT || format == POSTING_SEAL_PURGE_PENDING_FORMAT_V1) {
+                    final boolean hasArtifactForm = format == POSTING_SEAL_PURGE_PENDING_FORMAT;
                     // count is the spill commit marker: 0 means the write was torn.
                     final int count = mem.getInt(Integer.BYTES);
-                    final long fixed = 6L * Long.BYTES + 2L * Integer.BYTES;
+                    final long fixed = 6L * Long.BYTES + (hasArtifactForm ? 3L : 2L) * Integer.BYTES;
                     long offset = 2L * Integer.BYTES;
                     for (int i = 0; i < count; i++) {
                         if (offset + fixed + Integer.BYTES > fileSize) {
@@ -13205,6 +13223,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         offset += Long.BYTES;
                         long sealTxn = mem.getLong(offset);
                         offset += Long.BYTES;
+                        int artifactForm = PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN;
+                        if (hasArtifactForm) {
+                            artifactForm = mem.getInt(offset);
+                            offset += Integer.BYTES;
+                        }
                         long partitionTimestamp = mem.getLong(offset);
                         offset += Long.BYTES;
                         long partitionNameTxn = mem.getLong(offset);
@@ -13229,6 +13252,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 indexColumnName,
                                 postingColumnNameTxn,
                                 sealTxn,
+                                artifactForm,
                                 partitionTimestamp,
                                 partitionNameTxn,
                                 taskPartitionBy,
@@ -13238,6 +13262,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                         deferredPostingSealPurges.add(task);
                         recovered++;
+                    }
+                    if (!hasArtifactForm && recovered > 0) {
+                        LOG.critical().$("posting seal-purge pending file predates artifact-form tagging; entries are replayed but will be dropped without unlinking [table=").$(tableToken)
+                                .$(", format=").$(format)
+                                .$(", entries=").$(recovered)
+                                .I$();
                     }
                 } else {
                     LOG.advisory().$("posting seal-purge pending file has unknown format, discarding [table=").$(tableToken)
@@ -14947,6 +14977,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 mem.putLong(task.getPostingColumnNameTxn());
                 mem.putLong(task.getSealTxn());
+                mem.putInt(task.getArtifactForm());
                 mem.putLong(task.getPartitionTimestamp());
                 mem.putLong(task.getPartitionNameTxn());
                 mem.putInt(task.getPartitionBy());

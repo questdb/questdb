@@ -922,6 +922,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 columnName,
                 TableUtils.COLUMN_NAME_TXN_NONE,
                 sealTxn,
+                PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                 0L,
                 -1L,
                 PartitionBy.NONE,
@@ -930,6 +931,136 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 toTableTxn
         );
         return task;
+    }
+
+    /**
+     * C1, direction B: a parquet-form purge task must never apply its own
+     * scoreboard window to the native namespace's artifacts.
+     * <p>
+     * The two numbers a {@code PostingSealPurgeTask} can carry are counted
+     * independently -- {@code PostingIndexChainWriter}'s per-column generation
+     * for {@code .pv}/{@code .pc*}, the table txn for
+     * {@code <col>.pidx.<indexTxn>} -- and one partition directory can hold
+     * both forms for one column at once
+     * ({@code ParquetIndexSealTest.testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber}
+     * builds exactly that directory through production SQL), so equal numbers
+     * do not mean the same version.
+     * <p>
+     * The arrangement here is the one the fix has to survive. The generation is
+     * SUPERSEDED, not the chain head, so the operator's {@code .pk}-head re-read
+     * -- which only ever proved "not the live head" -- says nothing about it. A
+     * reader is pinned at a txn that is inside the native generation's
+     * reader-reachable range and OUTSIDE the parquet task's window, which is
+     * precisely the gap the head guard cannot see: the parquet task's
+     * {@code isRangeAvailable} is satisfied while the {@code .pv} it happens to
+     * be numbered like is still on the chain a pinned reader walks.
+     * <p>
+     * The genuine native-form task for the same generation is published
+     * alongside with a window the pinned reader DOES block, so the test also
+     * shows that the file is still reader-reachable at the moment the parquet
+     * task is allowed to run -- without that the assertion could pass on a file
+     * nobody could reach.
+     */
+    @Test
+    public void testAParquetFormPurgeDoesNotUnlinkASupersededNativeGenerationOfTheSameNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_form_native");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                 TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                String col = "c_form";
+                long supersededSealTxn = writeCoveringAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                long liveHead = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE));
+                partitionPath.trimTo(pLen);
+                assertNotEquals(
+                        "the fixture must target a SUPERSEDED generation; against the live head the .pk-head guard would mask the defect",
+                        liveHead,
+                        supersededSealTxn
+                );
+                assertTrue(".pv must exist after seal", ff.exists(PostingIndexUtils.valueFileName(
+                        partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                assertTrue(".pc0 must exist after seal", ff.exists(PostingIndexUtils.coverDataFileName(
+                        partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                partitionPath.trimTo(pLen);
+
+                // Pinned at 5: inside [0, 10), the native generation's own
+                // window, and outside [0, 1), the parquet task's.
+                assertTrue(scoreboard.acquireTxn(0, 5L));
+                try {
+                    publishPurgeTask(tok, col, supersededSealTxn, PostingSealPurgeTask.ARTIFACT_FORM_NATIVE, 10L);
+                    publishPurgeTask(tok, col, supersededSealTxn, PostingSealPurgeTask.ARTIFACT_FORM_PARQUET, 1L);
+                    runPurgeJob(job, 3);
+
+                    assertTrue(
+                            "a parquet-form purge must not unlink a native .pv a pinned reader can still reach",
+                            ff.exists(PostingIndexUtils.valueFileName(
+                                    partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                    );
+                    partitionPath.trimTo(pLen);
+                    assertTrue(
+                            "a parquet-form purge must not unlink a native .pc0 a pinned reader can still reach",
+                            ff.exists(PostingIndexUtils.coverDataFileName(
+                                    partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                    );
+                    partitionPath.trimTo(pLen);
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+
+                // Anti-vacuity: the native-form task was genuinely blocked by the
+                // pin, not already complete. Once the pin clears it purges, which
+                // proves the file was reader-reachable throughout the window above.
+                runPurgeJob(job, 3);
+                assertFalse(
+                        "the native-form task must purge the same .pv once the pin clears",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                );
+            }
+        });
+    }
+
+    /**
+     * A task recovered from a purge log or spill file written before the
+     * artifact form was recorded carries no attribution, and its sealTxn could
+     * name a live file in either namespace. It must unlink nothing -- and it
+     * must not retry forever either, or the job's retry queue grows without
+     * bound across every restart.
+     */
+    @Test
+    public void testAnUnattributedPurgeTaskUnlinksNothingAndIsNotRetried() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_form_unknown");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                String col = "c_unknown";
+                long supersededSealTxn = writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+
+                publishPurgeTask(tok, col, supersededSealTxn, PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN, 1L);
+                runPurgeJob(job, 3);
+
+                assertTrue(
+                        "an unattributed task must not unlink a native .pv",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                );
+                partitionPath.trimTo(pLen);
+                assertEquals("an unattributed task must be dropped, not re-queued", 0, job.getOutstandingPurgeTasks());
+            }
+        });
     }
 
     private Path partitionPathFor(TableToken tok) {
@@ -947,6 +1078,16 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             long sealTxn,
             long toTableTxn
     ) {
+        publishPurgeTask(tok, colName, sealTxn, PostingSealPurgeTask.ARTIFACT_FORM_NATIVE, toTableTxn);
+    }
+
+    private void publishPurgeTask(
+            TableToken tok,
+            String colName,
+            long sealTxn,
+            int artifactForm,
+            long toTableTxn
+    ) {
         MessageBus bus = engine.getMessageBus();
         MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
         RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
@@ -958,6 +1099,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         try {
             queue.get(cursor).of(
                     tok, colName, TableUtils.COLUMN_NAME_TXN_NONE, sealTxn,
+                    artifactForm,
                     0L, -1L, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO,
                     0L, toTableTxn
             );
@@ -1075,6 +1217,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     "c",
                     TableUtils.COLUMN_NAME_TXN_NONE,
                     1L,
+                    PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                     0L,
                     -1L,
                     PartitionBy.NONE,
