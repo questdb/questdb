@@ -368,6 +368,163 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * C1, the inverse of {@link #testASealStrandedBeforeItsTokenIsPublishedIsSwept}
+     * and the control that predicate was missing: a pair the committed
+     * {@code _pm} DOES name must survive the sweep, even though its index txn is
+     * above the committed txn.
+     * <p>
+     * That combination is not exotic, it is the window the write ordering
+     * creates on purpose. A seal names its artifacts {@code getTxn() + 1} and
+     * {@code publishParquetIndexTokens} fsyncs the {@code _pm} header patch
+     * before the {@code _txn} commit, so a crash or a rollback between the two
+     * leaves a committed footer naming an index txn one above the committed
+     * txn -- for good, since the rollback moves the txn back.
+     * <p>
+     * Reached through the production entry path in two injected steps:
+     * <ol>
+     *     <li>{@code ADD INDEX} seals, publishes the token and makes the header
+     *     patch durable, then the {@code _meta.swp} it needs next is refused.
+     *     The alter throws and the transaction rolls back, leaving exactly that
+     *     state -- asserted, not assumed, before step 2 runs.</li>
+     *     <li>The retried alter opens a fresh seal batch, which runs the sweep,
+     *     and is then failed at the {@code data.parquet} mapping -- after the
+     *     sweep and before the reseal could recreate what the sweep removed. So
+     *     the pair's presence afterwards is the sweep's verdict alone, with no
+     *     recreate to mask it.</li>
+     * </ol>
+     * A file-existence assertion is only available because of that second
+     * injection; without it the retry rewrites the same name either way, which
+     * is why the sibling test has to count unlinks instead.
+     */
+    @Test
+    public void testAPairTheCommittedFooterNamesIsNotSwept() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final boolean[] armedMetaSwap = {false};
+        final boolean[] metaSwapRefused = {false};
+        final boolean[] armedParquetMap = {false};
+        final boolean[] parquetMapRefused = {false};
+        final long[] parquetFd = {-1};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (armedParquetMap[0] && fd > -1 && fd == parquetFd[0]) {
+                    armedParquetMap[0] = false;
+                    parquetMapRefused[0] = true;
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (armedParquetMap[0] && fd > -1 && Utf8s.endsWithAscii(name, TableUtils.PARQUET_PARTITION_NAME)) {
+                    parquetFd[0] = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armedMetaSwap[0] && name != null && Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    // The seal has already published its token and fsynced the
+                    // _pm header patch by now; refusing the metadata swap file
+                    // aborts the alter before the _txn commit.
+                    metaSwapRefused[0] = true;
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            createSparseKeyTable();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final long committedTxnBefore = committedTxn(TABLE_NAME);
+            armedMetaSwap[0] = true;
+            try {
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+            } finally {
+                armedMetaSwap[0] = false;
+            }
+            Assert.assertTrue("the _meta.swp was never refused, so nothing rolled back", metaSwapRefused[0]);
+            engine.releaseInactive();
+
+            final String publishedMeta;
+            final String publishedParquet;
+            final long publishedIndexTxn;
+            try (Path path = new Path()) {
+                publishedMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                publishedParquet = onlyFileNamed(partitionPath(path), "sym.pidx.", ".parquet");
+                publishedIndexTxn = Numbers.parseLong(
+                        publishedMeta.substring("sym.pidx.".length(), publishedMeta.length() - "._im".length())
+                );
+                // The premise, both halves. The committed footer names the pair,
+                // so it is referenced; and its index txn is above the committed
+                // txn, so the rule under test is the one that fires.
+                assertCoveringIndexToken(
+                        path,
+                        TABLE_NAME,
+                        SYM_COLUMN_ID,
+                        publishedIndexTxn,
+                        imFileSizeField(partitionPath(path).concat(publishedMeta).$())
+                );
+                Assert.assertEquals(
+                        "premise: the rollback must leave the committed txn where it was",
+                        committedTxnBefore,
+                        committedTxn(TABLE_NAME)
+                );
+                Assert.assertTrue(
+                        "premise: the published index txn must be ABOVE the committed txn, or the"
+                                + " committed-txn rule never fires and this test proves nothing"
+                                + " [indexTxn=" + publishedIndexTxn + ", committedTxn=" + committedTxn(TABLE_NAME) + ']',
+                        publishedIndexTxn > committedTxn(TABLE_NAME)
+                );
+            }
+
+            armedParquetMap[0] = true;
+            parquetFd[0] = -1;
+            try {
+                execute("ALTER TABLE " + TABLE_NAME + " RESUME WAL");
+                drainWalQueue();
+            } finally {
+                armedParquetMap[0] = false;
+            }
+            Assert.assertTrue(
+                    "the retried alter must be failed at the data.parquet mapping, after the sweep and"
+                            + " before any reseal, or the reseal masks the sweep's verdict",
+                    parquetMapRefused[0]
+            );
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                final FilesFacade facade = configuration.getFilesFacade();
+                Assert.assertTrue(
+                        "the sweep unlinked a pair the committed _pm still names -- silent deletion of"
+                                + " referenced data [file=" + publishedParquet + ']',
+                        facade.exists(partitionPath(path).concat(publishedParquet).$())
+                );
+                Assert.assertTrue(
+                        "the sweep unlinked the _im of a pair the committed _pm still names"
+                                + " [file=" + publishedMeta + ']',
+                        facade.exists(partitionPath(path).concat(publishedMeta).$())
+                );
+                assertCoveringIndexToken(
+                        path,
+                        TABLE_NAME,
+                        SYM_COLUMN_ID,
+                        publishedIndexTxn,
+                        imFileSizeField(partitionPath(path).concat(publishedMeta).$())
+                );
+            }
+        });
+    }
+
+    /**
      * I2: a crash between an {@code _im} commit and the {@code _pm} header patch
      * strands the whole seal batch, and nothing else can ever reclaim it.
      * <p>

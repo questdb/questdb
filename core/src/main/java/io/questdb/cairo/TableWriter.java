@@ -311,6 +311,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // two longs per entry.
     private final LongList parquetSweepScratchTokens = new LongList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    // Accompanies parquetSweepScratchTokens: true only when the partition's
+    // committed _pm was mapped AND its footer resolved, so that "the footer
+    // publishes nothing" is distinguishable from "the footer could not be
+    // read". Only the first licenses the sweep's committed-txn fallback.
+    private boolean parquetSweepTokensResolved;
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
     // at once; the writer-thread paths touch the same list only after the O3 workers
@@ -15301,15 +15306,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * below means superseded and possibly still reachable by a pinned reader,
      * which is the reader-gated purge's business and not this sweep's.
      * <p>
+     * The committed footer is consulted FIRST and the writer's txn is only the
+     * fallback for a column the footer publishes no token for at all. The order
+     * is load-bearing, not stylistic. A seal names its artifacts
+     * {@code txWriter.getTxn() + 1} and {@link #publishParquetIndexTokens} makes
+     * the {@code _pm} header patch durable BEFORE the {@code _txn} commit, so
+     * between the two -- and permanently, after a crash or a
+     * {@link #rollback()} in that window -- the committed footer names an index
+     * txn one ABOVE the committed txn. Testing the writer's txn first would
+     * unlink, on the next seal batch, a pair the committed {@code _pm} still
+     * names and a reader at the committed snapshot still resolves, while
+     * {@link #publishParquetIndexTokens} copies that token forward unchanged.
+     * The footer is the authority on what was published; the writer's txn only
+     * bounds what could ever have been.
+     * <p>
      * Answers false whenever anything cannot be established: an unparseable
-     * name, a column that is not in metadata, a partition whose committed
-     * tokens could not be read, or a column the footer publishes no token for
-     * at all. The last is deliberately conservative -- DROP INDEX retires a
-     * column's token while the pair it named waits for its pinned readers, and
-     * that pair must survive a sweep triggered by a later ADD INDEX. It leaves
-     * one case uncovered: a first seal that strands a pair and is only swept
-     * after later commits have carried the committed txn past it. That leaks a
-     * pair rather than losing one, which is the recoverable direction.
+     * name, a column that is not in metadata, or a partition whose committed
+     * tokens could not be read. It leaves one case uncovered: a first seal that
+     * strands a pair and is only swept after later commits have carried the
+     * committed txn past it. That leaks a pair rather than losing one, which is
+     * the recoverable direction.
+     * <p>
+     * DROP INDEX retires a column's token while the pair it named waits for its
+     * pinned readers. That pair is below the committed txn and the footer
+     * publishes nothing for the column, so the fallback would sweep it -- which
+     * is why the retirement hands it to the reader-gated purge before it goes,
+     * and why the fallback must never be reached for a column the footer does
+     * name.
      */
     private boolean isUnpublishedParquetIndexPair(CharSequence stem) {
         final int infix = Chars.indexOf(stem, 0, stem.length(), ParquetIndexSeal.PIDX_INFIX);
@@ -15322,15 +15345,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (NumericException e) {
             return false;
         }
-        if (indexTxn > txWriter.getTxn()) {
-            // A published token's index txn is the txn its own batch commits at,
-            // so it never exceeds the committed txn. One above it was named by a
-            // seal whose batch never committed -- nothing can reference it. This
-            // is the rule that catches a first seal, where the footer carries no
-            // prior entry for the column to compare against.
-            return true;
-        }
-        if (parquetSweepScratchTokens.size() == 0) {
+        if (!parquetSweepTokensResolved) {
+            // The committed footer could not be read, so nothing about what it
+            // publishes can be established. An empty token list means "publishes
+            // nothing" only when the read succeeded; conflating the two here is
+            // what would turn an unreadable _pm into a deletion.
             return false;
         }
         final int columnIndex = metadata.getColumnIndexQuiet(stem, 0, infix);
@@ -15340,10 +15359,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
         for (int i = 0, n = parquetSweepScratchTokens.size(); i < n; i += 2) {
             if (parquetSweepScratchTokens.getQuick(i) == columnId) {
+                // Index txns are table txns, so the committed footer names the
+                // largest one ever published for the column. Above it was never
+                // published; at or below it is published or superseded, and
+                // superseded is the reader-gated purge's business.
                 return indexTxn > parquetSweepScratchTokens.getQuick(i + 1);
             }
         }
-        return false;
+        // The footer publishes no token for this column, so there is no
+        // published index txn to compare against and the writer's committed txn
+        // is the only bound left: one above it was named by a seal whose batch
+        // never committed. This is the rule that catches a first seal.
+        return indexTxn > txWriter.getTxn();
     }
 
     /**
@@ -15353,9 +15380,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * committed snapshot resolves: the header is patched last, so every footer
      * the mapping can reach is already published. Leaves {@code out} empty when
      * there is no {@code _pm}, it cannot be read, or it publishes nothing.
+     * <p>
+     * Sets {@link #parquetSweepTokensResolved} to record which of those an
+     * empty {@code out} means. The sweep's fallback rule is licensed by "the
+     * footer publishes no token for this column" and NOT by "the footer could
+     * not be read", so the two must not be conflated.
      */
     private void readCommittedParquetIndexTokens(int plen, LongList out) {
         out.clear();
+        parquetSweepTokensResolved = false;
         long addr = 0;
         long fileSize = 0;
         try {
@@ -15369,8 +15402,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 out.add(parquetMetaReader.getCoveringIndexColumnId(i));
                 out.add(parquetMetaReader.getCoveringIndexTxn(i));
             }
+            parquetSweepTokensResolved = true;
         } catch (CairoException e) {
             out.clear();
+            parquetSweepTokensResolved = false;
             LOG.error().$("could not read the committed covering index tokens, sweeping conservatively [path=")
                     .$(path).$(", msg=").$safe(e.getFlyweightMessage()).I$();
         } finally {
