@@ -2230,11 +2230,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (dropIndexOperator == null) {
                 dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
             }
+            // Captured before the meta swap below clears them: the retirement
+            // needs both, and it deliberately runs after the column has stopped
+            // being indexed.
+            final boolean hadPostingIndex = IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
+            final int postingWriterIndex = columnMetadata.getWriterIndex();
+
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
-            // The parquet form is not the purging operator's to remove: retire
-            // the published token and hand its artifacts to the reader-gated
-            // purge while the column is still indexed in metadata.
-            retireParquetIndexTokens(columnIndex);
             // swap meta commit
 
             // refresh metadata
@@ -2243,6 +2245,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setCoveringColumnIndices(null);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
+
+            // The parquet form is not the purging operator's to remove: retire
+            // the published token and hand its artifacts to the reader-gated
+            // purge. AFTER the drop commits, never before.
+            //
+            // Retiring first inverts the safe direction. The _pm header patch is
+            // durable the moment it lands, so a crash between it and the metadata
+            // commit leaves a column that metadata still calls POSTING-indexed,
+            // on a partition that is still parquet, with no token in the _pm --
+            // and checkPostingIndexIsReadable answers a missing token by
+            // returning, which hands the query to a native chain that has no
+            // visible generation for a parquet-sealed column. The query then
+            // silently returns nothing, which is precisely the failure this whole
+            // task exists to close, reached through a crash rather than a
+            // configuration flip. Removing a pointer whose absence is
+            // indistinguishable from "never had one" has to come last.
+            //
+            // In this order the crash window leaves the mirror state: the column
+            // is committed as not indexed while some partitions still carry a
+            // token for it. No query is wrong -- the probe returns on the first
+            // comparison and the scan does not use an index at all -- and the
+            // stale entry is reclaimed by the next publish for that partition,
+            // which drops any token naming a column that is no longer
+            // POSTING-indexed.
+            if (hadPostingIndex && retireParquetIndexTokens(postingWriterIndex)) {
+                commitTxWriter();
+            }
 
             // remove indexer - skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -12382,6 +12411,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 if (parquetIndexTokens.getQuick(resealedAt + 1) != existingIndexTxn) {
+                    // Not reachable through any production path today, and so
+                    // untested: the only trigger for a reseal is an out-of-order
+                    // write into a sealed parquet partition, which goes through
+                    // O3 update mode, and that rewrites the footer with an empty
+                    // covering-index section before the publish reads it -- so
+                    // getCoveringIndexCount() is already 0 and this loop does not
+                    // run. That is the deferred O3 update-mode leak; fixing it is
+                    // what makes this branch live, and it needs a pinned-reader
+                    // test at that point. The drop branch above carries the same
+                    // bound and is tested.
                     supersededColumnIds.add(existingColumnId);
                     supersededIndexTxns.add(existingIndexTxn);
                     supersededVisibleAtTxns.add(parquetIndexTokens.getQuick(resealedAt + 1));
@@ -13996,16 +14035,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * pass resealed, so every later footer for that partition restates a token for
      * an index that no longer exists.
      * <p>
-     * Runs while the column is still indexed in metadata, before the meta swap,
-     * and before {@code clearTodoAndCommitMeta} assigns
-     * {@code txWriter.getTxn() + 1} -- the txn at which the retirement becomes
-     * visible and therefore the purge window's upper bound.
+     * Runs after the drop is committed -- see the ordering argument at the call
+     * site -- so the caller passes the column's writer index, which the meta
+     * swap does not change, rather than a column index into metadata that no
+     * longer describes an indexed column. {@code txWriter.getTxn() + 1} is the
+     * txn at which the retirement becomes visible and therefore the purge
+     * window's upper bound; the caller commits at exactly that txn when this
+     * returns true.
+     *
+     * @return true when at least one partition's {@code _pm} was rewritten, so
+     * the caller knows whether a commit is owed. False means nothing changed and
+     * a commit would only burn a txn.
      */
-    private void retireParquetIndexTokens(int columnIndex) {
-        if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
-            return;
-        }
-        final int writerIndex = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+    private boolean retireParquetIndexTokens(int writerIndex) {
+        boolean retiredAny = false;
         for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
             if (!txWriter.isPartitionParquet(partitionIndex)) {
                 continue;
@@ -14035,7 +14078,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             parquetIndexRetiredColumnIds.add(writerIndex);
             publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
+            retiredAny = true;
         }
+        return retiredAny;
     }
 
     private void resizePartitionUpdateSink() {

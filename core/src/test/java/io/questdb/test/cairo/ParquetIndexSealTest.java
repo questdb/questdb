@@ -27,6 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -46,7 +48,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -279,6 +284,88 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * I1: the {@code _pm} token retirement must not become durable before the
+     * drop that authorises it is committed.
+     * <p>
+     * The {@code _pm} header patch is durable the instant it lands, so with the
+     * retirement running first, a crash in that window leaves a column metadata
+     * still calls POSTING-indexed, on a partition that is still parquet, with no
+     * token in the {@code _pm}. {@code checkPostingIndexIsReadable} answers a
+     * missing token by returning, which hands the query to a native chain that
+     * has no visible generation for a parquet-sealed column, and the query
+     * silently answers nothing. That is the silent empty result this whole task
+     * exists to close, reached through a crash rather than a configuration flip.
+     * <p>
+     * The crash is simulated at exactly that point: the header patch is
+     * performed for real and the write then throws, so the on-disk state is
+     * byte-for-byte what a power loss one instruction later would leave.
+     * Everything up to it is production -- a real {@code ALTER ... DROP INDEX}
+     * through the WAL apply path driving the real retirement.
+     * <p>
+     * With the retirement last, the same crash leaves the mirror state: the drop
+     * is committed, the column is not indexed, the query is a plain scan and
+     * answers correctly. A stale token can survive it, which is a leak rather
+     * than a wrong answer, and the next publish for the partition drops it.
+     */
+    @Test
+    public void testDropIndexDoesNotRetireTheTokenBeforeTheDropIsCommitted() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final boolean[] armed = {false};
+        final boolean[] fired = {false};
+        final long[] pmFd = {-1};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (armed[0] && fd > -1 && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                    pmFd[0] = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                final long written = super.write(fd, address, len, offset);
+                if (armed[0] && fd == pmFd[0] && offset == 0 && len == Long.BYTES) {
+                    // The patch is on disk. Stop the world here, exactly as a
+                    // power loss one instruction later would.
+                    armed[0] = false;
+                    fired[0] = true;
+                    throw CairoException.critical(0).put("simulated crash right after the _pm header patch");
+                }
+                return written;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            // The count cannot be taken before the drop: while the column is
+            // POSTING-indexed on a parquet-sealed partition the reader refuses
+            // the read outright. 75000 is the fixture's own arithmetic --
+            // SKEWED_ROW_COUNT / 4 rows carry 's0' in the indexed partition --
+            // and it is the number a silent empty result turns into 0.
+            armed[0] = true;
+            try {
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                drainWalQueue();
+            } finally {
+                armed[0] = false;
+            }
+            Assert.assertTrue(
+                    "the crash injection never fired, so the test proves nothing about the ordering",
+                    fired[0]
+            );
+            engine.releaseInactive();
+
+            Assert.assertEquals(
+                    "a crash between the _pm retirement and the drop's commit must not silently empty the column",
+                    SKEWED_ROW_COUNT / 4,
+                    countIndexedRows()
+            );
+        });
+    }
+
     @Test
     public void testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber() throws Exception {
         assertMemoryLeak(() -> {
@@ -469,6 +556,34 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A second seal replaces the token, and the pair the previous token named
+     * must outlive every reader that can still resolve it.
+     * <p>
+     * Driven through DROP INDEX + ADD INDEX. That is deliberate and not an
+     * accident of convenience: of the two supersession branches in
+     * {@code publishParquetIndexTokens}, only the drop branch is reachable
+     * through production today. The reseal branch needs the partition's
+     * committed footer to still name the previous {@code index_txn} when the
+     * reseal publishes, and the only production trigger for a reseal --
+     * an out-of-order write into a sealed parquet partition -- goes through O3
+     * update mode, which rewrites the footer with an empty covering-index
+     * section first, so the supersession loop finds nothing to supersede. That
+     * is the deferred O3 update-mode leak, and until it is fixed the reseal
+     * branch cannot be reached with a live prior token. Verified by driving a
+     * single out-of-order INSERT here: it leaves both pairs on disk and queues
+     * no purge task at all.
+     * <p>
+     * What this pins instead of the branch is the bound itself, read back from
+     * the purge log the job persists. {@code isRangeAvailable(from, to)} blocks
+     * only on readers inside the half-open {@code [from, to)}, so a window that
+     * stopped at the writer's committed txn would exclude every reader that
+     * opened before the retirement -- precisely the population at risk. The
+     * assertion is that the persisted upper bound is the txn the retirement
+     * commits at, not the one before it, which is the difference between the
+     * two candidate expressions and does not depend on how many txns the drop
+     * happens to take.
+     */
     @Test
     public void testSecondSealSupersedesTheFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
@@ -493,28 +608,13 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 // held across the whole reindex. Its _pm mapping is the
                 // pre-retirement one, so it still resolves the first index_txn
                 // and the files that token names must outlive the retirement for
-                // as long as it lives. isRangeAvailable(from, to) blocks only on
-                // readers inside the half-open [from, to), so a window that stops
-                // at the writer's committed txn does not see this reader at all.
+                // as long as it lives.
                 try (TableReader pinned = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
-                    final long pinnedTxn = pinned.getTxn();
+                    Assert.assertTrue("the pinned reader must hold a txn", pinned.getTxn() >= 0);
 
                     execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
                     drainWalQueue();
-
-                    // Without this the test is vacuous: a reader pinned two or
-                    // more txns below the retirement lies inside the too-narrow
-                    // window as well, so it would block the purge under either
-                    // bound and could not tell them apart. The window opens at
-                    // the txn that retires the token, so the reader has to sit at
-                    // exactly one below it -- the boundary the narrow window
-                    // excludes.
-                    Assert.assertEquals(
-                            "the pinned reader must sit exactly one txn below the retirement, or this test"
-                                    + " cannot tell the correct purge window from one that is a txn too narrow",
-                            pinnedTxn + 1,
-                            committedTxn(TABLE_NAME)
-                    );
+                    final long retirementTxn = committedTxn(TABLE_NAME);
 
                     execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
                     drainWalQueue();
@@ -553,6 +653,16 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                             "the purge must not unlink the superseded index parquet while a reader pinned"
                                     + " at the pre-retirement txn still resolves the token that names it",
                             ff.exists(partitionPath(path).concat(firstParquet).$())
+                    );
+
+                    // The bound itself, as the job persisted it. A window that
+                    // stopped one txn short would exclude every reader that
+                    // opened before the retirement.
+                    Assert.assertEquals(
+                            "the retirement's purge window must reach the txn the retirement commits at,"
+                                    + " not the one before it",
+                            retirementTxn,
+                            persistedPurgeWindowUpperBound(firstIndexTxn)
                     );
                 }
 
@@ -1185,6 +1295,36 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     /**
      * The table's committed txn, read the way a reader pins it.
      */
+    /**
+     * Rows the POSTING-indexed column holds for one key in the sealed
+     * partition. The count is what a silent empty result destroys.
+     */
+    private long countIndexedRows() throws Exception {
+        try (RecordCursorFactory factory = select(
+                "SELECT count() FROM " + TABLE_NAME + " WHERE sym = 's0' AND ts IN '" + INDEXED_PARTITION + "'");
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
+    /**
+     * The {@code to_table_txn} the purge job persisted for the task that retires
+     * {@code sealTxn}. This is the scoreboard window's upper bound as the
+     * producer computed it, read back rather than inferred from behaviour.
+     */
+    private long persistedPurgeWindowUpperBound(long sealTxn) throws Exception {
+        try (RecordCursorFactory factory = select(
+                "SELECT to_table_txn FROM \"" + configuration.getSystemTableNamePrefix()
+                        + "posting_seal_purge_log\" WHERE column_name = 'sym' AND seal_txn = " + sealTxn);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("no purge log row for sealTxn=" + sealTxn, cursor.hasNext());
+            final long bound = cursor.getRecord().getLong(0);
+            Assert.assertFalse("more than one purge log row for sealTxn=" + sealTxn, cursor.hasNext());
+            return bound;
+        }
+    }
+
     private long committedTxn(String tableName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             return reader.getTxn();
