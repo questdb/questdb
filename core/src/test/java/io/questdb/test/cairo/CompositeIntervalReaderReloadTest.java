@@ -24,8 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
@@ -44,7 +42,7 @@ import org.junit.Test;
  * Both directions, and each interval query is checked against the plain twin rather than a hand-computed
  * number.
  */
-public class CompositeIntervalReaderReloadTest extends AbstractCairoTest {
+public class CompositeIntervalReaderReloadTest extends AbstractCompositeTwinTest {
 
     /**
      * A brand-new CELL appears inside a window the reader has already scanned. The new cell changes the
@@ -138,26 +136,6 @@ public class CompositeIntervalReaderReloadTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Compares forward rows, count, and the backward timestamp sequence. The backward query uses a
-     * single sort key so it genuinely selects the backward cursor, and projects {@code ts} so tied
-     * timestamps cannot make the comparison flap.
-     */
-    private void assertTwinEqual(String where) throws SqlException {
-        final String orderAsc = " ORDER BY ts, exch, px";
-        assertSqlCursors("SELECT * FROM p" + where + orderAsc, "SELECT * FROM c" + where + orderAsc);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
-        assertSqlCursors("SELECT ts FROM p" + where + " ORDER BY ts DESC",
-                "SELECT ts FROM c" + where + " ORDER BY ts DESC");
-    }
 
-    private void createTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-    }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

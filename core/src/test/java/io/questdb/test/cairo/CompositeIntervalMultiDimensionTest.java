@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
@@ -42,7 +41,7 @@ import org.junit.Test;
  * <p>
  * All shapes are the discriminating ones and are compared against a plain twin, forward and backward.
  */
-public class CompositeIntervalMultiDimensionTest extends AbstractCairoTest {
+public class CompositeIntervalMultiDimensionTest extends AbstractCompositeTwinTest {
 
     /**
      * Two dimensions: the straddling cell and the matching cell differ in the SECOND dimension only, so
@@ -57,9 +56,9 @@ public class CompositeIntervalMultiDimensionTest extends AbstractCairoTest {
                     + "('2023-01-02T02:00:00.000000Z','EX','S1',2.0)");
             drainWalQueue();
 
-            assertTwinEqual(" WHERE ts = '2023-01-02T02:00:00.000000Z'");
-            assertTwinEqual(" WHERE ts >= '2023-01-02T01:30:00.000000Z' AND ts < '2023-01-02T02:30:00.000000Z'");
-            assertTwinEqual("");
+            assertTwinEqualHere(" WHERE ts = '2023-01-02T02:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE ts >= '2023-01-02T01:30:00.000000Z' AND ts < '2023-01-02T02:30:00.000000Z'");
+            assertTwinEqualHere("");
         });
     }
 
@@ -75,9 +74,9 @@ public class CompositeIntervalMultiDimensionTest extends AbstractCairoTest {
                     + "('2023-01-02T02:00:00.000000Z','EX1','S',2.0)");
             drainWalQueue();
 
-            assertTwinEqual(" WHERE ts = '2023-01-02T02:00:00.000000Z'");
-            assertTwinEqual(" WHERE ts >= '2023-01-02T01:30:00.000000Z' AND ts < '2023-01-02T02:30:00.000000Z'");
-            assertTwinEqual("");
+            assertTwinEqualHere(" WHERE ts = '2023-01-02T02:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE ts >= '2023-01-02T01:30:00.000000Z' AND ts < '2023-01-02T02:30:00.000000Z'");
+            assertTwinEqualHere("");
         });
     }
 
@@ -93,9 +92,9 @@ public class CompositeIntervalMultiDimensionTest extends AbstractCairoTest {
             insertIntoBoth("('2023-01-02T01:00:00.000000Z','EX','S1',1.0)");
             drainWalQueue();
 
-            assertTwinEqual(" WHERE ts >= '2023-01-02T04:00:00.000000Z' AND ts <= '2023-01-02T06:00:00.000000Z'");
-            assertTwinEqual(" WHERE ts = '2023-01-02T05:00:00.000000Z'");
-            assertTwinEqual("");
+            assertTwinEqualHere(" WHERE ts >= '2023-01-02T04:00:00.000000Z' AND ts <= '2023-01-02T06:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE ts = '2023-01-02T05:00:00.000000Z'");
+            assertTwinEqualHere("");
         });
     }
 
@@ -126,11 +125,11 @@ public class CompositeIntervalMultiDimensionTest extends AbstractCairoTest {
             insertIntoBoth(rows.toString());
             drainWalQueue();
 
-            assertTwinEqual(" WHERE ts = '2023-01-02T03:00:00.000000Z'");
-            assertTwinEqual(" WHERE ts >= '2023-01-02T02:00:00.000000Z' AND ts <= '2023-01-02T04:00:00.000000Z'");
-            assertTwinEqual(" WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'");
-            assertTwinEqual(" WHERE exch = 'EX1' AND ts >= '2023-01-01T02:00:00.000000Z' AND ts <= '2023-01-02T04:00:00.000000Z'");
-            assertTwinEqual("");
+            assertTwinEqualHere(" WHERE ts = '2023-01-02T03:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE ts >= '2023-01-02T02:00:00.000000Z' AND ts <= '2023-01-02T04:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE exch = 'EX1' AND ts >= '2023-01-01T02:00:00.000000Z' AND ts <= '2023-01-02T04:00:00.000000Z'");
+            assertTwinEqualHere("");
         });
     }
 
@@ -141,37 +140,31 @@ public class CompositeIntervalMultiDimensionTest extends AbstractCairoTest {
     @Test
     public void testClusteredCompositeStraddlingCell() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY, exch ORDER BY sym WAL");
-            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createTwins("ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE",
+                    "PARTITION BY DAY, exch ORDER BY sym");
             insertIntoBoth("('2023-01-02T01:00:00.000000Z','E0','B',1.0),"
                     + "('2023-01-02T03:00:00.000000Z','E0','A',3.0),"
                     + "('2023-01-02T02:00:00.000000Z','E1','B',2.0),"
                     + "('2023-01-02T02:30:00.000000Z','E1','A',2.5)");
             drainWalQueue();
 
-            assertTwinEqual(" WHERE ts = '2023-01-02T02:00:00.000000Z'");
-            assertTwinEqual(" WHERE ts >= '2023-01-02T01:30:00.000000Z' AND ts <= '2023-01-02T02:45:00.000000Z'");
-            assertTwinEqual("");
+            assertTwinEqualHere(" WHERE ts = '2023-01-02T02:00:00.000000Z'");
+            assertTwinEqualHere(" WHERE ts >= '2023-01-02T01:30:00.000000Z' AND ts <= '2023-01-02T02:45:00.000000Z'");
+            assertTwinEqualHere("");
         });
     }
 
-    private void assertTwinEqual(String where) throws SqlException {
-        final String orderAsc = " ORDER BY ts, exch, sym, px";
-        assertSqlCursors("SELECT * FROM p" + where + orderAsc, "SELECT * FROM c" + where + orderAsc);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
-        assertSqlCursors("SELECT ts FROM p" + where + " ORDER BY ts DESC",
-                "SELECT ts FROM c" + where + " ORDER BY ts DESC");
+    /**
+     * These tables carry an extra dimension column, so the forward ordering differs from the harness
+     * default.
+     */
+    private void assertTwinEqualHere(String where) throws SqlException {
+        assertTwinEqual(where, " ORDER BY ts, exch, sym, px");
     }
 
     private void createTwoDimensionTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE)"
-                + " TIMESTAMP(ts) PARTITION BY DAY, exch, sym LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createTwins("ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE",
+                "PARTITION BY DAY, exch, sym LAYOUT PLAIN");
     }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.std.str.StringSink;
 import org.junit.Test;
@@ -44,7 +43,7 @@ import org.junit.Test;
  * and a cell wholly below it visited first by a backward scan — so this is a genuine second execution of
  * the fixed code paths rather than a cosmetic layout smoke test.
  */
-public class CompositeIntervalHiveLayoutTest extends AbstractCairoTest {
+public class CompositeIntervalHiveLayoutTest extends AbstractCompositeTwinTest {
 
     /**
      * Forward: cell E0 straddles the point interval without matching it; sibling E1 holds the row.
@@ -52,7 +51,7 @@ public class CompositeIntervalHiveLayoutTest extends AbstractCairoTest {
     @Test
     public void testStraddlingCellHiveLayout() throws Exception {
         assertMemoryLeak(() -> {
-            createTwins();
+            createHiveTwins();
             insertIntoBoth("('2023-01-02T01:00:00.000000Z','E0',1.0),"
                     + "('2023-01-02T03:00:00.000000Z','E0',3.0),"
                     + "('2023-01-02T02:00:00.000000Z','E1',2.0)");
@@ -72,7 +71,7 @@ public class CompositeIntervalHiveLayoutTest extends AbstractCairoTest {
     @Test
     public void testCellBelowIntervalHiveLayout() throws Exception {
         assertMemoryLeak(() -> {
-            createTwins();
+            createHiveTwins();
             insertIntoBoth("('2023-01-02T05:00:00.000000Z','E0',5.0)");
             drainWalQueue();
             insertIntoBoth("('2023-01-02T01:00:00.000000Z','E1',1.0)");
@@ -91,7 +90,7 @@ public class CompositeIntervalHiveLayoutTest extends AbstractCairoTest {
     @Test
     public void testNullCellHiveLayout() throws Exception {
         assertMemoryLeak(() -> {
-            createTwins();
+            createHiveTwins();
             insertIntoBoth("('2023-01-02T01:00:00.000000Z','E0',1.0),"
                     + "('2023-01-02T03:00:00.000000Z','E0',3.0),"
                     + "('2023-01-02T02:00:00.000000Z',null,2.0)");
@@ -109,7 +108,7 @@ public class CompositeIntervalHiveLayoutTest extends AbstractCairoTest {
     @Test
     public void testManyCellsHiveLayout() throws Exception {
         assertMemoryLeak(() -> {
-            createTwins();
+            createHiveTwins();
             final StringBuilder rows = new StringBuilder();
             for (int i = 0; i < 10; i++) {
                 rows.append("('2023-01-02T01:00:00.000000Z','E").append(i).append("',1.0),")
@@ -136,24 +135,13 @@ public class CompositeIntervalHiveLayoutTest extends AbstractCairoTest {
         TestUtils.assertContains(partitions, "exch=");
     }
 
-    private void assertTwinEqual(String where) throws SqlException {
-        final String orderAsc = " ORDER BY ts, exch, px";
-        assertSqlCursors("SELECT * FROM p" + where + orderAsc, "SELECT * FROM c" + where + orderAsc);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
-        assertSqlCursors("SELECT ts FROM p" + where + " ORDER BY ts DESC",
-                "SELECT ts FROM c" + where + " ORDER BY ts DESC");
-    }
 
     /**
-     * No LAYOUT clause at all: the composite table takes the DEFAULT layout, which is the point.
+     * No LAYOUT clause at all: the composite table takes the DEFAULT layout, which is the point of this
+     * file.
      */
-    private void createTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    private void createHiveTwins() throws SqlException {
+        createTwins("ts TIMESTAMP, exch SYMBOL, px DOUBLE", "PARTITION BY DAY, exch");
     }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

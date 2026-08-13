@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
@@ -44,7 +43,7 @@ import org.junit.Test;
  * so the backward cursor is genuinely selected, and project {@code ts} so tied timestamps cannot make
  * the comparison flap.
  */
-public class CompositeIntervalLimitTest extends AbstractCairoTest {
+public class CompositeIntervalLimitTest extends AbstractCompositeTwinTest {
 
     @Test
     public void testLimitForwardOverSiblingCells() throws Exception {
@@ -140,10 +139,6 @@ public class CompositeIntervalLimitTest extends AbstractCairoTest {
         assertSqlCursors("SELECT ts FROM p" + where + order + limit, "SELECT ts FROM c" + where + order + limit);
     }
 
-    private void createTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-    }
 
     /**
      * E0 straddles 02:00-04:00 without a row inside it; E1 and E2 hold the rows that are.
@@ -157,8 +152,4 @@ public class CompositeIntervalLimitTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

@@ -24,8 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
@@ -42,7 +40,7 @@ import org.junit.Test;
  * these tests deliberately prune the cell that would otherwise straddle the window, and prune cells at
  * the start, middle and end of a day's cell run. Forward and backward, against a plain twin.
  */
-public class CompositeIntervalCellPruningTest extends AbstractCairoTest {
+public class CompositeIntervalCellPruningTest extends AbstractCompositeTwinTest {
 
     /**
      * The straddling cell is the one PRUNED OUT. The matching row lives in a cell that the scan only
@@ -149,21 +147,6 @@ public class CompositeIntervalCellPruningTest extends AbstractCairoTest {
         });
     }
 
-    private void assertTwinEqual(String where) throws SqlException {
-        final String orderAsc = " ORDER BY ts, exch, px";
-        assertSqlCursors("SELECT * FROM p" + where + orderAsc, "SELECT * FROM c" + where + orderAsc);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
-        assertSqlCursors("SELECT ts FROM p" + where + " ORDER BY ts DESC",
-                "SELECT ts FROM c" + where + " ORDER BY ts DESC");
-    }
 
-    private void createTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-    }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -55,7 +54,7 @@ import org.junit.Test;
  * Each test asserts against a plain twin fed identical rows, so it states the contract (composite
  * matches plain) rather than a hand-computed number.
  */
-public class CompositeIntervalSiblingCellTest extends AbstractCairoTest {
+public class CompositeIntervalSiblingCellTest extends AbstractCompositeTwinTest {
 
     /**
      * Empty-frame exit. Cell E0 (lower cellKey) holds 01:00 and 03:00 and so straddles the interval
@@ -183,36 +182,11 @@ public class CompositeIntervalSiblingCellTest extends AbstractCairoTest {
     }
 
     /**
-     * Descending twin comparison, and it has to work harder than it looks to stay honest.
-     * <p>
-     * <b>Single sort key.</b> {@code ORDER BY ts DESC} only. An earlier version of this helper ordered by
-     * {@code ts DESC, exch DESC, px DESC} and was VACUOUS: a multi-key sort makes the optimiser SORT over
-     * a FORWARD scan, so the backward cursor these tests exist for was never entered, and they passed
-     * against a build with the defect present. The tests here use distinct timestamps, so a single key is
-     * a total order anyway.
-     * <p>
-     * <b>Plan assertion.</b> Because that failure mode is invisible in the results, the plan is asserted
-     * directly: if the query stops using the backward interval scan, these tests fail rather than quietly
-     * stop testing anything.
-     * <p>
-     * <b>Rows AND count.</b> The pre-fix defect returned a CORRECT count alongside an EMPTY row set —
-     * {@code count()} does not go through the backward cursor. Checking either one alone would miss it.
+     * Backward-only comparison, delegating to the shared harness (which asserts the plan and projects
+     * only ts -- see AbstractCompositeTwinTest for why those two things are not optional).
      */
     private void assertTwinEqualDesc(String where) throws SqlException {
-        final String order = " ORDER BY ts DESC";
-        final String compositeSql = "SELECT * FROM c" + where + order;
-
-        final StringSink plan = new StringSink();
-        printSql("EXPLAIN " + compositeSql, plan);
-        // A filtered query must go through the interval cursor -- that is the code under test. An
-        // UNFILTERED one legitimately has no interval to scan and uses a plain backward frame scan;
-        // asserting "Interval backward scan" there would be asserting something false.
-        TestUtils.assertContains(plan, where.isEmpty() ? "Frame backward scan" : "Interval backward scan");
-
-        assertSqlCursors("SELECT * FROM p" + where + order, compositeSql);
-        assertSqlCursors(
-                "SELECT count() FROM (SELECT * FROM p" + where + order + ")",
-                "SELECT count() FROM (" + compositeSql + ")");
+        assertBackwardTwinEqual(where);
     }
 
     /**
@@ -243,25 +217,6 @@ public class CompositeIntervalSiblingCellTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Asserts the composite subject matches its plain twin for {@code where}, on BOTH the row scan and
-     * {@code count()} — the two run through different code paths ({@code next()} and
-     * {@code calculateSize()}) which each had to be fixed, so a fix to only one would pass a row-scan
-     * comparison while still returning a wrong count.
-     */
-    private void assertTwinEqual(String where) throws SqlException {
-        final String order = " ORDER BY ts, exch, px";
-        assertSqlCursors("SELECT * FROM p" + where + order, "SELECT * FROM c" + where + order);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
-    }
 
-    private void createTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-    }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

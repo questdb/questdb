@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
@@ -41,7 +40,7 @@ import org.junit.Test;
  * holding the rows that do. Every result is compared against a plain twin fed identical rows, so the
  * assertions state the contract rather than hand-computed numbers.
  */
-public class CompositeIntervalAggregateTest extends AbstractCairoTest {
+public class CompositeIntervalAggregateTest extends AbstractCompositeTwinTest {
 
     @Test
     public void testScalarAggregatesOverFilteredScan() throws Exception {
@@ -127,10 +126,6 @@ public class CompositeIntervalAggregateTest extends AbstractCairoTest {
         assertSqlCursors(String.format(template, "p"), String.format(template, "c"));
     }
 
-    private void createTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-    }
 
     /**
      * E0 straddles 02:00-04:00 without a row inside it; E1 and E2 hold the rows that are.
@@ -144,8 +139,4 @@ public class CompositeIntervalAggregateTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private void insertIntoBoth(String values) throws SqlException {
-        execute("INSERT INTO c VALUES " + values);
-        execute("INSERT INTO p VALUES " + values);
-    }
 }

@@ -25,9 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 /**
@@ -49,7 +46,7 @@ import org.junit.Test;
  * selects the backward cursor (a multi-key sort silently sorts over a FORWARD scan instead), and rows
  * tied on timestamp are identical in that projection, so the comparison cannot flap on tie order.
  */
-public class CompositeMultiIntervalTest extends AbstractCairoTest {
+public class CompositeMultiIntervalTest extends AbstractCompositeTwinTest {
 
     /**
      * Two disjoint sub-day windows inside ONE day, over a day with three cells. This is the shape the
@@ -102,8 +99,7 @@ public class CompositeMultiIntervalTest extends AbstractCairoTest {
     @Test
     public void testIntervalsOverWideAndNarrowCells() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createTwins();
             final String rows = "('2023-01-02T01:00:00.000000Z','A',1.0),"
                     + "('2023-01-02T02:00:00.000000Z','A',2.0),"
                     + "('2023-01-02T04:00:00.000000Z','A',4.0),"
@@ -146,8 +142,7 @@ public class CompositeMultiIntervalTest extends AbstractCairoTest {
     @Test
     public void testMultipleIntervalsOverNonMatchingCell() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createTwins();
             final String rows = "('2023-01-02T01:00:00.000000Z','E0',1.0),"
                     + "('2023-01-02T03:00:00.000000Z','E0',3.0),"
                     + "('2023-01-02T02:00:00.000000Z','E1',2.0)";
@@ -164,24 +159,17 @@ public class CompositeMultiIntervalTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Delegates to the shared harness, which compares forward rows, count and the backward timestamp
+     * sequence -- and asserts the plan for the backward one (see AbstractCompositeTwinTest for the two
+     * ways a "backward" query silently is not one).
+     */
     private void assertTwinEqualBothDirections(String where) throws SqlException {
-        // forward: full rows, deterministic total order
-        final String orderAsc = " ORDER BY ts, exch, px";
-        assertSqlCursors("SELECT * FROM p" + where + orderAsc, "SELECT * FROM c" + where + orderAsc);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
-
-        // backward: ts only, single sort key, and assert the plan really is a backward scan
-        final StringSink plan = new StringSink();
-        printSql("EXPLAIN SELECT ts FROM c" + where + " ORDER BY ts DESC", plan);
-        TestUtils.assertContains(plan, "backward scan");
-        assertSqlCursors(
-                "SELECT ts FROM p" + where + " ORDER BY ts DESC",
-                "SELECT ts FROM c" + where + " ORDER BY ts DESC");
+        assertTwinEqual(where);
     }
 
     private void createAndFillTwins() throws SqlException {
-        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-        execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createTwins();
         final StringBuilder rows = new StringBuilder();
         boolean first = true;
         for (String day : new String[]{"2023-01-01", "2023-01-02", "2023-01-03"}) {
