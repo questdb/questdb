@@ -45,6 +45,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -121,6 +122,10 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
     private static final String SWITCH_TABLE_NAME = "t_pidx_switch";
     private static final String TABLE_NAME = "t_pidx";
+    // Two-symbol fixtures below. Rows are only ever counted per key, so a small
+    // partition is enough and the parquet convert stays cheap.
+    private static final String TORN_TABLE_NAME = "t_pidx_torn";
+    private static final int TWO_SYMBOL_ROW_COUNT = 20_000;
 
     /**
      * W4-I1: the cost of a {@code _pm} chain walk must not grow with the chain.
@@ -2303,6 +2308,178 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A partition open that TEARS leaves the partition slot marked closed while
+     * this reader still holds the {@code _pm} mapping and the index forms
+     * resolved from it -- and nothing collects that state before the next open.
+     * <p>
+     * {@code openMissingColumnsInPartition}'s catch block sets the slot's SIZE
+     * word to -1 and its ACTIVE_COLUMNS_OPEN word to 0 WITHOUT going through
+     * {@code closeParquetPartition}, and neither {@code closeExcessPartitions}
+     * nor {@code reconcileOpenPartitions0} collects such a slot afterwards --
+     * both guard on {@code openPartitionSize > -1}. So the next
+     * {@code openPartition} re-enters {@code openParquetMetadata} with the
+     * previous mapping's answer still in the list. That matters because
+     * {@code cacheParquetIndexForms} appends and {@code indexFormEntryOffset}
+     * returns the FIRST match: a survivor outranks the entry just resolved, and
+     * the reader hands out an {@code index_txn} naming an artifact pair a later
+     * seal superseded and the purge may already have unlinked.
+     * <p>
+     * Driven entirely through production. {@code setActiveColumns} is the
+     * production lever that clears ACTIVE_COLUMNS_OPEN on an open partition
+     * (goPassive takes the same route through {@code resetAllColumnsOpenFlag}),
+     * and the throw is a real {@code openRO} refusal of {@code sym2}'s posting
+     * key file inside {@code reloadColumnAt}, which is the only I/O
+     * {@code reloadColumnAt} performs for a PARQUET partition. Hence the
+     * fixture's two indexed columns: {@code sym} carries the parquet-form token
+     * that can go stale, {@code sym2} is sealed natively so it has a native
+     * index reader to fail on.
+     * <p>
+     * The reopen is made to resolve a DIFFERENT answer -- {@code DROP INDEX}
+     * retires the token, so the fresh answer is "no covering index at all". That
+     * is the {@code n == 0} shape, and it is the worse of the two: a partition
+     * that stops publishing takes {@code cacheParquetIndexForms}' early return,
+     * so a stale entry survives WHOLE rather than merely being shadowed by a
+     * fresh one.
+     * <p>
+     * <b>What this test does and does not discriminate.</b> Two independent
+     * clears stand between this shape and a stale answer:
+     * {@code invalidateIndexFormCache} at the top of {@code openParquetMetadata}
+     * and the {@code existing.clear()} inside {@code cacheParquetIndexForms}.
+     * The latter is the ONLY call site of the former's successor -- the
+     * invalidate runs unconditionally, immediately above the remap, with nothing
+     * between them -- so removing the clear alone cannot fail this or any other
+     * test: it is dominated. Removing the invalidate alone, or both, does fail
+     * it, with the stale {@code index_txn} of the retired token. The clear is
+     * defence in depth for a route added later that skips the invalidate; this
+     * test is what closes the gap the invalidate itself had, which no test
+     * covered.
+     */
+    @Test
+    public void testATornPartitionOpenDoesNotStrandTheCachedIndexForm() throws Exception {
+        final boolean[] armed = {false};
+        final boolean[] fired = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed[0] && name != null && Utf8s.containsAscii(name, "sym2.pk")) {
+                    fired[0] = true;
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            createTwoIndexFormsTable();
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TORN_TABLE_NAME))) {
+                final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int sym2ColumnIndex = reader.getMetadata().getColumnIndex("sym2");
+                Assert.assertTrue(reader.openPartition(0) > 0);
+
+                // Fixture guards. sym must carry a parquet-form token, or there
+                // is nothing that can go stale; sym2 must NOT, or its index
+                // reader -- the throw this test needs -- is refused instead of
+                // created.
+                Assert.assertEquals(
+                        "the fixture must seal sym as parquet",
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
+                );
+                final long firstIndexTxn = reader.getPartitionIndexTxn(0, symColumnIndex);
+                Assert.assertTrue("a published token names a real index txn", firstIndexTxn >= 0);
+                Assert.assertEquals(
+                        "the fixture must seal sym2 natively",
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
+                        reader.getPartitionIndexForm(0, sym2ColumnIndex)
+                );
+                // Populates indexes[primaryIndex] for sym2, which is what makes
+                // reloadColumnAt open a file at all on a parquet partition. Only
+                // the BACKWARD direction lands in the slot reloadColumnAt reads.
+                Assert.assertNotNull(reader.getIndexReader(0, sym2ColumnIndex, IndexReader.DIR_BACKWARD));
+
+                // Tear the open. setActiveColumns clears ACTIVE_COLUMNS_OPEN
+                // while the slot stays open, so openPartition routes into
+                // openMissingColumnsInPartition rather than openPartition0.
+                reader.setActiveColumns(null);
+                armed[0] = true;
+                try {
+                    reader.openPartition(0);
+                    Assert.fail("the partition open must fail while sym2's key file cannot be opened");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "sym2.pk");
+                } finally {
+                    armed[0] = false;
+                }
+                Assert.assertTrue("the injected open failure never fired", fired[0]);
+
+                // The state the catch block leaves, asserted rather than assumed:
+                // the slot says closed, the _pm mapping is still held, and the
+                // forms resolved from it are still in the list.
+                Assert.assertEquals(
+                        "the catch block must mark the partition closed",
+                        -1,
+                        reader.getPartitionRowCount(0)
+                );
+                Assert.assertTrue(
+                        "the torn open must leave the _pm mapping in place -- that is what makes"
+                                + " the next open re-enter with a populated list",
+                        reader.getParquetMetadataSize(0) > 0
+                );
+                Assert.assertEquals(
+                        "the torn open must leave the cached form in place, or the reopen below"
+                                + " has nothing to be stale about",
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
+                );
+
+                // The partition stops publishing a token. Same directory, same
+                // name txn, same data.parquet: only the _pm grows a footer whose
+                // covering section is empty.
+                final long nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+                execute("ALTER TABLE " + TORN_TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                drainWalQueue();
+                Assert.assertEquals(
+                        "premise: the retirement must not move the partition directory, or this"
+                                + " reader's stale name txn sends the reopen at the OLD _pm and the"
+                                + " two answers coincide",
+                        nameTxnBefore,
+                        currentPartitionNameTxn(TORN_TABLE_NAME)
+                );
+                try (Path path = new Path()) {
+                    assertNoCoveringIndexToken(path, TORN_TABLE_NAME, nameTxnBefore);
+                }
+
+                // Deliberately no reload(): a reload would close the partition
+                // through reconcileOpenPartitions0 and invalidate the cache the
+                // ordinary way, which is the path that is already covered.
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                Assert.assertEquals(
+                        "the reopen must resolve the CURRENT _pm, which publishes nothing --"
+                                + " a stale entry from the torn open's mapping is a superseded"
+                                + " index txn [stale=" + firstIndexTxn + ']',
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
+                );
+                Assert.assertEquals(-1, reader.getPartitionIndexTxn(0, symColumnIndex));
+                Assert.assertEquals(0, reader.getPartitionIndexImFileSize(0, symColumnIndex));
+
+                // And on the production path: this reader's metadata still calls
+                // sym POSTING-indexed, so checkPostingIndexIsReadable still runs
+                // and a stale entry would refuse the read naming a retired pair.
+                try {
+                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_BACKWARD);
+                } catch (CairoException e) {
+                    Assert.assertFalse(
+                            "the refusal fired off a form resolved from a mapping this reopen"
+                                    + " replaced [msg=" + e.getFlyweightMessage() + ']',
+                            Chars.contains(e.getFlyweightMessage(), "has no reader yet")
+                    );
+                }
+            }
+        });
+    }
+
     @Test
     public void testPostingIndexReadIsServedWhileTheNativeFormatIsSelected() throws Exception {
         assertMemoryLeak(() -> {
@@ -2959,6 +3136,44 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 "postings\tdistinctRowIds\tminRowId\tmaxRowId\n"
                         + partitionRowCount + '\t' + partitionRowCount + "\t0\t" + (partitionRowCount - 1) + '\n'
         );
+    }
+
+    /**
+     * A parquet partition carrying ONE covering index of each on-disk form:
+     * {@code sym} sealed as parquet, so the {@code _pm} publishes a token for
+     * it, and {@code sym2} sealed natively, so its {@code .pk} / {@code .pv} /
+     * {@code .pc} sidecars are linked into the same directory and a native index
+     * reader can be opened over it.
+     * <p>
+     * The order is load-bearing: the format property is read at seal time, so
+     * {@code sym2} must be indexed while it still says {@code native}. Sealing
+     * {@code sym} afterwards touches only {@code sym}'s entry --
+     * {@code publishParquetIndexTokens} copies forward whatever it does not
+     * reseal, and {@code sym2} has nothing to copy.
+     */
+    private void createTwoIndexFormsTable() throws Exception {
+        execute("CREATE TABLE " + TORN_TABLE_NAME + " (" +
+                "ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + TORN_TABLE_NAME + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                " 'o' || (x % 4)," +
+                " x::DOUBLE," +
+                " x" +
+                " FROM long_sequence(" + TWO_SYMBOL_ROW_COUNT + ")");
+        drainWalQueue();
+        // A later partition, so the indexed one is not the active partition.
+        execute("INSERT INTO " + TORN_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 's0', 'o0', 1.0, 1)");
+        drainWalQueue();
+        execute("ALTER TABLE " + TORN_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        execute("ALTER TABLE " + TORN_TABLE_NAME + " ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (price)");
+        drainWalQueue();
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        execute("ALTER TABLE " + TORN_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+        drainWalQueue();
+        engine.releaseInactive();
     }
 
     /**
