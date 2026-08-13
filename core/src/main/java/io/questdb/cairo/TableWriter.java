@@ -1532,17 +1532,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-        // The LAG lives INSIDE the last partition's column files, above its live row count, and is made
-        // visible later by advancing that count rather than by moving anything. A commit that turns the
-        // partition COMPOSITE breaks the second half of that deal: the piece it relocates to the tail now
-        // occupies the file rows the lag was parked at, so what the count later adopts is somebody else's
-        // data. Applying the lag FIRST is what keeps the two apart - by the time this commit can make the
-        // partition composite, the lag rows are in the O3 buffers and go out through the same path as
-        // everything else, at E. A replace-range commit already demands this much (see the
-        // getLagRowCount() == 0 assertion it opens with); merge-append demands it for the same reason.
-        if (txWriter.getLagRowCount() > 0 && configuration.isO3PartitionMergeAppendEnabled()) {
-            commitToTimestamp = WalTxnDetails.FORCE_FULL_COMMIT;
-        }
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         bufferClusterTxnRanges(seqTxn, transactionBlock);
         // Capture wall clock once to reduce syscalls. Used for:
@@ -9911,7 +9900,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // unaffected: those partitions accept LAG normally.
                 boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
                         && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-                boolean noLag = lastPartitionBlocksAppend || isParquetTableEmptyPlaceholder;
+                // Merge-append tables take no LAG at all. The LAG is parked INSIDE the last partition's
+                // column files, above its live row count, and made visible later by advancing that count
+                // rather than by moving anything - which holds only while those file rows stay free. A
+                // commit that turns the partition COMPOSITE relocates a piece onto exactly those rows, so
+                // the count would go on to adopt somebody else's data. Refusing the LAG for the whole
+                // table, rather than only once the partition is already composite, is what keeps the two
+                // from ever meeting: the danger arrives with the commit that CREATES the composite
+                // partition, and at that point the partition still looks ordinary.
+                boolean noLag = lastPartitionBlocksAppend
+                        || isParquetTableEmptyPlaceholder
+                        || configuration.isO3PartitionMergeAppendEnabled();
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
                         || noLag
