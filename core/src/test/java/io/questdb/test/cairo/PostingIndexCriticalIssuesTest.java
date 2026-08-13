@@ -155,6 +155,19 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     FROM long_sequence(100)
                     """);
             execute("ALTER TABLE t_add_col_spill_txn ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
+            final TableToken token = engine.verifyTableName("t_add_col_spill_txn");
+            // The txn the ADD COLUMN committed at. openNewColumnFiles arms
+            // getTxn() + 1 before clearTodoAndCommitMetaStructureVersion assigns
+            // that txn, so this is the exact value the mid-commit flush below has
+            // to carry. Pinning the value rather than merely "non-zero" is what
+            // discriminates getTxn() + 1 from a plain getTxn(): the latter tags
+            // the entry one txn low, which reads as already committed, so the
+            // writer-open recovery walk can no longer drop it when the commit it
+            // belongs to never lands.
+            final long addColumnTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                addColumnTxn = reader.getTxFile().getTxn();
+            }
             // A hot key with thousands of rowids blows well past the 256-byte
             // spill budget, so the add() loop flushes before syncColumns runs.
             // The rows stay inside the SAME day so that no partition switch
@@ -166,7 +179,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            final TableToken token = engine.verifyTableName("t_add_col_spill_txn");
             final long partitionTs;
             final long partitionNameTxn;
             final long columnNameTxn;
@@ -195,6 +207,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             tags.getQuick(i)
                     );
                 }
+                Assert.assertTrue(
+                        "no chain entry carries the txn openNewColumnFiles armed, so the arm is not the"
+                                + " one this publish consumed: expected txWriter.getTxn() + 1, i.e. the txn"
+                                + " the ADD COLUMN commits at"
+                                + " [tags=" + tags + ", addColumnTxn=" + addColumnTxn + ']',
+                        tags.indexOf(addColumnTxn) >= 0
+                );
             }
 
             // The index must still answer predicates over every indexed row.
@@ -250,6 +269,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // this partition carries the new column yet.
             execute("ALTER TABLE t_rename_col_txn ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
             execute("ALTER TABLE t_rename_col_txn RENAME COLUMN sym TO sym2");
+            final TableToken token = engine.verifyTableName("t_rename_col_txn");
+            // The txn the RENAME committed at. The indexer rebind arms
+            // getTxn() + 1 before bumpMetadataAndColumnStructureVersion assigns
+            // that txn, so this is the exact value the mid-commit flush below has
+            // to carry. See testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal
+            // for why the value, and not just "non-zero", is the thing to pin.
+            final long renameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                renameTxn = reader.getTxFile().getTxn();
+            }
             // Same day, so no partition switch runs openPartition (which arms).
             execute("""
                     INSERT INTO t_rename_col_txn
@@ -258,7 +287,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            final TableToken token = engine.verifyTableName("t_rename_col_txn");
             final long partitionTs;
             final long partitionNameTxn;
             final long columnNameTxn;
@@ -286,6 +314,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             tags.getQuick(i)
                     );
                 }
+                Assert.assertTrue(
+                        "no chain entry carries the txn renameColumn's indexer rebind armed, so the arm is"
+                                + " not the one this publish consumed: expected txWriter.getTxn() + 1, i.e."
+                                + " the txn the RENAME commits at"
+                                + " [tags=" + tags + ", renameTxn=" + renameTxn + ']',
+                        tags.indexOf(renameTxn) >= 0
+                );
             }
 
             assertQuery("SELECT count() FROM t_rename_col_txn WHERE sym2 = 'A'")
@@ -363,8 +398,17 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final TableToken token = engine.verifyTableName("t_squash_restore_txn");
             // One writer instance for both steps: the squash's restore must
             // still be in effect when the following commit indexes the new rows.
+            final long squashTxn;
             try (TableWriter w = TestUtils.getWriter(engine, token)) {
                 w.squashPartitions();
+                // The txn the squash committed at.
+                // restorePostingIndexersToLastPartition arms getTxn() + 1 before
+                // commitTxWriterAndPublishPendingPostingSealPurges assigns that
+                // txn, so this is the exact value the next commit's mid-stream
+                // spill flush has to carry. See
+                // testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal for
+                // why the value, and not just "non-zero", is the thing to pin.
+                squashTxn = w.getTxn();
                 final long base = MicrosFormatUtils.parseTimestamp("2024-01-02T01:00:00.000000Z");
                 for (int i = 0; i < 5_000; i++) {
                     TableWriter.Row r = w.newRow(base + i * 1_000_000L);
@@ -405,6 +449,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             tags.getQuick(i)
                     );
                 }
+                Assert.assertTrue(
+                        "no chain entry carries the txn restorePostingIndexersToLastPartition armed, so the"
+                                + " arm is not the one this publish consumed: expected txWriter.getTxn() + 1,"
+                                + " i.e. the txn the squash commits at"
+                                + " [tags=" + tags + ", squashTxn=" + squashTxn + ']',
+                        tags.indexOf(squashTxn) >= 0
+                );
             }
 
             assertQuery("SELECT count() FROM t_squash_restore_txn WHERE sym = 'A'")
