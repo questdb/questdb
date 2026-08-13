@@ -48,6 +48,16 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         super(configuration, intervalModel, timestampIndex);
     }
 
+    /**
+     * NOTE on the composite sibling-cell handling below, mirrored from {@link #next(long)}: no COMPOSITE
+     * query reaches this method today. The composite cross-cell merge cursor wraps this one and counts by
+     * iterating {@code next()} rather than delegating here -- measured, by instrumenting this method and
+     * finding that {@code SELECT count()} with a timestamp filter reaches it on a PLAIN table and on no
+     * composite query tried. The mirrored logic is kept deliberately rather than left out: counting by
+     * iteration is an obvious thing to optimise later, and a delegation added then would silently
+     * reintroduce the dropped-rows defect this fix exists for. It is unreachable-for-composite
+     * futureproofing, NOT a live fix -- the live fix is in {@code next()}.
+     */
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         // Mirrors next(): walks partitions and intervals from the top down,
@@ -94,8 +104,9 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip interval
-                if (partitionTimestampHiApprox < intervalLo) {
+                // interval is wholly below partition, skip interval -- unless a same-day sibling cell
+                // follows, in which case fall through to the exact checks (see next()'s twin comment).
+                if (partitionTimestampHiApprox < intervalLo && !hasSameDaySiblingBelow(currentPartition, partitionLo1)) {
                     partitionLimit1 = limitHi + 1;
                     intervalsHi1 = currentInterval;
                     continue;
@@ -104,16 +115,25 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 reader.openPartition(currentPartition);
                 timestampFinder.prepare();
 
-                // interval is wholly below partition, skip interval
                 final long partitionTimestampHiExact = timestampFinder.timestampAt(limitHi);
+                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
+                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                // interval is wholly below partition, skip interval
                 if (partitionTimestampHiExact < intervalLo) {
+                    if (hasSameDaySiblingBelow(currentPartition, partitionLo1)) {
+                        if (currentInterval - 1 >= intervalsLo1
+                                && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
+                            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                        }
+                        partitionHi1 = currentPartition;
+                        partitionLimit1 = -1;
+                        continue;
+                    }
                     partitionLimit1 = limitHi + 1;
                     intervalsHi1 = currentInterval;
                     continue;
                 }
 
-                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
-                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
                 final long lo;
                 if (partitionTimestampLoExact < intervalLo) {
                     // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
@@ -215,8 +235,11 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip interval
-                if (partitionTimestampHiApprox < intervalLo) {
+                // Interval is wholly below partition, skip interval -- UNLESS a sibling cell of the same
+                // day follows in this backward walk (see retireIntervalOrVisitSibling). Falling through
+                // to the exact checks handles that case uniformly; the extra partition open is paid only
+                // by a composite multi-cell day, and this is unreachable for a plain table.
+                if (partitionTimestampHiApprox < intervalLo && !hasSameDaySiblingBelow(currentPartition, partitionLo)) {
                     skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
@@ -224,15 +247,18 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 reader.openPartition(currentPartition);
                 timestampFinder.prepare();
 
-                // interval is wholly below partition, skip interval
                 final long partitionTimestampHiExact = timestampFinder.timestampAt(limitHi);
+                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
+                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                // interval is wholly below partition, skip interval
                 if (partitionTimestampHiExact < intervalLo) {
+                    if (retireIntervalOrVisitSibling(currentPartition, currentInterval, partitionTimestampLoExact)) {
+                        continue;
+                    }
                     skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
 
-                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
-                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
                 final long lo;
                 if (partitionTimestampLoExact < intervalLo) {
                     // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
@@ -314,6 +340,45 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     public void toTop() {
         super.toTop();
         partitionLimit = -1;
+    }
+
+    /**
+     * Whether the partition BELOW {@code partitionIndex} — the next one this backward walk will visit —
+     * is a SIBLING CELL of the same day rather than the previous day, i.e. whether the two share a
+     * partition timestamp. Only a composite table's multi-cell day produces this; for a plain table it is
+     * always {@code false}, which is what keeps every caller byte-identical for plain tables.
+     */
+    private boolean hasSameDaySiblingBelow(int partitionIndex, int partitionLoBound) {
+        return partitionIndex - 1 >= partitionLoBound
+                && reader.getPartitionTimestampByIndex(partitionIndex - 1)
+                == reader.getPartitionTimestampByIndex(partitionIndex);
+    }
+
+    /**
+     * Shared tail for {@link #next(long)}'s "cell wholly below the interval" exit. Returns {@code true}
+     * when the caller should {@code continue} at the next same-day sibling cell instead of retiring the
+     * interval.
+     * <p>
+     * Retiring the interval there is correct for a plain table, where {@code currentPartition - 1} is
+     * always the PREVIOUS DAY. It is wrong for a composite multi-cell day, where it can be a SIBLING
+     * CELL — a separate cell whose rows may fall inside the interval this one sits entirely below.
+     * Retiring the interval drops them silently: a backward scan (any {@code ORDER BY ts DESC} with a
+     * timestamp filter) returned NO rows where the forward scan of the same data returned one.
+     * <p>
+     * This mirrors the forward cursor's fix. It carries the same trade and the same guard: advancing
+     * abandons this cell for any LOWER interval the backward walk visits next, so if such an interval
+     * reaches into this cell's own span, fail loudly rather than drop rows.
+     */
+    private boolean retireIntervalOrVisitSibling(int currentPartition, int currentInterval, long partitionTimestampLoExact) {
+        if (!hasSameDaySiblingBelow(currentPartition, partitionLo)) {
+            return false;
+        }
+        if (currentInterval - 1 >= intervalsLo
+                && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
+            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+        }
+        skipPartition(currentPartition);
+        return true;
     }
 
     private void skipInterval(int intervalIndex, long limit) {

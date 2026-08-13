@@ -48,6 +48,16 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         super(configuration, intervalModel, timestampIndex);
     }
 
+    /**
+     * NOTE on the composite sibling-cell handling below, mirrored from {@link #next(long)}: no COMPOSITE
+     * query reaches this method today. The composite cross-cell merge cursor wraps this one and counts by
+     * iterating {@code next()} rather than delegating here -- measured, by instrumenting this method and
+     * finding that {@code SELECT count()} with a timestamp filter reaches it on a PLAIN table and on no
+     * composite query tried. The mirrored logic is kept deliberately rather than left out: counting by
+     * iteration is an obvious thing to optimise later, and a delegation added then would silently
+     * reintroduce the dropped-rows defect this fix exists for. It is unreachable-for-composite
+     * futureproofing, NOT a live fix -- the live fix is in {@code next()}.
+     */
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         int intervalsLo1 = this.intervalsLo;

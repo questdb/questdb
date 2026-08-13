@@ -25,7 +25,9 @@
 package io.questdb.test.cairo;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -126,6 +128,91 @@ public class CompositeIntervalSiblingCellTest extends AbstractCairoTest {
             assertTwinEqual(" WHERE ts >= '2023-01-02T00:00:00.000000Z' AND ts < '2023-01-03T00:00:00.000000Z'");
             assertTwinEqual("");
         });
+    }
+
+
+    /**
+     * The BACKWARD cursor has the same defect mirrored, and it is worse: it returned NO rows at all.
+     * <p>
+     * {@code IntervalBwdPartitionFrameCursor} walks partitions downward, so its dangerous exit is "cell
+     * wholly BELOW the interval" rather than above. Cell E1 (higher cellKey, so visited FIRST going
+     * backwards) holds only 01:00 and sits entirely below {@code [04:00, 06:00]}; cell E0 holds the
+     * 05:00 row that matches. Before the fix E1 retired the interval and E0 was never visited.
+     * <p>
+     * Two commits are load-bearing: within a single commit WAL apply sorts by timestamp, so the cell
+     * holding the earliest row interns first and takes the LOWER cellKey — the below-interval cell could
+     * never be the one a backward walk meets first.
+     */
+    @Test
+    public void testBackwardScanCellBelowIntervalMustNotRetireIt() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('2023-01-02T05:00:00.000000Z','E0',5.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-02T01:00:00.000000Z','E1',1.0)");
+            drainWalQueue();
+
+            assertTwinEqualDesc(" WHERE ts >= '2023-01-02T04:00:00.000000Z' AND ts <= '2023-01-02T06:00:00.000000Z'");
+            assertTwinEqualDesc(" WHERE ts = '2023-01-02T05:00:00.000000Z'");
+            assertTwinEqualDesc(" WHERE ts >= '2023-01-02T00:00:00.000000Z' AND ts < '2023-01-03T00:00:00.000000Z'");
+            assertTwinEqualDesc("");
+        });
+    }
+
+    /**
+     * Backward scan over a day with many cells, only some of which hold a matching row.
+     */
+    @Test
+    public void testBackwardScanManyCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // First commit fixes the cellKey order; later commits add cells that sort EARLIER, so a
+            // backward walk meets below-interval cells before matching ones.
+            insertIntoBoth("('2023-01-02T08:00:00.000000Z','M1',8.0),('2023-01-02T09:00:00.000000Z','M2',9.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-02T01:00:00.000000Z','L1',1.0),('2023-01-02T02:00:00.000000Z','L2',2.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-02T03:00:00.000000Z','L3',3.0)");
+            drainWalQueue();
+
+            assertTwinEqualDesc(" WHERE ts >= '2023-01-02T07:00:00.000000Z' AND ts <= '2023-01-02T10:00:00.000000Z'");
+            assertTwinEqualDesc(" WHERE ts = '2023-01-02T08:00:00.000000Z'");
+            assertTwinEqualDesc(" WHERE ts >= '2023-01-02T02:30:00.000000Z' AND ts <= '2023-01-02T08:30:00.000000Z'");
+            assertTwinEqualDesc("");
+        });
+    }
+
+    /**
+     * Descending twin comparison, and it has to work harder than it looks to stay honest.
+     * <p>
+     * <b>Single sort key.</b> {@code ORDER BY ts DESC} only. An earlier version of this helper ordered by
+     * {@code ts DESC, exch DESC, px DESC} and was VACUOUS: a multi-key sort makes the optimiser SORT over
+     * a FORWARD scan, so the backward cursor these tests exist for was never entered, and they passed
+     * against a build with the defect present. The tests here use distinct timestamps, so a single key is
+     * a total order anyway.
+     * <p>
+     * <b>Plan assertion.</b> Because that failure mode is invisible in the results, the plan is asserted
+     * directly: if the query stops using the backward interval scan, these tests fail rather than quietly
+     * stop testing anything.
+     * <p>
+     * <b>Rows AND count.</b> The pre-fix defect returned a CORRECT count alongside an EMPTY row set —
+     * {@code count()} does not go through the backward cursor. Checking either one alone would miss it.
+     */
+    private void assertTwinEqualDesc(String where) throws SqlException {
+        final String order = " ORDER BY ts DESC";
+        final String compositeSql = "SELECT * FROM c" + where + order;
+
+        final StringSink plan = new StringSink();
+        printSql("EXPLAIN " + compositeSql, plan);
+        // A filtered query must go through the interval cursor -- that is the code under test. An
+        // UNFILTERED one legitimately has no interval to scan and uses a plain backward frame scan;
+        // asserting "Interval backward scan" there would be asserting something false.
+        TestUtils.assertContains(plan, where.isEmpty() ? "Frame backward scan" : "Interval backward scan");
+
+        assertSqlCursors("SELECT * FROM p" + where + order, compositeSql);
+        assertSqlCursors(
+                "SELECT count() FROM (SELECT * FROM p" + where + order + ")",
+                "SELECT count() FROM (" + compositeSql + ")");
     }
 
     /**
