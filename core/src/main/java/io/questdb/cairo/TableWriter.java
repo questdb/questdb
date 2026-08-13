@@ -12429,6 +12429,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetMetaAddr = parquetMetaReader.getAddr();
             parquetMetaSize = parquetMetaReader.getFileSize();
             final long parseAnchor = parquetMetaReader.getResolvedFileSize();
+            // An O3 in-place update writes its footer with the covering section
+            // EMPTIED (O3PartitionJob's updateFileMetadata(0, 0, 0)), because the
+            // merge rewrote the row group blocks the index was built over. The
+            // artifacts it named are still on disk and still named by the
+            // PREVIOUS footer, which the chain never truncates -- so reading only
+            // the anchor sees nothing to supersede and queues no purge, and the
+            // pair leaks. Measured at two files per O3 commit.
+            //
+            // So when the anchor publishes nothing, step back one footer and
+            // retire what it named. Retire, not restate: the merge invalidated
+            // the index, and updateParquetIndexes rebuilds it after this footer
+            // is written. The visible-at txn is the same txWriter.getTxn() + 1 a
+            // seal names its artifacts with, so a pinned reader's window is
+            // unchanged.
+            if (parquetMetaReader.getCoveringIndexCount() == 0 && parquetMetaReader.resolvePrevFooter()) {
+                // Only when the data.parquet itself changed. That is what
+                // distinguishes an O3 in-place update -- which rewrote row
+                // groups and emptied the section -- from an ordinary publish
+                // whose anchor happens to carry no token yet, where the prior
+                // footer's entries are still live and the normal supersession
+                // path will retire them at its own publish. Retiring them here
+                // too queues the pair twice.
+                final boolean o3Rewrote = parquetMetaReader.getParquetFileSize() != parquetFileSize;
+                for (int i = 0, n = o3Rewrote ? parquetMetaReader.getCoveringIndexCount() : 0; i < n; i++) {
+                    supersededColumnIds.add(parquetMetaReader.getCoveringIndexColumnId(i));
+                    supersededIndexTxns.add(parquetMetaReader.getCoveringIndexTxn(i));
+                    supersededVisibleAtTxns.add(txWriter.getTxn() + 1);
+                }
+                // Back to the anchor: everything below reads the committed view.
+                if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+                    throw CairoException.critical(0)
+                            .put("could not re-resolve the parquet metadata footer after reading the prior one [table=")
+                            .put(tableToken.getTableName())
+                            .put(", parquetFileSize=").put(parquetFileSize)
+                            .put(']');
+                }
+            }
             for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
                 final long existingColumnId = parquetMetaReader.getCoveringIndexColumnId(i);
                 final long existingIndexTxn = parquetMetaReader.getCoveringIndexTxn(i);

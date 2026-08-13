@@ -3461,6 +3461,53 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    /**
+     * An ordinary out-of-order INSERT must not leak the pidx pair its update
+     * supersedes.
+     * <p>
+     * The O3 in-place update writes its footer with the covering section
+     * emptied -- the merge rewrote the row groups the index was built over --
+     * so the artifacts it named survive named only by the PREVIOUS footer. A
+     * publish that reads the parse anchor alone therefore sees nothing to
+     * supersede and queues no purge task, and the pair leaks. That was measured
+     * at two files per O3 commit, bounded only by the rewrite period.
+     * <p>
+     * Counted AFTER draining the purge job, so this asserts the artifacts are
+     * actually retired rather than that a task was queued.
+     */
+    @Test
+    public void testAnOrdinaryO3InsertDoesNotLeakTheSupersededPidxPair() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            runPostingSealPurgeJob();
+            final int sealed = countPidxArtifacts();
+            Assert.assertTrue("the fixture must have sealed a pair, got " + sealed, sealed >= 2);
+
+            for (int i = 0; i < 3; i++) {
+                execute("INSERT INTO " + TABLE_NAME
+                        + " VALUES ('" + INDEXED_PARTITION + "T00:00:00.000005Z', 's7', 1.5, 9)");
+                drainWalQueue();
+                runPostingSealPurgeJob();
+            }
+
+            final int after = countPidxArtifacts();
+            Assert.assertTrue(
+                    "every O3 update supersedes a pair and the superseded ones must be retired,"
+                            + " got " + sealed + " -> " + after,
+                    after <= sealed
+            );
+        });
+    }
+
+    private int countPidxArtifacts() {
+        try (Path path = new Path()) {
+            final java.io.File[] files = new java.io.File(partitionPath(path).toString())
+                    .listFiles((_, name) -> name.contains(".pidx."));
+            return files == null ? 0 : files.length;
+        }
+    }
+
     private Path partitionPath(Path path) {
         return partitionPath(path, TABLE_NAME);
     }
