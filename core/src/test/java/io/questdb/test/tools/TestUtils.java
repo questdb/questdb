@@ -180,13 +180,17 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAscii(utf8Sequence)) {
-            // isAscii()=true but value is not actually ASCII — this is always wrong.
-            // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
-            // VarcharSlice uses column-level metadata and may not know per-value).
-            Utf8StringSink sink = new Utf8StringSink();
-            sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
-            Assert.fail(sink.toString());
+        if (utf8Sequence != null && utf8Sequence.isAscii()) {
+            for (int i = 0, n = utf8Sequence.size(); i < n; i++) {
+                if (utf8Sequence.byteAt(i) < 0) {
+                    // isAscii()=true but value is not actually ASCII — this is always wrong.
+                    // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
+                    // VarcharSlice uses column-level metadata and may not know per-value).
+                    Utf8StringSink sink = new Utf8StringSink();
+                    sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
+                    Assert.fail(sink.toString());
+                }
+            }
         }
     }
 
