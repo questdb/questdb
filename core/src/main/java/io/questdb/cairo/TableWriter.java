@@ -15559,9 +15559,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * 61st commit on that fixture) and the whole leaked set goes with the old
      * one, so the accumulation is bounded by the rewrite period -- dead bytes in
      * {@code data.parquet} against the configured ratio and byte cap -- not by
-     * the partition's lifetime. Fixing it belongs at the O3 update / publish
-     * boundary and is tracked as the O3 in-place update-mode leak; nothing this
-     * sweep can do reaches it.
+     * the partition's lifetime. That bound holds only on the default trigger:
+     * both knobs are settable
+     * ({@code cairo.partition.encoder.parquet.o3.rewrite.unused.ratio}, default
+     * 0.5, and {@code cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes},
+     * default 1 GiB -- {@code PropServerConfiguration.java:2355-2356}), and
+     * under a configuration that disables or greatly raises either one the
+     * rewrite trigger never fires, so the leak reverts to bounded only by the
+     * partition directory's lifetime. Not hypothetical:
+     * {@code ParquetIndexSealTest#testAChainWalkVerifiesOneChecksumHoweverLongTheChainIs}
+     * sets the ratio to {@code 1000000} and the byte cap to
+     * {@code 1000000000000L} to switch the rewrite off for exactly this reason,
+     * then drives the chain past 150 footers on a single partition. Fixing it
+     * belongs at the O3 update / publish boundary and is tracked as the O3
+     * in-place update-mode leak; nothing this sweep can do reaches it.
      * <p>
      * DROP INDEX retires a column's token while the pair it named waits for its
      * pinned readers. The retirement's own footer publishes nothing for the
