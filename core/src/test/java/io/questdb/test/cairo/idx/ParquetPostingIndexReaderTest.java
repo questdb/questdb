@@ -584,6 +584,34 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * SELECT DISTINCT over a parquet-sealed partition must return the same
+     * symbols the table holds.
+     * <p>
+     * The interface documents {@code -1} as "not supported, caller falls back",
+     * but the only caller does {@code foundCount += collectDistinctKeys(...)},
+     * so declining does not fall back -- it silently shortens the answer by one
+     * per partition. Comparing against a scan that cannot use the index is what
+     * catches that; asserting "returned something" would not.
+     */
+    @Test
+    public void testSelectDistinctOverAParquetSealedPartitionMatchesTheTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            // The indexed partition holds exactly s0, s7 and s15. Dropping a
+            // key -- which is what returning -1 does, one per partition --
+            // shows up as a missing row here.
+            assertQuery("select distinct sym from x where ts in '" + INDEXED_PARTITION + "' order by 1")
+                    .expectSize()
+                    .returns("sym\ns0\ns15\ns7\n");
+            // And the count agrees with a scan that cannot use the index.
+            assertSqlCursors(
+                    "select count_distinct(cast(sym as varchar)) c from x where ts in '" + INDEXED_PARTITION + "'",
+                    "select count_distinct(sym) c from x where ts in '" + INDEXED_PARTITION + "'"
+            );
+        });
+    }
+
+    /**
      * A key the directory does not resolve is an ordinary answer, not an error:
      * a query for a symbol this partition never carried must return no rows.
      * <p>

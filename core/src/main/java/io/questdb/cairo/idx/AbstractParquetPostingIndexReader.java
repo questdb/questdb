@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -211,6 +212,67 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     protected void onRowGroupDecoded(long rows) {
         decodedRowGroupCount++;
         decodedRowCount += rows;
+    }
+
+    /**
+     * Marks every key this partition's index holds, returning how many were
+     * NEWLY marked.
+     * <p>
+     * <b>It must answer, never decline.</b> {@code IndexReader} documents
+     * {@code -1} as "not supported, caller falls back to a cursor", but the
+     * only caller does {@code foundCount += collectDistinctKeys(foundKeys)},
+     * so a {@code -1} does not trigger a fallback -- it silently shortens
+     * {@code SELECT DISTINCT} by one per partition.
+     * <p>
+     * Cheap because only {@code key_id} is projected: every key present is the
+     * {@code key_id} of at least one index row, and the groups are key-major
+     * so the scan is a run-length walk rather than a set build.
+     */
+    @Override
+    public int collectDistinctKeys(DirectBitSet foundKeys) {
+        return collectDistinctKeysInRange(foundKeys, 0, Long.MAX_VALUE);
+    }
+
+    /**
+     * @see #collectDistinctKeys(DirectBitSet)
+     */
+    @Override
+    public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        final int groups = imReader.getIndexRowGroupCount();
+        if (groups <= 0) {
+            return 0;
+        }
+        int found = 0;
+        // The implicit-null prefix is not in the index, so key 0 has to be
+        // marked from columnTop rather than from any row.
+        if (columnTop > 0 && rowLo < columnTop && !foundKeys.get(0)) {
+            foundKeys.set(0);
+            found++;
+        }
+        try (CountingCursor probe = new CountingCursor()) {
+            for (int rg = 0; rg < groups; rg++) {
+                final long rows = imReader.getRowGroupNumRows(rg);
+                if (rows <= 0 || isRowGroupPruned(rg, rowLo, rowHi)) {
+                    continue;
+                }
+                final long keyIdPtr = probe.decodeKeyIdColumn(rg, rows);
+                // Key-major, so a linear walk that only tests the boundary
+                // marks each distinct key once without a set.
+                int previous = -1;
+                for (long i = 0; i < rows; i++) {
+                    final int k = Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2));
+                    if (k == previous) {
+                        continue;
+                    }
+                    previous = k;
+                    if (k >= 0 && k < foundKeys.capacity() && !foundKeys.get(k)) {
+                        foundKeys.set(k);
+                        found++;
+                    }
+                }
+            }
+        }
+        return found;
     }
 
     /**
