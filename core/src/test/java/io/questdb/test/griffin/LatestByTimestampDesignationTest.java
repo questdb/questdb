@@ -267,6 +267,51 @@ public class LatestByTimestampDesignationTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The other half of the contract, and the reason the revert is scoped to two factories rather than
+     * all of them: the SPECIALIZED LATEST ON factories (a bare {@code LATEST ON} directly over a table,
+     * with or without a filter or a key list/sub-query) emit their rows in ASCENDING timestamp order, so
+     * a designated timestamp on their output is an honest claim rather than a lie.
+     * <p>
+     * Asserted with the winners deliberately INTERLEAVED -- key {@code k0} wins at 05:00, {@code k1} at
+     * 01:00, and so on -- so output that merely echoed key or scan order would not come back sorted.
+     * This is what the two reverted factories cannot promise: they replay rows in base-cursor order for
+     * an arbitrary sub-query, which nothing sorts.
+     */
+    @Test
+    public void testSpecializedLatestOnFactoriesEmitAscending() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table w (ts timestamp, k symbol, v double) timestamp(ts) partition by day");
+            execute("insert into w values "
+                    + "('2024-01-02T05:00:00.000000Z','k0',0.0),"
+                    + "('2024-01-02T01:00:00.000000Z','k1',1.0),"
+                    + "('2024-01-02T04:00:00.000000Z','k2',2.0),"
+                    + "('2024-01-02T02:00:00.000000Z','k3',3.0),"
+                    + "('2024-01-02T06:00:00.000000Z','k4',4.0),"
+                    + "('2024-01-02T03:00:00.000000Z','k5',5.0)");
+
+            final String ascending = "ts\n"
+                    + "2024-01-02T01:00:00.000000Z\n"
+                    + "2024-01-02T02:00:00.000000Z\n"
+                    + "2024-01-02T03:00:00.000000Z\n"
+                    + "2024-01-02T04:00:00.000000Z\n"
+                    + "2024-01-02T05:00:00.000000Z\n"
+                    + "2024-01-02T06:00:00.000000Z\n";
+            assertQuery("select ts from (select * from w latest on ts partition by k)")
+                    .noLeakCheck().expectSize().timestampAsc("ts").returns(ascending);
+            assertQuery("select ts from (select * from w where v >= 0 latest on ts partition by k)")
+                    .noLeakCheck().expectSize().timestampAsc("ts").returns(ascending);
+            assertQuery("select ts from (select * from w where k in (select k from w) latest on ts partition by k)")
+                    .noLeakCheck().expectSize().timestampAsc("ts").returns(ascending);
+            assertQuery("select ts from (select * from w where k in ('k0','k2','k4') latest on ts partition by k)")
+                    .noLeakCheck().expectSize().timestampAsc("ts")
+                    .returns("ts\n"
+                            + "2024-01-02T04:00:00.000000Z\n"
+                            + "2024-01-02T05:00:00.000000Z\n"
+                            + "2024-01-02T06:00:00.000000Z\n");
+        });
+    }
+
     @Test
     public void testLatestOnOverSubQueryWithoutRandomAccess() throws Exception {
         // LatestByRecordCursorFactory (the "non-light" sibling of Task 1's fix): generateLatestBy()'s
