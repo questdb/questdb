@@ -204,22 +204,79 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
      * dispatch replaced existed to prevent. Phase 2C Task 4 replaces it, and
      * this test is what makes an unfinished 2C impossible to ship silently.
      */
+    /**
+     * The backward cursor must be the forward one reversed, exactly -- same
+     * postings, opposite order.
+     * <p>
+     * Comparing against the forward cursor's output rather than against a
+     * literal is what makes this an oracle: the two share the directory lookup
+     * and the zone-map skip but not the traversal, so a defect in either
+     * traversal shows up as a disagreement. A test asserting only "descending"
+     * would pass on a cursor that silently dropped a group.
+     */
     @Test
-    public void testTheBackwardCursorRefusesLoudlyRatherThanAnsweringEmpty() throws Exception {
+    public void testTheBackwardCursorMirrorsTheForwardOne() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedParquetTable("x");
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                 final int columnIndex = reader.getMetadata().getColumnIndex("sym");
-                final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_BACKWARD);
-                try {
-                    indexReader.getCursor(1, 0, Long.MAX_VALUE);
-                    Assert.fail("the backward cursor must throw until Task 6 implements it");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(
-                            e.getFlyweightMessage(),
-                            "parquet-form posting index cursor is not implemented for this direction"
-                    );
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+
+                final LongList forward = new LongList();
+                try (RowCursor fwd = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD)
+                        .getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (fwd.hasNext()) {
+                        forward.add(fwd.next());
+                    }
                 }
+                Assert.assertTrue("the key must have postings", forward.size() > 0);
+
+                int i = forward.size();
+                try (RowCursor bwd = reader.getIndexReader(0, columnIndex, IndexReader.DIR_BACKWARD)
+                        .getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (bwd.hasNext()) {
+                        Assert.assertTrue("backward cursor emitted more rows than forward", i > 0);
+                        Assert.assertEquals(forward.getQuick(--i), bwd.next());
+                    }
+                }
+                Assert.assertEquals("backward cursor emitted fewer rows than forward", 0, i);
+            }
+        });
+    }
+
+    /**
+     * The backward cursor honours the same row-id window as the forward one,
+     * including the zone-map skip -- a window is not a forward-only concept.
+     */
+    @Test
+    public void testTheBackwardCursorClipsToTheRowIdWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+
+                final LongList all = new LongList();
+                try (RowCursor fwd = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD)
+                        .getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (fwd.hasNext()) {
+                        all.add(fwd.next());
+                    }
+                }
+                Assert.assertTrue("the fixture needs at least four postings", all.size() >= 4);
+
+                final long lo = all.getQuick(1);
+                final long hi = all.getQuick(all.size() - 2);
+                final LongList clipped = new LongList();
+                try (RowCursor bwd = reader.getIndexReader(0, columnIndex, IndexReader.DIR_BACKWARD)
+                        .getCursor(key, lo, hi)) {
+                    while (bwd.hasNext()) {
+                        clipped.add(bwd.next());
+                    }
+                }
+                Assert.assertEquals(all.size() - 2, clipped.size());
+                Assert.assertEquals("descending: the window's high end comes first", hi, clipped.getQuick(0));
+                Assert.assertEquals(lo, clipped.getQuick(clipped.size() - 1));
             }
         });
     }

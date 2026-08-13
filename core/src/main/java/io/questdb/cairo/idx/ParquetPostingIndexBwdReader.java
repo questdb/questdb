@@ -24,10 +24,155 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexMetaFileReader;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+
 /**
  * {@link IndexReader#DIR_BACKWARD} reader over a parquet-form covering index.
- * Differs from {@link ParquetPostingIndexFwdReader} only in cursor direction,
- * which arrives with Phase 2C Task 6.
+ * Serves a key's postings in descending {@code row_id} order.
  */
 public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexReader {
+    private final BwdCursor cursor = new BwdCursor();
+
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        cursor.of(key, minValue, maxValue);
+        return cursor;
+    }
+
+    /**
+     * @see ParquetPostingIndexFwdReader#getCursor(int, long, long, int[])
+     */
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        if (requiredCoverColumns != null && requiredCoverColumns.length > 0) {
+            throw CairoException.critical(0)
+                    .put("parquet-form covering index cannot project covered columns yet [column=")
+                    .put(columnName).put(", indexTxn=").put(indexTxn).put(']');
+        }
+        return getCursor(key, minValue, maxValue);
+    }
+
+    /**
+     * The forward cursor's run, walked in reverse.
+     * <p>
+     * Reversing is sound because the file is key-major and {@code row_id}
+     * ascends within a key, so a key's row groups are themselves ordered by
+     * {@code row_id}: walking groups from {@code rgHi} down, and each decoded
+     * group from its last row back, yields strictly descending ids without a
+     * sort. The test asserts that against the forward cursor's output reversed
+     * rather than trusting the argument.
+     * <p>
+     * The two in-group filters and the zone-map skip are identical to the
+     * forward cursor's -- only the traversal order differs.
+     */
+    private class BwdCursor implements RowCursor {
+        private long groupRows;
+        private boolean hasNext;
+        private int key;
+        private long keyIdPtr;
+        private long maxValue;
+        private long minValue;
+        private long next;
+        private int rg;
+        private int rgLo;
+        private long rowIdPtr;
+        private long rowInGroup;
+
+        /**
+         * @see ParquetPostingIndexFwdReader
+         */
+        @Override
+        public void close() {
+            rowGroupBuffers.close();
+            keyIdPtr = 0;
+            rowIdPtr = 0;
+            hasNext = false;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (hasNext) {
+                return true;
+            }
+            while (rg >= rgLo) {
+                if (keyIdPtr == 0 && !decodeCurrentGroup()) {
+                    return false;
+                }
+                while (rowInGroup > 0) {
+                    final long i = --rowInGroup;
+                    if (Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2)) != key) {
+                        continue;
+                    }
+                    final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                    if (rowId < minValue || rowId > maxValue) {
+                        continue;
+                    }
+                    next = rowId;
+                    hasNext = true;
+                    return true;
+                }
+                // Group exhausted; force a decode of the previous one.
+                rg--;
+                keyIdPtr = 0;
+            }
+            return false;
+        }
+
+        @Override
+        public long next() {
+            hasNext = false;
+            return next;
+        }
+
+        private boolean decodeCurrentGroup() {
+            while (rg >= rgLo) {
+                groupRows = imReader.getRowGroupNumRows(rg);
+                if (groupRows <= 0) {
+                    rg--;
+                    continue;
+                }
+                if (isRowGroupPruned(rg, minValue, maxValue)) {
+                    rg--;
+                    continue;
+                }
+                final DirectIntList columns = decodeProjection();
+                rowGroupBuffers.reopen();
+                decoder.decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
+                onRowGroupDecoded();
+                keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+                // Walked from the end: rowInGroup is a countdown, not an index.
+                rowInGroup = groupRows;
+                return true;
+            }
+            return false;
+        }
+
+        private void of(int key, long minValue, long maxValue) {
+            this.key = key;
+            this.minValue = minValue;
+            this.maxValue = maxValue;
+            this.hasNext = false;
+            this.next = -1;
+            this.keyIdPtr = 0;
+            this.rowIdPtr = 0;
+            this.rowInGroup = 0;
+            this.groupRows = 0;
+
+            final long range = rowGroupRangeForKey(key);
+            if (range == IndexMetaFileReader.KEY_ABSENT) {
+                // Exhausted before it starts: rg < rgLo.
+                rg = 0;
+                rgLo = 1;
+                return;
+            }
+            rgLo = Numbers.decodeLowInt(range);
+            rg = Numbers.decodeHighInt(range);
+        }
+    }
 }
