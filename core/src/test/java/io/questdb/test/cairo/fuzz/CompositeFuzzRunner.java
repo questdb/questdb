@@ -528,36 +528,28 @@ public class CompositeFuzzRunner {
             ));
         }
 
-        if (axes.fastAppend) {
-            final long fastAppendCommits =
-                    (TableWriter.getCompositeFastAppendCommittedCount() - baselineFastAppendCommittedCount)
-                            + (TableWriter.getCompositeMultiCellFastAppendCommittedCount() - baselineMultiCellFastAppendCommittedCount);
-            final long fastAppendEligible =
-                    (TableWriter.getCompositeFastAppendEligibleCount() - baselineFastAppendEligibleCount)
-                            + (TableWriter.getCompositeMultiCellFastAppendEligibleCount() - baselineMultiCellFastAppendEligibleCount);
-            // The floor is "eligible implies committed", NOT "the flag is on, so it must have happened".
-            //
-            // Fast-append is an OPTIMISATION with real preconditions -- an in-order commit onto the last
-            // partition's cell, which must already hold rows, with no indexes, no var-size value column
-            // and no column top. A run whose shape never satisfies them never becomes eligible, and
-            // demanding a fast-append commit anyway asserts something the product never promised.
-            // Measured, not assumed: at seed (6734027928530775461, 7885943598324962968) -- 3 dimensions,
-            // cardinality 64, 1061 cells over the run -- the ELIGIBLE counters are 0, so nothing was
-            // skipped; the data is simply too fragmented for a commit to ever extend the last cell in
-            // order. Raising cairo.wal.composite.fastappend.max.open.cells from 64 to 8192 changed
-            // nothing, ruling out the open-cell cap.
-            //
-            // What IS worth failing on is a commit the writer judged ELIGIBLE and then did not take:
-            // that is the fast-append path silently not running when it should, which is exactly what
-            // this floor is for. Deterministic coverage of fast-append actually firing belongs to the
-            // fixed-shape matrix (CompositeMatrixTest), which pins the axes instead of drawing them.
-            if (fastAppendEligible > 0 && fastAppendCommits < 1) {
-                throw new AssertionError(exercisedFailureMessage(
-                        "fast-append eligible=" + fastAppendEligible + " but committed=" + fastAppendCommits
-                                + " -- the writer judged commits eligible for the fast-append path and took none"
-                ));
-            }
-        }
+        // NO fast-append floor here, and both attempts at one were wrong -- recorded so a third is not
+        // written from the same intuition:
+        //
+        //   "flag on => at least one fast-append commit" fails because fast-append has real
+        //   preconditions (an in-order commit extending the LAST partition's cell, which must already
+        //   hold rows, with no indexes, no var-size value column, no column top). A run whose data is
+        //   too fragmented never satisfies them. Measured: seed (6734027928530775461,
+        //   7885943598324962968), 3 dimensions, 1061 cells -- ELIGIBLE counters 0, nothing skipped,
+        //   and raising cairo.wal.composite.fastappend.max.open.cells 64 -> 8192 changed nothing.
+        //
+        //   "eligible => committed" fails too, and failed in CI-shaped running rather than in review:
+        //   the eligible counter is a DETECTION layer, deliberately coarser than the ACTION layer
+        //   (canCompositeFastAppendCell), which applies its own gates -- a brand-new cell's first
+        //   commit takes the full path by design. eligible=1 with committed=0 is therefore ORDINARY,
+        //   not a defect. Seed (2422047073701366409, 1269583385469926566) produced exactly that.
+        //
+        // Fast-append actually FIRING is asserted where the workload is built to reach it:
+        // CompositeFastAppendCrashTest pins the eligible counter across an armed commit ("the armed
+        // commit must be routed to the composite fast-append path"). CompositeMatrixTest covers the
+        // flag-OFF twin equivalence only -- it does not assert the path is taken, so it is not a
+        // substitute. Either way that belongs with a pinned workload: a random-shape run cannot assert
+        // an optimisation it may legitimately never reach.
 
         final long existingCellRows = TableWriter.getCompositeExistingCellRowCount() - baselineExistingCellRowCount;
         if (existingCellRows < 1) {
