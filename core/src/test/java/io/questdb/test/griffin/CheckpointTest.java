@@ -112,11 +112,15 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -884,8 +888,10 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.clear();
 
             // The bitmap index rebuild task for sym blocks in openRO until the
-            // test releases it, so the drain is parked in Future.get() when the
-            // interrupt is delivered.
+            // test releases it. The get hook below proves the drain has reached
+            // the incomplete Future before the interrupt is delivered.
+            final SOCountDownLatch getEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch getInterrupted = new SOCountDownLatch(1);
             final SOCountDownLatch taskRunning = new SOCountDownLatch(1);
             final AtomicBoolean releaseTask = new AtomicBoolean();
             final FilesFacade blockingFf = new TestFilesFacadeImpl() {
@@ -914,6 +920,7 @@ public class CheckpointTest extends AbstractCairoTest {
                         TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig);
                         Path tablePath = new Path().of(dbRoot).concat(token).slash()
                 ) {
+                    restoreAgent.setFutureGetHooks(getEntered::countDown, getInterrupted::countDown);
                     restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
                 } catch (Throwable th) {
                     thrown.set(th);
@@ -922,20 +929,72 @@ public class CheckpointTest extends AbstractCairoTest {
             }, "restore-drain-interrupt");
             restoreThread.start();
 
-            taskRunning.await();
-            restoreThread.interrupt();
-            // Let the interrupt land in the parked Future.get() before the held
-            // task is released, so the drain takes its interrupt arm; the
-            // awaitDone interrupt check makes this robust either way.
-            Os.sleep(100);
-            releaseTask.set(true);
-            restoreThread.join();
+            try {
+                Assert.assertTrue(
+                        "parallel restore task did not start",
+                        taskRunning.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                Assert.assertTrue(
+                        "restore drain did not enter Future.get()",
+                        getEntered.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                restoreThread.interrupt();
+                Assert.assertTrue(
+                        "Future.get() did not observe the interrupt",
+                        getInterrupted.await(TimeUnit.SECONDS.toNanos(5))
+                );
+            } finally {
+                releaseTask.set(true);
+                restoreThread.join(TimeUnit.SECONDS.toMillis(10));
+            }
 
+            Assert.assertFalse("restore thread did not stop", restoreThread.isAlive());
             final Throwable th = thrown.get();
             Assert.assertNotNull("rebuildTableFiles should have thrown", th);
             Assert.assertTrue("expected CairoException, got: " + th, th instanceof CairoException);
             TestUtils.assertContains(((CairoException) th).getFlyweightMessage(), "parallel task interrupted");
             Assert.assertTrue("the draining thread's interrupt status must be restored", interruptStatusRestored.get());
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDrainPreInterruptedFutureCompletesAndRestoresStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch getEntered = new SOCountDownLatch(1);
+            final FutureTask<Void> task = new FutureTask<>(() -> null) {
+                @Override
+                public Void get() throws InterruptedException, ExecutionException {
+                    getEntered.countDown();
+                    return super.get();
+                }
+            };
+            final Thread completer = new Thread(() -> {
+                getEntered.await();
+                task.run();
+            }, "restore-pre-interrupt-completer");
+            completer.start();
+
+            boolean isInterruptRestored = false;
+            try (TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)) {
+                final Field futuresField = TableSnapshotRestore.class.getDeclaredField("futures");
+                futuresField.setAccessible(true);
+                @SuppressWarnings("unchecked") final ObjList<Future<?>> futures = (ObjList<Future<?>>) futuresField.get(restoreAgent);
+                futures.add(task);
+
+                try {
+                    Thread.currentThread().interrupt();
+                    restoreAgent.finalizeParallelTasks();
+                    isInterruptRestored = Thread.currentThread().isInterrupted();
+                } finally {
+                    Thread.interrupted();
+                }
+            } finally {
+                task.run();
+                completer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
+            Assert.assertFalse("future completer did not stop", completer.isAlive());
+            Assert.assertTrue("finalizeParallelTasks did not restore interrupt status", isInterruptRestored);
         });
     }
 
