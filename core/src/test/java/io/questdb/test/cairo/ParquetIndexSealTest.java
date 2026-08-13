@@ -107,6 +107,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // is 1. The _pm covering-index entry is keyed by writer index, which is what
     // the _pm records as a column id.
     private static final int SYM_COLUMN_ID = 1;
+    private static final String RESIDUE_TABLE_NAME = "t_pidx_residue";
     private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
     private static final String SWITCH_TABLE_NAME = "t_pidx_switch";
     private static final String TABLE_NAME = "t_pidx";
@@ -363,6 +364,139 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     "a crash between the _pm retirement and the drop's commit must not silently empty the column",
                     SKEWED_ROW_COUNT / 4,
                     countIndexedRows()
+            );
+        });
+    }
+
+    /**
+     * I6a: the reseal supersession branch in {@code publishParquetIndexTokens}
+     * was commented as unreachable in production, and therefore untested. It is
+     * reachable, and this drives the route that reaches it.
+     * <p>
+     * {@code DROP INDEX} commits the metadata first and retires the {@code _pm}
+     * token in a second transaction. A crash between the two leaves the footer
+     * naming {@code (sym, T1)} for a column metadata no longer calls indexed,
+     * and nothing reclaims that residue -- the merge loop has no such rule. A
+     * later {@code ADD INDEX TYPE POSTING} on the same column then seals
+     * {@code T2}, and the publish sees a footer entry for a column this batch
+     * also staged, with a different index txn: the branch.
+     * <p>
+     * Asserted on the persisted purge window rather than on behaviour, because
+     * what the branch decides is the window's upper bound: it must be the txn
+     * the reseal commits at, so a reader pinned below it can still resolve
+     * {@code T1}. {@code BYPASS WAL} so the injected failure surfaces to the
+     * caller instead of suspending an apply that would then retry the drop.
+     */
+    @Test
+    public void testAResealSupersedesATokenTheDropIndexRetirementNeverRemoved() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final boolean[] armedRetire = {false};
+        final boolean[] retireRefused = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armedRetire[0] && name != null && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                    // The only _pm opened read-write during a DROP INDEX is the
+                    // retirement's own footer append, which runs after the
+                    // metadata commit. Refusing it is the crash window.
+                    armedRetire[0] = false;
+                    retireRefused[0] = true;
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            execute("CREATE TABLE " + RESIDUE_TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO " + RESIDUE_TABLE_NAME + " SELECT" +
+                    " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(20000)");
+            // A later partition so the indexed one is not the active partition:
+            // a non-WAL table cannot hold a parquet active partition.
+            execute("INSERT INTO " + RESIDUE_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 's0', 1.0, 1)");
+            execute("ALTER TABLE " + RESIDUE_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            execute("ALTER TABLE " + RESIDUE_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseInactive();
+
+            final String firstMeta;
+            final String firstParquet;
+            final long firstIndexTxn;
+            try (Path path = new Path()) {
+                firstMeta = onlyFileNamed(partitionPath(path, RESIDUE_TABLE_NAME), "sym.pidx.", "._im");
+                firstParquet = onlyFileNamed(partitionPath(path, RESIDUE_TABLE_NAME), "sym.pidx.", ".parquet");
+                firstIndexTxn = Numbers.parseLong(
+                        firstMeta.substring("sym.pidx.".length(), firstMeta.length() - "._im".length()));
+            }
+
+            armedRetire[0] = true;
+            try {
+                execute("ALTER TABLE " + RESIDUE_TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                Assert.fail("the retirement's _pm open was not refused");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot remove index");
+            } finally {
+                armedRetire[0] = false;
+            }
+            Assert.assertTrue("the retirement's _pm open was never refused", retireRefused[0]);
+            engine.releaseInactive();
+
+            try (TableReader reader = engine.getReader(engine.verifyTableName(RESIDUE_TABLE_NAME))) {
+                Assert.assertFalse(
+                        "premise: the drop must have committed the metadata before the retirement failed",
+                        reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym"))
+                );
+            }
+            try (Path path = new Path()) {
+                // The residue: a token for a column that is no longer indexed.
+                assertCoveringIndexToken(
+                        path,
+                        RESIDUE_TABLE_NAME,
+                        SYM_COLUMN_ID,
+                        firstIndexTxn,
+                        imFileSizeField(partitionPath(path, RESIDUE_TABLE_NAME).concat(firstMeta).$())
+                );
+            }
+
+            execute("ALTER TABLE " + RESIDUE_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseInactive();
+
+            final long resealTxn = committedTxn(RESIDUE_TABLE_NAME);
+            try (Path path = new Path()) {
+                final String secondMeta = newestFileNamed(
+                        partitionPath(path, RESIDUE_TABLE_NAME), "sym.pidx.", "._im", firstMeta);
+                final long secondIndexTxn = Numbers.parseLong(
+                        secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length()));
+                Assert.assertNotEquals(
+                        "premise: the reseal must carry a different index txn, or the branch never fires",
+                        firstIndexTxn,
+                        secondIndexTxn
+                );
+                assertCoveringIndexToken(
+                        path,
+                        RESIDUE_TABLE_NAME,
+                        SYM_COLUMN_ID,
+                        secondIndexTxn,
+                        imFileSizeField(partitionPath(path, RESIDUE_TABLE_NAME).concat(secondMeta).$())
+                );
+                Assert.assertTrue(
+                        "the superseded pair must still be on disk until its readers drain",
+                        configuration.getFilesFacade().exists(
+                                partitionPath(path, RESIDUE_TABLE_NAME).concat(firstParquet).$())
+                );
+            }
+
+            runPostingSealPurgeJob();
+            Assert.assertEquals(
+                    "the reseal must hand the superseded pair to the reader-gated purge with a window"
+                            + " reaching the txn the reseal commits at",
+                    resealTxn,
+                    persistedPurgeWindowUpperBound(firstIndexTxn)
             );
         });
     }

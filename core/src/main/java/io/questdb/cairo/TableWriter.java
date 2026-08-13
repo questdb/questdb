@@ -12371,16 +12371,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 if (parquetIndexTokens.getQuick(resealedAt + 1) != existingIndexTxn) {
-                    // Not reachable through any production path today, and so
-                    // untested: the only trigger for a reseal is an out-of-order
-                    // write into a sealed parquet partition, which goes through
-                    // O3 update mode, and that rewrites the footer with an empty
-                    // covering-index section before the publish reads it -- so
-                    // getCoveringIndexCount() is already 0 and this loop does not
-                    // run. That is the deferred O3 update-mode leak; fixing it is
-                    // what makes this branch live, and it needs a pinned-reader
-                    // test at that point. The drop branch above carries the same
-                    // bound and is tested.
+                    // Reachable, and tested by
+                    // ParquetIndexSealTest#testAResealSupersedesATokenTheDropIndexRetirementNeverRemoved.
+                    // An earlier note here claimed the branch was dead because
+                    // the only reseal trigger is an O3 write, which rewrites the
+                    // footer with an empty covering section first, so
+                    // getCoveringIndexCount() is 0 and this loop does not run.
+                    // That covers the O3 route only. The live route is a crash
+                    // between DROP INDEX's metadata commit and its retirement:
+                    // the footer keeps naming (C, oldIndexTxn), nothing reclaims
+                    // it (this merge has no "the column is no longer indexed"
+                    // rule -- see the residue note at the dropIndex call site),
+                    // and a later ADD INDEX TYPE POSTING on C reaches
+                    // indexParquetPartition, stages (C, newIndexTxn) and lands
+                    // here.
+                    //
+                    // The bound is the same expression the drop branch uses --
+                    // the staged index txn is txWriter.getTxn() + 1, the txn this
+                    // batch commits at -- so the superseded pair stays reachable
+                    // to every reader pinned below it.
                     supersededColumnIds.add(existingColumnId);
                     supersededIndexTxns.add(existingIndexTxn);
                     supersededVisibleAtTxns.add(parquetIndexTokens.getQuick(resealedAt + 1));
@@ -12459,13 +12468,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // partition, so a reader either still holds the old mapping and is still
         // pinned below visibleAtTxn, or re-maps and reads the new footer.
         //
-        // Measured to be redundant on every path reachable today: over six
-        // consecutive O3 token publishes into a non-last parquet partition the
-        // _pm was re-mapped with and without this call, including the five where
-        // the partition name txn did not move. Kept as insurance, not deleted as
-        // dead: the invariant is what the purge window's soundness rests on, the
-        // paths that currently over-determine it are incidental, and the
-        // retirement commit DROP INDEX now makes is already a token-only commit.
+        // Load-bearing, not insurance. An earlier note called it "measured to be
+        // redundant on every path reachable today", from an experiment over six
+        // O3 token publishes into a non-last parquet partition. That experiment
+        // sampled one path, and it predates the squash stamp added to this same
+        // method below, so it no longer describes this code at all. Three
+        // reachable cases where this call is the ONLY signal:
+        //
+        //  - The DROP INDEX retirement commit. retireParquetIndexTokens runs
+        //    after clearTodoAndCommitMeta and commits on its own, so that second
+        //    transaction moves nothing but the _pm bytes: no rows, no partition
+        //    name txn, no data.parquet size, and the column version committed in
+        //    the transaction before it. reconcileOpenPartitions' fast path
+        //    compares exactly partitionTableVersion, columnVersion and
+        //    truncateVersion, and even when it is taken it only reconciles the
+        //    LAST partition -- so without a bump a reader reloads past the
+        //    retirement still holding its pre-retirement _pm mapping for any
+        //    other partition, resolving a token whose pair the purge is about to
+        //    unlink under it, from outside [0, visibleAtTxn).
+        //  - Squash-counter saturation. The stamp below bumps
+        //    partitionTableVersion itself, but only when it succeeds;
+        //    incrementPartitionSquashCounter returns false at
+        //    PARTITION_SQUASH_COUNTER_MAX without bumping anything.
+        //  - A partition the stamp cannot find (publishedPartitionIndex == -1),
+        //    where no stamp is attempted at all.
+        //
         // Its cost is bounded -- checkSchedulePurgeO3Partitions no longer
         // schedules a partition purge for a bump that moves no partition
         // directory. TableReader#testAReloadingReaderDropsItsParquetMetaMappingAcrossATokenPublish
