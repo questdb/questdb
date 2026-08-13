@@ -807,13 +807,42 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveLastFooter() {
-        final long addr = this.addr;
-        final long currentSize = this.fileSize;
-        final long currentFooterLength = Integer.toUnsignedLong(
-                Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
-        final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
-        checkFooterOffset(currentOffset, currentFooterLength, currentSize);
-        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+        return resolveFooterAt(this.fileSize);
+    }
+
+    /**
+     * Re-resolves onto the footer one step back along the MVCC chain from the
+     * currently resolved one, i.e. the footer whose committed {@code _pm} head
+     * is this footer's {@code prev_parquet_meta_file_size}. Returns false at the
+     * end of the chain, leaving the reader resolved on the footer it was on.
+     * <p>
+     * Repeated calls from {@link #resolveLastFooter()} enumerate every footer
+     * {@link #resolveFooter(long)} can ever select, for any argument: that method
+     * walks this same {@code prev} chain from the mapped tail, so a footer it can
+     * reach is a footer on this chain. A reader that mapped the {@code _pm} at an
+     * earlier, smaller header size starts its own walk at a past committed head,
+     * which is itself a link on this chain, so its reachable set is a suffix of
+     * this one. Callers that must establish "no footer, live or superseded, names
+     * X" enumerate rather than resolve.
+     * <p>
+     * Each step re-binds the native handle to the newly selected footer and
+     * re-verifies its checksum, so accessors that read through the handle
+     * (the covering-index section among them) describe the footer this call
+     * settled on and not the one before it.
+     *
+     * @return false at the end of the chain
+     * @throws CairoException if the next footer's format is unsupported or corrupt
+     */
+    public boolean resolvePrevFooter() {
+        assert isOpen();
+        final long prevSize = Unsafe.getLong(footerAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
+        // Same bound resolveFooter's walk applies: prevSize must hold at least a
+        // header + trailer, and must move strictly backwards so the walk ends.
+        if (prevSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE || prevSize >= this.resolvedFileSize) {
+            return false;
+        }
+        resetResolvedFooter();
+        return resolveFooterAt(prevSize);
     }
 
     private static native boolean canSkipRowGroup0(
@@ -897,6 +926,40 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         assert index >= 0 && index < Unsafe.getInt(sectionAddr)
                 : "covering index entry index " + index + " out of range";
         return sectionAddr + COVERING_INDEX_ENTRY_COUNT_SIZE + (long) index * COVERING_INDEX_ENTRY_SIZE;
+    }
+
+    /**
+     * Resolves the footer whose committed {@code _pm} head is {@code currentSize}
+     * -- its trailer sits at {@code currentSize - 4} -- bypassing MVCC matching.
+     */
+    private boolean resolveFooterAt(long currentSize) {
+        final long addr = this.addr;
+        final long currentFooterLength = Integer.toUnsignedLong(
+                Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
+        final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+        checkFooterOffset(currentOffset, currentFooterLength, currentSize);
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+    }
+
+    /**
+     * Drops the resolved-footer state and the native handle bound to it, keeping
+     * the mapping ({@code addr} / {@code fileSize}) so another footer of the same
+     * {@code _pm} can be resolved. Restores the preconditions
+     * {@link #validateAndCommitFooter} asserts, which is why a re-resolve must go
+     * through this rather than assign over a live resolution.
+     */
+    private void resetResolvedFooter() {
+        if (nativeReaderPtr != 0) {
+            destroyNativeReader(nativeReaderPtr);
+            nativeReaderPtr = 0;
+        }
+        this.nativeReaderFileSize = 0;
+        this.resolvedFileSize = 0;
+        this.footerAddr = 0;
+        this.columnCount = 0;
+        this.isColumnIdToIndexBuilt = false;
+        this.rowGroupCount = 0;
+        this.checksumVerified = false;
     }
 
     /**

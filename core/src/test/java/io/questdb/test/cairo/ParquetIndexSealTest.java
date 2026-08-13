@@ -110,6 +110,10 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // is 1. The _pm covering-index entry is keyed by writer index, which is what
     // the _pm records as a column id.
     private static final int SYM_COLUMN_ID = 1;
+    // Writer index of the second SYMBOL column in the two-symbol fixture below:
+    // ts 0, sym 1, sym2 2.
+    private static final int SYM2_COLUMN_ID = 2;
+    private static final String CHAIN_TABLE_NAME = "t_pidx_chain";
     private static final String RESIDUE_TABLE_NAME = "t_pidx_residue";
     private static final String ROLLBACK_TABLE_NAME = "t_pidx_rollback";
     private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
@@ -838,6 +842,178 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         SYM_COLUMN_ID,
                         publishedIndexTxn,
                         imFileSizeField(partitionPath(path).concat(publishedMeta).$())
+                );
+            }
+        });
+    }
+
+    /**
+     * W3-C1: the footer the sweep reads is not the footer a reader resolves, and
+     * an ordinary O3 write into the partition is enough to separate the two.
+     * <p>
+     * The sweep read the physically-last footer. An in-place O3 update writes
+     * ITS footer with the covering section dropped -- {@code updateFileMetadata(0, 0, 0)},
+     * the explicit "drop the section" answer -- and patches the {@code _pm}
+     * header on the O3 worker, BEFORE the {@code _txn} commit. A reader is
+     * unaffected: it matches on the committed {@code data.parquet} size from its
+     * own snapshot and walks {@code prev} back to the footer that names the
+     * tokens. The sweep, reading the tail, saw an empty section, fell through to
+     * "no token for this column" and unlinked a pair that footer still names.
+     * <p>
+     * The state is built through production entry paths only:
+     * <ol>
+     *     <li>{@code sym} takes a covering posting index that survives. It is
+     *     what arms {@code resealParquetCoveringForPartition}, and with it the
+     *     sweep, on the insert in step 3 -- the gate is "the table has a
+     *     covering posting column", not "this column".</li>
+     *     <li>{@code sym2}'s {@code ADD INDEX} seals, publishes its token and
+     *     fsyncs the {@code _pm} header patch, and is then refused its
+     *     {@code _meta.swp}. The transaction rolls back, so the committed txn
+     *     stays put and the footer a reader resolves names
+     *     {@code (sym2, committedTxn + 1)} -- asserted, not assumed.</li>
+     *     <li>A single out-of-order row lands in the parquet partition. That is
+     *     an ordinary successful commit; nothing about it fails.</li>
+     * </ol>
+     * The verdict is asserted from the reader's side, with
+     * {@code resolveFooter(parquetFileSizeBeforeTheInsert)}: the pair a reader
+     * pinned to the pre-insert snapshot resolves must still be on disk. Both
+     * halves of the premise are asserted first -- the update really ran in place
+     * (a rewrite would move the partition directory and the sweep would find
+     * nothing to do), and the post-insert footer really dropped {@code sym2}'s
+     * token (or the cheap read alone would have protected the pair and this test
+     * would prove nothing).
+     */
+    @Test
+    public void testAPairOnlyAFooterBelowTheTailNamesIsNotSwept() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        // Four row groups over the 20k rows below: a single-row-group parquet
+        // file always takes the O3 REWRITE branch, and the rewrite moves the
+        // partition directory, which is not the state under test.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5000);
+        final boolean[] armedMetaSwap = {false};
+        final boolean[] metaSwapRefused = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armedMetaSwap[0] && name != null && Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    // By now the seal has published its token and fsynced the _pm
+                    // header patch; refusing the metadata swap aborts the alter
+                    // before the _txn commit.
+                    metaSwapRefused[0] = true;
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            execute("CREATE TABLE " + CHAIN_TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO " + CHAIN_TABLE_NAME + " SELECT" +
+                    " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                    " 'o' || (x % 4)," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(20000)");
+            // A later partition so the indexed one is not the active partition:
+            // a non-WAL table cannot hold a parquet active partition.
+            execute("INSERT INTO " + CHAIN_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 's0', 'o0', 1.0, 1)");
+            execute("ALTER TABLE " + CHAIN_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            execute("ALTER TABLE " + CHAIN_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            engine.releaseInactive();
+
+            final long committedTxnBeforeStrand = committedTxn(CHAIN_TABLE_NAME);
+            final TableToken token = engine.verifyTableName(CHAIN_TABLE_NAME);
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                final ObjList<CharSequence> covering = new ObjList<>();
+                covering.add("price");
+                armedMetaSwap[0] = true;
+                try {
+                    writer.addIndex("sym2", configuration.getIndexValueBlockSize(), IndexType.POSTING, covering);
+                    Assert.fail("the _meta.swp open was not refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Cannot open indexed file");
+                } finally {
+                    armedMetaSwap[0] = false;
+                }
+                writer.rollback();
+            }
+            Assert.assertTrue("the _meta.swp open was never refused, so nothing rolled back", metaSwapRefused[0]);
+            engine.releaseInactive();
+
+            final String strandedMeta;
+            final String strandedParquet;
+            final long strandedIndexTxn;
+            final long parquetFileSizeBefore = committedParquetFileSize(CHAIN_TABLE_NAME);
+            final long partitionNameTxnBefore = currentPartitionNameTxn(CHAIN_TABLE_NAME);
+            try (Path path = new Path()) {
+                strandedMeta = onlyFileNamed(partitionPath(path, CHAIN_TABLE_NAME), "sym2.pidx.", "._im");
+                strandedParquet = onlyFileNamed(partitionPath(path, CHAIN_TABLE_NAME), "sym2.pidx.", ".parquet");
+                strandedIndexTxn = Numbers.parseLong(
+                        strandedMeta.substring("sym2.pidx.".length(), strandedMeta.length() - "._im".length())
+                );
+                Assert.assertEquals(
+                        "premise: the rollback must leave the committed txn where it was",
+                        committedTxnBeforeStrand,
+                        committedTxn(CHAIN_TABLE_NAME)
+                );
+                Assert.assertTrue(
+                        "premise: the stranded index txn must be ABOVE the committed txn, or the"
+                                + " committed-txn fallback never fires and this test proves nothing"
+                                + " [indexTxn=" + strandedIndexTxn + ", committedTxn=" + committedTxnBeforeStrand + ']',
+                        strandedIndexTxn > committedTxnBeforeStrand
+                );
+                Assert.assertEquals(
+                        "premise: the footer a reader resolves must name the stranded pair",
+                        strandedIndexTxn,
+                        publishedIndexTxnAt(path, CHAIN_TABLE_NAME, parquetFileSizeBefore, SYM2_COLUMN_ID)
+                );
+            }
+
+            // An ordinary O3 commit. Nothing about it fails.
+            execute("INSERT INTO " + CHAIN_TABLE_NAME + " VALUES ('" + INDEXED_PARTITION + "T00:00:00.007777Z', 's0', 'o0', 1.0, 1)");
+            engine.releaseInactive();
+
+            Assert.assertEquals(
+                    "premise: the O3 update must have run IN PLACE -- a rewrite moves the partition"
+                            + " directory and leaves the sweep nothing to look at",
+                    partitionNameTxnBefore,
+                    currentPartitionNameTxn(CHAIN_TABLE_NAME)
+            );
+            final long parquetFileSizeAfter = committedParquetFileSize(CHAIN_TABLE_NAME);
+            Assert.assertNotEquals(
+                    "premise: the in-place update must have moved the committed parquet size, or the"
+                            + " two resolutions coincide and there is nothing to tell apart",
+                    parquetFileSizeBefore,
+                    parquetFileSizeAfter
+            );
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "premise: the update's own footer must have dropped sym2's token, or the cheap"
+                                + " single-footer read protects the pair by itself and this test proves"
+                                + " nothing",
+                        Long.MIN_VALUE,
+                        publishedIndexTxnAt(path, CHAIN_TABLE_NAME, parquetFileSizeAfter, SYM2_COLUMN_ID)
+                );
+                // The verdict, from the reader's side: a reader pinned to the
+                // pre-insert snapshot resolves the footer that names the pair.
+                Assert.assertEquals(
+                        "the footer a pinned reader resolves must still name the stranded pair",
+                        strandedIndexTxn,
+                        publishedIndexTxnAt(path, CHAIN_TABLE_NAME, parquetFileSizeBefore, SYM2_COLUMN_ID)
+                );
+                final FilesFacade facade = configuration.getFilesFacade();
+                Assert.assertTrue(
+                        "the sweep unlinked a pair the footer a pinned reader resolves still names --"
+                                + " silent deletion of referenced data [file=" + strandedParquet + ']',
+                        facade.exists(partitionPath(path, CHAIN_TABLE_NAME).concat(strandedParquet).$())
+                );
+                Assert.assertTrue(
+                        "the sweep unlinked the _im of a pair the footer a pinned reader resolves still"
+                                + " names [file=" + strandedMeta + ']',
+                        facade.exists(partitionPath(path, CHAIN_TABLE_NAME).concat(strandedMeta).$())
                 );
             }
         });
@@ -2229,6 +2405,49 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private long committedTxn(String tableName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             return reader.getTxn();
+        }
+    }
+
+    private long committedParquetFileSize(String tableName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            return reader.getTxFile().getPartitionParquetFileSize(0);
+        }
+    }
+
+    /**
+     * The index txn the {@code _pm} publishes for {@code columnId} to a reader
+     * whose committed {@code data.parquet} size is {@code parquetFileSize}, or
+     * {@link Long#MIN_VALUE} when that footer names no token for the column.
+     * <p>
+     * Resolves the way every reader does -- {@code resolveFooter(committedSize)},
+     * as in {@code TableReader}, {@code ParquetPartitionDecoder} and
+     * {@code O3PartitionJob} -- so passing an older committed size is how a test
+     * asks what a reader pinned to an older snapshot still sees.
+     */
+    private long publishedIndexTxnAt(Path path, String tableName, long parquetFileSize, int columnId) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        final long addr = ParquetMetaFileReader.openAndMapRO(
+                ff,
+                partitionPath(path, tableName).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                reader
+        );
+        Assert.assertTrue("_pm must be readable", addr != 0);
+        final long fileSize = reader.getFileSize();
+        try {
+            Assert.assertTrue(
+                    "_pm footer must resolve for parquet size " + parquetFileSize,
+                    reader.resolveFooter(parquetFileSize)
+            );
+            for (int i = 0, n = reader.getCoveringIndexCount(); i < n; i++) {
+                if (reader.getCoveringIndexColumnId(i) == columnId) {
+                    return reader.getCoveringIndexTxn(i);
+                }
+            }
+            return Long.MIN_VALUE;
+        } finally {
+            reader.clear();
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
         }
     }
 
