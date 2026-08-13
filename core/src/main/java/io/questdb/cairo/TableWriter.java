@@ -935,12 +935,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // configureCoveringIfNeeded can find them during index rebuild.
         columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
+        // Set the index type before writeIndex too, for the same reason the
+        // covering indices are set above: a parquet seal that runs DURING the
+        // rebuild publishes a covering-index token, and the token merge decides
+        // whether a token is still wanted by asking the metadata whether the
+        // column is POSTING-indexed. With the type set only afterwards, every
+        // publish inside this window sees "not indexed" and the merge would drop
+        // a token it must keep. In-memory only until rewriteAndSwapMetadata
+        // below; a throw from writeIndex leaves nothing durable, and the catch
+        // restores the previous type so an aborted ADD INDEX does not leave the
+        // writer's own metadata claiming an index it failed to build.
+        final byte previousIndexType = columnMetadata.getIndexType();
+        final int previousBlockCapacity = columnMetadata.getIndexValueBlockCapacity();
+        columnMetadata.setIndexType(indexType);
+        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
-
-            columnMetadata.setIndexType(indexType);
-            columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
             // set the index flag in metadata and create new _meta.swp
             rewriteAndSwapMetadata(metadata);
@@ -949,6 +961,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             indexers.extendAndSet(columnIndex, indexer);
             populateDenseIndexerList();
         } catch (Throwable th) {
+            columnMetadata.setIndexType(previousIndexType);
+            columnMetadata.setIndexValueBlockCapacity(previousBlockCapacity);
             Misc.free(indexer);
             throw th;
         }
@@ -12486,6 +12500,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     supersededVisibleAtTxns.add(txWriter.getTxn() + 1);
                     continue;
                 }
+                if (resealedAt < 0 && !isColumnPostingIndexed((int) existingColumnId)) {
+                    // The committed metadata says this column carries no POSTING
+                    // index, so the token is residue: DROP INDEX committed and a
+                    // crash intervened before the retirement, and nothing has
+                    // reclaimed it since. Retire it rather than copying it
+                    // forward for the life of the partition.
+                    //
+                    // Safe only because setIndexType now precedes writeIndex in
+                    // addIndex. With the type set afterwards, every publish
+                    // during an ADD INDEX rebuild sees "not indexed" and this
+                    // rule would drop a token it must keep -- which is why the
+                    // ordering change is part of this fix rather than a tidy-up.
+                    //
+                    // NEITHER HALF IS PINNED BY A TEST, and that is recorded
+                    // rather than glossed. The residue is crash-only to create:
+                    // it needs a DROP INDEX that commits and then a crash before
+                    // the retirement, which no production path here can produce.
+                    // Disabling this branch breaks nothing, and so does reverting
+                    // the ordering -- the drop/rebuild cycle the test drives never
+                    // publishes inside the unsafe window. What would exercise
+                    // both is a crash-injection fixture around the DROP INDEX
+                    // commit, which belongs with the other injection tests.
+                    supersededColumnIds.add(existingColumnId);
+                    supersededIndexTxns.add(existingIndexTxn);
+                    supersededVisibleAtTxns.add(txWriter.getTxn() + 1);
+                    continue;
+                }
                 if (resealedAt < 0) {
                     merged.add(existingColumnId);
                     merged.add(existingIndexTxn);
@@ -12935,6 +12976,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * past the {@code _txn} commit instead of publishing it inside the writer's
      * uncommitted window.
      */
+    /**
+     * Whether the committed metadata says {@code writerIndex} carries a POSTING
+     * index. Keyed on the WRITER index because that is what a {@code _pm}
+     * covering entry's column id is.
+     * <p>
+     * A dropped column keeps a negated-type slot rather than shifting its
+     * neighbours, so a stale id resolves to a column that is simply not
+     * indexed, which is the answer this wants.
+     */
+    private boolean isColumnPostingIndexed(int writerIndex) {
+        // Linear over the column list rather than an index lookup: there is no
+        // writer-index-to-column-index map on the writer's metadata, the list
+        // is small, and this runs once per covering entry at publish time.
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnMetadata(i).getWriterIndex() == writerIndex) {
+                return IndexType.isPosting(metadata.getColumnIndexType(i));
+            }
+        }
+        // No live column carries that writer index: the column was dropped, so
+        // the token it left behind is residue.
+        return false;
+    }
+
     private void purgeSupersededParquetIndexArtifacts(
             long columnId,
             long partitionTimestamp,

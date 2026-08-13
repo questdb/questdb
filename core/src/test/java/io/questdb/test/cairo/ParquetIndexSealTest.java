@@ -3500,6 +3500,50 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A token left behind by a DROP INDEX whose retirement never ran must be
+     * reclaimed by the next publish, not copied forward for the life of the
+     * partition.
+     * <p>
+     * The residue is crash-only to create, so the test creates it directly: it
+     * publishes a token, then drops the index WITHOUT letting the retirement
+     * reach the footer, leaving the _pm naming a pair for a column the
+     * committed metadata says is not indexed. The next publish must retire it.
+     * <p>
+     * The safety of this is entirely the ADD INDEX ordering: setIndexType now
+     * precedes writeIndex, so a publish DURING a rebuild sees the column as
+     * indexed. The companion assertion below is the unsafe direction -- a
+     * rebuild must not lose its own token -- and it is the one that fails if
+     * that ordering is ever reverted.
+     */
+    @Test
+    public void testAStaleTokenForANonIndexedColumnIsReclaimed() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            runPostingSealPurgeJob();
+
+            // Drop the index, then rebuild it. The rebuild is what exercises
+            // the unsafe direction: with setIndexType after writeIndex, the
+            // publish inside the rebuild would see "not indexed" and drop the
+            // token it had just written.
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            runPostingSealPurgeJob();
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            runPostingSealPurgeJob();
+
+            // The rebuild must have published a token and must NOT have
+            // dropped its own: the covered query is served from the parquet
+            // index, and answers exactly what an unindexed scan does.
+            assertSqlCursors(
+                    "select price, qty from t_pidx where ts in '2024-01-01' and cast(sym as varchar) = 's0'",
+                    COVERED_QUERY
+            );
+        });
+    }
+
     private int countPidxArtifacts() {
         try (Path path = new Path()) {
             final java.io.File[] files = new java.io.File(partitionPath(path).toString())
