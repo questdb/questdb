@@ -284,6 +284,17 @@ public class DirectLongListTest {
     }
 
     @Test
+    public void testSetAtCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongList list = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
+                list.set(0, 42);
+                Assert.assertEquals(42, list.get(0));
+                Assert.assertThrows(AssertionError.class, () -> list.set(list.getCapacity(), 43));
+            }
+        });
+    }
+
+    @Test
     public void testSetCapacityOnClosedList() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectLongList list = new DirectLongList(0, MemoryTag.NATIVE_LONG_LIST, true)) {
