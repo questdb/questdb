@@ -78,6 +78,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     protected final RowGroupBuffers rowGroupBuffers =
             new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     protected long columnTop;
+    protected long decodedRowGroupCount;
     protected long indexTxn = -1;
     protected long partitionTimestamp;
     protected long pidxAddr;
@@ -124,6 +125,46 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         projection.add(imReader.getRowIdColumn());
         projection.add(ColumnType.LONG);
         return projection;
+    }
+
+    /**
+     * Row groups this reader has actually decoded since it was bound. Pruning
+     * is asserted against this rather than against a duration: a latency
+     * assertion passes on warm-up while the skip misses entirely.
+     */
+    public long getDecodedRowGroupCount() {
+        return decodedRowGroupCount;
+    }
+
+    /**
+     * Pruning level 2: true when {@code rowGroup}'s row-id extent does not
+     * intersect the caller's {@code [minValue, maxValue]}, so the group holds
+     * nothing the cursor could emit and need not be decoded.
+     * <p>
+     * Row id is monotone in the designated timestamp within a partition, so an
+     * interval scan's row-id range maps onto this EXACTLY rather than
+     * conservatively -- a group is skipped only when it provably holds no row
+     * in range.
+     * <p>
+     * The extents come from the {@code _im}'s own {@code RG_ROW_ID_MIN} /
+     * {@code RG_ROW_ID_MAX} sections, not from the {@code row_id} chunk's
+     * parquet statistics, because the sections are written unconditionally
+     * while that chunk does not exist at all under the alternative payload
+     * kind. Reading the stats would silently lose time pruning for that
+     * payload rather than failing.
+     */
+    protected boolean isRowGroupPruned(int rowGroup, long minValue, long maxValue) {
+        return imReader.getRowGroupRowIdMin(rowGroup) > maxValue
+                || imReader.getRowGroupRowIdMax(rowGroup) < minValue;
+    }
+
+    /**
+     * Records a decode. Kept next to the pruning predicate so the counter and
+     * the skip cannot drift: a group is counted where it is decoded, never
+     * where it is merely visited.
+     */
+    protected void onRowGroupDecoded() {
+        decodedRowGroupCount++;
     }
 
     /**
@@ -338,6 +379,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         this.columnTop = columnTop;
         this.partitionTimestamp = partitionTimestamp;
         this.indexTxn = indexTxn;
+        this.decodedRowGroupCount = 0;
         this.imFileSize = imFileSize;
         final int plen = path.size();
         try {

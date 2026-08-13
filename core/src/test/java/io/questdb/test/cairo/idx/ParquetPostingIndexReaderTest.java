@@ -268,6 +268,61 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Pruning level 2. A narrow row-id window must decode fewer row groups than
+     * the key's whole run.
+     * <p>
+     * The assertion counts row groups DECODED, not elapsed time: a latency
+     * assertion passes on warm-up while the skip misses entirely, and this
+     * branch has already shipped one perf claim that a repeat run inverted.
+     * <p>
+     * The count is also checked against the rows the window actually contains,
+     * so a skip that pruned too much -- dropping a group that did hold matching
+     * postings -- fails here rather than silently returning fewer rows.
+     */
+    @Test
+    public void testANarrowRowIdRangeDecodesFewerRowGroupsThanTheKeysWholeRun() throws Exception {
+        assertMemoryLeak(() -> {
+            createHotKeyParquetTable("x", 400_000, "hot");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("hot") + 1;
+                final AbstractParquetPostingIndexReader indexReader =
+                        (AbstractParquetPostingIndexReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+
+                final long wholeRows = drain(indexReader.getCursor(key, 0, Long.MAX_VALUE));
+                final long whole = indexReader.getDecodedRowGroupCount();
+                Assert.assertTrue(
+                        "the fixture must give the hot key more than one row group, got " + whole,
+                        whole > 1
+                );
+
+                final long before = indexReader.getDecodedRowGroupCount();
+                final long narrowRows = drain(indexReader.getCursor(key, 0, 999));
+                final long narrow = indexReader.getDecodedRowGroupCount() - before;
+                Assert.assertTrue(
+                        "a narrow row-id range must decode fewer row groups: narrow=" + narrow
+                                + " whole=" + whole,
+                        narrow < whole
+                );
+
+                // The skip must not prune a group that did hold matching rows.
+                // Row ids 0..999 cover the first 1000 rows of the partition, of
+                // which the hot symbol takes all but every 16th.
+                Assert.assertTrue("the narrow window must still return rows", narrowRows > 0);
+                Assert.assertTrue(
+                        "the narrow window cannot return more than the whole run",
+                        narrowRows < wholeRows
+                );
+                Assert.assertEquals(
+                        "every posting in [0, 999] must survive the skip",
+                        1000 - (1000 / 16),
+                        narrowRows
+                );
+            }
+        });
+    }
+
+    /**
      * A key the directory does not resolve is an ordinary answer, not an error:
      * a query for a symbol this partition never carried must return no rows.
      * <p>
@@ -332,6 +387,49 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(hi, clipped.getQuick(clipped.size() - 1));
             }
         });
+    }
+
+    /**
+     * A key whose postings span several dedicated row groups, so a narrow
+     * row-id window can exclude most of them.
+     * <p>
+     * The seal targets {@code TARGET_ROW_GROUP_ROWS} rows per group and splits
+     * a key that exceeds it, so the hot symbol needs comfortably more than that
+     * many postings. With fewer, the whole index is one row group and the two
+     * arms of the pruning test cannot differ -- it would pass against no
+     * pruning at all.
+     */
+    private void createHotKeyParquetTable(String tableName, int rows, String hotSymbol) throws Exception {
+        execute("CREATE TABLE " + tableName + " (" +
+                "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // 15 of every 16 rows carry the hot symbol, so at `rows` = 400k it holds
+        // ~375k postings: four row groups at the 100k target, against one for
+        // everything else.
+        execute("INSERT INTO " + tableName + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " CASE WHEN x % 16 = 0 THEN 'cold' ELSE '" + hotSymbol + "' END," +
+                " x::DOUBLE," +
+                " x" +
+                " FROM long_sequence(" + rows + ")");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    private static long drain(RowCursor cursor) {
+        long n = 0;
+        try (RowCursor c = cursor) {
+            while (c.hasNext()) {
+                c.next();
+                n++;
+            }
+        }
+        return n;
     }
 
     /**

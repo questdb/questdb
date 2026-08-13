@@ -82,8 +82,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
      * ascends without a sort. That is asserted by the test rather than assumed
      * here.
      * <p>
-     * Row groups are NOT skipped by their row-id zone maps yet: that is pruning
-     * level 2, and doing it here would make its negative control vacuous.
+     * Row groups whose row-id extent misses the window are skipped without a
+     * decode -- pruning level 2, exact because row id is monotone in the
+     * designated timestamp within a partition.
      */
     private class FwdCursor implements RowCursor {
         private long groupRows;
@@ -150,25 +151,40 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         }
 
         private boolean decodeCurrentGroup() {
-            groupRows = imReader.getRowGroupNumRows(rg);
-            if (groupRows <= 0) {
-                // An empty group cannot hold a posting. Skipping it here rather
-                // than calling the decoder keeps a zero-row decode -- which the
-                // native side treats as an error -- off the path.
-                rg++;
-                return rg <= rgHi && decodeCurrentGroup();
+            // Walk forward over groups that cannot contribute, rather than
+            // recursing: a key's run can be long, and a narrow window can
+            // exclude most of it.
+            while (rg <= rgHi) {
+                groupRows = imReader.getRowGroupNumRows(rg);
+                if (groupRows <= 0) {
+                    // An empty group cannot hold a posting. Skipping it here
+                    // rather than calling the decoder keeps a zero-row decode --
+                    // which the native side treats as an error -- off the path.
+                    rg++;
+                    continue;
+                }
+                if (isRowGroupPruned(rg, minValue, maxValue)) {
+                    // Pruning level 2: the group's row-id extent misses the
+                    // caller's window entirely, so nothing in it could be
+                    // emitted. Skipped without a decode, and deliberately
+                    // without counting one.
+                    rg++;
+                    continue;
+                }
+                final DirectIntList columns = decodeProjection();
+                // No-op once allocated; the buffers are destroyed by close() and
+                // a pooled reader is rebound without being reconstructed.
+                rowGroupBuffers.reopen();
+                decoder.decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
+                onRowGroupDecoded();
+                // Chunk ordinals follow the projection's order, not the parquet
+                // file's: key_id was added first, row_id second.
+                keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+                rowInGroup = 0;
+                return true;
             }
-            final DirectIntList columns = decodeProjection();
-            // No-op once allocated; the buffers are destroyed by close() and a
-            // pooled reader is rebound without being reconstructed.
-            rowGroupBuffers.reopen();
-            decoder.decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
-            // Chunk ordinals follow the projection's order, not the parquet
-            // file's: key_id was added first, row_id second.
-            keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
-            rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
-            rowInGroup = 0;
-            return true;
+            return false;
         }
 
         private void of(int key, long minValue, long maxValue) {
