@@ -198,6 +198,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // (>= 0) and every negated parquet position (<= -1), so the default
             // marker of -1 would silently swallow the entry for parquet column 0
             // when that column has no field id. Only MIN_VALUE is out of reach.
+            //
+            // Moving the marker cannot cost a reader its "absent" answer, for a
+            // reason worth stating before the next change to this key space:
+            // IntIntHashMap.get() returns a HARDCODED -1 on a miss, not the
+            // configured noEntryKeyValue (IntIntHashMap.noEntryValue), so
+            // absence is read off the VALUE side. Every value here is a parquet
+            // column index, always >= 0, so `parquetIdx < 0` in
+            // resolveParquetColumn stays an exact miss test no matter where the
+            // keys live. A marker is only ever a constraint on the key space.
+            //
+            // MIN_VALUE is also the one value the key space must never reach:
+            // keyIndex() hashes with `key & mask` and MIN_VALUE & mask == 0, so
+            // slot 0 would read as permanently free and probe() would not
+            // terminate on a full table. ColumnMapping.parquetLookupKey asserts
+            // the bound that keeps it unreachable.
             columnIdToParquetIdx = new IntIntHashMap(16, 0.5, Integer.MIN_VALUE);
             frameMemory = new PageFrameMemoryImpl();
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
