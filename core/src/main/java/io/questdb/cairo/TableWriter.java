@@ -12606,21 +12606,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // partition -- minutes to hours of continuous late-data ingest -- after
         // which every publish forever takes the .squash_ts file write.
         //
-        // Which for the incremental backup is not even read on a parquet
-        // partition: CheckpointManifest.getPartitionSquashTracker branches on
-        // isParquet and falls back to .squash_ts only on the NATIVE arm; the
-        // parquet arm takes data.parquet's last-modified time, which a token
-        // publish does not touch. So for THAT consumer saturation does not
-        // degrade to a slower signal, it loses the signal.
+        // That much is checkable here. The next two claims are NOT: neither
+        // CheckpointManifest nor StoragePolicyJob exists in this checkout, both
+        // are enterprise-side, and the paragraph below is a lead for whoever can
+        // read them rather than something this repository establishes.
         //
-        // Not a general property of .squash_ts, and the earlier note here said
-        // it as though it were. Cold storage resolves the same fallback with no
-        // isParquet branch at all (StoragePolicyJob.resolveSquashTracker, called
-        // from the parquet export check and from isSquashTrackerStale), so there
-        // the .squash_ts write below IS load-bearing for a parquet partition and
-        // saturation only makes the signal slower. One consumer losing it
-        // outright is enough to justify keeping the counter off the cliff rather
-        // than improving the fallback, which is what this skip does.
+        //   - The incremental backup is believed not to read .squash_ts on a
+        //     parquet partition at all: CheckpointManifest.getPartitionSquashTracker
+        //     branches on isParquet and falls back to .squash_ts only on the
+        //     NATIVE arm, the parquet arm taking data.parquet's last-modified
+        //     time, which a token publish does not touch. If so, saturation does
+        //     not degrade that consumer to a slower signal, it loses the signal.
+        //   - Cold storage is believed to resolve the same fallback with no
+        //     isParquet branch (StoragePolicyJob.resolveSquashTracker), so there
+        //     the .squash_ts write below would be load-bearing for a parquet
+        //     partition and saturation would only make the signal slower.
+        //
+        // The skip rests on neither. It rests on what is verifiable above: the
+        // trigger was per-commit, the counter is 16 bits, nothing on the
+        // in-place O3 path resets it, and every publish past saturation takes a
+        // file write forever. Keeping a 16-bit counter off a per-commit trigger
+        // needs no argument about who reads the fallback.
         //
         // Skipping the stamp when the transaction already moved the partition's
         // own _txn record does exactly that, and costs nothing: on that path the
