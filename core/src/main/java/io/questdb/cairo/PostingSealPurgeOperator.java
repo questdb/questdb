@@ -127,7 +127,13 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // sym.pidx.1 at once -- so the producer records it and a task that
         // carries no attribution unlinks nothing.
         if (!PostingSealPurgeTask.isValidArtifactForm(task.getArtifactForm())) {
-            LOG.critical().$("posting seal purge: task carries no artifact form (purge log or spill file written by an older build), dropping without unlinking [table=")
+            // Every field below comes from the same decode that produced the
+            // artifact form this branch rejected, so they are best-effort: a
+            // decode wrong about one field can be wrong about the rest. Printed
+            // anyway because they are the only lead a human gets, and said to be
+            // best-effort so nobody treats a bad path as evidence of a bug
+            // elsewhere.
+            LOG.critical().$("posting seal purge: task carries no artifact form (purge log or spill file written by an older build), dropping without unlinking; fields below are best-effort, decoded from the same record [table=")
                     .$(task.getTableToken() == null ? null : task.getTableToken().getTableName())
                     .$(", column=").$(task.getIndexColumnName())
                     .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
