@@ -730,15 +730,15 @@ public class HttpServer implements Closeable {
             this.recycledSelectors = afterSelectorPop == null
                     ? new ConcurrentPool<>()
                     : new ConcurrentPool<>() {
-                        @Override
-                        public HttpRequestProcessorSelectorImpl pop() {
-                            final HttpRequestProcessorSelectorImpl selector = super.pop();
-                            if (selector != null) {
-                                afterSelectorPop.run();
-                            }
-                            return selector;
-                        }
-                    };
+                @Override
+                public HttpRequestProcessorSelectorImpl pop() {
+                    final HttpRequestProcessorSelectorImpl selector = super.pop();
+                    if (selector != null) {
+                        afterSelectorPop.run();
+                    }
+                    return selector;
+                }
+            };
             this.selectors = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 selectors.add(null);
