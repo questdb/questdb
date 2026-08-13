@@ -598,6 +598,65 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
     }
 
     /**
+     * A rewrite relocates a piece to the tail of the shared column files, so the pieces of one partition no
+     * longer sit in timestamp order: ascending physical row ids can step BACKWARDS in time at a piece
+     * boundary. One {@code .pk} serves the whole partition, so a key's posting list carries both pieces and
+     * the designated-timestamp covering sidecar built from it is no longer ascending - which the covering
+     * compressor's linear-predictor encoder assumes.
+     */
+    @Ignore("A rewrite parks a relocated piece above the last one, so ascending physical row ids step"
+            + "BACKWARDS in time at a piece boundary and the designated-timestamp covering sidecar built from"
+            + "the posting list is no longer ascending. The linear-predictor encoder assumes it is, and the ADD"
+            + "INDEX apply suspends the table.")
+    @Test
+    public void testCoveringIndexOverMergeAppendedPieceHasUnsortedTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            // One cut, largest gap wins: the cut lands above the backdated stride, so the HOT piece is the
+            // day's prefix and the rewrite parks it above the cold tail piece.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            // 'k' is deliberately absent from the prefix piece's ORIGINAL image, which survives as dead
+            // space below both live pieces: were 'k' indexed down there its posting list would start at an
+            // early timestamp again and the endpoints would read as ascending.
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i," +
+                            " (CASE WHEN (x - 1) * 15 < 18000 THEN 'a' ELSE 'k' END)::SYMBOL sym," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            // Backdated, and tagged 'k': these rows merge into the prefix piece and follow it to the tail
+            // of the column files, so 'k' ends on a timestamp EARLIER than the one it starts on.
+            execute(
+                    "CREATE TABLE z AS (SELECT x::INT + 1000000 i, 'k'::SYMBOL sym," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+            assertPieceRelocatedAboveLastPiece("x");
+
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (ts)");
+            drainWalQueue();
+            Assert.assertFalse("table suspended",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            final String unionBody = "SELECT * FROM x0 UNION ALL SELECT * FROM z";
+            assertIndexAndData(unionBody, "a", "k");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertIndexAndData(unionBody, "a", "k");
+        });
+    }
+
+    /**
      * A DEDUP table sorts every commit through the many-segments sort, single transactions included,
      * because the composite path routes every commit down the block path. A commit of one transaction
      * whose rows all carry the SAME timestamp gives that sort a zero-width key - no timestamp range and no
@@ -943,6 +1002,17 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             + "E), so an indexed scan returns a subset. Cause not yet isolated.")
     @Test
     public void testIndexBuildCoversEveryPieceOfADirectoryBitmap() throws Exception {
+        testIndexBuildCoversEveryPieceOfADirectory("BITMAP");
+    }
+
+    @Ignore("An index built over a composite partition covers one piece rather than the whole of [columnTop,"
+            + "E), so an indexed scan returns a subset. Cause not yet isolated.")
+    @Test
+    public void testIndexBuildCoversEveryPieceOfADirectoryPosting() throws Exception {
+        testIndexBuildCoversEveryPieceOfADirectory("POSTING");
+    }
+
+    private void testIndexBuildCoversEveryPieceOfADirectory(String indexType) throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
@@ -978,7 +1048,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
 
             // ALTER TABLE ... ADD INDEX: the historic partitions plus the last one.
-            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX TYPE " + indexType);
             drainWalQueue();
 
             assertSymbolIndexAndData(unionBody.toString());
@@ -1178,6 +1248,99 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("ALTER TABLE x SQUASH PARTITIONS");
             drainWalQueue();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, actual, LOG);
+        });
+    }
+
+    /**
+     * A column added while a LATER partition was active leaves the earlier one with no record for it, so
+     * every piece there has to answer "absent" from the partition's shared column top alone. That top has
+     * to be {@code E}: a top BELOW it leaves the append base {@code E - top} non-zero, the index build
+     * never sees its first row, and a POSTING column whose partition holds no index yet gets opened for
+     * append instead of created - "index does not exist", and the apply suspends the table.
+     * <p>
+     * The cut ABOVE the stride is what makes this the MIDDLE piece - a sibling's rows still sit between its
+     * end and {@code E} - so the base is not zero. Merging into the LAST piece instead would leave the top
+     * at {@code E}, a zero base, and no bug to see.
+     */
+    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
+            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
+    @Test
+    public void testMergeAppendCreatesPostingIndexForColumnAbsentFromPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "POSTING");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            // A second day keeps 2020-02-03 a MID partition and owns the added column's only record.
+            execute("INSERT INTO x SELECT x::INT + 2000 i," +
+                    " timestamp_sequence('2020-02-04', 60*1000000L) ts FROM long_sequence(100)");
+            drainWalQueue();
+
+            // Added BEFORE the cut: only the LAST partition gets a record, so no piece of 2020-02-03 holds
+            // a .pk for s and each has to answer "absent" from the column-top default alone.
+            execute("ALTER TABLE x ADD COLUMN s SYMBOL INDEX");
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            // ONE backdated commit into a mid-morning stride: it cuts 2020-02-03 at the stride's cold edges
+            // and rewrites the hot piece in the same commit.
+            execute(
+                    "CREATE TABLE y AS (SELECT x::INT + 3000000 i," +
+                            " timestamp_sequence('2020-02-03T04:00:09', 5*1000000L) ts," +
+                            " 'k' || (x % 5) s FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM y");
+            drainWalQueue();
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+
+            final String unionBody = "SELECT i, s, ts FROM x0 UNION ALL SELECT i, s, ts FROM y";
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i, s::STRING s, ts FROM (" + unionBody + ") ORDER BY ts",
+                    "SELECT i, s::STRING s, ts FROM x ORDER BY ts",
+                    LOG
+            );
+            // Per key, so the index cursor runs over the entries the rewrite wrote. Data equality alone
+            // passes on an index that was silently created empty.
+            for (int k = 0; k < 5; k++) {
+                final String predicate = " WHERE s = 'k" + k + "'";
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT i, s::STRING s, ts FROM (" + unionBody + ")" + predicate + " ORDER BY ts",
+                        "SELECT i, s::STRING s, ts FROM x" + predicate + " ORDER BY ts",
+                        LOG
+                );
+            }
+
+            // A cold reopen exposes reader-side geometry the warm cursors above share with the writer.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i, s::STRING s, ts FROM (" + unionBody + ") ORDER BY ts",
+                    "SELECT i, s::STRING s, ts FROM x ORDER BY ts",
+                    LOG
+            );
+
+            execute("ALTER TABLE x SQUASH PARTITIONS");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i, s::STRING s, ts FROM (" + unionBody + ") ORDER BY ts",
+                    "SELECT i, s::STRING s, ts FROM x ORDER BY ts",
+                    LOG
+            );
         });
     }
 
@@ -1794,6 +1957,17 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testNullKeyIndexScanOnCompositeDirectoryBitmap() throws Exception {
+        testNullKeyIndexScanOnCompositeDirectory("");
+    }
+
+    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
+            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
+    @Test
+    public void testNullKeyIndexScanOnCompositeDirectoryPosting() throws Exception {
+        testNullKeyIndexScanOnCompositeDirectory("TYPE POSTING");
+    }
+
+    private void testNullKeyIndexScanOnCompositeDirectory(String indexType) throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
@@ -1810,7 +1984,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT x::INT + 900000 i," +
                     " timestamp_sequence('2020-02-05', 60*1000000L) ts FROM long_sequence(50)");
             drainWalQueue();
-            execute("ALTER TABLE x ADD COLUMN sym SYMBOL INDEX");
+            execute("ALTER TABLE x ADD COLUMN sym SYMBOL INDEX " + indexType);
             drainWalQueue();
 
             // Narrow backdated clusters, one per hour inside the pre-column region. Each cuts the day
@@ -2085,6 +2259,55 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
     }
 
     /**
+     * A WAL apply no longer holds the active partition open between commits, so the release after a commit
+     * is what has to close the POSTING writer left open on the last partition's {@code .pk}. Releasing over
+     * a list the release itself clears makes that a no-op on any apply that never refilled it, and the
+     * indexer then carries an open writer - and a stale chain region limit - into the next commit. The next
+     * apply's pool writer appends a slot past that limit and the seal closes the stale writer, truncating
+     * the {@code .pk} back and lopping the tail off the slot just published: the entry counts a generation
+     * that reads back as all zeroes, so every row it indexed vanishes from index scans.
+     */
+    @Test
+    public void testWalCommitDoesNotStrandPostingIndexWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, ('s' || (x % 5))::SYMBOL sym," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(1000)" +
+                            "), INDEX(sym TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            StringBuilder unionBody = new StringBuilder("SELECT * FROM x0");
+            // Every batch lands in the SAME day the create left open, so each apply hands the one .pk the
+            // stranded writer holds to the O3 pool writer, which appends a slot past the region limit that
+            // writer cached. One commit per drain: the stranding and the append have to fall in different
+            // commits.
+            for (int b = 0; b < 6; b++) {
+                final String start = "2020-02-03T04:" + (10 + b * 8) + ":07";
+                execute(
+                        "CREATE TABLE z" + b + " AS (SELECT x::INT + " + (1_000_000 * (b + 1)) + " i," +
+                                " ('s' || (x % 5))::SYMBOL sym," +
+                                " timestamp_sequence('" + start + "', 1000000L) ts FROM long_sequence(200))"
+                );
+                unionBody.append(" UNION ALL SELECT * FROM z").append(b);
+                // Descending, so the block needs the O3 sort and the apply routes through O3PartitionJob -
+                // but every row still lands above the partition's max, so nothing is rewritten and the seal
+                // takes the skip-rebuild path that keeps the pool writer's slot.
+                execute("INSERT INTO x SELECT * FROM z" + b + " ORDER BY ts DESC");
+                drainWalQueue();
+            }
+
+            assertSymbolIndexAndData(unionBody.toString());
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertSymbolIndexAndData(unionBody.toString());
+        });
+    }
+
+    /**
      * A partition holds ONE index shared by every piece that reads its column files, and a rewrite parks a
      * relocated piece ABOVE the last piece's own end. So the highest legitimate row id in that index is
      * the partition's physical extent {@code E}, not the last piece's end: evicting orphan row ids at the
@@ -2092,7 +2315,19 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * only the indexed scan loses the sibling's rows.
      */
     @Test
-    public void testWriterReopenKeepsIndexOfMergeAppendedPiece() throws Exception {
+    public void testWriterReopenKeepsIndexOfMergeAppendedPieceBitmap() throws Exception {
+        testWriterReopenKeepsIndexOfMergeAppendedPiece("");
+    }
+
+    @Ignore("The BITMAP variant passes and this one does not, so the .pk chain is the difference: a partition"
+            + "holds ONE chain whose highest legitimate row id is E, and evicting orphan row ids at the LAST"
+            + "piece's end throws away every entry a relocated sibling owns.")
+    @Test
+    public void testWriterReopenKeepsIndexOfMergeAppendedPiecePosting() throws Exception {
+        testWriterReopenKeepsIndexOfMergeAppendedPiece(" TYPE POSTING");
+    }
+
+    private void testWriterReopenKeepsIndexOfMergeAppendedPiece(String indexType) throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
@@ -2104,7 +2339,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
                             "SELECT x::INT i, ('s' || (x % 5))::SYMBOL sym," +
                             " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
                             " FROM long_sequence(5760)" +
-                            "), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                            "), INDEX(sym" + indexType + ") TIMESTAMP(ts) PARTITION BY DAY WAL"
             );
             drainWalQueue();
             execute("CREATE TABLE x0 AS (SELECT * FROM x)");
@@ -2347,6 +2582,30 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
                 previous = ts;
                 row++;
             }
+        }
+    }
+
+    /**
+     * The rows, then each named key through the index. The per-key variant of
+     * {@link #assertSymbolIndexAndData(String)}, for fixtures whose keys are not {@code s0..s4}.
+     */
+    private static void assertIndexAndData(String unionBody, String... keys) throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "SELECT i, sym::STRING sym, ts FROM (" + unionBody + ") ORDER BY ts",
+                "SELECT i, sym::STRING sym, ts FROM x ORDER BY ts",
+                LOG
+        );
+        for (String key : keys) {
+            final String predicate = " WHERE sym = '" + key + "'";
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i, sym::STRING sym, ts FROM (" + unionBody + ")" + predicate + " ORDER BY ts",
+                    "SELECT i, sym::STRING sym, ts FROM x" + predicate + " ORDER BY ts",
+                    LOG
+            );
         }
     }
 

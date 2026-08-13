@@ -242,9 +242,12 @@ so a column that came back empty could not pass.
 
 ## The ported pre-split suite
 
-`O3PartitionPreSplitTest` carries 30 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. 12 run and pass; 18 carry an `@Ignore`
+`O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
+there that does not turn on a replace commit or on compaction. 13 run and pass; 23 carry an `@Ignore`
 naming the gap that blocks them, so the ignored list IS the to-do list and the suite stays runnable.
+
+Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
+this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
 The port is what found gaps 14 and 15. Three of the ignored tests do not merely fail, they take the JVM
 down with a SIGSEGV, which is why they are marked rather than left red.
@@ -280,8 +283,15 @@ below it.
   Two ported scenarios.
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
-- **Three ported scenarios fail unattributed** - two dedup ones around the batch boundary, and the index
-  build over a composite partition. Leads, not diagnoses.
+- **An index built over a composite partition covers one piece**, not the whole of `[columnTop, E)`, so an
+  indexed scan returns a subset. Both index types. Cause not yet isolated.
+- **The POSTING `.pk` chain ceiling is the LAST piece's end, not `E`**, so opening a writer evicts every
+  entry a relocated sibling owns. `testWriterReopenKeepsIndexOfMergeAppendedPiece` passes on BITMAP and
+  fails on POSTING, which is what isolates it to the chain.
+- **The covering sidecar assumes ascending timestamps.** A rewrite parks a relocated piece above the last
+  one, so physical row order stops being timestamp order and `ADD INDEX ... INCLUDE (ts)` suspends the
+  table.
+- **Two dedup scenarios fail unattributed** around the batch boundary. Leads, not diagnoses.
 - **`NEW_PIECE`'s floor**: the executor records the new piece's `tsLo` as the batch's FIRST timestamp, not
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.
