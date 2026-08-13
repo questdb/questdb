@@ -248,9 +248,10 @@ impl FooterFeatureFlags {
     /// update writer silently inherits the previous footer's entries when
     /// its setter is not called, which would leave a stale index token
     /// pointing at a superseded index. This section drops instead -- an
-    /// update that calls neither `set_covering_index()` nor
-    /// `clear_covering_index()` fires a `debug_assert!` and, in release,
-    /// lands a footer with no covering-index section. Dropping degrades to
+    /// update that does not call `set_covering_index()` at all fires a
+    /// `debug_assert!` and, in release, lands a footer with no
+    /// covering-index section; `set_covering_index(vec![])` is the explicit
+    /// way to drop it. Dropping degrades to
     /// "no Parquet-form index" and therefore to a scan, which is correct if
     /// slower; inheriting would hand out a token for an index that no longer
     /// matches the data. Dropping is the fail-safe direction, inheriting the

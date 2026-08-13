@@ -29,6 +29,15 @@ import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
 
 public class PostingSealPurgeTask implements Mutable {
+    // The ON-DISK form of the artifacts THIS TASK names, int-valued and
+    // PERSISTED (sys.posting_seal_purge_log's artifact_form column and the
+    // spill file's format word 2). NOT interchangeable with
+    // PostingIndexUtils.PARQUET_INDEX_FORMAT_*, which describes the same
+    // native-vs-parquet distinction for the CONFIGURED writer form with a
+    // different byte encoding (NATIVE 0, PARQUET 1) and no UNKNOWN. The two
+    // overlap numerically -- ARTIFACT_FORM_NATIVE == PARQUET_INDEX_FORMAT_PARQUET
+    // == 1 -- so a mix-up is silent. Being persisted, this family's values are
+    // also not free to change.
     /**
      * The task names a {@code <col>.pv.<postingColumnNameTxn>.<sealTxn>} value
      * file and its {@code .pc*} covers. {@code sealTxn} is a per-column chain

@@ -222,6 +222,16 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     public static final int PAGE_SIZE = 4096;
+    // The CONFIGURED writer form, byte-valued, from
+    // cairo.posting.index.parquet.partition.format. NOT interchangeable with
+    // PostingSealPurgeTask.ARTIFACT_FORM_*, which describes the same
+    // native-vs-parquet distinction with a different int encoding (UNKNOWN 0,
+    // NATIVE 1, PARQUET 2) and is PERSISTED in the purge log. The two overlap
+    // numerically -- ARTIFACT_FORM_NATIVE == PARQUET_INDEX_FORMAT_PARQUET == 1 --
+    // and `int x = someByte` compiles silently, so a mix-up would route a
+    // native purge task down PostingSealPurgeOperator's parquet branch, whose
+    // whole safety argument is that a native task never reaches it. Convert
+    // explicitly if these ever have to meet.
     public static final byte PARQUET_INDEX_FORMAT_NATIVE = 0;
     public static final byte PARQUET_INDEX_FORMAT_PARQUET = 1;
     public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES;

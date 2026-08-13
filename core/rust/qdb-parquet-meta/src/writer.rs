@@ -505,22 +505,16 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     }
 
     /// Replaces the covering-index entries `(column_id, index_txn,
-    /// im_file_size)` on the new footer. An empty `Vec` is equivalent to
-    /// [`Self::clear_covering_index`]. Any update that rewrites row group
+    /// im_file_size)` on the new footer. An empty `Vec` is the explicit
+    /// opt-in to DROP the prior footer's section: the new footer omits the
+    /// section and its gating bit, readers fall back to a scan, and the
+    /// `debug_assert!` in `finish_appending_at()` stays silent. Both
+    /// production callers spell it that way. Any update that rewrites row group
     /// blocks invalidates the covering index built over them, so a caller
     /// that keeps the section must restate it with a refreshed
     /// `index_txn`: there is deliberately no inherit opt-in.
     pub fn set_covering_index(&mut self, entries: Vec<(u32, u64, u64)>) -> &mut Self {
         self.covering_index = Some(entries);
-        self
-    }
-
-    /// Explicit opt-in to drop the prior footer's covering-index section.
-    /// The new footer omits the section and its gating bit, so readers fall
-    /// back to a scan. Silences the `debug_assert!` in
-    /// `finish_appending_at()`.
-    pub fn clear_covering_index(&mut self) -> &mut Self {
-        self.covering_index = Some(Vec::new());
         self
     }
 
@@ -780,7 +774,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             None => {
                 debug_assert!(
                     self.prior_covering_index.is_empty(),
-                    "ParquetMetaUpdateWriter.finish: covering_index not set but prior footer had COVERING_INDEX_BIT with {} entr(ies); production paths must call .set_covering_index(new) to restate it or .clear_covering_index() to drop it",
+                    "ParquetMetaUpdateWriter.finish: covering_index not set but prior footer had COVERING_INDEX_BIT with {} entr(ies); production paths must call .set_covering_index(new) to restate it or .set_covering_index(vec![]) to drop it",
                     self.prior_covering_index.len()
                 );
                 &[]
@@ -1633,7 +1627,7 @@ mod tests {
 
         let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
         updater.seq_txn(SeqTxn::new(2));
-        updater.clear_covering_index();
+        updater.set_covering_index(Vec::new());
         updater.parquet_footer(8192, 256);
         let (full, new_size) = append_and_reopen(&original, &mut updater);
 
