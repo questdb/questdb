@@ -24,38 +24,6 @@
 
 package io.questdb.mp.continuation;
 
-import org.jetbrains.annotations.TestOnly;
-
-final class FiberRunQueue {
-    private final FiberRing ring;
-
-    FiberRunQueue(int initialCapacity) {
-        ring = new FiberRing(initialCapacity);
-    }
-
-    @TestOnly
-    int capacity() {
-        return ring.capacity();
-    }
-
-    int depth() {
-        return ring.depth();
-    }
-
-    boolean hasAvailable() {
-        return ring.hasAvailable();
-    }
-
-    void put(Fiber fiber) {
-        ring.put(fiber);
-    }
-
-    @TestOnly
-    void setDepthForTesting(int depth) {
-        ring.setDepthForTesting(depth);
-    }
-
-    Fiber tryDequeue() {
-        return ring.tryDequeue();
-    }
+public interface FiberRuntimeConfigurationListener {
+    void onConfigurationChanged(int maxLiveFiberCount, int maxRetainedFiberCount);
 }

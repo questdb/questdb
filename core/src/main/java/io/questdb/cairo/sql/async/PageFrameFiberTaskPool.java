@@ -32,14 +32,14 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
 final class PageFrameFiberTaskPool implements QuietCloseable {
-    private final int capacity;
+    private int capacity;
     private int createdCount;
     private final PageFrameReduceDispatcher dispatcher;
     private final CairoEngine engine;
     private int freeCount;
     private PageFrameFiberTask freeTasks;
     private boolean isClosed;
-    private final int maxRetainedCount;
+    private int maxRetainedCount;
 
     PageFrameFiberTaskPool(
             CairoEngine engine,
@@ -94,8 +94,18 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    @TestOnly
+    synchronized int getCapacity() {
+        return capacity;
+    }
+
     synchronized int getCreatedCount() {
         return createdCount;
+    }
+
+    @TestOnly
+    synchronized int getMaxRetainedCount() {
+        return maxRetainedCount;
     }
 
     synchronized boolean hasLeasedTasks() {
@@ -156,6 +166,32 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         } catch (Throwable th) {
             Misc.free(task, th);
             throw th;
+        }
+    }
+
+    void updateLimits(int capacity, int maxRetainedCount) {
+        PageFrameFiberTask retiredTasks = null;
+        synchronized (this) {
+            if (isClosed) {
+                return;
+            }
+            this.capacity = capacity;
+            this.maxRetainedCount = maxRetainedCount;
+            while (freeCount > maxRetainedCount) {
+                final PageFrameFiberTask task = freeTasks;
+                freeTasks = task.nextFree;
+                task.isPooled = false;
+                task.nextFree = retiredTasks;
+                retiredTasks = task;
+                createdCount--;
+                freeCount--;
+            }
+        }
+        while (retiredTasks != null) {
+            final PageFrameFiberTask next = retiredTasks.nextFree;
+            retiredTasks.nextFree = null;
+            Misc.free(retiredTasks);
+            retiredTasks = next;
         }
     }
 }

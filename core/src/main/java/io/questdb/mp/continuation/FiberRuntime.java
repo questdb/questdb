@@ -48,13 +48,12 @@ public final class FiberRuntime {
     private final LongAdder budgetExhaustionCount = new LongAdder();
     private final FiberEventWaitQueue capacityWaitQueue;
     private final SOCountDownLatch closedLatch = new SOCountDownLatch(1);
+    private final ObjList<FiberRuntimeConfigurationListener> configurationListeners = new ObjList<>();
     private final FiberPool fiberPool;
     private final AtomicInteger finalizerCount = new AtomicInteger();
     private final LongAdder inlineSuspendViolationCount = new LongAdder();
     private final AtomicBoolean isInlineSuspendViolationLogged = new AtomicBoolean();
     private final ObjList<LongAdder> launchCounts = new ObjList<>(LaunchResult.COUNT);
-    private final int maxLiveFiberCount;
-    private final int maxRetainedFiberCount;
     private final LongAdder mountCount = new LongAdder();
     private final LongAdder mountedCount = new LongAdder();
     private final AtomicInteger outstandingTaskCount = new AtomicInteger();
@@ -63,15 +62,20 @@ public final class FiberRuntime {
     private final LongAdder saturationCount = new LongAdder();
     private volatile @Nullable Runnable afterProcessForTesting;
     private volatile @Nullable Runnable afterReservationReleaseForTesting;
+    private volatile Configuration configuration;
     private volatile boolean isPoolQuiesced;
     private volatile FiberRuntimeState state = FiberRuntimeState.OPEN;
 
     public FiberRuntime(int retainedFiberCount) {
-        this(retainedFiberCount, retainedFiberCount, null, null);
+        this(retainedFiberCount, retainedFiberCount, 64, null, null);
     }
 
     public FiberRuntime(int retainedFiberCount, int maxLiveFiberCount) {
-        this(retainedFiberCount, maxLiveFiberCount, null, null);
+        this(retainedFiberCount, maxLiveFiberCount, 64, null, null);
+    }
+
+    public FiberRuntime(int retainedFiberCount, int maxLiveFiberCount, int mountBudget) {
+        this(retainedFiberCount, maxLiveFiberCount, mountBudget, null, null);
     }
 
     @TestOnly
@@ -80,13 +84,23 @@ public final class FiberRuntime {
             int maxLiveFiberCount,
             @Nullable Runnable beforeFiberAcquireForTesting
     ) {
-        this(retainedFiberCount, maxLiveFiberCount, beforeFiberAcquireForTesting, null);
+        this(retainedFiberCount, maxLiveFiberCount, 64, beforeFiberAcquireForTesting, null);
     }
 
     @TestOnly
     public FiberRuntime(
             int retainedFiberCount,
             int maxLiveFiberCount,
+            @Nullable Runnable beforeFiberAcquireForTesting,
+            @Nullable Runnable beforeWaitFireForTesting
+    ) {
+        this(retainedFiberCount, maxLiveFiberCount, 64, beforeFiberAcquireForTesting, beforeWaitFireForTesting);
+    }
+
+    private FiberRuntime(
+            int retainedFiberCount,
+            int maxLiveFiberCount,
+            int mountBudget,
             @Nullable Runnable beforeFiberAcquireForTesting,
             @Nullable Runnable beforeWaitFireForTesting
     ) {
@@ -106,9 +120,11 @@ public final class FiberRuntime {
                     "retainedFiberCount must be positive and not exceed maxLiveFiberCount"
             );
         }
+        if (mountBudget < 1) {
+            throw new IllegalArgumentException("mountBudget must be positive");
+        }
         this.beforeFiberAcquireForTesting = beforeFiberAcquireForTesting;
-        this.maxLiveFiberCount = maxLiveFiberCount;
-        this.maxRetainedFiberCount = retainedFiberCount;
+        this.configuration = new Configuration(maxLiveFiberCount, retainedFiberCount, mountBudget);
         this.capacityWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_CAPACITY);
         this.runQueue = new FiberRunQueue(maxLiveFiberCount);
         this.fiberPool = new FiberPool(
@@ -155,7 +171,7 @@ public final class FiberRuntime {
                 throw new IllegalStateException("fiber capacity cancellation registration failed");
             }
             if (state == FiberRuntimeState.OPEN
-                    && outstandingTaskCount.get() < maxLiveFiberCount
+                    && outstandingTaskCount.get() < configuration.maxLiveFiberCount
                     && fiberPool.hasAvailableFiber()) {
                 return FiberWaitCoordinator.REASON_CAPACITY;
             }
@@ -221,6 +237,7 @@ public final class FiberRuntime {
                 }
             }
             state = FiberRuntimeState.QUIESCING;
+            configurationListeners.clear();
         }
         try {
             beginQuiesceListeners();
@@ -257,7 +274,7 @@ public final class FiberRuntime {
                 finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED);
             }
         }
-        if (attempts == attemptBudget && runQueue.depth() > 0) {
+        if (attempts == attemptBudget && runQueue.hasAvailable()) {
             budgetExhaustionCount.increment();
         }
         tryClose();
@@ -289,11 +306,15 @@ public final class FiberRuntime {
     }
 
     public int getMaxLiveFiberCount() {
-        return maxLiveFiberCount;
+        return configuration.maxLiveFiberCount;
     }
 
     public int getMaxRetainedFiberCount() {
-        return maxRetainedFiberCount;
+        return configuration.maxRetainedFiberCount;
+    }
+
+    public int getMountBudget() {
+        return configuration.mountBudget;
     }
 
     public long getMountCount() {
@@ -322,6 +343,11 @@ public final class FiberRuntime {
 
     public long getRetiredFiberCount() {
         return fiberPool.getRetiredCount();
+    }
+
+    @TestOnly
+    public synchronized int getConfigurationListenerCountForTesting() {
+        return configurationListeners.size();
     }
 
     @TestOnly
@@ -402,6 +428,38 @@ public final class FiberRuntime {
         );
     }
 
+    public synchronized void registerConfigurationListener(FiberRuntimeConfigurationListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("fiber runtime configuration listener must not be null");
+        }
+        if (state != FiberRuntimeState.OPEN) {
+            throw new IllegalStateException("fiber runtime is not open");
+        }
+        configurationListeners.add(listener);
+        final Configuration currentConfiguration = configuration;
+        try {
+            listener.onConfigurationChanged(
+                    currentConfiguration.maxLiveFiberCount,
+                    currentConfiguration.maxRetainedFiberCount
+            );
+        } catch (Throwable th) {
+            LOG.critical().$("fiber runtime configuration listener failed [error=").$(th).I$();
+        }
+    }
+
+    public synchronized boolean unregisterConfigurationListener(FiberRuntimeConfigurationListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("fiber runtime configuration listener must not be null");
+        }
+        for (int i = 0, n = configurationListeners.size(); i < n; i++) {
+            if (configurationListeners.getQuick(i) == listener) {
+                configurationListeners.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     public synchronized void registerQuiesceListener(FiberRuntimeQuiesceListener listener) {
         if (listener == null) {
             throw new IllegalArgumentException("fiber runtime quiesce listener must not be null");
@@ -445,6 +503,7 @@ public final class FiberRuntime {
         }
         boolean isReserved = false;
         try {
+            final int maxLiveFiberCount = configuration.maxLiveFiberCount;
             if (outstandingTaskCount.getAndIncrement() >= maxLiveFiberCount) {
                 releaseTaskSlot();
                 saturationCount.increment();
@@ -467,6 +526,41 @@ public final class FiberRuntime {
                 releaseTaskSlot();
             }
             releaseAdmission();
+        }
+    }
+
+    public void updateConfiguration(int maxLiveFiberCount, int retainedFiberCount, int mountBudget) {
+        if (maxLiveFiberCount < 1) {
+            throw new IllegalArgumentException("maxLiveFiberCount must be positive");
+        }
+        if (retainedFiberCount < 1) {
+            throw new IllegalArgumentException("retainedFiberCount must be positive");
+        }
+        if (mountBudget < 1) {
+            throw new IllegalArgumentException("mountBudget must be positive");
+        }
+        final int maxRetainedFiberCount = Math.min(maxLiveFiberCount, retainedFiberCount);
+        final int previousMaxLiveFiberCount;
+        synchronized (this) {
+            if (state != FiberRuntimeState.OPEN) {
+                return;
+            }
+            previousMaxLiveFiberCount = configuration.maxLiveFiberCount;
+            configuration = new Configuration(maxLiveFiberCount, maxRetainedFiberCount, mountBudget);
+            fiberPool.reconcileRetention();
+            for (int i = 0, n = configurationListeners.size(); i < n; i++) {
+                try {
+                    configurationListeners.getQuick(i).onConfigurationChanged(
+                            maxLiveFiberCount,
+                            maxRetainedFiberCount
+                    );
+                } catch (Throwable th) {
+                    LOG.critical().$("fiber runtime configuration listener failed [error=").$(th).I$();
+                }
+            }
+        }
+        if (maxLiveFiberCount > previousMaxLiveFiberCount) {
+            capacityWaitQueue.fireAll();
         }
     }
 
@@ -926,7 +1020,7 @@ public final class FiberRuntime {
                 && isPoolQuiesced
                 && outstandingTaskCount.get() == 0
                 && finalizerCount.get() == 0
-                && runQueue.depth() == 0
+                && !runQueue.hasAvailable()
                 && fiberPool.getCreatedCount() == fiberPool.getRetiredCount()
                 && !fiberPool.hasInFlightWaitRegistrations()) {
             state = FiberRuntimeState.CLOSED;
@@ -984,6 +1078,18 @@ public final class FiberRuntime {
     void signalCapacity() {
         if (state == FiberRuntimeState.OPEN) {
             capacityWaitQueue.fire();
+        }
+    }
+
+    private static final class Configuration {
+        private final int maxLiveFiberCount;
+        private final int maxRetainedFiberCount;
+        private final int mountBudget;
+
+        private Configuration(int maxLiveFiberCount, int maxRetainedFiberCount, int mountBudget) {
+            this.maxLiveFiberCount = maxLiveFiberCount;
+            this.maxRetainedFiberCount = maxRetainedFiberCount;
+            this.mountBudget = mountBudget;
         }
     }
 }

@@ -28,7 +28,6 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
-import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -89,21 +88,6 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     @Override
     public FactoryProvider getFactoryProvider() {
         return getDelegate().getFactoryProvider();
-    }
-
-    @Override
-    public int getFiberMaxLiveCount() {
-        return getDelegate().getFiberMaxLiveCount();
-    }
-
-    @Override
-    public int getFiberMountBudget() {
-        return getDelegate().getFiberMountBudget();
-    }
-
-    @Override
-    public int getFiberRetainedCount() {
-        return getDelegate().getFiberRetainedCount();
     }
 
     @Override
@@ -239,11 +223,6 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     @Override
     public int getWorkerCount() {
         return getDelegate().getWorkerCount();
-    }
-
-    @Override
-    public WorkerPoolMode getWorkerPoolMode() {
-        return getDelegate().getWorkerPoolMode();
     }
 
     @Override

@@ -22,40 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp.continuation;
+package io.questdb.mp;
 
-import org.jetbrains.annotations.TestOnly;
+public interface DynamicFiberWorkerPoolConfiguration extends WorkerPoolConfiguration {
 
-final class FiberRunQueue {
-    private final FiberRing ring;
+    FiberConfiguration getFiberConfiguration();
 
-    FiberRunQueue(int initialCapacity) {
-        ring = new FiberRing(initialCapacity);
+    void setFiberConfigurationListener(FiberConfigurationListener listener);
+
+    record FiberConfiguration(int maxLiveCount, int retainedCount, int mountBudget) {
     }
 
-    @TestOnly
-    int capacity() {
-        return ring.capacity();
-    }
-
-    int depth() {
-        return ring.depth();
-    }
-
-    boolean hasAvailable() {
-        return ring.hasAvailable();
-    }
-
-    void put(Fiber fiber) {
-        ring.put(fiber);
-    }
-
-    @TestOnly
-    void setDepthForTesting(int depth) {
-        ring.setDepthForTesting(depth);
-    }
-
-    Fiber tryDequeue() {
-        return ring.tryDequeue();
+    @FunctionalInterface
+    interface FiberConfigurationListener {
+        void onConfigurationChanged(int maxLiveCount, int retainedCount, int mountBudget);
     }
 }

@@ -255,7 +255,7 @@ public class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(
+        final HttpServer server = HttpServer.createMinHttpServer(
                 configuration,
                 workerPool,
                 configuration.getFactoryProvider().getHttpMinSocketFactory()

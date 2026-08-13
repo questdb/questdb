@@ -24,99 +24,63 @@
 
 package io.questdb.mp.continuation;
 
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Bounded lock-free MPMC ring of {@link Fiber} references. This is the scheduler's hot queue:
- * every launch and wake enqueues here and every carrier tick dequeues, so it must not funnel all
- * workers through one monitor. Capacity covers the pool's live-fiber limit and a fiber is enqueued
- * at most once (guarded by {@code Fiber.notificationState}), so a full ring indicates an accounting
- * bug rather than backpressure.
+ * Growable MPMC queue of {@link Fiber} references. The logical Fiber limits bound the number of
+ * entries; linked queue segments only let a live configuration increase exceed startup capacity.
  */
 final class FiberRing {
     private static final int MAX_CAPACITY = 1 << 30;
     private static final int MIN_CAPACITY = 32;
-    private final RingQueue<Holder> buffer;
-    private final int capacity;
-    private final MPSequence pubSeq;
-    private final MCSequence subSeq;
+    private final ConcurrentQueue<Fiber> queue;
+    @TestOnly
+    private volatile int forcedDepth = -1;
 
     FiberRing(int initialCapacity) {
         if (initialCapacity < 1 || initialCapacity > MAX_CAPACITY) {
             throw new IllegalArgumentException("initialCapacity is out of range [value=" + initialCapacity + ']');
         }
-        this.capacity = Numbers.ceilPow2(Math.max(MIN_CAPACITY, initialCapacity));
-        this.buffer = new RingQueue<>(Holder::new, capacity);
-        this.pubSeq = new MPSequence(capacity);
-        this.subSeq = new MCSequence(capacity);
-        pubSeq.then(subSeq).then(pubSeq);
+        queue = ConcurrentQueue.createConcurrentObjectQueue(
+                Numbers.ceilPow2(Math.max(MIN_CAPACITY, initialCapacity))
+        );
     }
 
     int capacity() {
-        return capacity;
+        return queue.capacity();
     }
 
     int depth() {
-        // racy by design: transiently overcounts by in-flight publications
-        return (int) (pubSeq.current() - subSeq.current());
+        final int depth = forcedDepth;
+        return depth > -1 ? depth : queue.getApproximateCount();
     }
 
     boolean hasAvailable() {
-        final long next = subSeq.current() + 1;
-        return pubSeq.availableIndex(next) >= next;
+        return queue.hasAvailable();
     }
 
     void put(Fiber fiber) {
         if (fiber == null) {
             throw new IllegalArgumentException("fiber must not be null");
         }
-        while (true) {
-            final long cursor = pubSeq.next();
-            if (cursor > -1) {
-                buffer.get(cursor).fiber = fiber;
-                pubSeq.done(cursor);
-                return;
-            }
-            // -1 also covers a consumer that claimed but has not released a slot yet; only a ring
-            // genuinely holding capacity entries is the accounting-bug throw
-            if (cursor == -1 && depth() >= capacity) {
-                throw new IllegalStateException("fiber ring is full");
-            }
-            Os.pause();
+        final int forcedDepth = this.forcedDepth;
+        if (forcedDepth > -1 && forcedDepth >= capacity()) {
+            throw new IllegalStateException("fiber ring is full");
         }
+        queue.enqueue(fiber);
     }
 
     @TestOnly
     void setDepthForTesting(int depth) {
-        if (depth < 0 || depth > capacity) {
+        if (depth < 0 || depth > capacity()) {
             throw new IllegalArgumentException("depth is out of range [value=" + depth + ']');
         }
-        pubSeq.setCurrent(subSeq.current() + depth);
+        forcedDepth = depth == 0 ? -1 : depth;
     }
 
     Fiber tryDequeue() {
-        while (true) {
-            final long cursor = subSeq.next();
-            if (cursor > -1) {
-                final Holder holder = buffer.get(cursor);
-                final Fiber fiber = holder.fiber;
-                holder.fiber = null;
-                subSeq.done(cursor);
-                return fiber;
-            }
-            if (cursor == -1) {
-                return null;
-            }
-            Os.pause();
-        }
-    }
-
-    private static final class Holder {
-        private Fiber fiber;
+        return queue.tryDequeueValue(null);
     }
 }

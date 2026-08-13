@@ -61,12 +61,20 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
                     .withFactoryProvider(DefaultFactoryProvider.INSTANCE)
                     .withNetwork(new BindFailingNetworkFacade())
                     .build(new DefaultTestCairoConfiguration(root));
-            try (WorkerPool workerPool = new TestWorkerPool(1)) {
-                try {
-                    new HttpServer(configuration, workerPool, PlainSocketFactory.INSTANCE);
-                    Assert.fail();
-                } catch (NetworkError expected) {
-                    Assert.assertTrue(expected.getMessage().contains("could not bind"));
+            for (WorkerPoolMode workerPoolMode : WorkerPoolMode.values()) {
+                try (WorkerPool workerPool = new TestWorkerPool(1, workerPoolMode)) {
+                    try {
+                        new HttpServer(configuration, workerPool, PlainSocketFactory.INSTANCE);
+                        Assert.fail();
+                    } catch (NetworkError expected) {
+                        Assert.assertTrue(expected.getMessage().contains("could not bind"));
+                    }
+                    if (workerPoolMode == WorkerPoolMode.FIBER_HOST) {
+                        Assert.assertEquals(
+                                0,
+                                workerPool.getFiberRuntime().getConfigurationListenerCountForTesting()
+                        );
+                    }
                 }
             }
         });

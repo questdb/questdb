@@ -25,6 +25,7 @@
 package io.questdb.mp.continuation;
 
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,8 +38,6 @@ public final class FiberPool {
     private final AtomicInteger inFlightWaitRegistrationCount = new AtomicInteger();
     private volatile boolean isClosed;
     private final ObjList<Fiber> liveFibers = new ObjList<>();
-    private final int maxLive;
-    private final int maxRetained;
     private final AtomicInteger parkedCount = new AtomicInteger();
     private final AtomicInteger retainedCount = new AtomicInteger();
     private final AtomicLong retiredCount = new AtomicLong();
@@ -61,8 +60,6 @@ public final class FiberPool {
         }
         this.beforeWaitFireForTesting = beforeWaitFireForTesting;
         this.freeList = new FiberRing(maxRetained);
-        this.maxLive = maxLive;
-        this.maxRetained = maxRetained;
         this.runtime = runtime;
     }
 
@@ -92,7 +89,7 @@ public final class FiberPool {
             return;
         }
         if (!isClosed) {
-            if (retainedCount.incrementAndGet() <= maxRetained) {
+            if (retainedCount.incrementAndGet() <= runtime.getMaxRetainedFiberCount()) {
                 try {
                     freeList.put(fiber);
                 } catch (RuntimeException | Error th) {
@@ -182,7 +179,7 @@ public final class FiberPool {
             return true;
         }
         synchronized (this) {
-            return !isClosed && liveFibers.size() < maxLive;
+            return !isClosed && liveFibers.size() < runtime.getMaxLiveFiberCount();
         }
     }
 
@@ -220,6 +217,19 @@ public final class FiberPool {
             if (inFlightWaitRegistrationCount.compareAndSet(count, count - 1)) {
                 return;
             }
+        }
+    }
+
+    void reconcileRetention() {
+        final int maxRetained = runtime.getMaxRetainedFiberCount();
+        while (retainedCount.get() > maxRetained) {
+            final Fiber fiber = freeList.tryDequeue();
+            if (fiber == null) {
+                Os.pause();
+                continue;
+            }
+            retainedCount.decrementAndGet();
+            retire(fiber);
         }
     }
 
@@ -298,7 +308,7 @@ public final class FiberPool {
             retainedFiber.reserve();
             return retainedFiber;
         }
-        if (liveFibers.size() < maxLive) {
+        if (liveFibers.size() < runtime.getMaxLiveFiberCount()) {
             final Fiber fiber = new Fiber(this, beforeWaitFireForTesting);
             fiber.setRegistryIndex(liveFibers.size());
             liveFibers.add(fiber);

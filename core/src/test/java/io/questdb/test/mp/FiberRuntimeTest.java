@@ -28,6 +28,7 @@ import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeConfigurationListener;
 import io.questdb.mp.continuation.FiberRuntimeQuiesceListener;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
@@ -287,6 +288,113 @@ public class FiberRuntimeTest {
                 for (int i = 0, n = threads.size(); i < n; i++) {
                     threads.getQuick(i).join();
                 }
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testConfigurationListenerReceivesCurrentValuesOnRegistration() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1, 1, 1);
+            try {
+                runtime.updateConfiguration(4, 2, 7);
+
+                final AtomicInteger maxLiveFiberCount = new AtomicInteger(-1);
+                final AtomicInteger maxRetainedFiberCount = new AtomicInteger(-1);
+                runtime.registerConfigurationListener((maxLive, maxRetained) -> {
+                    maxLiveFiberCount.set(maxLive);
+                    maxRetainedFiberCount.set(maxRetained);
+                });
+
+                Assert.assertEquals(4, maxLiveFiberCount.get());
+                Assert.assertEquals(2, maxRetainedFiberCount.get());
+            } finally {
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testConfigurationListenerCanBeUnregistered() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1, 1, 1);
+            try {
+                final AtomicInteger callCount = new AtomicInteger();
+                final FiberRuntimeConfigurationListener listener =
+                        (maxLive, maxRetained) -> callCount.incrementAndGet();
+                runtime.registerConfigurationListener(listener);
+
+                Assert.assertEquals(1, callCount.get());
+                Assert.assertEquals(1, runtime.getConfigurationListenerCountForTesting());
+                Assert.assertTrue(runtime.unregisterConfigurationListener(listener));
+                Assert.assertFalse(runtime.unregisterConfigurationListener(listener));
+                Assert.assertEquals(0, runtime.getConfigurationListenerCountForTesting());
+
+                runtime.updateConfiguration(2, 1, 1);
+
+                Assert.assertEquals(1, callCount.get());
+            } finally {
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testConfigurationListenersAreReleasedOnQuiesce() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1, 1, 1);
+            runtime.registerConfigurationListener((maxLive, maxRetained) -> {
+            });
+            Assert.assertEquals(1, runtime.getConfigurationListenerCountForTesting());
+
+            runtime.beginQuiesce();
+
+            Assert.assertEquals(0, runtime.getConfigurationListenerCountForTesting());
+            Assert.assertTrue(runtime.awaitClosed(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+            runtime.closeAfterDrained();
+        });
+    }
+
+    @Test
+    public void testConfigurationUpdateChangesLiveRetentionAndMountBudget() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(2, 2, 1);
+            final OneShotTask firstTask = new OneShotTask();
+            final OneShotTask secondTask = new OneShotTask();
+            final OneShotTask thirdTask = new OneShotTask();
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(firstTask));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(secondTask));
+
+                runtime.updateConfiguration(1, 1, 7);
+                Assert.assertEquals(1, runtime.getMaxLiveFiberCount());
+                Assert.assertEquals(1, runtime.getMaxRetainedFiberCount());
+                Assert.assertEquals(7, runtime.getMountBudget());
+                Assert.assertEquals(LaunchResult.SATURATED, runtime.launch(thirdTask));
+
+                Assert.assertEquals(2, runtime.drain(2));
+                Assert.assertEquals(1, runtime.getRetainedFiberCount());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(1, runtime.getRetiredFiberCount());
+
+                runtime.updateConfiguration(3, 3, 9);
+                firstTask.reopen();
+                secondTask.reopen();
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(firstTask));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(secondTask));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(thirdTask));
+                Assert.assertEquals(3, runtime.drain(3));
+                Assert.assertEquals(3, runtime.getRetainedFiberCount());
+
+                runtime.updateConfiguration(3, 1, 11);
+                Assert.assertEquals(3, runtime.getMaxLiveFiberCount());
+                Assert.assertEquals(1, runtime.getMaxRetainedFiberCount());
+                Assert.assertEquals(11, runtime.getMountBudget());
+                Assert.assertEquals(1, runtime.getRetainedFiberCount());
+                Assert.assertEquals(2, runtime.drain(2));
+                Assert.assertEquals(3, runtime.getRetiredFiberCount());
+            } finally {
                 close(runtime);
             }
         });

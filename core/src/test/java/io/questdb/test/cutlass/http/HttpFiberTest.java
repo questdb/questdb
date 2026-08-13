@@ -27,12 +27,15 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConnectionFiberTask;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
@@ -42,6 +45,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolConfigurationWrapper;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
@@ -59,6 +63,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -87,6 +92,242 @@ public class HttpFiberTest extends AbstractTest {
         TestUtils.assertMemoryLeak(() -> {
             assertBindingAfterSelectorReuse(WorkerPoolMode.FIBER_HOST);
             assertBindingAfterSelectorReuse(WorkerPoolMode.LEGACY);
+        });
+    }
+
+    @Test
+    public void testSelectorPoolTracksDynamicFiberLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withBaseDir(root)
+                    .withFiberEnabled(true)
+                    .withPort(0)
+                    .withWorkerCount(1)
+                    .build(cairoConfiguration);
+            final WorkerPoolConfigurationWrapper poolConfiguration = new WorkerPoolConfigurationWrapper();
+            poolConfiguration.setDelegate(fiberHostConfiguration(1));
+            try (WorkerPool workerPool = new TestWorkerPool(poolConfiguration)) {
+                final FiberRuntime runtime = workerPool.getFiberRuntime();
+                final HttpServer httpServer = new HttpServer(
+                        httpConfiguration,
+                        workerPool,
+                        PlainSocketFactory.INSTANCE
+                );
+                try {
+                    Assert.assertEquals(1, runtime.getConfigurationListenerCountForTesting());
+                    Assert.assertEquals(1, httpServer.getMaxRecycledSelectorCountForTesting());
+
+                    poolConfiguration.setDelegate(fiberHostConfiguration(3));
+
+                    Assert.assertEquals(3, httpServer.getMaxRecycledSelectorCountForTesting());
+                    final HttpRequestProcessorSelector first = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector second = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector third = httpServer.acquireSelectorForTesting();
+                    httpServer.releaseSelectorForTesting(first);
+                    httpServer.releaseSelectorForTesting(second);
+                    httpServer.releaseSelectorForTesting(third);
+                    Assert.assertEquals(3, httpServer.getRecycledSelectorCountForTesting());
+
+                    final HttpRequestProcessorSelector leasedFirst = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector leasedSecond = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector leasedThird = httpServer.acquireSelectorForTesting();
+                    Assert.assertEquals(0, httpServer.getRecycledSelectorCountForTesting());
+
+                    poolConfiguration.setDelegate(fiberHostConfiguration(1));
+
+                    Assert.assertEquals(1, httpServer.getMaxRecycledSelectorCountForTesting());
+                    httpServer.releaseSelectorForTesting(leasedFirst);
+                    httpServer.releaseSelectorForTesting(leasedSecond);
+                    httpServer.releaseSelectorForTesting(leasedThird);
+                    Assert.assertEquals(1, httpServer.getRecycledSelectorCountForTesting());
+
+                    poolConfiguration.setDelegate(fiberHostConfiguration(3));
+                    final HttpRequestProcessorSelector idleFirst = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector idleSecond = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector idleThird = httpServer.acquireSelectorForTesting();
+                    httpServer.releaseSelectorForTesting(idleFirst);
+                    httpServer.releaseSelectorForTesting(idleSecond);
+                    httpServer.releaseSelectorForTesting(idleThird);
+                    Assert.assertEquals(3, httpServer.getRecycledSelectorCountForTesting());
+
+                    poolConfiguration.setDelegate(fiberHostConfiguration(1));
+
+                    Assert.assertEquals(1, httpServer.getRecycledSelectorCountForTesting());
+                } finally {
+                    httpServer.close();
+                }
+                Assert.assertEquals(0, runtime.getConfigurationListenerCountForTesting());
+                Assert.assertEquals(0, httpServer.getMaxRecycledSelectorCountForTesting());
+                Assert.assertEquals(0, httpServer.getRecycledSelectorCountForTesting());
+
+                poolConfiguration.setDelegate(fiberHostConfiguration(3));
+
+                Assert.assertEquals(0, httpServer.getMaxRecycledSelectorCountForTesting());
+            }
+        });
+    }
+
+    @Test
+    public void testSelectorAcquireCannotCompleteAcrossClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withBaseDir(root)
+                    .withFiberEnabled(true)
+                    .withPort(0)
+                    .withWorkerCount(1)
+                    .build(cairoConfiguration);
+            final CountDownLatch selectorPopped = new CountDownLatch(1);
+            final CountDownLatch resumeAcquire = new CountDownLatch(1);
+            try (WorkerPool workerPool = new TestWorkerPool(fiberHostConfiguration(1))) {
+                final HttpServer httpServer = HttpServer.createWithSelectorPopHookForTesting(
+                        httpConfiguration,
+                        workerPool,
+                        PlainSocketFactory.INSTANCE,
+                        () -> {
+                            selectorPopped.countDown();
+                            TestUtils.await(resumeAcquire);
+                        }
+                );
+                final HttpRequestProcessorSelector recycled = httpServer.acquireSelectorForTesting();
+                httpServer.releaseSelectorForTesting(recycled);
+                final CountDownLatch acquireCompleted = new CountDownLatch(1);
+                final AtomicReference<HttpRequestProcessorSelector> acquiredSelector = new AtomicReference<>();
+                final AtomicReference<Throwable> acquireFailure = new AtomicReference<>();
+                final Thread acquiringThread = new Thread(() -> {
+                    try {
+                        acquiredSelector.set(httpServer.acquireSelectorForTesting());
+                    } catch (Throwable th) {
+                        acquireFailure.set(th);
+                    } finally {
+                        acquireCompleted.countDown();
+                    }
+                });
+                boolean isServerClosed = false;
+                try {
+                    acquiringThread.start();
+                    Assert.assertTrue(selectorPopped.await(10, TimeUnit.SECONDS));
+
+                    httpServer.close();
+                    isServerClosed = true;
+                    Assert.assertThrows(IllegalStateException.class, httpServer::acquireSelectorForTesting);
+                    resumeAcquire.countDown();
+
+                    Assert.assertTrue(acquireCompleted.await(10, TimeUnit.SECONDS));
+                    acquiringThread.join();
+                    final HttpRequestProcessorSelector acquired = acquiredSelector.get();
+                    if (acquired != null) {
+                        httpServer.releaseSelectorForTesting(acquired);
+                    }
+                    Assert.assertNull(acquired);
+                    Assert.assertTrue(acquireFailure.get() instanceof IllegalStateException);
+                } finally {
+                    resumeAcquire.countDown();
+                    acquiringThread.join();
+                    if (!isServerClosed) {
+                        httpServer.close();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSelectorPoolDynamicTrimContinuesAfterCloseFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withBaseDir(root)
+                    .withFiberEnabled(true)
+                    .withPort(0)
+                    .withWorkerCount(1)
+                    .build(cairoConfiguration);
+            final WorkerPoolConfigurationWrapper poolConfiguration = new WorkerPoolConfigurationWrapper();
+            poolConfiguration.setDelegate(fiberHostConfiguration(3));
+            try (WorkerPool workerPool = new TestWorkerPool(poolConfiguration)) {
+                final AtomicInteger failingCloseCount = new AtomicInteger();
+                final AtomicInteger followingCloseCount = new AtomicInteger();
+                final HttpServer httpServer = new HttpServer(
+                        httpConfiguration,
+                        workerPool,
+                        PlainSocketFactory.INSTANCE
+                );
+                try {
+                    httpServer.bind(closeTrackingHandlerFactory("/failing", failingCloseCount, true));
+                    httpServer.bind(closeTrackingHandlerFactory("/following", followingCloseCount, false));
+                    final HttpRequestProcessorSelector first = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector second = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector third = httpServer.acquireSelectorForTesting();
+                    httpServer.releaseSelectorForTesting(first);
+                    httpServer.releaseSelectorForTesting(second);
+                    httpServer.releaseSelectorForTesting(third);
+
+                    poolConfiguration.setDelegate(fiberHostConfiguration(1));
+
+                    Assert.assertEquals(1, httpServer.getRecycledSelectorCountForTesting());
+                    Assert.assertEquals(2, failingCloseCount.get());
+                    Assert.assertEquals(2, followingCloseCount.get());
+                } finally {
+                    try {
+                        httpServer.close();
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSelectorPoolTerminalCloseContinuesAfterCloseFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withBaseDir(root)
+                    .withFiberEnabled(true)
+                    .withPort(0)
+                    .withWorkerCount(1)
+                    .build(cairoConfiguration);
+            try (WorkerPool workerPool = new TestWorkerPool(fiberHostConfiguration(3))) {
+                final AtomicInteger failingCloseCount = new AtomicInteger();
+                final AtomicInteger followingCloseCount = new AtomicInteger();
+                final AtomicInteger serverCloseableCount = new AtomicInteger();
+                final HttpServer httpServer = new HttpServer(
+                        httpConfiguration,
+                        workerPool,
+                        PlainSocketFactory.INSTANCE
+                );
+                try {
+                    httpServer.bind(closeTrackingHandlerFactory("/failing", failingCloseCount, true));
+                    httpServer.bind(closeTrackingHandlerFactory("/following", followingCloseCount, false));
+                    httpServer.registerClosable(serverCloseableCount::incrementAndGet);
+                    httpServer.getSelectorByWorkerForTesting(0);
+                    final HttpRequestProcessorSelector first = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector second = httpServer.acquireSelectorForTesting();
+                    final HttpRequestProcessorSelector third = httpServer.acquireSelectorForTesting();
+                    httpServer.releaseSelectorForTesting(first);
+                    httpServer.releaseSelectorForTesting(second);
+                    httpServer.releaseSelectorForTesting(third);
+
+                    final RuntimeException failure = Assert.assertThrows(
+                            RuntimeException.class,
+                            httpServer::close
+                    );
+
+                    Assert.assertEquals(3, failure.getSuppressed().length);
+                    Assert.assertEquals(4, failingCloseCount.get());
+                    Assert.assertEquals(4, followingCloseCount.get());
+                    Assert.assertEquals(1, serverCloseableCount.get());
+                    Assert.assertEquals(0, httpServer.getRecycledSelectorCountForTesting());
+                } finally {
+                    if (serverCloseableCount.get() == 0) {
+                        try {
+                            httpServer.close();
+                        } catch (RuntimeException ignored) {
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -202,6 +443,108 @@ public class HttpFiberTest extends AbstractTest {
                         );
                     }
                 }));
+    }
+
+    @Test
+    public void testHttpMinDedicatedPoolIsLegacy() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withBaseDir(root)
+                    .withFiberEnabled(false)
+                    .withPort(0)
+                    .withWorkerCount(1)
+                    .build(cairoConfiguration);
+            try (
+                    WorkerPool workerPool = new TestWorkerPool(httpConfiguration);
+                    HttpServer minHttpServer = Services.INSTANCE.createMinHttpServer(httpConfiguration, workerPool)
+            ) {
+                Assert.assertFalse(workerPool.isFiberHost());
+                Assert.assertThrows(IllegalStateException.class, workerPool::getFiberRuntime);
+                workerPool.start();
+                try {
+                    new SendAndReceiveRequestBuilder()
+                            .withPort(minHttpServer.getPort())
+                            .execute(
+                                    "GET /status HTTP/1.1\r\n\r\n",
+                                    "HTTP/1.1 200 OK"
+                            );
+                    Assert.assertThrows(IllegalStateException.class, workerPool::getFiberRuntime);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHttpMinUsesOrdinaryJobsOnSharedFiberHostPool() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withBaseDir(root)
+                    .withFiberEnabled(true)
+                    .withPort(0)
+                    .withWorkerCount(1)
+                    .build(cairoConfiguration);
+            final WorkerPoolConfiguration workerPoolConfiguration = new WorkerPoolConfiguration() {
+                @Override
+                public Metrics getMetrics() {
+                    return Metrics.DISABLED;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return WorkerPoolMode.FIBER_HOST;
+                }
+            };
+            try (
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    WorkerPool workerPool = new TestWorkerPool(workerPoolConfiguration);
+                    HttpServer minHttpServer = Services.INSTANCE.createMinHttpServer(httpConfiguration, workerPool);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
+                httpServer.bind(createJsonQueryFactory("/query", httpConfiguration, engine));
+                workerPool.start();
+                try {
+                    new SendAndReceiveRequestBuilder()
+                            .withPort(minHttpServer.getPort())
+                            .execute(
+                                    "GET /status HTTP/1.1\r\n\r\n",
+                                    "HTTP/1.1 200 OK"
+                            );
+
+                    final FiberRuntime runtime = workerPool.getFiberRuntime();
+                    Assert.assertEquals(0, runtime.getCreatedFiberCount());
+                    Assert.assertEquals(0, runtime.getLaunchCount(LaunchResult.LAUNCHED));
+                    Assert.assertEquals(0, runtime.getMountCount());
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+
+                    try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                        testHttpClient.assertGet(
+                                "/query",
+                                "{\"query\":\"SELECT 42 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
+                                "SELECT 42 x",
+                                "localhost",
+                                httpServer.getPort(),
+                                null,
+                                null,
+                                null
+                        );
+                    }
+                    Assert.assertTrue(runtime.getMountCount() > 0);
+                    Assert.assertTrue(runtime.getCreatedFiberCount() > 0);
+                    Assert.assertTrue(runtime.getLaunchCount(LaunchResult.LAUNCHED) > 0);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
     }
 
     @Test
@@ -917,6 +1260,26 @@ public class HttpFiberTest extends AbstractTest {
         runtime.closeAfterDrained();
     }
 
+    private static HttpRequestHandlerFactory closeTrackingHandlerFactory(
+            String url,
+            AtomicInteger closeCount,
+            boolean isCloseFailing
+    ) {
+        final ObjHashSet<String> urls = new ObjHashSet<>();
+        urls.add(url);
+        return new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
+                return urls;
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new CloseTrackingHttpRequestHandler(closeCount, isCloseFailing);
+            }
+        };
+    }
+
     private static HttpRequestHandlerFactory createJsonQueryFactory(
             String url,
             DefaultHttpServerConfiguration httpConfiguration,
@@ -939,6 +1302,58 @@ public class HttpFiberTest extends AbstractTest {
                 );
             }
         };
+    }
+
+    private static WorkerPoolConfiguration fiberHostConfiguration(int maxLiveFiberCount) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public int getFiberMaxLiveCount() {
+                return maxLiveFiberCount;
+            }
+
+            @Override
+            public int getFiberRetainedCount() {
+                return 1;
+            }
+
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public WorkerPoolMode getWorkerPoolMode() {
+                return WorkerPoolMode.FIBER_HOST;
+            }
+        };
+    }
+
+    private static class CloseTrackingHttpRequestHandler implements HttpRequestHandler, QuietCloseable {
+        private final AtomicInteger closeCount;
+        private final boolean isCloseFailing;
+
+        private CloseTrackingHttpRequestHandler(AtomicInteger closeCount, boolean isCloseFailing) {
+            this.closeCount = closeCount;
+            this.isCloseFailing = isCloseFailing;
+        }
+
+        @Override
+        public void close() {
+            closeCount.incrementAndGet();
+            if (isCloseFailing) {
+                throw new RuntimeException("injected handler close failure");
+            }
+        }
+
+        @Override
+        public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+            return null;
+        }
     }
 
     private static class BatchingTestHttpDispatcher extends TestHttpDispatcher {

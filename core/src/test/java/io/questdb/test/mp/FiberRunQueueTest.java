@@ -92,6 +92,9 @@ public class FiberRunQueueTest {
                     start.await();
                     while (!isStopped.get()
                             && (producersDone.getCount() > 0 || runtime.getOutstandingTaskCount() > 0)) {
+                        if (runtime.getQueuedCount() < 0) {
+                            throw new AssertionError("fiber run queue depth became negative");
+                        }
                         if (runtime.drain(1) == 0) {
                             Os.pause();
                         }
@@ -129,9 +132,9 @@ public class FiberRunQueueTest {
     }
 
     @Test
-    public void testHotPutNeverGrowsTheRing() {
+    public void testLiveLimitIncreaseGrowsTheRunQueue() {
         final int burstSize = 64;
-        final FiberRuntime runtime = new FiberRuntime(burstSize);
+        final FiberRuntime runtime = new FiberRuntime(1, 1);
         final AtomicInteger nextIndex = new AtomicInteger();
         final AtomicIntegerArray order = new AtomicIntegerArray(burstSize);
         final ObjList<OrderedTask> tasks = new ObjList<>(burstSize);
@@ -140,18 +143,24 @@ public class FiberRunQueueTest {
         }
 
         try {
+            final int initialCapacity = runtime.getRunQueueCapacity();
+            runtime.updateConfiguration(burstSize, burstSize, 64);
             nextIndex.set(0);
             for (int i = 0; i < burstSize; i++) {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(tasks.getQuick(i)));
             }
-            Assert.assertEquals(burstSize, runtime.drain(burstSize));
-            // Capacity is fixed at construction from the live-fiber limit, so a burst that fills
-            // every live slot must still fit without put() ever reporting a full ring.
             final int capacity = runtime.getRunQueueCapacity();
             Assert.assertTrue(
-                    "run queue must hold every live fiber [capacity=" + capacity + ", burstSize=" + burstSize + ']',
-                    capacity >= burstSize
+                    "run queue must grow beyond its startup segment [initial=" + initialCapacity
+                            + ", current=" + capacity + ']',
+                    capacity > initialCapacity
             );
+            Assert.assertEquals(burstSize, runtime.getQueuedCount());
+            Assert.assertEquals(initialCapacity, runtime.drain(initialCapacity));
+            Assert.assertEquals(1, runtime.getBudgetExhaustionCount());
+            Assert.assertEquals(burstSize - initialCapacity, runtime.getQueuedCount());
+            Assert.assertEquals(burstSize - initialCapacity, runtime.drain(burstSize));
+            Assert.assertEquals(0, runtime.getQueuedCount());
             Assert.assertEquals(burstSize, runtime.getCreatedFiberCount());
 
             for (int round = 0; round < 100; round++) {
@@ -183,6 +192,12 @@ public class FiberRunQueueTest {
         }
 
         try {
+            final int capacity = runtime.getRunQueueCapacity();
+            Assert.assertTrue(
+                    "run queue must be sized for the startup live limit [capacity=" + capacity
+                            + ", burstSize=" + burstSize + ']',
+                    capacity >= burstSize
+            );
             for (int round = 0; round < 100; round++) {
                 nextIndex.set(0);
                 for (int i = 0; i < burstSize; i++) {
@@ -196,6 +211,7 @@ public class FiberRunQueueTest {
                 Assert.assertEquals(burstSize, runtime.drain(burstSize));
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
                 Assert.assertEquals(0, runtime.getQueuedCount());
+                Assert.assertEquals(capacity, runtime.getRunQueueCapacity());
                 Assert.assertEquals(burstSize, runtime.getCreatedFiberCount());
                 Assert.assertEquals(burstSize, runtime.getRetainedFiberCount());
                 for (int i = 0; i < burstSize; i++) {

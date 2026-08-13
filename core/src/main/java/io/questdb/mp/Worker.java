@@ -46,7 +46,6 @@ public class Worker extends Thread {
     private static final CarrierLocal<Worker> CURRENT = new CarrierLocal<>();
     private final int affinity;
     private final String criticalErrorLine;
-    private final int fiberMountBudget;
     private final FiberRuntime fiberRuntime;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
@@ -79,11 +78,9 @@ public class Worker extends Thread {
             long sleepMs,
             Metrics metrics,
             @Nullable FiberRuntime fiberRuntime,
-            int fiberMountBudget,
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
-        assert fiberMountBudget > 0;
         setName(poolName + '_' + workerId);
         this.poolName = poolName;
         this.workerId = workerId;
@@ -110,7 +107,6 @@ public class Worker extends Thread {
         this.sleepMs = sleepMs;
         this.metrics = metrics;
         this.fiberRuntime = fiberRuntime;
-        this.fiberMountBudget = fiberMountBudget;
         this.log = log;
     }
 
@@ -216,7 +212,7 @@ public class Worker extends Thread {
                 if (state == WorkerLifecycle.HALTING && fiberRuntime.state() == FiberRuntimeState.CLOSED) {
                     break;
                 }
-                isRunAsap |= fiberRuntime.drain(fiberMountBudget) > 0;
+                isRunAsap |= fiberRuntime.drain(fiberRuntime.getMountBudget()) > 0;
                 if (state == WorkerLifecycle.HALTING && fiberRuntime.state() == FiberRuntimeState.CLOSED) {
                     break;
                 }

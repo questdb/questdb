@@ -54,9 +54,7 @@ public class WorkerPool implements Closeable {
     private final ObjList<Job> assignedJobs = new ObjList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
-    private final int fiberMaxLiveCount;
-    private final int fiberMountBudget;
-    private final int fiberRetainedCount;
+    private final DynamicFiberWorkerPoolConfiguration dynamicFiberConfiguration;
     private final FiberRuntime fiberRuntime;
     private final ObjList<Object> freeOnExit = new ObjList<>();
     private final ReentrantLock haltLock = new ReentrantLock();
@@ -110,6 +108,10 @@ public class WorkerPool implements Closeable {
             throw new IllegalArgumentException("worker pool mode is required [pool=" + configuration.getPoolName() + ']');
         }
         final boolean isFiberHost = mode == WorkerPoolMode.FIBER_HOST;
+        this.dynamicFiberConfiguration = isFiberHost
+                && configuration instanceof DynamicFiberWorkerPoolConfiguration dynamicConfiguration
+                ? dynamicConfiguration
+                : null;
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.napThreshold = configuration.getNapThreshold();
@@ -117,9 +119,20 @@ public class WorkerPool implements Closeable {
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = configuration.getMetrics();
         this.priority = configuration.workerPoolPriority();
-        this.fiberMaxLiveCount = isFiberHost ? configuration.getFiberMaxLiveCount() : 0;
-        this.fiberMountBudget = isFiberHost ? configuration.getFiberMountBudget() : 1;
-        this.fiberRetainedCount = isFiberHost ? configuration.getFiberRetainedCount() : 0;
+        final int fiberMaxLiveCount;
+        final int fiberMountBudget;
+        final int fiberRetainedCount;
+        if (dynamicFiberConfiguration != null) {
+            final DynamicFiberWorkerPoolConfiguration.FiberConfiguration fiberConfiguration =
+                    dynamicFiberConfiguration.getFiberConfiguration();
+            fiberMaxLiveCount = fiberConfiguration.maxLiveCount();
+            fiberMountBudget = fiberConfiguration.mountBudget();
+            fiberRetainedCount = fiberConfiguration.retainedCount();
+        } else {
+            fiberMaxLiveCount = isFiberHost ? configuration.getFiberMaxLiveCount() : 0;
+            fiberMountBudget = isFiberHost ? configuration.getFiberMountBudget() : 1;
+            fiberRetainedCount = isFiberHost ? configuration.getFiberRetainedCount() : 0;
+        }
         if (fiberMountBudget < 1) {
             throw new IllegalArgumentException("fiber mount budget must be positive [pool=" + poolName + ']');
         }
@@ -136,11 +149,20 @@ public class WorkerPool implements Closeable {
         this.fiberRuntime = isFiberHost
                 ? new FiberRuntime(
                 fiberRetainedCount,
-                fiberMaxLiveCount
+                fiberMaxLiveCount,
+                fiberMountBudget
         )
                 : null;
         if (fiberRuntime != null) {
-            metrics.fiberMetrics().register(poolName, fiberRuntime);
+            try {
+                if (dynamicFiberConfiguration != null) {
+                    dynamicFiberConfiguration.setFiberConfigurationListener(fiberRuntime::updateConfiguration);
+                }
+                metrics.fiberMetrics().register(poolName, fiberRuntime);
+            } catch (Throwable th) {
+                rollbackFiberRuntimeConstruction(th);
+                throw th;
+            }
         }
     }
 
@@ -212,11 +234,15 @@ public class WorkerPool implements Closeable {
     }
 
     public int getFiberMaxLiveCount() {
-        return fiberMaxLiveCount;
+        return fiberRuntime != null ? fiberRuntime.getMaxLiveFiberCount() : 0;
+    }
+
+    public int getFiberMountBudget() {
+        return fiberRuntime != null ? fiberRuntime.getMountBudget() : 1;
     }
 
     public int getFiberRetainedCount() {
-        return fiberRetainedCount;
+        return fiberRuntime != null ? fiberRuntime.getMaxRetainedFiberCount() : 0;
     }
 
     public FiberRuntime getFiberRuntime() {
@@ -353,9 +379,9 @@ public class WorkerPool implements Closeable {
                 if (log != null && fiberRuntime != null) {
                     log.info().$("fiber-host worker pool configured [pool=").$(poolName)
                             .$(", workers=").$(workerCount)
-                            .$(", maxLive=").$(fiberMaxLiveCount)
-                            .$(", maxRetained=").$(fiberRetainedCount)
-                            .$(", mountBudget=").$(fiberMountBudget)
+                            .$(", maxLive=").$(fiberRuntime.getMaxLiveFiberCount())
+                            .$(", maxRetained=").$(fiberRuntime.getMaxRetainedFiberCount())
+                            .$(", mountBudget=").$(fiberRuntime.getMountBudget())
                             .I$();
                 }
                 // very common cleaner
@@ -379,7 +405,6 @@ public class WorkerPool implements Closeable {
                             sleepMs,
                             metrics,
                             fiberRuntime,
-                            fiberMountBudget,
                             log
                     );
                     worker.setPriority(priority);
@@ -448,6 +473,16 @@ public class WorkerPool implements Closeable {
             }
         }
         workerMetrics.update(min, max);
+    }
+
+    private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            primary.addSuppressed(failure);
+        }
+        return primary;
     }
 
     private static void closeInstances(ObjList<Job> jobs) {
@@ -633,9 +668,25 @@ public class WorkerPool implements Closeable {
                 }
                 return false;
             }
+            Throwable cleanupFailure = null;
             if (runtime != null) {
-                runtime.closeAfterDrained();
-                metrics.fiberMetrics().unregister(runtime);
+                if (dynamicFiberConfiguration != null) {
+                    try {
+                        dynamicFiberConfiguration.setFiberConfigurationListener(null);
+                    } catch (Throwable th) {
+                        cleanupFailure = addCleanupFailure(cleanupFailure, th);
+                    }
+                }
+                try {
+                    runtime.closeAfterDrained();
+                } catch (Throwable th) {
+                    cleanupFailure = addCleanupFailure(cleanupFailure, th);
+                }
+                try {
+                    metrics.fiberMetrics().unregister(runtime);
+                } catch (Throwable th) {
+                    cleanupFailure = addCleanupFailure(cleanupFailure, th);
+                }
             }
             closeInstances(assignedJobs);
             synchronized (workersLock) {
@@ -644,7 +695,7 @@ public class WorkerPool implements Closeable {
             // Closeables the caller explicitly handed to the pool via freeOnExit() are closed here;
             // the pool never close()d the jobs it minted itself -- those release through
             // closeInstance() above.
-            final Throwable cleanupFailure = Misc.freeObjListIfCloseableBestEffort(null, freeOnExit);
+            cleanupFailure = Misc.freeObjListIfCloseableBestEffort(cleanupFailure, freeOnExit);
             isHaltComplete = true;
             CairoException.rethrowCleanupFailure(cleanupFailure);
             return true;
@@ -653,6 +704,31 @@ public class WorkerPool implements Closeable {
             if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    private void rollbackFiberRuntimeConstruction(Throwable failure) {
+        if (dynamicFiberConfiguration != null) {
+            try {
+                dynamicFiberConfiguration.setFiberConfigurationListener(null);
+            } catch (Throwable th) {
+                addCleanupFailure(failure, th);
+            }
+        }
+        try {
+            metrics.fiberMetrics().unregister(fiberRuntime);
+        } catch (Throwable th) {
+            addCleanupFailure(failure, th);
+        }
+        try {
+            fiberRuntime.beginQuiesce();
+        } catch (Throwable th) {
+            addCleanupFailure(failure, th);
+        }
+        try {
+            fiberRuntime.closeAfterDrained();
+        } catch (Throwable th) {
+            addCleanupFailure(failure, th);
         }
     }
 

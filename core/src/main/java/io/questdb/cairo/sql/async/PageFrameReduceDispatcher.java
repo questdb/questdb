@@ -36,6 +36,7 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeConfigurationListener;
 import io.questdb.mp.continuation.FiberRuntimeQuiesceListener;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.LaunchResult;
@@ -51,7 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListener, QuietCloseable {
+public final class PageFrameReduceDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
     private static final int DEFAULT_BATCH_LIMIT = 64;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
@@ -96,6 +97,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         this.timerShards = engine.getTimerShards();
         try {
             runtime.registerQuiesceListener(this);
+            runtime.registerConfigurationListener(this);
         } catch (Throwable th) {
             taskPool.close();
             throw th;
@@ -325,13 +327,23 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
         return batchRowBudget;
     }
 
+    public long getProgressVersion() {
+        return progressVersion.get();
+    }
+
     @TestOnly
     public int getCreatedTaskCount() {
         return taskPool.getCreatedCount();
     }
 
-    public long getProgressVersion() {
-        return progressVersion.get();
+    @TestOnly
+    public int getTaskCapacity() {
+        return taskPool.getCapacity();
+    }
+
+    @TestOnly
+    public int getTaskMaxRetainedCount() {
+        return taskPool.getMaxRetainedCount();
     }
 
     public boolean isCurrentFiberOwned() {
@@ -341,6 +353,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeQuiesceListe
     @Override
     public boolean isQuiesced() {
         return quiesceState.get() == QUIESCE_DRAINED;
+    }
+
+    @Override
+    public void onConfigurationChanged(int maxLiveFiberCount, int maxRetainedFiberCount) {
+        taskPool.updateLimits(maxLiveFiberCount, maxRetainedFiberCount);
     }
 
     @Override

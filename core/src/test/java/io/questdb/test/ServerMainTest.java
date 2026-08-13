@@ -1253,7 +1253,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.net.accept.loop.timeout\tQDB_HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.affinity\tQDB_HTTP_MIN_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tdefault\tfalse\tfalse\n" +
-                                    "http.min.worker.fiber.enabled\tQDB_HTTP_MIN_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
@@ -1281,6 +1280,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.query.cache.enabled\tQDB_HTTP_QUERY_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "http.fiber.enabled\tQDB_HTTP_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.fiber.max.live\tQDB_HTTP_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "http.worker.fiber.max.retained\tQDB_HTTP_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "http.worker.fiber.mount.budget\tQDB_HTTP_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "http.request.header.buffer.size\tQDB_HTTP_REQUEST_HEADER_BUFFER_SIZE\t64448\tdefault\tfalse\ttrue\n" +
                                     "http.security.interrupt.on.closed.connection\tQDB_HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.security.max.response.rows\tQDB_HTTP_SECURITY_MAX_RESPONSE_ROWS\t9223372036854775807\tdefault\tfalse\tfalse\n" +
@@ -1390,6 +1392,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.fiber.enabled\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.fiber.max.live\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "mat.view.refresh.worker.fiber.max.retained\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "mat.view.refresh.worker.fiber.mount.budget\tQDB_MAT_VIEW_REFRESH_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.haltOnError\tQDB_MAT_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
@@ -1447,6 +1452,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.security.readonly\tQDB_PG_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
                                     "pg.fiber.enabled\tQDB_PG_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.fiber.max.live\tQDB_PG_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "pg.worker.fiber.max.retained\tQDB_PG_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "pg.worker.fiber.mount.budget\tQDB_PG_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "pg.select.cache.enabled\tQDB_PG_SELECT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
@@ -1487,15 +1495,21 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.network.worker.affinity\tQDB_SHARED_NETWORK_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.count\tQDB_SHARED_NETWORK_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.fiber.enabled\tQDB_SHARED_NETWORK_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.fiber.max.live\tQDB_SHARED_NETWORK_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.network.worker.fiber.max.retained\tQDB_SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.network.worker.fiber.mount.budget\tQDB_SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "shared.query.worker.affinity\tQDB_SHARED_QUERY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.count\tQDB_SHARED_QUERY_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.fiber.enabled\tQDB_SHARED_QUERY_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.fiber.max.live\tQDB_SHARED_QUERY_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.query.worker.fiber.max.retained\tQDB_SHARED_QUERY_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.query.worker.fiber.mount.budget\tQDB_SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.fiber.enabled\tQDB_SHARED_WRITE_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "worker.fiber.max.live\tQDB_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\tfalse\n" +
-                                    "worker.fiber.max.retained\tQDB_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\tfalse\n" +
-                                    "worker.fiber.mount.budget\tQDB_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.fiber.max.live\tQDB_SHARED_WRITE_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.write.worker.fiber.max.retained\tQDB_SHARED_WRITE_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
+                                    "shared.write.worker.fiber.mount.budget\tQDB_SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\tfalse\tconf\tfalse\tfalse\n" +
                                     "telemetry.enabled\tQDB_TELEMETRY_ENABLED\ttrue\tconf\tfalse\tfalse\n" +

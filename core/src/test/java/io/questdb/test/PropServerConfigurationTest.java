@@ -43,6 +43,7 @@ import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacadeImpl;
@@ -2672,8 +2673,12 @@ public class PropServerConfigurationTest {
 
         // Zero-valued properties must select the same derive branch through the prop configuration.
         final Properties properties = new Properties();
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
         assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
@@ -2683,41 +2688,101 @@ public class PropServerConfigurationTest {
     @Test
     public void testWorkerPoolFiberCapacityProperties() throws Exception {
         final Properties properties = new Properties();
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath(), "37");
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "11");
-        properties.setProperty(PropertyKey.WORKER_FIBER_MOUNT_BUDGET.getPropertyPath(), "5");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "37");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "11");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET.getPropertyPath(), "5");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
-        assertWorkerPoolFiberConfiguration(configuration.getHttpMinServerConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(configuration.getHttpServerConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(configuration.getMatViewRefreshPoolConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(configuration.getPGWireConfiguration(), 37, 11, 5);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolQueryConfiguration(), 37, 11, 5);
-        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolWriteConfiguration(), 37, 11, 5);
+    }
+
+    @Test
+    public void testWorkerPoolFiberCapacityPropertiesAreIsolated() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("http.worker.fiber.max.live", "101");
+        properties.setProperty("http.worker.fiber.max.retained", "11");
+        properties.setProperty("http.worker.fiber.mount.budget", "21");
+        properties.setProperty("pg.worker.fiber.max.live", "102");
+        properties.setProperty("pg.worker.fiber.max.retained", "12");
+        properties.setProperty("pg.worker.fiber.mount.budget", "22");
+        properties.setProperty("shared.network.worker.fiber.max.live", "103");
+        properties.setProperty("shared.network.worker.fiber.max.retained", "13");
+        properties.setProperty("shared.network.worker.fiber.mount.budget", "23");
+        properties.setProperty("shared.query.worker.fiber.max.live", "104");
+        properties.setProperty("shared.query.worker.fiber.max.retained", "14");
+        properties.setProperty("shared.query.worker.fiber.mount.budget", "24");
+        properties.setProperty("shared.write.worker.fiber.max.live", "105");
+        properties.setProperty("shared.write.worker.fiber.max.retained", "15");
+        properties.setProperty("shared.write.worker.fiber.mount.budget", "25");
+        properties.setProperty("mat.view.refresh.worker.fiber.max.live", "106");
+        properties.setProperty("mat.view.refresh.worker.fiber.max.retained", "16");
+        properties.setProperty("mat.view.refresh.worker.fiber.mount.budget", "26");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        assertWorkerPoolFiberConfiguration(configuration.getHttpServerConfiguration(), 101, 11, 21);
+        assertWorkerPoolFiberConfiguration(configuration.getPGWireConfiguration(), 102, 12, 22);
+        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 103, 13, 23);
+        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolQueryConfiguration(), 104, 14, 24);
+        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolWriteConfiguration(), 105, 15, 25);
+        assertWorkerPoolFiberConfiguration(configuration.getMatViewRefreshPoolConfiguration(), 106, 16, 26);
+    }
+
+    @Test
+    public void testWorkerPoolFiberGlobalPropertiesHaveNoFallback() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("worker.fiber.max.live", "17");
+        properties.setProperty("worker.fiber.max.retained", "7");
+        properties.setProperty("worker.fiber.mount.budget", "3");
+
+        Assert.assertTrue(PropertyKey.getByString("worker.fiber.max.live").isEmpty());
+        Assert.assertTrue(PropertyKey.getByString("worker.fiber.max.retained").isEmpty());
+        Assert.assertTrue(PropertyKey.getByString("worker.fiber.mount.budget").isEmpty());
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        assertDerivedFiberDefaults(configuration.getHttpServerConfiguration());
+        assertDerivedFiberDefaults(configuration.getPGWireConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolWriteConfiguration());
+        assertDerivedFiberDefaults(configuration.getMatViewRefreshPoolConfiguration());
+    }
+
+    @Test
+    public void testWorkerPoolFiberHttpMinPropertyIsRemoved() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("http.min.worker.fiber.enabled", "true");
+
+        Assert.assertTrue(PropertyKey.getByString("http.min.worker.fiber.enabled").isEmpty());
+        final WorkerPoolConfiguration configuration = newPropServerConfiguration(properties).getHttpMinServerConfiguration();
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getWorkerPoolMode()
+        );
+        try (WorkerPool workerPool = new WorkerPool(configuration)) {
+            Assert.assertFalse(workerPool.isFiberHost());
+            Assert.assertThrows(IllegalStateException.class, workerPool::getFiberRuntime);
+        }
     }
 
     @Test
     public void testWorkerPoolFiberCapacityValidation() throws Exception {
-        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MAX_LIVE, "-1");
-        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MAX_LIVE, "1_073_741_825");
-        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MAX_RETAINED, "-1");
-        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MAX_RETAINED, "1_073_741_825");
-        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MOUNT_BUDGET, "0");
-        assertFiberPropertyRejected(PropertyKey.WORKER_FIBER_MOUNT_BUDGET, "1_073_741_825");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE, "-1");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE, "1_073_741_825");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED, "-1");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED, "1_073_741_825");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET, "0");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET, "1_073_741_825");
 
         final Properties properties = new Properties();
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath(), "4");
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "5");
-        try {
-            newPropServerConfiguration(properties);
-            Assert.fail("expected retained Fiber count validation failure");
-        } catch (ServerConfigurationException expected) {
-            TestUtils.assertContains(
-                    expected.getMessage(),
-                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
-            );
-        }
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "5");
+        assertWorkerPoolFiberConfiguration(
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration(),
+                4,
+                4,
+                64
+        );
     }
 
     @Test
@@ -2751,10 +2816,6 @@ public class PropServerConfigurationTest {
                 PropServerConfiguration::getHttpServerConfiguration
         );
         assertWorkerPoolModeProperty(
-                PropertyKey.HTTP_MIN_WORKER_FIBER_ENABLED,
-                PropServerConfiguration::getHttpMinServerConfiguration
-        );
-        assertWorkerPoolModeProperty(
                 PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getSharedWorkerPoolNetworkConfiguration
         );
@@ -2779,12 +2840,10 @@ public class PropServerConfigurationTest {
     @Test
     public void testWorkerPoolFiberDerivedLiveClampsExplicitRetained() throws Exception {
         final Properties properties = new Properties();
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "1_000_000");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "1_000_000");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
         assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolNetworkConfiguration());
-        assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolQueryConfiguration());
-        assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolWriteConfiguration());
     }
 
     @Test
@@ -2805,14 +2864,10 @@ public class PropServerConfigurationTest {
     public void testWorkerPoolFiberRetainedCountClampedToDerivedLiveCount() throws Exception {
         final Properties properties = new Properties();
         properties.setProperty(PropertyKey.SHARED_WORKER_COUNT.getPropertyPath(), "32");
-        properties.setProperty(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "200");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "200");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
-        Assert.assertEquals(64, configuration.getHttpMinServerConfiguration().getFiberRetainedCount());
-        Assert.assertEquals(64, configuration.getMatViewRefreshPoolConfiguration().getFiberRetainedCount());
         Assert.assertEquals(200, configuration.getSharedWorkerPoolNetworkConfiguration().getFiberRetainedCount());
-        Assert.assertEquals(200, configuration.getSharedWorkerPoolQueryConfiguration().getFiberRetainedCount());
-        Assert.assertEquals(200, configuration.getSharedWorkerPoolWriteConfiguration().getFiberRetainedCount());
     }
 
     @Test

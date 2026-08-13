@@ -1639,21 +1639,6 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        public int getFiberMaxLiveCount() {
-            return delegate.getFiberMaxLiveCount();
-        }
-
-        @Override
-        public int getFiberMountBudget() {
-            return delegate.getFiberMountBudget();
-        }
-
-        @Override
-        public int getFiberRetainedCount() {
-            return delegate.getFiberRetainedCount();
-        }
-
-        @Override
         public Metrics getMetrics() {
             return delegate.getMetrics();
         }
@@ -1690,7 +1675,7 @@ public class ServerMain implements Closeable {
 
         @Override
         public io.questdb.mp.WorkerPoolMode getWorkerPoolMode() {
-            return delegate.getWorkerPoolMode();
+            return io.questdb.mp.WorkerPoolMode.LEGACY;
         }
 
         @Override

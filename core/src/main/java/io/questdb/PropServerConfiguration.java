@@ -701,7 +701,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
     private long httpMinWorkerNapThreshold;
-    private WorkerPoolMode httpMinWorkerPoolMode = WorkerPoolMode.LEGACY;
     private int httpMinWorkerPoolPriority;
     private long httpMinWorkerSleepThreshold;
     private long httpMinWorkerSleepTimeout;
@@ -1151,12 +1150,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
                 this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
-                this.httpMinWorkerPoolMode = readWorkerPoolMode(
-                        properties,
-                        env,
-                        PropertyKey.HTTP_MIN_WORKER_FIBER_ENABLED,
-                        false
-                );
 
                 final int httpMinWorkerPoolPriority = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_POOL_PRIORITY, Thread.MAX_PRIORITY - 2);
                 this.httpMinWorkerPoolPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, httpMinWorkerPoolPriority));
@@ -2563,37 +2556,44 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = factoryProvider;
     }
 
-    private static void configureFiberPool(
-            Log log,
+    private void configureFiberPool(
+            Properties properties,
+            @Nullable Map<String, String> env,
             PropFiberWorkerPoolConfiguration configuration,
-            int maxLiveCount,
-            int mountBudget,
-            int retainedCount
+            PropertyKey maxLiveKey,
+            PropertyKey retainedKey,
+            PropertyKey mountBudgetKey
     ) throws ServerConfigurationException {
+        final int maxLiveCount = getInt(properties, env, maxLiveKey, 0);
+        if (maxLiveCount < 0 || maxLiveCount > 1 << 30) {
+            throw new ServerConfigurationException(
+                    maxLiveKey.getPropertyPath() + " must be 0 or between 1 and " + (1 << 30)
+            );
+        }
+        final int retainedCount = getInt(properties, env, retainedKey, 0);
+        if (retainedCount < 0 || retainedCount > 1 << 30) {
+            throw new ServerConfigurationException(
+                    retainedKey.getPropertyPath() + " must be 0 or between 1 and " + (1 << 30)
+            );
+        }
+        final int mountBudget = getInt(properties, env, mountBudgetKey, 64);
+        if (mountBudget < 1 || mountBudget > 1 << 30) {
+            throw new ServerConfigurationException(
+                    mountBudgetKey.getPropertyPath() + " must be between 1 and " + (1 << 30)
+            );
+        }
         configuration.configureFiber(maxLiveCount, mountBudget, retainedCount);
         if (configuration.getFiberRetainedCount() > configuration.getFiberMaxLiveCount()) {
-            if (maxLiveCount == 0) {
-                configuration.configureFiber(
-                        maxLiveCount,
-                        mountBudget,
-                        configuration.getFiberMaxLiveCount()
-                );
-                log.info().$(PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath())
-                        .$(" exceeds the derived ").$(PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath())
-                        .$(", clamping [pool=").$(configuration.getPoolName())
-                        .$(", retained=").$(retainedCount)
-                        .$(", maxLive=").$(configuration.getFiberMaxLiveCount()).I$();
-                return;
-            }
-            throw new ServerConfigurationException(
-                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
-                            + " must not exceed "
-                            + PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath()
-                            + " [pool=" + configuration.getPoolName()
-                            + ", retained=" + configuration.getFiberRetainedCount()
-                            + ", maxLive=" + configuration.getFiberMaxLiveCount()
-                            + ']'
+            configuration.configureFiber(
+                    maxLiveCount,
+                    mountBudget,
+                    configuration.getFiberMaxLiveCount()
             );
+            log.info().$(retainedKey.getPropertyPath())
+                    .$(" exceeds ").$(maxLiveKey.getPropertyPath())
+                    .$(", clamping [pool=").$(configuration.getPoolName())
+                    .$(", retained=").$(retainedCount)
+                    .$(", maxLive=").$(configuration.getFiberMaxLiveCount()).I$();
         }
     }
 
@@ -2659,47 +2659,54 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env
     ) throws ServerConfigurationException {
-        final int maxLiveCount = getInt(properties, env, PropertyKey.WORKER_FIBER_MAX_LIVE, 0);
-        if (maxLiveCount < 0 || maxLiveCount > 1 << 30) {
-            throw new ServerConfigurationException(
-                    PropertyKey.WORKER_FIBER_MAX_LIVE.getPropertyPath()
-                            + " must be 0 or between 1 and " + (1 << 30)
-            );
-        }
-        final int retainedCount = getInt(properties, env, PropertyKey.WORKER_FIBER_MAX_RETAINED, 0);
-        if (retainedCount < 0 || retainedCount > 1 << 30) {
-            throw new ServerConfigurationException(
-                    PropertyKey.WORKER_FIBER_MAX_RETAINED.getPropertyPath()
-                            + " must be 0 or between 1 and " + (1 << 30)
-            );
-        }
-        final int mountBudget = getInt(properties, env, PropertyKey.WORKER_FIBER_MOUNT_BUDGET, 64);
-        if (mountBudget < 1 || mountBudget > 1 << 30) {
-            throw new ServerConfigurationException(
-                    PropertyKey.WORKER_FIBER_MOUNT_BUDGET.getPropertyPath()
-                            + " must be between 1 and " + (1 << 30)
-            );
-        }
-
         configureFiberPool(
-                log,
-                (PropFiberWorkerPoolConfiguration) httpMinServerConfiguration,
-                maxLiveCount,
-                mountBudget,
-                retainedCount
-        );
-        configureFiberPool(
-                log,
+                properties,
+                env,
                 (PropFiberWorkerPoolConfiguration) httpServerConfiguration,
-                maxLiveCount,
-                mountBudget,
-                retainedCount
+                PropertyKey.HTTP_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.HTTP_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.HTTP_WORKER_FIBER_MOUNT_BUDGET
         );
-        configureFiberPool(log, matViewRefreshPoolConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(log, pgConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(log, sharedWorkerPoolNetworkConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(log, sharedWorkerPoolQueryConfiguration, maxLiveCount, mountBudget, retainedCount);
-        configureFiberPool(log, sharedWorkerPoolWriteConfiguration, maxLiveCount, mountBudget, retainedCount);
+        configureFiberPool(
+                properties,
+                env,
+                matViewRefreshPoolConfiguration,
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                pgConfiguration,
+                PropertyKey.PG_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.PG_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.PG_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                sharedWorkerPoolNetworkConfiguration,
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                sharedWorkerPoolQueryConfiguration,
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET
+        );
+        configureFiberPool(
+                properties,
+                env,
+                sharedWorkerPoolWriteConfiguration,
+                PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE,
+                PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED,
+                PropertyKey.SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET
+        );
     }
 
     private int configureSharedThreadPool(
@@ -5868,13 +5875,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpMinServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpServerConfiguration {
+    public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
 
         public PropHttpMinServerConfiguration() {
-        }
-
-        public PropHttpMinServerConfiguration(WorkerPoolConfiguration configuration) {
-            super(configuration);
         }
 
         @Override
@@ -6025,11 +6028,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWorkerCount() {
             return httpMinWorkerCount;
-        }
-
-        @Override
-        public WorkerPoolMode getWorkerPoolMode() {
-            return httpMinWorkerPoolMode;
         }
 
         @Override

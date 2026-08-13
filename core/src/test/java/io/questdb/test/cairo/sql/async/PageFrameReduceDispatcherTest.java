@@ -85,6 +85,33 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     @Test
+    public void testFiberTaskPoolLimitsFollowRuntimeConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                Assert.assertEquals(1, dispatcher.getTaskCapacity());
+                Assert.assertEquals(1, dispatcher.getTaskMaxRetainedCount());
+
+                runtime.updateConfiguration(4, 2, 7);
+                Assert.assertEquals(4, dispatcher.getTaskCapacity());
+                Assert.assertEquals(2, dispatcher.getTaskMaxRetainedCount());
+
+                runtime.updateConfiguration(1, 4, 3);
+                Assert.assertEquals(1, dispatcher.getTaskCapacity());
+                Assert.assertEquals(1, dispatcher.getTaskMaxRetainedCount());
+            } finally {
+                close(runtime);
+                Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
     public void testBatchRowBudgetStopsDrainAfterFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -1609,7 +1636,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     public void testOrderedTaskFiberRetentionLimitBoundsPool() throws Exception {
         assertMemoryLeak(() -> {
             final int taskCount = 4;
-            final FiberRuntime runtime = new FiberRuntime(1, taskCount);
+            final FiberRuntime runtime = new FiberRuntime(taskCount, taskCount);
             final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
@@ -1657,6 +1684,11 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(taskCount, dispatcher.getCreatedTaskCount());
                 Assert.assertEquals(taskCount, runtime.getParkedFiberCount());
+
+                runtime.updateConfiguration(2, 1, 64);
+                Assert.assertEquals(2, dispatcher.getTaskCapacity());
+                Assert.assertEquals(1, dispatcher.getTaskMaxRetainedCount());
+                Assert.assertEquals(taskCount, dispatcher.getCreatedTaskCount());
 
                 waitQueue.fire(1, false);
                 Assert.assertEquals(taskCount, runtime.drain(taskCount));

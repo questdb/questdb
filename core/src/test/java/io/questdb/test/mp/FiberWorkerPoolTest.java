@@ -25,9 +25,12 @@
 package io.questdb.test.mp;
 
 import io.questdb.Metrics;
+import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolConfigurationWrapper;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
@@ -40,6 +43,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -69,6 +73,169 @@ public class FiberWorkerPoolTest {
             ) {
                 pool.close();
                 Assert.assertFalse(isBoundedHaltCalled.get());
+            }
+        });
+    }
+
+    @Test
+    public void testDynamicFiberConfigurationConstructionRollsBackPublication() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+            final RuntimeException expected = new RuntimeException("listener registration failed");
+            final RuntimeException cleanupFailure = new RuntimeException("listener rollback failed");
+            final AtomicReference<DynamicFiberWorkerPoolConfiguration.FiberConfigurationListener> listenerReference =
+                    new AtomicReference<>();
+            final WorkerPoolConfigurationWrapper configuration = new WorkerPoolConfigurationWrapper() {
+                @Override
+                public Metrics getMetrics() {
+                    return metrics;
+                }
+
+                @Override
+                public void setFiberConfigurationListener(FiberConfigurationListener listener) {
+                    super.setFiberConfigurationListener(listener);
+                    listenerReference.set(listener);
+                    if (listener != null) {
+                        throw expected;
+                    }
+                    throw cleanupFailure;
+                }
+            };
+            configuration.setDelegate(fiberHostConfiguration("fiber-construction-rollback-test", 1, false));
+
+            final RuntimeException failure = Assert.assertThrows(
+                    RuntimeException.class,
+                    () -> new TestWorkerPool(configuration)
+            );
+            Assert.assertSame(expected, failure);
+            Assert.assertArrayEquals(new Throwable[]{cleanupFailure}, failure.getSuppressed());
+            Assert.assertNull(listenerReference.get());
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(512)) {
+                metrics.fiberMetrics().scrapeIntoPrometheus(sink);
+                Assert.assertEquals(0, sink.size());
+            }
+        });
+    }
+
+    @Test
+    public void testDynamicFiberConfigurationConstructionUsesCoherentTuple() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch initialMaxLiveRead = new CountDownLatch(1);
+            final CountDownLatch releaseInitialMaxLiveRead = new CountDownLatch(1);
+            final WorkerPoolConfigurationWrapper configuration = new WorkerPoolConfigurationWrapper();
+            configuration.setDelegate(fiberHostConfiguration(
+                    "fiber-dynamic-construction-test",
+                    1,
+                    false,
+                    2,
+                    2,
+                    3,
+                    () -> {
+                        initialMaxLiveRead.countDown();
+                        try {
+                            if (!releaseInitialMaxLiveRead.await(10, TimeUnit.SECONDS)) {
+                                throw new AssertionError("timed out waiting to release initial Fiber configuration");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+            ));
+
+            final AtomicReference<Throwable> asyncError = new AtomicReference<>();
+            final AtomicReference<TestWorkerPool> constructedPool = new AtomicReference<>();
+            final Thread constructor = new Thread(() -> {
+                try {
+                    constructedPool.set(new TestWorkerPool(configuration));
+                } catch (Throwable th) {
+                    asyncError.set(th);
+                }
+            });
+            constructor.start();
+            try {
+                Assert.assertTrue(initialMaxLiveRead.await(10, TimeUnit.SECONDS));
+                configuration.setDelegate(fiberHostConfiguration(
+                        "fiber-dynamic-construction-test",
+                        1,
+                        false,
+                        4,
+                        4,
+                        5,
+                        null
+                ));
+            } finally {
+                releaseInitialMaxLiveRead.countDown();
+                constructor.join(10_000L);
+            }
+            Assert.assertFalse(constructor.isAlive());
+
+            final TestWorkerPool pool = constructedPool.get();
+            try {
+                if (asyncError.get() != null) {
+                    throw new AssertionError(asyncError.get());
+                }
+                Assert.assertNotNull(pool);
+                final FiberRuntime runtime = pool.getFiberRuntime();
+                Assert.assertEquals(4, runtime.getMaxLiveFiberCount());
+                Assert.assertEquals(4, runtime.getMaxRetainedFiberCount());
+                Assert.assertEquals(5, runtime.getMountBudget());
+            } finally {
+                if (pool != null) {
+                    pool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDynamicFiberConfigurationHaltContinuesAfterListenerFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+            final RuntimeException expected = new RuntimeException("listener removal failed");
+            final AtomicReference<DynamicFiberWorkerPoolConfiguration.FiberConfigurationListener> listenerReference =
+                    new AtomicReference<>();
+            final WorkerPoolConfigurationWrapper configuration = new WorkerPoolConfigurationWrapper() {
+                @Override
+                public Metrics getMetrics() {
+                    return metrics;
+                }
+
+                @Override
+                public void setFiberConfigurationListener(FiberConfigurationListener listener) {
+                    super.setFiberConfigurationListener(listener);
+                    listenerReference.set(listener);
+                    if (listener == null) {
+                        throw expected;
+                    }
+                }
+            };
+            configuration.setDelegate(fiberHostConfiguration("fiber-halt-cleanup-test", 1, false));
+            final TestWorkerPool pool = new TestWorkerPool(configuration);
+            final AtomicBoolean isJobClosed = new AtomicBoolean();
+            final AtomicBoolean isResourceClosed = new AtomicBoolean();
+            pool.assign(new Job() {
+                @Override
+                public void closeInstance() {
+                    isJobClosed.set(true);
+                }
+
+                @Override
+                public boolean run(WorkerContext workerContext) {
+                    return false;
+                }
+            });
+            pool.freeResourceOnExit(() -> isResourceClosed.set(true));
+
+            final RuntimeException failure = Assert.assertThrows(RuntimeException.class, pool::halt);
+            Assert.assertSame(expected, failure);
+            Assert.assertNull(listenerReference.get());
+            Assert.assertTrue(isJobClosed.get());
+            Assert.assertTrue(isResourceClosed.get());
+            Assert.assertEquals(FiberRuntimeState.CLOSED, pool.getFiberRuntime().state());
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(512)) {
+                metrics.fiberMetrics().scrapeIntoPrometheus(sink);
+                Assert.assertEquals(0, sink.size());
             }
         });
     }
@@ -392,6 +559,73 @@ public class FiberWorkerPoolTest {
     }
 
     @Test
+    public void testLiveWorkerObservesMountBudgetUpdate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WorkerPoolConfigurationWrapper configuration = new WorkerPoolConfigurationWrapper();
+            configuration.setDelegate(fiberHostConfiguration("fiber-mount-budget-test", 1, false, 4, 1));
+            final TestWorkerPool pool = new TestWorkerPool(configuration);
+            final CountDownLatch[] entered = {
+                    new CountDownLatch(1),
+                    new CountDownLatch(1),
+                    new CountDownLatch(1)
+            };
+            final CountDownLatch[] release = {
+                    new CountDownLatch(1),
+                    new CountDownLatch(1),
+                    new CountDownLatch(1)
+            };
+            final AtomicInteger loop = new AtomicInteger();
+            final AtomicInteger completed = new AtomicInteger();
+            pool.assign(workerContext -> {
+                final int index = loop.getAndIncrement();
+                if (index < entered.length) {
+                    entered[index].countDown();
+                    try {
+                        release[index].await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                }
+                return false;
+            });
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            pool.start();
+            try {
+                Assert.assertTrue(entered[0].await(10, TimeUnit.SECONDS));
+                for (int i = 0; i < 4; i++) {
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                        @Override
+                        protected void onDone() {
+                            completed.incrementAndGet();
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            return true;
+                        }
+                    }));
+                }
+
+                release[0].countDown();
+                Assert.assertTrue(entered[1].await(10, TimeUnit.SECONDS));
+                Assert.assertEquals(1, completed.get());
+
+                configuration.setDelegate(fiberHostConfiguration("fiber-mount-budget-test", 1, false, 4, 3));
+                Assert.assertEquals(3, runtime.getMountBudget());
+                release[1].countDown();
+                Assert.assertTrue(entered[2].await(10, TimeUnit.SECONDS));
+                Assert.assertEquals(4, completed.get());
+            } finally {
+                for (int i = 0; i < release.length; i++) {
+                    release[i].countDown();
+                }
+                pool.halt();
+            }
+        });
+    }
+
+    @Test
     public void testProductionConfigurationDefaultsToLegacy() {
         final WorkerPoolConfiguration configuration = () -> 1;
         Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getWorkerPoolMode());
@@ -416,15 +650,45 @@ public class FiberWorkerPoolTest {
             boolean isDaemon,
             int maxLiveCount
     ) {
+        return fiberHostConfiguration(poolName, workerCount, isDaemon, maxLiveCount, 64);
+    }
+
+    private static WorkerPoolConfiguration fiberHostConfiguration(
+            String poolName,
+            int workerCount,
+            boolean isDaemon,
+            int maxLiveCount,
+            int mountBudget
+    ) {
+        return fiberHostConfiguration(poolName, workerCount, isDaemon, maxLiveCount, 1, mountBudget, null);
+    }
+
+    private static WorkerPoolConfiguration fiberHostConfiguration(
+            String poolName,
+            int workerCount,
+            boolean isDaemon,
+            int maxLiveCount,
+            int retainedCount,
+            int mountBudget,
+            Runnable beforeMaxLiveRead
+    ) {
         return new WorkerPoolConfiguration() {
             @Override
             public int getFiberMaxLiveCount() {
+                if (beforeMaxLiveRead != null) {
+                    beforeMaxLiveRead.run();
+                }
                 return maxLiveCount;
             }
 
             @Override
+            public int getFiberMountBudget() {
+                return mountBudget;
+            }
+
+            @Override
             public int getFiberRetainedCount() {
-                return 1;
+                return retainedCount;
             }
 
             @Override
