@@ -12602,12 +12602,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // partition -- minutes to hours of continuous late-data ingest -- after
         // which every publish forever takes the .squash_ts file write.
         //
-        // Which for a parquet partition is not even read: the incremental-backup
-        // consumer falls back to .squash_ts only for a NATIVE partition, and for
-        // a parquet one reads data.parquet's last-modified time, which a token
-        // publish does not touch. So saturation does not degrade to a slower
-        // signal, it loses the signal -- and the fix has to be to keep the
-        // counter off the cliff, not to improve the fallback.
+        // Which for the incremental backup is not even read on a parquet
+        // partition: CheckpointManifest.getPartitionSquashTracker branches on
+        // isParquet and falls back to .squash_ts only on the NATIVE arm; the
+        // parquet arm takes data.parquet's last-modified time, which a token
+        // publish does not touch. So for THAT consumer saturation does not
+        // degrade to a slower signal, it loses the signal.
+        //
+        // Not a general property of .squash_ts, and the earlier note here said
+        // it as though it were. Cold storage resolves the same fallback with no
+        // isParquet branch at all (StoragePolicyJob.resolveSquashTracker, called
+        // from the parquet export check and from isSquashTrackerStale), so there
+        // the .squash_ts write below IS load-bearing for a parquet partition and
+        // saturation only makes the signal slower. One consumer losing it
+        // outright is enough to justify keeping the counter off the cliff rather
+        // than improving the fallback, which is what this skip does.
         //
         // Skipping the stamp when the transaction already moved the partition's
         // own _txn record does exactly that, and costs nothing: on that path the
