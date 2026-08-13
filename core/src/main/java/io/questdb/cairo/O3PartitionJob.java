@@ -55,6 +55,7 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -78,6 +79,12 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    /**
+     * Per-worker scratch for the composite plan, held the same way the parquet path holds its context: the
+     * plan is recomputed for every partition a commit touches, and none of its lists outlive the call.
+     */
+    private static final CarrierLocal<O3CompositeContext> COMPOSITE_CONTEXT =
+            new CarrierLocal<>(O3CompositeContext::new);
     private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
             new CarrierLocal<>(O3ParquetMergeContext::new);
     public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
@@ -206,6 +213,95 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * Plans what this commit does to one partition, executes it, and publishes the result: a
+     * {@code _geometry} record describing the pieces that now exist, and the sink block telling
+     * {@code _txn} the partition's new row count and where that record is.
+     * <p>
+     * The whole of steps 1 to 4 of {@link #processCompositePartition}, in one place, because they are one
+     * transaction: the geometry record is made durable here and the {@code _txn} that points at it is
+     * written by the commit that consumes the sink - the ordering {@code _cv} already obeys.
+     */
+    private static void processCompositePartition(
+            Path pathToTable,
+            int partitionIndex,
+            long partitionTimestamp,
+            long srcNameTxn,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long o3TimestampMin,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long partitionUpdateSinkAddr,
+            long oldPartitionSize
+    ) {
+        final O3CompositeContext ctx = COMPOSITE_CONTEXT.get();
+        ctx.clear();
+        final TxReader txReader = tableWriter.getTxReader();
+        final PartitionGeometry geometry = txReader.getGeometry();
+
+        final int actionCount = processCompositePartition(
+                partitionIndex,
+                srcOooLo,
+                srcOooHi,
+                sortedTimestampsAddr,
+                tableWriter,
+                null,
+                ctx.bounds,
+                ctx.cuts,
+                ctx.actions
+        );
+
+        final long e = executeCompositePlan(
+                pathToTable,
+                partitionTimestamp,
+                srcNameTxn,
+                txReader.getPartitionPhysicalRowCount(partitionIndex),
+                oooColumns,
+                srcOooMax,
+                sortedTimestampsAddr,
+                tableWriter,
+                ctx.bounds,
+                ctx.actions,
+                actionCount,
+                ctx.pieces
+        );
+
+        // The geometry that gets published describes what was WRITTEN. Pieces are recorded by the executor
+        // in timestamp order, which is the order addPiece requires.
+        long liveRows = 0;
+        geometry.beginUpdate(partitionIndex);
+        for (int i = 0, n = ctx.pieces.size(); i < n; i += 4) {
+            geometry.addPiece(
+                    ctx.pieces.getQuick(i),
+                    ctx.pieces.getQuick(i + 1),
+                    ctx.pieces.getQuick(i + 2),
+                    ctx.pieces.getQuick(i + 3)
+            );
+            liveRows += ctx.pieces.getQuick(i + 3);
+        }
+        geometry.commitUpdate(partitionIndex, e);
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                tableWriter.getTxn() + 1,
+                tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
+                tableWriter.getConfiguration().getCommitMode()
+        );
+
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, liveRows);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        // The partition keeps its directory and its name txn - the rows went into the files it already has
+        // - so it does NOT mutate in the sense the sink means, and nothing is queued for removal.
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(0, 0));
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
+        Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, geometryRef);
+    }
+
+    /**
      * Executes a plan against one partition, and returns the {@code E} it left behind - the partition's
      * new physical extent, which is where the next write to it will append.
      * <p>
@@ -306,27 +402,32 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), pieceHi
                                 )
                         ) {
-                            final long pieceTimestampAddr = timestampAddressOf(source, metadata.getTimestampIndex(), pieceHi);
-                            Vect.mergeTwoLongIndexesAsc(
+                            // The column stays OPEN across both calls below. Its address is only valid
+                            // while it is - closing it releases the mapping, and reading the address after
+                            // that is a use-after-free the merge index walks straight into.
+                            try (FrameColumn timestampColumn = source.createColumn(metadata.getTimestampIndex())) {
+                                final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
+                                Vect.mergeTwoLongIndexesAsc(
                                     pieceTimestampAddr,
                                     pieceLo,
                                     pieceRows,
                                     sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
                                     o3Rows,
-                                    mergeIndexAddr
-                            );
-                            FrameAlgebra.merge(
-                                    target,
-                                    source,
-                                    pieceLo,
-                                    pieceHi,
-                                    o3,
-                                    action.o3Lo,
-                                    action.o3Hi + 1,
-                                    mergeIndexAddr,
-                                    upcomingTableTxn,
-                                    commitMode
-                            );
+                                        mergeIndexAddr
+                                );
+                                FrameAlgebra.merge(
+                                        target,
+                                        source,
+                                        pieceLo,
+                                        pieceHi,
+                                        o3,
+                                        action.o3Lo,
+                                        action.o3Hi + 1,
+                                        mergeIndexAddr,
+                                        upcomingTableTxn,
+                                        commitMode
+                                );
+                            }
                         } finally {
                             Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
                         }
@@ -359,14 +460,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         piecesOut.add(rowOffset, rowCount);
     }
 
-    /**
-     * The address of the partition's designated-timestamp column, mapped as far as {@code rowHi}.
-     */
-    private static long timestampAddressOf(Frame frame, int timestampIndex, long rowHi) {
-        try (FrameColumn column = frame.createColumn(timestampIndex)) {
-            return column.getContiguousDataAddr(rowHi);
-        }
-    }
 
     public static void processParquetPartition(
             Path pathToTable,
@@ -1053,23 +1146,32 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 && srcDataMax > 0
                 && compositeIndex > -1
                 && tableWriter.getConfiguration().isO3PartitionMergeAppendEnabled()) {
-            processCompositePartition(
-                    compositeIndex,
-                    srcOooLo,
-                    srcOooHi,
-                    sortedTimestampsAddr,
-                    tableWriter,
-                    null,
-                    // Allocated here only because this path throws immediately below. The executor will
-                    // hold the plan's scratch on the task, the way the parquet path holds its context.
-                    new LongList(),
-                    new LongList(),
-                    new ObjList<>()
-            );
-            throw CairoException.critical(0)
-                    .put("composite partition write is not implemented [table=").put(tableWriter.getTableToken().getTableName())
-                    .put(", partition=").put(partitionTimestamp)
-                    .put(']');
+            try {
+                processCompositePartition(
+                        pathToTable,
+                        compositeIndex,
+                        partitionTimestamp,
+                        srcNameTxn,
+                        oooColumns,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        o3TimestampMin,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        partitionUpdateSinkAddr,
+                        oldPartitionSize
+                );
+            } catch (Throwable e) {
+                LOG.error().$("process composite partition error [table=").$(tableWriter.getTableToken())
+                        .$(", e=").$(e)
+                        .I$();
+                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            } finally {
+                tableWriter.o3ClockDownPartitionUpdateCount();
+                tableWriter.o3CountDownDoneLatch();
+            }
+            return;
         }
 
         if (isParquet) {
@@ -4232,5 +4334,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         processPartition(queue.get(cursor), cursor, subSeq);
         return true;
+    }
+
+    /**
+     * The composite plan's scratch, reused across partitions on one worker.
+     */
+    private static class O3CompositeContext implements Mutable {
+        private final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
+        private final LongList bounds = new LongList();
+        private final LongList cuts = new LongList();
+        // Flat quads describing what the executor actually wrote: tsLo, tsHi, rowOffset, rowCount.
+        private final LongList pieces = new LongList();
+
+        @Override
+        public void clear() {
+            bounds.clear();
+            cuts.clear();
+            pieces.clear();
+        }
     }
 }
