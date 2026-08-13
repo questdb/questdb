@@ -26,7 +26,11 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -55,6 +59,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -953,6 +958,72 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 AAA\t3\t2024-01-01T02:00:00.000000Z
                                 """);
             }
+        });
+    }
+
+    /**
+     * A parquet column whose field id is negative belongs to no QuestDB table
+     * column, so it must never be given an id in the writer-index space: writer
+     * indices and parquet positions are the same numbers, and a synthesised id
+     * silently aliases the column onto whichever real column owns that index.
+     * <p>
+     * The covering index's own parquet artifact is exactly that file. Its
+     * synthetic {@code key_id} and {@code row_id} are parquet columns 0 and 1
+     * and carry field id -1, because the {@code _im} writer requires exactly
+     * that to tell them from the covered columns; the covered columns carry
+     * their writer indices. Here {@code ts} is writer index 0 -- covered
+     * because {@code cairo.posting.index.auto.include.timestamp} defaults on --
+     * and {@code price} is writer index 1, so substituting the parquet position
+     * for the negative id aliased {@code key_id} onto {@code ts} and
+     * {@code row_id} onto {@code price}. The symptom was not an error:
+     * {@code key_id} came back as the low 32 bits of each row's timestamp and
+     * {@code row_id} as the raw bits of a double. Only the parallel page-frame
+     * path projects by id, so only it was affected.
+     */
+    @Test
+    public void testNegativeFieldIdsDoNotCollideWithAWriterIndex() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pidx_proj (ts TIMESTAMP, price DOUBLE, sym SYMBOL, qty LONG)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pidx_proj SELECT" +
+                    " dateadd('u', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP)," +
+                    " x::DOUBLE," +
+                    " 's' || (x % 3)," +
+                    " x" +
+                    " FROM long_sequence(1000)");
+            // A later partition, so the indexed one is not the active partition.
+            execute("INSERT INTO pidx_proj VALUES ('2024-01-02T00:00:00Z', 1.0, 's0', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE pidx_proj CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE pidx_proj ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String indexParquetPath = findSinglePidxParquet("pidx_proj", "sym");
+
+            // Three symbols over 1000 postings: the key ids are the index's
+            // 1..3 (a key id is the symbol key plus one, 0 being the null key)
+            // and the row ids are the partition's own 0..999. An aliased key_id
+            // or row_id lands outside those ranges: before the fix key_id came
+            // back as 270606337..270607336, the low 32 bits of each row's
+            // timestamp.
+            assertQuery("SELECT min(key_id) minKey, max(key_id) maxKey, count_distinct(key_id) keys," +
+                    " min(row_id) minRow, max(row_id) maxRow, count_distinct(row_id) rows" +
+                    " FROM read_parquet('" + indexParquetPath + "')")
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("minKey\tmaxKey\tkeys\tminRow\tmaxRow\trows\n1\t3\t3\t0\t999\t1000\n");
+
+            // And the covered columns must still project by their field ids:
+            // every row's price, qty and timestamp derive from its own row id.
+            assertQuery("SELECT count() FROM read_parquet('" + indexParquetPath + "')" +
+                    " WHERE price <> row_id + 1 OR qty <> row_id + 1" +
+                    " OR ts <> dateadd('u', (row_id + 1)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP)")
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 
@@ -2038,6 +2109,32 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     LOG,
                     true
             );
+        }
+    }
+
+    /**
+     * Absolute path of the single {@code <col>.pidx.<indexTxn>.parquet} the seal
+     * left in the table's first partition. More than one would mean a superseded
+     * artifact survived, and reading whichever came first would make the caller's
+     * assertions depend on directory order.
+     */
+    private String findSinglePidxParquet(String tableName, String indexColumnName) {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        try (Path path = new Path(); TableReader reader = engine.getReader(tableToken)) {
+            final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+            final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            path.of(configuration.getDbRoot()).concat(tableToken);
+            TableUtils.setPathForNativePartition(
+                    path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn
+            );
+            final String prefix = indexColumnName + ".pidx.";
+            final File[] files = new File(path.toString())
+                    .listFiles((ignore, name) -> name.startsWith(prefix) && name.endsWith(".parquet"));
+            Assert.assertNotNull("no partition directory at " + path, files);
+            Assert.assertEquals(
+                    "expected exactly one " + prefix + "*.parquet under " + path, 1, files.length
+            );
+            return path.concat(files[0].getName()).toString();
         }
     }
 

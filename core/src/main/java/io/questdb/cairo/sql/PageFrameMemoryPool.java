@@ -193,7 +193,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // cursors rehash up on demand rather than every pool (incl. all-native
             // scans) paying for 256 slots.
             byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.MONOTONIC.maxCachedBuffers);
-            columnIdToParquetIdx = new IntIntHashMap(16);
+            // The empty-slot marker must be a key this map cannot hold, and its
+            // keys are ColumnMapping.parquetLookupKey values: every writer index
+            // (>= 0) and every negated parquet position (<= -1), so the default
+            // marker of -1 would silently swallow the entry for parquet column 0
+            // when that column has no field id. Only MIN_VALUE is out of reach.
+            columnIdToParquetIdx = new IntIntHashMap(16, 0.5, Integer.MIN_VALUE);
             frameMemory = new PageFrameMemoryImpl();
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             this.configuration = configuration;
@@ -1079,9 +1084,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         hasFullProjectionMap = false;
         for (int i = 0; i < parquetColumnCount; i++) {
             final int id = decoder.getColumnId(i);
-            // External parquet files may not have field IDs (all -1).
-            // Fall back to positional index so the lookup in openParquet() works.
-            columnIdToParquetIdx.put(id < 0 ? i : id, i);
+            // A parquet file written outside QuestDB may carry no field ids
+            // (all -1), and the covering index's parquet carries -1 on its
+            // synthetic key_id / row_id, so a negative id still needs a key.
+            // ColumnMapping.parquetLookupKey is that key on both sides: keying
+            // it by the bare position instead, as this once did, filed such a
+            // column under a number a real column's writer index owns, and
+            // whichever came last won the entry.
+            columnIdToParquetIdx.put(ColumnMapping.parquetLookupKey(id, i), i);
         }
     }
 
