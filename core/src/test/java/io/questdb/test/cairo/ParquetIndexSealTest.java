@@ -2863,6 +2863,14 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
      * oracles ran on the serial path alone to route around that, which made them
      * depend on {@code cairo.sql.parallel.read.parquet.enabled}, a config a user
      * can flip. Both paths are asserted now.
+     * <p>
+     * Which arm failed is the whole point of the label, so everything an arm
+     * can throw is labelled, not only {@code AssertionError} - a
+     * {@code CairoException} raised on one path and not the other is exactly
+     * the asymmetry worth naming. The label is built from {@code toString()}
+     * rather than {@code getMessage()}: a message-less {@code AssertionError}
+     * would otherwise report a line ending in "null". The original is chained
+     * either way, so nothing is lost.
      */
     private void assertIndexParquetQuery(String sql, String expected) throws Exception {
         final boolean wasParallel = sqlExecutionContext.isParallelReadParquetEnabled();
@@ -2872,8 +2880,8 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 sqlExecutionContext.setParallelReadParquetEnabled(parallel);
                 try {
                     assertQuery(sql).inferRandomAccess().expectSize().returns(expected);
-                } catch (AssertionError e) {
-                    throw new AssertionError("[parallelReadParquet=" + parallel + "] " + e.getMessage(), e);
+                } catch (Throwable th) {
+                    throw new AssertionError("[parallelReadParquet=" + parallel + "] " + th, th);
                 }
             }
         } finally {
