@@ -977,8 +977,29 @@ public class TableReader implements Closeable, SymbolTableSource {
         // do it as a first step before more expensive checks.
         if (txnScoreboard.isOutdated(txn)) {
             long partitionTableVersion = txFile.getPartitionTableVersion();
+            // Taken before the reload, against this reader's own snapshot, so it
+            // can be compared with the fresh one below. Only reached once the
+            // scoreboard says this txn is outdated, so it is not on the common
+            // release path.
+            long partitionListFingerprint = partitionListFingerprint();
             // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive. We do this check at the end.
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
+                if (partitionListFingerprint() == partitionListFingerprint) {
+                    // The version moved but no partition directory did. This task
+                    // means "the partition list moved on while I held this txn, so
+                    // directories I pinned may be removable", and there is nothing
+                    // for it to remove: an O3 partition purge is keyed on
+                    // partition directory and name txn, both unchanged.
+                    //
+                    // Several writer-side bumps are not partition-list changes --
+                    // markPartitionDataChanged, markParquetPartitionRemoteStale,
+                    // the squash counter -- and the covering-index token publish
+                    // is one of them, on a per-commit trigger. Without this the
+                    // queue takes a task per reader release after every such
+                    // commit, and under saturation logs a "queue is full" error
+                    // for work that would find nothing.
+                    return;
+                }
                 // The last lock for this txn is released, and this is not the latest txn number
                 // Schedule a job to clean up partition versions this reader may hold
                 if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
@@ -992,6 +1013,28 @@ public class TableReader implements Closeable, SymbolTableSource {
                         .$(']').$();
             }
         }
+    }
+
+    /**
+     * Identifies the partition list by the only two things an O3 partition purge
+     * can act on: which partitions are attached and which directory version each
+     * one names. A bump that leaves both alone -- a token publish, a data-changed
+     * mark, a squash-counter increment -- produces the same value, and a purge
+     * scheduled for it could only find nothing.
+     * <p>
+     * Deliberately not a proxy for "did anything change": it answers the
+     * narrower question the purge task exists to act on, and it is compared
+     * against the same reader's own pre-reload snapshot rather than against a
+     * latched version word.
+     */
+    private long partitionListFingerprint() {
+        final int n = txFile.getPartitionCount();
+        long h = n;
+        for (int i = 0; i < n; i++) {
+            h = h * 31 + txFile.getPartitionTimestampByIndex(i);
+            h = h * 31 + txFile.getPartitionNameTxn(i);
+        }
+        return h;
     }
 
     private void closeDeletedPartition(int partitionIndex) {

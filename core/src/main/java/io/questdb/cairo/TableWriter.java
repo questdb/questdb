@@ -12515,6 +12515,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // cover it. Bumping makes reconcileOpenPartitions0 close the parquet
         // partition, so a reader either still holds the old mapping and is still
         // pinned below visibleAtTxn, or re-maps and reads the new footer.
+        //
+        // Measured to be redundant on every path reachable today: over six
+        // consecutive O3 token publishes into a non-last parquet partition the
+        // _pm was re-mapped with and without this call, including the five where
+        // the partition name txn did not move. Kept as insurance, not deleted as
+        // dead: the invariant is what the purge window's soundness rests on, the
+        // paths that currently over-determine it are incidental, and the
+        // retirement commit DROP INDEX now makes is already a token-only commit.
+        // Its cost is bounded -- checkSchedulePurgeO3Partitions no longer
+        // schedules a partition purge for a bump that moves no partition
+        // directory. TableReader#testAReloadingReaderDropsItsParquetMetaMappingAcrossATokenPublish
+        // pins the invariant; it cannot pin this call, and says so.
         txWriter.bumpPartitionTableVersion();
         for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
             purgeSupersededParquetIndexArtifacts(

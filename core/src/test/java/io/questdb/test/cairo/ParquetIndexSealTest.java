@@ -555,6 +555,161 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * I3: the covering-index token publish bumps the partition table version so
+     * a reloading reader drops its {@code _pm} mapping, and that bump also fires
+     * {@code checkSchedulePurgeO3Partitions} on every reader release afterwards.
+     * <p>
+     * That task means "the partition list moved on while I held this txn, so
+     * directories I pinned may be removable". A token publish creates no
+     * removable directory -- same partitions, same name txns -- so every task it
+     * schedules is a no-op, and under queue pressure it also logs "could not
+     * queue purge partition task, queue is full" for work that would find
+     * nothing.
+     * <p>
+     * The reconciliation the bump exists to force is asserted separately by
+     * {@code testAReloadingReaderDropsItsParquetMetaMappingAcrossATokenPublish};
+     * this pins the other half, that the scheduling stops.
+     */
+    @Test
+    public void testATokenPublishSchedulesNoO3PartitionPurge() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+
+            final MessageBus bus = engine.getMessageBus();
+            drainO3PurgeDiscoveryQueue(bus);
+
+            final TableToken token = engine.verifyTableName(TABLE_NAME);
+            // DROP INDEX / ADD INDEX rather than an O3 insert: both publish a
+            // token into the partition's _pm and neither touches a single row, so
+            // the token publish is the ONLY thing that could schedule a purge. An
+            // O3 insert would not isolate it -- the O3 commit is itself a
+            // partition change and schedules purges of its own, which is exactly
+            // the work this task is for.
+            //
+            // The reader must be open across the publish and released after it,
+            // or checkSchedulePurgeO3Partitions never runs.
+            for (int i = 0; i < 4; i++) {
+                try (TableReader ignored = engine.getReader(token)) {
+                    execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                    drainWalQueue();
+                }
+                engine.releaseInactive();
+                try (TableReader ignored = engine.getReader(token)) {
+                    execute("ALTER TABLE " + TABLE_NAME
+                            + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                    drainWalQueue();
+                }
+                engine.releaseInactive();
+            }
+
+            Assert.assertEquals(
+                    "a token publish changes no partition directory, so it must schedule no O3 partition purge",
+                    0,
+                    drainO3PurgeDiscoveryQueue(bus)
+            );
+        });
+    }
+
+    /**
+     * I5: the opposite arm of
+     * {@link #testTheRefusalProbeResolvesThePinnedReadersOwnIndexTxn}. That one
+     * proves a reader which never reloads keeps its own snapshot's answer; this
+     * one proves a reader which DOES reload stops giving the old one.
+     * <p>
+     * The two together are what makes the superseded artifacts' purge window
+     * sound. The window is expressed in table txns, so it can only cover a
+     * reader that is still pinned below the publish. A token publish moves
+     * nothing else in {@code _txn} -- same partition name txn, same row count,
+     * same {@code data.parquet} size, untouched column version -- so without a
+     * restamp {@code reconcileOpenPartitions} takes its fast path and a reader
+     * can advance its txn past the publish while still holding the mapping it
+     * took at partition-open time. It would then resolve the old
+     * {@code index_txn} from outside the window that protects the files that
+     * token names.
+     * <p>
+     * Asserted through both the reader's own probe -- which is what a query
+     * reaches -- and the mapping size directly.
+     * <p>
+     * <b>This test does not discriminate the bump.</b> Removing
+     * {@code txWriter.bumpPartitionTableVersion()} from
+     * {@code publishParquetIndexTokens} leaves it green, and that is not a gap
+     * in the fixture: no production path reached from here publishes a token
+     * without also moving something the reader already reconciles on. Measured
+     * over six consecutive O3 token publishes into a non-last parquet partition,
+     * the {@code _pm} was re-mapped every time both with and without the bump,
+     * in the five of six where the partition name txn did not move either. The
+     * bump is therefore insurance rather than the operative signal today, and it
+     * is kept because the invariant it protects -- a reader must not advance its
+     * txn past a publish while holding the pre-publish mapping -- is what the
+     * purge window's soundness rests on. What this test pins is the invariant,
+     * so a future change that makes the bump operative cannot silently lose it.
+     */
+    @Test
+    public void testAReloadingReaderDropsItsParquetMetaMappingAcrossATokenPublish() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            final long firstIndexTxn;
+            try (Path path = new Path()) {
+                final String firstMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                firstIndexTxn = Numbers.parseLong(
+                        firstMeta.substring("sym.pidx.".length(), firstMeta.length() - "._im".length())
+                );
+            }
+
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                // Take the mapping first, at the size this snapshot's header
+                // names. The second seal appends past that tail.
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                final long mappedSize = reader.getParquetMetadataSize(0);
+                Assert.assertTrue("the reader must hold a _pm mapping", mappedSize > 0);
+                final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
+
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                drainWalQueue();
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+
+                final long secondIndexTxn;
+                try (Path path = new Path()) {
+                    final String secondMeta = newestFileNamed(
+                            partitionPath(path), "sym.pidx.", "._im", "sym.pidx." + firstIndexTxn + "._im");
+                    secondIndexTxn = Numbers.parseLong(
+                            secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length())
+                    );
+                }
+                Assert.assertTrue(
+                        "the fixture must actually supersede the first token, or the two answers coincide"
+                                + " and this test cannot fail [first=" + firstIndexTxn + ", second=" + secondIndexTxn + ']',
+                        secondIndexTxn > firstIndexTxn
+                );
+
+                // Advance this reader's txn past the publish. From here on it is
+                // outside the purge window that protects the first token's
+                // artifacts, so it must no longer be able to name them.
+                Assert.assertTrue("the reader must have something to reload", reader.reload());
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                Assert.assertNotEquals(
+                        "the reloading reader must re-map the _pm, not keep the mapping it took"
+                                + " at partition-open time",
+                        mappedSize,
+                        reader.getParquetMetadataSize(0)
+                );
+
+                try {
+                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                    Assert.fail("the parquet-form posting index must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + secondIndexTxn);
+                }
+            }
+        });
+    }
+
     @Test
     public void testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber() throws Exception {
         assertMemoryLeak(() -> {
@@ -1511,6 +1666,27 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             final long bound = cursor.getRecord().getLong(0);
             Assert.assertFalse("more than one purge log row for sealTxn=" + sealTxn, cursor.hasNext());
             return bound;
+        }
+    }
+
+    /**
+     * Empties the O3 partition purge discovery queue and returns how many tasks
+     * it held.
+     */
+    private static int drainO3PurgeDiscoveryQueue(MessageBus bus) {
+        int drained = 0;
+        while (true) {
+            long cursor = bus.getO3PurgeDiscoverySubSeq().next();
+            if (cursor == -2) {
+                Os.pause();
+                continue;
+            }
+            if (cursor < 0) {
+                return drained;
+            }
+            bus.getO3PurgeDiscoveryQueue().get(cursor);
+            bus.getO3PurgeDiscoverySubSeq().done(cursor);
+            drained++;
         }
     }
 
