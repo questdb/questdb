@@ -1455,6 +1455,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return columnVersionWriter;
     }
 
+    public ColumnVersionWriter getColumnVersionWriter() {
+        return columnVersionWriter;
+    }
+
+    public FrameFactory getFrameFactory() {
+        return engine.getFrameFactory();
+    }
+
     @Override
     public void commit() {
         commit(0);

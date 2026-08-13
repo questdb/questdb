@@ -29,6 +29,10 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.frm.Frame;
+import io.questdb.cairo.frm.FrameAlgebra;
+import io.questdb.cairo.frm.FrameColumn;
+import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
@@ -198,6 +202,172 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 minPieceRows,
                 actionsOut
         );
+    }
+
+    /**
+     * Executes a plan against one partition, and returns the {@code E} it left behind - the partition's
+     * new physical extent, which is where the next write to it will append.
+     * <p>
+     * Everything is written at the TAIL, above every row the partition already holds, so nothing live is
+     * overwritten and a reader pinned on the old geometry keeps addressing the bytes it always did. That is
+     * what makes the write safe without copying the untouched pieces:
+     * <ul>
+     *     <li>{@code KEEP} writes NOTHING. The piece's bytes stay where they are and only its extent is
+     *     carried into the new geometry. This is the action that pays for the whole design;</li>
+     *     <li>{@code NEW_PIECE} appends the incoming rows as they are;</li>
+     *     <li>{@code MERGE} appends the piece and the incoming rows interleaved, in timestamp order. The
+     *     piece's old bytes stay put and become dead space.</li>
+     * </ul>
+     * The source and the target are the SAME FILES, wrapped in two frames: one reading a region below
+     * {@code E}, one writing at {@code E}. Reading one region while appending to another is exactly what
+     * append-only allows.
+     * <p>
+     * The caller records each action's resulting piece as it goes, so the geometry that gets published
+     * describes what was actually written rather than what was planned.
+     */
+    private static long executeCompositePlan(
+            Path pathToTable,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long partitionE,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooMax,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            LongList bounds,
+            ObjList<O3CompositeMergeStrategy.Action> actions,
+            int actionCount,
+            LongList piecesOut
+    ) {
+        final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
+        final FrameFactory frameFactory = tableWriter.getFrameFactory();
+        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final long upcomingTableTxn = tableWriter.getTxn() + 1;
+        final Path partitionPath = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForNativePartition(
+                partitionPath,
+                metadata.getTimestampType(),
+                tableWriter.getPartitionBy(),
+                partitionTimestamp,
+                srcNameTxn
+        );
+
+        piecesOut.clear();
+        long e = partitionE;
+        // Cumulative row of the piece being read, in the partition's own row space.
+        long cumulativeLo = 0;
+        try (
+                Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), partitionE);
+                Frame source = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), partitionE);
+                Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax)
+        ) {
+            for (int i = 0; i < actionCount; i++) {
+                final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
+                final long o3Rows = action.getO3RowCount();
+                switch (action.type) {
+                    case KEEP -> {
+                        final long rows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                        addPiece(piecesOut, bounds, action.pieceIndex, cumulativeLo, rows, 0);
+                        cumulativeLo += rows;
+                    }
+                    case NEW_PIECE -> {
+                        final long at = e;
+                        FrameAlgebra.append(target, o3, action.o3Lo, action.o3Hi + 1, upcomingTableTxn, commitMode);
+                        e += o3Rows;
+                        // A new piece is founded at the first timestamp it carries - nothing below that
+                        // routes to it - and it holds only the batch.
+                        addNewPiece(
+                                piecesOut,
+                                getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo),
+                                getTimestampIndexValue(sortedTimestampsAddr, action.o3Hi),
+                                at,
+                                o3Rows
+                        );
+                    }
+                    case MERGE -> {
+                        final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                        final long at = e;
+                        final long mergeRows = pieceRows + o3Rows;
+                        final long indexSize = mergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                        final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                        try {
+                            // The piece's designated timestamps, read out of the partition's own file at
+                            // the rows the piece occupies.
+                            final long pieceTimestampAddr = timestampAddressOf(source, metadata.getTimestampIndex(), cumulativeLo + pieceRows);
+                            Vect.mergeTwoLongIndexesAsc(
+                                    pieceTimestampAddr,
+                                    cumulativeLo,
+                                    pieceRows,
+                                    sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
+                                    o3Rows,
+                                    mergeIndexAddr
+                            );
+                            FrameAlgebra.merge(
+                                    target,
+                                    source,
+                                    cumulativeLo,
+                                    cumulativeLo + pieceRows,
+                                    o3,
+                                    action.o3Lo,
+                                    action.o3Hi + 1,
+                                    mergeIndexAddr,
+                                    upcomingTableTxn,
+                                    commitMode
+                            );
+                        } finally {
+                            Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
+                        }
+                        e += mergeRows;
+                        // The merged image keeps the piece's floor - rows between that floor and the first
+                        // row it now holds still route here - and takes whichever side ends higher.
+                        addNewPiece(
+                                piecesOut,
+                                O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                Math.max(
+                                        O3CompositeMergeStrategy.getTsHi(bounds, action.pieceIndex),
+                                        getTimestampIndexValue(sortedTimestampsAddr, action.o3Hi)
+                                ),
+                                at,
+                                mergeRows
+                        );
+                        cumulativeLo += pieceRows;
+                    }
+                }
+            }
+        }
+        return e;
+    }
+
+    /**
+     * Records a piece the plan CARRIED FORWARD unchanged: its bytes were never touched, so it keeps the
+     * row offset it already had, which is its cumulative position plus whatever shift it was sitting at.
+     */
+    private static void addPiece(LongList piecesOut, LongList bounds, int pieceIndex, long cumulativeLo, long rows, long shift) {
+        addNewPiece(
+                piecesOut,
+                O3CompositeMergeStrategy.getTsLo(bounds, pieceIndex),
+                O3CompositeMergeStrategy.getTsHi(bounds, pieceIndex),
+                cumulativeLo + shift,
+                rows
+        );
+    }
+
+    /**
+     * Records one piece of the geometry being built: {@code tsLo}, {@code tsHi}, {@code rowOffset},
+     * {@code rowCount}, in the order {@link PartitionGeometry#addPiece} takes them.
+     */
+    private static void addNewPiece(LongList piecesOut, long tsLo, long tsHi, long rowOffset, long rowCount) {
+        piecesOut.add(tsLo, tsHi);
+        piecesOut.add(rowOffset, rowCount);
+    }
+
+    /**
+     * The address of the partition's designated-timestamp column, mapped as far as {@code rowHi}.
+     */
+    private static long timestampAddressOf(Frame frame, int timestampIndex, long rowHi) {
+        try (FrameColumn column = frame.createColumn(timestampIndex)) {
+            return column.getContiguousDataAddr(rowHi);
+        }
     }
 
     public static void processParquetPartition(
