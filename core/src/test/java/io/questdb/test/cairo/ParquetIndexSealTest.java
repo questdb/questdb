@@ -1088,12 +1088,32 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     parquetFileSizeAfter
             );
             try (Path path = new Path()) {
+                // Asserted against the O3 update's OWN footer, which is the one
+                // the sweep read: the sweep runs at beginParquetIndexTokenBatch,
+                // after the in-place update has patched the _pm header and
+                // before the reseal's publish appends anything, so the physical
+                // tail then was the update's footer. After the commit that
+                // footer is one prev step below the tail -- the publish anchors
+                // its prev at the committed head it merged from, which is
+                // exactly that footer. Resolving at parquetFileSizeAfter instead
+                // would land on the publish's footer, one footer later than the
+                // state under test; both drop sym2, so the old assertion held,
+                // but it pinned the wrong footer.
+                final int tailCoveringCount = coveringIndexCountAtTail(path, CHAIN_TABLE_NAME, 0);
+                final int updateFooterCoveringCount = coveringIndexCountAtTail(path, CHAIN_TABLE_NAME, 1);
+                Assert.assertTrue(
+                        "premise: the reseal's publish must have named the surviving covering column, or"
+                                + " the two footers below are not being told apart [tailCount="
+                                + tailCoveringCount + ']',
+                        tailCoveringCount > 0
+                );
                 Assert.assertEquals(
-                        "premise: the update's own footer must have dropped sym2's token, or the cheap"
-                                + " single-footer read protects the pair by itself and this test proves"
-                                + " nothing",
-                        Long.MIN_VALUE,
-                        publishedIndexTxnAt(path, CHAIN_TABLE_NAME, parquetFileSizeAfter, SYM2_COLUMN_ID)
+                        "premise: the O3 update's own footer -- the one the sweep read -- must have"
+                                + " dropped the covering section outright (updateFileMetadata's (0,0,0)"
+                                + " contract), or the cheap single-footer read protects the pair by"
+                                + " itself and this test proves nothing",
+                        0,
+                        updateFooterCoveringCount
                 );
                 // The verdict, from the reader's side: a reader pinned to the
                 // pre-insert snapshot resolves the footer that names the pair.
@@ -2497,6 +2517,39 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             bus.getO3PurgeDiscoveryQueue().get(cursor);
             bus.getO3PurgeDiscoverySubSeq().done(cursor);
             drained++;
+        }
+    }
+
+    /**
+     * The number of covering-index entries carried by the footer {@code stepsBack}
+     * {@code prev} links below the {@code _pm}'s physical tail. {@code 0} is the
+     * tail itself. Walks with the same {@code resolveLastFooter} /
+     * {@code resolvePrevFooter} pair the orphan sweep's chain walk uses, so a
+     * test can pin the footer the sweep saw rather than the one that happens to
+     * resolve for the current committed parquet size.
+     */
+    private int coveringIndexCountAtTail(Path path, String tableName, int stepsBack) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        final long addr = ParquetMetaFileReader.openAndMapRO(
+                ff,
+                partitionPath(path, tableName).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                reader
+        );
+        Assert.assertTrue("_pm must be readable", addr != 0);
+        final long fileSize = reader.getFileSize();
+        try {
+            Assert.assertTrue(reader.resolveLastFooter());
+            for (int i = 0; i < stepsBack; i++) {
+                Assert.assertTrue(
+                        "the _pm chain must be at least " + (stepsBack + 1) + " footers deep",
+                        reader.resolvePrevFooter()
+                );
+            }
+            return reader.getCoveringIndexCount();
+        } finally {
+            reader.clear();
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
         }
     }
 
