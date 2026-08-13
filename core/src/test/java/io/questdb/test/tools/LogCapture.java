@@ -68,8 +68,11 @@ public class LogCapture {
 
     /**
      * KNOWN DEFECT, shared with {@link #waitForRegex(String)} and deliberately
-     * not fixed here -- it is a test-infrastructure change touching 18 call
-     * sites in 12 files, so it is its own PR.
+     * not fixed here -- it is a test-infrastructure change touching 16 call
+     * sites in 11 files, so it is its own PR. Seven further statements reach
+     * this class through {@code SqlLoggingTest}'s own one-line
+     * {@code waitForRegex} wrapper, so the number of affected test statements is
+     * larger than the number of call sites on this class.
      * <p>
      * <b>The post-loop check tests the CLOCK, not the CONDITION.</b> The loop
      * exits either because the value arrived or because the wait elapsed, and
