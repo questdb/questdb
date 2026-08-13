@@ -1532,6 +1532,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+        // The LAG lives INSIDE the last partition's column files, above its live row count, and is made
+        // visible later by advancing that count rather than by moving anything. A commit that turns the
+        // partition COMPOSITE breaks the second half of that deal: the piece it relocates to the tail now
+        // occupies the file rows the lag was parked at, so what the count later adopts is somebody else's
+        // data. Applying the lag FIRST is what keeps the two apart - by the time this commit can make the
+        // partition composite, the lag rows are in the O3 buffers and go out through the same path as
+        // everything else, at E. A replace-range commit already demands this much (see the
+        // getLagRowCount() == 0 assertion it opens with); merge-append demands it for the same reason.
+        if (txWriter.getLagRowCount() > 0 && configuration.isO3PartitionMergeAppendEnabled()) {
+            commitToTimestamp = WalTxnDetails.FORCE_FULL_COMMIT;
+        }
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         bufferClusterTxnRanges(seqTxn, transactionBlock);
         // Capture wall clock once to reduce syscalls. Used for:
@@ -9883,10 +9894,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
-                // The LAG lives INSIDE the last partition's column files, appended past its live row count
-                // and committed in place later. A composite last partition has live rows past that point,
-                // so it refuses the LAG for the same reason a parquet one does - see
-                // isLastPartitionAppendBlocked.
+                // The LAG lives INSIDE the last partition's column files, parked above its live row count
+                // and made visible later by advancing that count. A COMPOSITE partition has live rows past
+                // that point, so it refuses the LAG for the same reason a parquet one does. This stops lag
+                // going IN; the FORCE_FULL_COMMIT in commitWalInsertTransactions drains what a partition
+                // was already holding when a commit turns it composite. Both are needed - dropping either
+                // one loses rows in testPreSplitsLastLogicalPartition.
                 boolean lastPartitionBlocksAppend = isLastPartitionAppendBlocked();
                 // On a FORMAT PARQUET table with no committed rows yet, the only
                 // partition is the native placeholder that openPartition above

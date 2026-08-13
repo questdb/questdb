@@ -260,11 +260,25 @@ Every in-place write into the last partition takes its file position from
 inside that piece and the close that followed truncated whatever it did not reach.
 
 A composite last partition now refuses those writes exactly as a PARQUET one does, through
-`isLastPartitionAppendBlocked()`. Two of the three sites matter:
+`isLastPartitionAppendBlocked()`, and a commit that could TURN a partition composite drains whatever lag it
+is already holding first. The two halves answer different questions - one keeps lag OUT of a composite
+partition, the other gets lag OUT OF THE WAY before a partition becomes one - and dropping either loses
+rows in `testPreSplitsLastLogicalPartition`.
+
+Sites:
 
 - **`noLag`**. The WAL LAG lives INSIDE the last partition's column files, appended past the live row count
   and committed in place later. This is the one that was doing the damage; blocking it is what turned
   `testPreSplitsLastLogicalPartition` and `testTailPiecePublishesGeometryOnceALaterPartitionArrives` green.
+- **`FORCE_FULL_COMMIT` when a merge-append table holds lag**, in `commitWalInsertTransactions`. The
+  partition a commit makes composite may have been holding lag when it arrived, and the piece the merge
+  relocates to the tail lands on the file rows that lag was parked at. Forcing the full commit applies the
+  lag first, through `o3MoveUncommitted` into the O3 buffers, so it goes out at `E` like everything else.
+  A replace-range commit already demands the same thing - it opens with `assert getLagRowCount() == 0`.
+  <br>**No test currently distinguishes this rule**: the suite was green without it, because the full-commit
+  path already moves lag into the O3 buffers before `processO3Block`. It is kept as the explicit statement
+  of the ordering, and it costs the lag optimisation on merge-append tables - a commit that finds lag can
+  no longer batch, it must drain.
 - **the per-partition `append` flag** in the O3 fan-out, beside `!isParquet`. `srcDataMax` is the live row
   count and would be the append's file row.
 - plus the drop-partition reopen, the end-of-O3-commit `setAppendPosition`, and the column-file reopen
