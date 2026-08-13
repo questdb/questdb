@@ -310,56 +310,12 @@ public class PostingGenLookup implements Closeable {
      * the {@code pendingTxnAtSeal < 0} fallback, taken whenever the publishing
      * caller has not armed {@code setNextTxnAtSeal} since the writer's last
      * {@code of(...)} (which resets the field to -1 through {@code close()}).
-     * Five production routes used to reach that fallback and no longer do (this
-     * is not an exhaustive list of routes that ever could -- see the search
-     * scope below, which names two that remain):
-     * {@code ContiguousFileIndexedFrameColumn.append} / {@code appendNulls} called
-     * {@code rollbackConditionally} BEFORE their conditional
-     * {@code setNextTxnAtSeal}, so the eviction a partition squash drives through
-     * {@code FrameAlgebra.append} republished tagged 0 with no crash in its
-     * precondition; and {@code TableWriter.openPartition} called
-     * {@code configureFollowerAndWriter} and then
-     * {@code rollbackConditionally(rowCount)} with no setter call in between, so a
-     * partition whose index still held rowids at or above the reopened row count
-     * republished its re-encoded entry tagged 0. Both now arm before they publish
-     * -- {@code upcomingTableTxn} and {@code txWriter.getTxn()} respectively.
-     * The other three are {@code TableWriter.openNewColumnFiles},
-     * {@code renameColumn}'s indexer rebind and
-     * {@code restorePostingIndexersToLastPartition}: none publishes itself and
-     * none commits through {@code commit00}, so the writer reached the next data
-     * commit still unset, and {@code commit00} runs {@code updateIndexes()}
-     * before {@code syncColumns()} arms anything. All three now arm
-     * {@code getTxn()+1}.
+     * The production routes that used to take that fallback, what was searched to
+     * find them, and the sites that remain open are enumerated once -- at the
+     * fallback itself in {@link PostingIndexWriter#publishToChain}. Arming those
+     * callers narrows the fallback's reach; it does not eliminate it.
      * <p>
-     * What was searched, so the claim can be re-checked: every site under
-     * {@code core/src/main} that RESETS the field, i.e. every entry point into a
-     * path-based {@code PostingIndexWriter.of()} (of() starts with close(), which
-     * sets it to -1) -- {@code configureFollowerAndWriter} (8 {@code TableWriter}
-     * sites), {@code configureWriter} ({@code TableWriter} x2,
-     * {@code IndexBuilder}, {@code TableSnapshotRestore}),
-     * {@code ContiguousFileIndexedFrameColumn.ofRW},
-     * {@code TableSnapshotRestore}'s direct {@code of()},
-     * {@code O3PartitionJob}'s, and {@code O3CopyJob}'s
-     * {@code openFromO3Context}. Three of those do NOT arm before the first call
-     * that can publish on the writer, and remain open:
-     * {@code TableWriter.changeSymbolCapacity} (harmless -- its
-     * {@code skipForPosting} guard reaches that branch only for a legacy BITMAP
-     * index, whose {@code BitmapIndexWriter} inherits a no-op setter), and the
-     * parquet index rebuilds in {@code O3PartitionJob} and
-     * {@code TableSnapshotRestore}, which run the whole {@code indexWriter.add()}
-     * loop before their {@code setNextTxnAtSeal}. {@code add()} is publish-capable
-     * once the loop crosses the indexer spill budget
-     * ({@code spillKey -> compactIfOverBudget -> flushAllPending ->
-     * publishToChain}), so those two can still tag an entry 0. Behaviour there is
-     * unchanged from before this work; the arming above narrows the fallback's
-     * reach rather than eliminating it.
-     * {@code PostingIndexWriter.closeNoTruncate()} presets 0 explicitly, but
-     * nothing under core/src/main calls that class's override
-     * ({@code SymbolMapWriter} and {@code SymbolMapUtil} hold a
-     * {@code BitmapIndexWriter}), and the convenience constructor that presets 0
-     * is {@code @TestOnly}.
-     * <p>
-     * None of that closes the gap below, because it does not change what 0 MEANS:
+     * That arming does not close the gap below, because it does not change what 0 MEANS:
      * a current-state caller arms the committed {@code _txn}, which is itself 0
      * until the table's first commit, and {@code .pk} files written before those
      * callers were armed still carry 0-tagged slots. So the detector

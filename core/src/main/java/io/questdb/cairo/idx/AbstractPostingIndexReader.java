@@ -1299,13 +1299,22 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
                 final int snapshotGenCount = genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
-                // Re-validate the chain header seqlock. extendHead mutates the
-                // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
-                // aligned stores and republishes the header. Without this
-                // check the picker can observe e.g. new GEN_COUNT with old
-                // VALUE_MEM_SIZE, leading to a snapshot whose gen-dir entries
-                // reference offsets past the recorded valueMemSize. Retry on
-                // any concurrent publish.
+                // Best-effort re-check of the chain-header seqlock: it says the
+                // head has moved on, start over. It does NOT hold a seqlock
+                // across snapshotMetadata. PostingIndexChainHeader.publish
+                // always writes the page the reader did NOT pick (:119-161) and
+                // stillStable re-reads only the picked page (:238-243), so ONE
+                // concurrent publish leaves the picked page's sequence pair
+                // untouched and slips through; it takes two or more publishes to
+                // flip back onto that page and trip this check. The pairing
+                // hazard this guards against in spirit -- new GEN_COUNT observed
+                // with old VALUE_MEM_SIZE, whose gen-dir entries would reference
+                // offsets past the recorded valueMemSize -- is already ruled out
+                // by the entry protocol: extendHead stores GEN_COUNT LAST behind
+                // a storeFence (PostingIndexChainWriter:292-293) and
+                // PostingIndexChainEntry.read() latches it FIRST behind a
+                // loadFence (:138-149). Keep the check anyway: it is two loads
+                // and it restarts the walk cheaply once the chain has churned.
                 if (!PostingIndexChainHeader.stillStable(keyMem, headerScratch.pageOffset, headerScratch.sequence)) {
                     if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
@@ -1334,10 +1343,26 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     Os.pause();
                     continue;
                 }
-                // Both seqlocks held across snapshotMetadata, so the gen-dir we
-                // walked is a single self-consistent entry version. A drop in
-                // the TXN_AT_SEAL sequence is therefore not a torn read but
-                // corruption at rest: a GEN_COUNT covering a gen-dir slot that
+                // The entry-level GEN_COUNT re-read above is what makes the walk
+                // safe, because gen-dir slots [0, GEN_COUNT) of a published entry
+                // are immutable for as long as GEN_COUNT stays equal. The only
+                // in-place gen-dir writer is PostingIndexWriter.publishToChain,
+                // which writes exactly ONE slot -- overrideGenIndex ==
+                // newGenCount - 1 -- and reaches its extend branch only from
+                // PostingIndexWriter.flushAllPending, which increments genCount
+                // before every publish and lets extendHead raise GEN_COUNT to
+                // newGenCount right after the slot write
+                // (PostingIndexChainWriter:292-295). Every other gen-dir writer --
+                // appendNewEntry, migrateHeadToFormat1, applyHeadTrim -- builds
+                // its entry at regionLimit and publishes it by flipping the head
+                // pointer. regionLimit is virgin past the head except where
+                // PostingIndexWriter.truncate() or recoveryDropAbandoned rewound
+                // it, so an entry offset reused with an EQUAL GEN_COUNT is a
+                // residual this re-read cannot see. Otherwise an unchanged
+                // GEN_COUNT means the gen-dir we walked is a single
+                // self-consistent entry version, so a drop in
+                // the TXN_AT_SEAL sequence is not a torn read but corruption
+                // at rest: a GEN_COUNT covering a gen-dir slot that
                 // was never validly written (historically, a .pk truncated below
                 // its published regionLimit -- see PostingIndexWriter.close()).
                 //

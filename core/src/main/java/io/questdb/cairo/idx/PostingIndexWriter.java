@@ -528,31 +528,20 @@ public class PostingIndexWriter implements IndexWriter {
                     // free the sibling indexers in unguarded loops, and O3CopyJob's
                     // finally { Misc.free(indexWriter); } would replace an in-flight
                     // O3 exception with this one.
-                    // The logging itself sits inside a swallow: AsyncLogRecord.$(Throwable)
-                    // allocates (getClass().getName(), getMessage(), getStackTrace()) and,
-                    // unlike $(Object) / $(Sinkable), guards none of it, so an
-                    // OutOfMemoryError raised while formatting `e` would escape close()
-                    // exactly in the ENOSPC / OOM scenario this catch exists for.
-                    // Swallowing that failure alone would strand the acquired log ring
-                    // slot: the chain would never reach I$(), and only a later chain
-                    // through THIS class's LOG on the SAME carrier reclaims it.
-                    // AbstractLogRecord keeps the AsyncLogRecord in a per-instance
-                    // CarrierLocal, so the stuck record is invisible to every other
-                    // Logger and every other carrier -- narrower than "this thread's
-                    // next log call". Level does not matter, though: prepareLogRecord
-                    // calls detectAbandonedLogRecord() on every level, so a later
-                    // LOG.info() from this class on the same carrier reclaims the stuck
-                    // ERROR slot even while the ERROR ring stays full. So close out
-                    // whatever the record holds with I$() either way, mirroring what
-                    // AsyncLogRecord.$(Object) / $(Sinkable) do before they rethrow.
-                    // I$() is the only release on either path. Two back-to-back calls
-                    // would not themselves corrupt the log sequence -- the producer is
-                    // an MPSequence, whose done(cursor) is an ordered flag write derived
-                    // from cursor alone, so repeating it stores the same value. The real
-                    // hazard is a release landing on a slot this chain no longer owns:
-                    // $() re-reads AsyncLogRecord's seq/cursor fields, and any
-                    // intervening chain on this carrier has reassigned them. A
-                    // NullLogRecord (ring full, or ERROR disabled) makes I$() a no-op.
+                    // The logging itself sits inside a swallow: AsyncLogRecord
+                    // .$(Throwable) allocates while formatting `e` and guards none
+                    // of it, so an OutOfMemoryError can escape mid-chain exactly in
+                    // the ENOSPC / OOM scenario this catch exists for. The
+                    // unconditional rec.I$() hands the acquired log ring slot back
+                    // on that path; NullLogRecord.I$() is a no-op, so a disabled or
+                    // ring-full record costs nothing. For what an unreleased record
+                    // costs and how a later chain on the same carrier reclaims it,
+                    // see AsyncLogRecord and AbstractLogRecord.prepareLogRecord.
+                    // CONSTRAINT, unenforced: do not add an $(Object) or $(Sinkable)
+                    // segment to THIS chain -- they are the only two segments that
+                    // release the record themselves and rethrow (AsyncLogRecord
+                    // :131-162), which would make the trailing rec.I$() a double
+                    // release onto a slot this chain may no longer own.
                     try {
                         LogRecord rec = LOG.error();
                         try {
@@ -4742,14 +4731,27 @@ public class PostingIndexWriter implements IndexWriter {
             // field to -1). That is SymbolColumnIndexer.configureFollowerAndWriter
             // (8 TableWriter sites), SymbolColumnIndexer.configureWriter
             // (TableWriter x2, IndexBuilder, TableSnapshotRestore),
-            // ContiguousFileIndexedFrameColumn.ofRW, TableSnapshotRestore's
-            // direct of(), O3PartitionJob's, and O3CopyJob's
-            // openFromO3Context. Each arms before the first call on that writer
-            // that can publish, except TableWriter.changeSymbolCapacity, whose
-            // skipForPosting guard means only a BITMAP index reaches it (and
-            // BitmapIndexWriter inherits IndexWriter's no-op setter). The
-            // remaining of() sites -- SymbolMapWriter's and SymbolMapUtil's --
-            // hold a BitmapIndexWriter, not this class. closeNoTruncate()
+            // ContiguousFileIndexedFrameColumn.ofRW, the direct of() calls in
+            // TableSnapshotRestore and O3PartitionJob.updateParquetIndexes, and
+            // O3CopyJob's openFromO3Context. Three of those do NOT arm before
+            // the first call on that writer that can publish, and remain open:
+            //   - TableWriter.changeSymbolCapacity, which is harmless: its
+            //     skipForPosting guard is exactly "indexed AND posting", so only
+            //     a legacy BITMAP index reaches the configureFollowerAndWriter
+            //     branch there, and BitmapIndexWriter inherits IndexWriter's
+            //     no-op setter.
+            //   - the parquet index rebuilds in O3PartitionJob
+            //     .updateParquetIndexes and TableSnapshotRestore
+            //     .rebuildParquetPartitionIndexes. Both run the whole
+            //     indexWriter.add() loop and call setNextTxnAtSeal only after
+            //     it, and add() is publish-capable once the loop crosses the
+            //     indexer spill budget (spillKey -> compactIfOverBudget ->
+            //     flushAllPending -> publishToChain), so those two can still tag
+            //     an entry 0. Behaviour there is unchanged from before this
+            //     work; the arming above narrows the fallback's reach rather
+            //     than eliminating it.
+            // The remaining of() sites -- SymbolMapWriter's and SymbolMapUtil's
+            // -- hold a BitmapIndexWriter, not this class. closeNoTruncate()
             // presets 0 explicitly, but nothing under core/src/main calls THIS
             // class's override, and the convenience constructor that presets 0
             // is @TestOnly. Not searched, and therefore not claimed: whether an

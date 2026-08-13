@@ -5406,34 +5406,21 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * slot 0 whenever the publishing caller left {@code pendingTxnAtSeal} unset. The
      * fixture below arms nothing before gen 0's publish, so gen 0 lands tagged 0, and
      * then arms gen 1 with {@code setNextTxnAtSeal(2L)} so gen 1 lands tagged 2.
-     * Five production callers used to leave it unset, and all now arm before the
-     * call that can publish:
-     * {@code ContiguousFileIndexedFrameColumn.append} / {@code appendNulls} called
-     * {@code rollbackConditionally} BEFORE their conditional
-     * {@code setNextTxnAtSeal} on a freshly {@code of()}-ed writer, which a partition
-     * squash drives through {@code FrameAlgebra.append} (see
-     * {@link #testSquashAppendRollbackPublishesUpcomingTxnAtSeal});
-     * {@code TableWriter.openPartition} called
-     * {@code rollbackConditionally} right after {@code configureFollowerAndWriter},
-     * whose {@code of()} reset the field to -1 (see
-     * {@link #testOpenPartitionRollbackPublishesCommittedTxnAtSeal}); and
-     * {@code TableWriter.openNewColumnFiles}, {@code renameColumn}'s indexer rebind
-     * and {@code restorePostingIndexersToLastPartition} each re-{@code of()}-ed a
-     * live writer and armed nothing, leaving the next commit's
-     * {@code updateIndexes()} -- which {@code commit00} runs BEFORE
-     * {@code syncColumns()} -- to publish unset (see
+     * Five production callers used to leave it unset and all now arm before the
+     * call that can publish. That roll-call, the search behind it and the sites
+     * that remain open live once, at the {@code pendingTxnAtSeal < 0} fallback in
+     * {@code PostingIndexWriter.publishToChain}; each fixed route has its own
+     * pinning test:
+     * {@link #testSquashAppendRollbackPublishesUpcomingTxnAtSeal},
+     * {@link #testOpenPartitionRollbackPublishesCommittedTxnAtSeal},
      * {@link #testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal},
      * {@link #testAlterRenameColumnRebindCarriesArmedTxnAtSeal} and
-     * {@link #testSquashRestoreIndexersCarriesArmedTxnAtSeal}).
-     * What was searched is every site under {@code core/src/main} that RESETS the
-     * field -- every entry point into a path-based {@code PostingIndexWriter.of()},
-     * since {@code of()} starts with {@code close()} -- and each now arms before
-     * the first call on that writer that can publish; the enumeration is spelled
-     * out at the fallback in {@code publishToChain}. Arming callers
-     * narrows the fallback's reach without changing what any tag MEANS, so it does
-     * not close the detector gap this test pins: a current-state caller arms the
-     * committed {@code _txn}, which is itself 0 until the table's first commit, and
-     * every 0-tagged slot already on disk keeps its meaning. The fixture plants the damaged shape
+     * {@link #testSquashRestoreIndexersCarriesArmedTxnAtSeal}.
+     * Arming those callers narrows the fallback's reach without changing what any
+     * tag MEANS, so it does not close the detector gap this test pins: a
+     * current-state caller arms the committed {@code _txn}, which is itself 0 until
+     * the table's first commit, and every 0-tagged slot already on disk keeps its
+     * meaning. The fixture plants the damaged shape
      * directly rather than driving it, so what this pins is the detector's behaviour
      * on a shape the writer can emit, not a reproduction of a specific incident. A
      * zeroed slot 0 is equally invisible, since the walk starts
