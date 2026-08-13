@@ -554,6 +554,18 @@ public class TableReader implements Closeable, SymbolTableSource {
      * not mapped, and the callers that must distinguish "no covering index" from
      * "not looked yet" open the partition first --
      * {@link #checkPostingIndexIsReadable} does exactly that.
+     * <p>
+     * <b>The answer is the published token, never the configured format.</b>
+     * {@code cairo.posting.index.parquet.partition.format} says what the NEXT
+     * seal will write; it says nothing about what this partition already
+     * carries, and the two disagree in both directions. Flip the property to
+     * {@code parquet} over a natively sealed partition and a format-keyed
+     * decision refuses -- or misdispatches -- a read that the native chain would
+     * have served correctly. Flip it back to {@code native} over a
+     * parquet-sealed one and a format-keyed decision waves through a native read
+     * of a chain the seal left with no visible generation, which answers "no
+     * keys, no rows": a silent empty result rather than an error. Dispatch on
+     * this method, not on the property.
      */
     public byte getPartitionIndexForm(int partitionIndex, int columnIndex) {
         return indexFormEntryOffset(partitionIndex, columnIndex) < 0
@@ -996,6 +1008,22 @@ public class TableReader implements Closeable, SymbolTableSource {
      * hypothetical malformed footer into a refusal.
      */
     private void cacheParquetIndexForms(int partitionIndex) {
+        // Clear before anything else, including the n == 0 exit. Callers are NOT
+        // required to have invalidated first: openMissingColumnsInPartition and
+        // createNewColumnList both leave a parquet partition with SIZE = -1 from
+        // their catch blocks WITHOUT going through closeParquetPartition, and
+        // neither closeExcessPartitions nor reconcileOpenPartitions0 collects
+        // such a slot afterwards -- both guard on openPartitionSize > -1. The
+        // next openPartition therefore re-enters here with the old list still
+        // populated. Since this method appends and indexFormEntryOffset returns
+        // the FIRST match, a survivor would win over the entry just resolved and
+        // hand out a stale index_txn. Clearing here makes the invariant hold
+        // whatever the caller did, so a future path that skips the invalidate
+        // cannot reintroduce it.
+        final LongList existing = parquetIndexForms.getQuick(partitionIndex);
+        if (existing != null) {
+            existing.clear();
+        }
         final int n = parquetMetaReader.getCoveringIndexCount();
         if (n == 0) {
             // The DEFAULT format seals natively and publishes nothing, so this
@@ -1003,7 +1031,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // getPartitionIndexForm on this partition is a null check.
             return;
         }
-        LongList forms = parquetIndexForms.getQuick(partitionIndex);
+        LongList forms = existing;
         if (forms == null) {
             forms = new LongList(n * PIDX_FORM_ENTRY_SIZE);
             parquetIndexForms.setQuick(partitionIndex, forms);
@@ -1846,12 +1874,15 @@ public class TableReader implements Closeable, SymbolTableSource {
             parquetMetaMem = new MemoryCMRDetachedImpl();
             parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
         }
-        parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
-        // The mapping is being replaced, so whatever was resolved from the
+        // The mapping is about to be replaced, so whatever was resolved from the
         // previous one is now about a file this reader no longer holds. Dropped
-        // before the resolve rather than after it, so a throw below cannot leave
-        // the old answer sitting against the new mapping.
+        // BEFORE ofWithSizeFromHeader, not after: that call close()s the mapping
+        // on failure, so a throw out of it would otherwise leave a populated
+        // cache describing a mapping that no longer exists. Only the addr == 0
+        // fail-closed guard in checkPostingIndexIsReadable hides that today, and
+        // the dispatch that replaces it does not repeat the guard.
         invalidateIndexFormCache(partitionIndex);
+        parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
 
         try {
             parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
