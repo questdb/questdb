@@ -115,6 +115,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
+    // Memo for hasParquetPartitions(long), keyed on the partition table version
+    // it was computed from. -1 means "not computed".
+    private long parquetPartitionsPartitionTableVersion = -1;
+    private boolean parquetPartitionsPresent;
     private int partitionCount;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
@@ -1077,10 +1081,26 @@ public class TableReader implements Closeable, SymbolTableSource {
             // keeps the behaviour it had before the suppression existed, at zero
             // added cost.
             //
-            // Both staleness directions of that predicate are benign: a wrong
+            // A POSTING-indexed column is necessary but NOT sufficient: a token
+            // publish also needs a parquet partition to publish into, because the
+            // token lives in that partition's _pm. So a POSTING-indexed table with
+            // no parquet partition -- the shape this feature area targets under
+            // the DEFAULT configuration -- used to pay the walk on every release
+            // to suppress something that could never happen. Both conditions are
+            // now required.
+            //
+            // Deliberately NOT keyed on the configured format as well. A DROP
+            // INDEX retirement is a token-only publish and can fire after the
+            // property has been flipped back to native, so the configuration says
+            // nothing about whether a publish is possible; the parquet partition
+            // does.
+            //
+            // Both staleness directions of BOTH predicates are benign: a wrong
             // false only restores the spurious schedule, a wrong true only pays
-            // for a fingerprint. Neither can produce a wrong answer.
-            final boolean suppressible = hasPostingIndexedColumn();
+            // for a fingerprint. Neither can produce a wrong answer. That is what
+            // licenses memoising them.
+            final boolean suppressible = hasPostingIndexedColumn()
+                    && hasParquetPartitions(partitionTableVersion);
             long partitionListFingerprint = suppressible ? partitionListFingerprint() : 0;
             // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive. We do this check at the end.
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
@@ -1167,6 +1187,32 @@ public class TableReader implements Closeable, SymbolTableSource {
             postingIndexedColumnMetadataVersion = metadataVersion;
         }
         return hasPostingIndexedColumn;
+    }
+
+    /**
+     * Whether this reader's snapshot has any parquet partition, i.e. whether the
+     * covering-index token publish that
+     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
+     * suppress has anywhere to publish INTO -- the token lives in a partition's
+     * {@code _pm}, so a table with no parquet partition can never produce one.
+     * <p>
+     * Cached against the partition table version, which every path that turns a
+     * partition into parquet or back bumps ({@code TableWriter} at the tail of
+     * both conversions), so the walk is paid once per partition-list change
+     * rather than once per reader release. Under continuous append-only ingest
+     * that version does not move, so this is O(1) in the case the gate exists
+     * for. See the call site for why a stale answer in either direction is
+     * harmless -- which is what makes caching it safe at all.
+     *
+     * @param partitionTableVersion this reader's own snapshot's version, read by
+     *                              the caller before {@code unsafeLoadAll}
+     */
+    private boolean hasParquetPartitions(long partitionTableVersion) {
+        if (parquetPartitionsPartitionTableVersion != partitionTableVersion) {
+            parquetPartitionsPresent = hasParquetPartitions();
+            parquetPartitionsPartitionTableVersion = partitionTableVersion;
+        }
+        return parquetPartitionsPresent;
     }
 
     private void closeDeletedPartition(int partitionIndex) {
