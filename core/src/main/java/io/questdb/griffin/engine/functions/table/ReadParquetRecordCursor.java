@@ -148,9 +148,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      * <p>
      * A negative parquet field id is NEVER mapped into the writer-index space.
-     * The id a mapping entry carries is resolved through the field-id map
-     * {@code PageFrameMemoryPool.buildColumnIdMap} builds, whose keys are writer
-     * indices, and a parquet POSITION is a number some real column in the same
+     * The id a mapping entry carries is resolved through the map
+     * {@code PageFrameMemoryPool.buildColumnIdMap} builds, whose keys are
+     * {@link ColumnMapping#parquetLookupKey} values -- writer indices for the
+     * columns that have one, negated positions for the columns that do not --
+     * and a parquet POSITION on its own is a number some real column in the same
      * file may legitimately hold as its writer index. Both sides therefore key a
      * negative id by position in the negative half of the space, through the one
      * {@link ColumnMapping#parquetLookupKey} that defines the rule; that javadoc
