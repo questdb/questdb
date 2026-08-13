@@ -177,25 +177,43 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnIdLookupPreservesLegacyAndFirstMatchSemantics() throws Exception {
+    public void testColumnIdLookupKeepsNegativeIdsOutOfTheWriterIndexSpace() throws Exception {
+        // A descriptor with no field id is not a column any writer index names,
+        // so it must answer no writer-index lookup -- least of all the lookup
+        // for the writer index that happens to equal its position. The first
+        // fixture is the covering-index seal's descriptor order (key_id, row_id,
+        // then the covered columns by writer index): under the old positional
+        // substitution key_id, at position 0, took key 0 and won it by first
+        // match, so a lookup for the covered column at writer index 0 -- by
+        // default the designated timestamp -- was answered with key_id.
         assertMemoryLeak(() -> {
             try (
-                    ParquetMetaTestFile positional = buildFile(new int[]{-1, -1, -1}, 1);
-                    ParquetMetaTestFile collisions = buildFile(new int[]{-1, 0, 5, 5}, 1)
+                    ParquetMetaTestFile sealOrder = buildFile(new int[]{-1, -1, 0, 1, 3}, 1);
+                    ParquetMetaTestFile collisions = buildFile(new int[]{-1, 0, 5, 5}, 1);
+                    ParquetMetaTestFile positional = buildFile(new int[]{-1, -1, -1}, 1)
             ) {
                 final ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(positional.dataPtr, positional.parquetMetaFileSize);
+                reader.of(sealOrder.dataPtr, sealOrder.parquetMetaFileSize);
                 Assert.assertTrue(reader.resolveLastFooter());
 
-                Assert.assertEquals(0, reader.getColumnIndexById(0));
-                Assert.assertEquals(2, reader.getColumnIndexById(2));
-                Assert.assertEquals(-1, reader.getColumnIndexById(3));
+                Assert.assertEquals(
+                        "the covered column at writer index 0, not key_id",
+                        2,
+                        reader.getColumnIndexById(0)
+                );
+                Assert.assertEquals(3, reader.getColumnIndexById(1));
+                Assert.assertEquals(4, reader.getColumnIndexById(3));
+                Assert.assertEquals(
+                        "writer index 2 is covered by no descriptor here",
+                        -1,
+                        reader.getColumnIndexById(2)
+                );
 
                 reader.of(collisions.dataPtr, collisions.parquetMetaFileSize);
                 Assert.assertTrue(reader.resolveLastFooter());
                 Assert.assertEquals(
-                        "the first descriptor must win an effective-id collision",
-                        0,
+                        "the descriptor that really carries field id 0 must win, not the one at position 0",
+                        1,
                         reader.getColumnIndexById(0)
                 );
                 Assert.assertEquals(
@@ -203,6 +221,16 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         2,
                         reader.getColumnIndexById(5)
                 );
+
+                reader.of(positional.dataPtr, positional.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+                Assert.assertEquals(
+                        "a file with no field ids resolves no writer index at all",
+                        -1,
+                        reader.getColumnIndexById(0)
+                );
+                Assert.assertEquals(-1, reader.getColumnIndexById(2));
+                Assert.assertEquals(-1, reader.getColumnIndexById(3));
                 reader.clear();
             }
         });

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.std.DirectLongList;
@@ -420,11 +421,24 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     /**
      * Finds a column by its stable id (the table writer index). The first lookup
      * for a reader binding builds an id-to-dense-index map; subsequent lookups are
-     * constant time. Mirrors
-     * {@code PageFrameMemoryPool.buildColumnIdMap}: external Parquet files without
-     * QuestDB field ids (all -1) fall back to positional indexing. Returns -1 if
-     * no column matches. Unlike {@link #getColumnIndex(CharSequence)}, this stays
-     * correct across column renames because the id never changes.
+     * constant time. Returns -1 if no column matches. Unlike
+     * {@link #getColumnIndex(CharSequence)}, this stays correct across column
+     * renames because the id never changes.
+     * <p>
+     * A negative descriptor id is NEVER mapped into the writer-index space. The
+     * map is keyed by {@link ColumnMapping#parquetLookupKey}, the same rule
+     * {@code PageFrameMemoryPool.buildColumnIdMap} keys its map by, so a column
+     * carrying no field id is keyed by its negated position -- a region no
+     * writer index can reach -- and can never mask the column whose writer index
+     * equals that position. This once substituted the bare position for a
+     * negative id: on a covering-index parquet, whose synthetic {@code key_id}
+     * and {@code row_id} descriptors both carry -1, that put {@code key_id} at
+     * position 0 under key 0 and, first match winning, made
+     * {@code getColumnIndexById(0)} answer {@code key_id} instead of the covered
+     * column whose writer index is 0. Answering -1 on such a file is what
+     * {@link IndexMetaFileReader#getColumnIndexById(int)} and the Rust
+     * {@code IndexMetaReader::column_index_by_id} already do, so all three now
+     * agree on one descriptor set.
      */
     public int getColumnIndexById(int columnId) {
         if (columnId < 0) {
@@ -432,18 +446,25 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
         if (!isColumnIdToIndexBuilt) {
             if (columnIdToIndex == null) {
-                columnIdToIndex = new IntIntHashMap(columnCount);
+                // The empty-slot marker must be a key this map cannot hold, and
+                // parquetLookupKey reaches every int but MIN_VALUE: the default
+                // marker of -1 is exactly the key of a position-0 column with no
+                // field id, and storing it would poison the slot instead of
+                // recording the entry. Absence is still read off the value side
+                // -- IntIntHashMap.get() misses with a hardcoded -1, independent
+                // of this marker, and every value here is a column index >= 0 --
+                // so moving the key space cannot affect it.
+                columnIdToIndex = new IntIntHashMap(columnCount, 0.5, Integer.MIN_VALUE);
             } else {
                 columnIdToIndex.clear();
             }
             for (int i = 0; i < columnCount; i++) {
-                final int id = getColumnId(i);
-                final int effectiveId = id < 0 ? i : id;
-                final int keyIndex = columnIdToIndex.keyIndex(effectiveId);
+                final int key = ColumnMapping.parquetLookupKey(getColumnId(i), i);
+                final int keyIndex = columnIdToIndex.keyIndex(key);
                 if (keyIndex >= 0) {
                     // Preserve the old linear scan's first-match behavior for a
                     // malformed footer containing duplicate field ids.
-                    columnIdToIndex.putAt(keyIndex, effectiveId, i);
+                    columnIdToIndex.putAt(keyIndex, key, i);
                 }
             }
             isColumnIdToIndexBuilt = true;
