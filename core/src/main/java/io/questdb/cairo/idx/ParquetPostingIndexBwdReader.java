@@ -106,7 +106,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long next;
         private int rg;
         private int rgLo;
+        private long rowHi;
         private long rowIdPtr;
+        private long rowLo;
+        private CountingCursor keyProbe;
         private boolean detached;
         private int[] requiredCoverColumns;
         private long rowInGroup;
@@ -116,6 +119,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          */
         @Override
         public void close() {
+            if (keyProbe != null) {
+                keyProbe.close();
+                keyProbe = null;
+            }
             if (detached) {
                 freeResources();
             } else {
@@ -124,6 +131,13 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             keyIdPtr = 0;
             rowIdPtr = 0;
             hasNext = false;
+        }
+
+        private CountingCursor probe() {
+            if (keyProbe == null) {
+                keyProbe = new CountingCursor();
+            }
+            return keyProbe;
         }
 
         @Override
@@ -186,10 +200,23 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     rg--;
                     continue;
                 }
+                // Pruning level 3: bound the value decode to the key's own
+                // rows. In a packed group most rows belong to other keys, and
+                // decoding them costs row_id plus every covered column.
+                final long keyRange = keyRowRangeInGroup(probe(), rg, key, groupRows);
+                if (keyRange == IndexMetaFileReader.KEY_ABSENT) {
+                    // The directory said this group COULD hold the key; the
+                    // probe says it does not. An ordinary miss, not an error.
+                    rg--;
+                    continue;
+                }
+                rowLo = Numbers.decodeLowInt(keyRange);
+                rowHi = Numbers.decodeHighInt(keyRange);
                 final DirectIntList columns = coveringProjection(requiredCoverColumns);
                 rowGroupBuffers.reopen();
-                decoder().decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
-                onRowGroupDecoded();
+                decoder().decodeRowGroup(rowGroupBuffers, columns, rg, (int) rowLo, (int) rowHi);
+                onRowGroupDecoded(rowHi - rowLo);
+                groupRows = rowHi - rowLo;
                 keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
                 rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
                 // Walked from the end: rowInGroup is a countdown, not an index.

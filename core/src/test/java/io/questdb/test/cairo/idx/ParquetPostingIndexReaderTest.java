@@ -529,6 +529,61 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Pruning level 3: inside a PACKED row group, only the key's own rows have
+     * their values decoded.
+     * <p>
+     * Asserted on rows decoded rather than row groups, because narrowing
+     * inside a group leaves the group count unchanged -- level 2's metric
+     * cannot see this and would pass against no narrowing at all. The fixture's
+     * three symbols share one row group, so the key's slice is a strict subset
+     * and the two numbers must differ.
+     * <p>
+     * This is level 3's EFFECT, not the spec's mechanism. The seal writes
+     * neither {@code ColumnIndex} nor {@code OffsetIndex} -- its writer takes
+     * a statistics flag and nothing for a page index -- so page skipping is
+     * reached through {@code decodeRowGroup}'s row bounds instead. Phase 3 must
+     * add the indexes if the stated mechanism is wanted.
+     */
+    @Test
+    public void testAPackedRowGroupDecodesOnlyTheKeysRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s0") + 1;
+                final AbstractParquetPostingIndexReader indexReader =
+                        (AbstractParquetPostingIndexReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+
+                long walked = 0;
+                try (RowCursor c = indexReader.getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (c.hasNext()) {
+                        c.next();
+                        walked++;
+                    }
+                }
+                Assert.assertTrue("the key must have postings", walked > 0);
+
+                final long decodedRows = indexReader.getDecodedRowCount();
+                final long groupRows = ROW_COUNT;
+                Assert.assertTrue(
+                        "the fixture must pack several keys into the group, or this cannot fail:"
+                                + " walked=" + walked + " groupRows=" + groupRows,
+                        walked < groupRows
+                );
+                Assert.assertEquals(
+                        "only the key's own rows may have their values decoded",
+                        walked,
+                        decodedRows
+                );
+                Assert.assertTrue(
+                        "decoding the whole group would be " + groupRows + " rows, got " + decodedRows,
+                        decodedRows < groupRows
+                );
+            }
+        });
+    }
+
+    /**
      * A key the directory does not resolve is an ordinary answer, not an error:
      * a query for a symbol this partition never carried must return no rows.
      * <p>

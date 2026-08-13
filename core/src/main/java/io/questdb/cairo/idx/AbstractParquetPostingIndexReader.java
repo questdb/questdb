@@ -75,6 +75,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     private static final Log LOG = LogFactory.getLog(AbstractParquetPostingIndexReader.class);
     protected final IndexMetaFileReader imReader = new IndexMetaFileReader();
     protected long columnTop;
+    protected long decodedRowCount;
     protected long decodedRowGroupCount;
     protected long indexTxn = -1;
     protected long partitionTimestamp;
@@ -112,6 +113,20 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * Rows whose VALUES this reader has decoded -- {@code row_id} and any
+     * covered columns -- since it was bound. Pruning level 3 is asserted on
+     * this rather than on the row-group count, because narrowing inside a
+     * packed group leaves the group count unchanged.
+     * <p>
+     * The {@code key_id} probe that finds the key's range is not counted: it
+     * reads one 4-byte column, which is what buys the narrowing, and counting
+     * it would make the metric measure the probe rather than the saving.
+     */
+    public long getDecodedRowCount() {
+        return decodedRowCount;
+    }
+
+    /**
      * Pruning level 2: true when {@code rowGroup}'s row-id extent does not
      * intersect the caller's {@code [minValue, maxValue]}, so the group holds
      * nothing the cursor could emit and need not be decoded.
@@ -134,12 +149,68 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * Finds {@code key}'s contiguous row range inside {@code rowGroup},
+     * returning {@code Numbers.encodeLowHighInts(lo, hiExclusive)} or
+     * {@link IndexMetaFileReader#KEY_ABSENT} when the group holds none.
+     * <p>
+     * Pruning level 3's EFFECT. The spec's mechanism is Parquet
+     * {@code ColumnIndex}/{@code OffsetIndex} page skipping; the seal does not
+     * write either -- its writer takes {@code statistics_enabled} and nothing
+     * for a page index -- so the indexes are absent from the file rather than
+     * merely unreachable from Java, and Phase 3 must add both. What is
+     * available is {@code decodeRowGroup(..., rowLo, rowHi)}, whose Rust side
+     * skips pages outside the range, so bounding the decode to the key's rows
+     * achieves page skipping through the API that exists.
+     * <p>
+     * The probe decodes ONLY {@code key_id}, four bytes a row, and binary
+     * searches it: the group is key-major, so a key's rows are contiguous.
+     * That cost buys skipping {@code row_id} and every covered column for the
+     * rows belonging to other keys, which in a packed group is most of them.
+     */
+    protected long keyRowRangeInGroup(CountingCursor probe, int rowGroup, int key, long groupRows) {
+        final long keyIdPtr = probe.decodeKeyIdColumn(rowGroup, groupRows);
+        long lo = 0;
+        long hi = groupRows;
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (Unsafe.getUnsafe().getInt(keyIdPtr + (mid << 2)) < key) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        final long start = lo;
+        hi = groupRows;
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (Unsafe.getUnsafe().getInt(keyIdPtr + (mid << 2)) <= key) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (start >= lo) {
+            return IndexMetaFileReader.KEY_ABSENT;
+        }
+        return Numbers.encodeLowHighInts((int) start, (int) lo);
+    }
+
+    /**
      * Records a decode. Kept next to the pruning predicate so the counter and
      * the skip cannot drift: a group is counted where it is decoded, never
      * where it is merely visited.
      */
     protected void onRowGroupDecoded() {
         decodedRowGroupCount++;
+    }
+
+    /**
+     * @param rows rows whose VALUES were decoded, which after level 3 is the
+     *             key's slice of the group rather than the whole group.
+     */
+    protected void onRowGroupDecoded(long rows) {
+        decodedRowGroupCount++;
+        decodedRowCount += rows;
     }
 
     /**
@@ -234,6 +305,15 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 }
             }
             return Numbers.LONG_NULL;
+        }
+
+        long decodeKeyIdColumn(int rowGroup, long rows) {
+            projection.clear();
+            projection.add(imReader.getKeyIdColumn());
+            projection.add(ColumnType.INT);
+            rowGroupBuffers.reopen();
+            decoder().decodeRowGroup(rowGroupBuffers, projection, rowGroup, 0, (int) rows);
+            return rowGroupBuffers.getChunkDataPtr(0);
         }
 
         private long decodeGroup(int rowGroup) {
@@ -767,6 +847,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         this.partitionTimestamp = partitionTimestamp;
         this.indexTxn = indexTxn;
         this.decodedRowGroupCount = 0;
+        this.decodedRowCount = 0;
         this.imFileSize = imFileSize;
         final int plen = path.size();
         try {
