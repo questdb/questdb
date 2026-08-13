@@ -107,10 +107,12 @@ public class LogCapture {
         final long maxWait = 120_000;
         final long start = clockMillis.getAsLong();
         final Pattern pattern = Pattern.compile(regex);
-        // Snapshot the sink into an immutable String before matching, like the synchronized
-        // indexOf() reads in waitFor(CharSequence, long) -- matching a Matcher directly against
-        // the live SynchronizedSink races an in-flight put() because CharSequence#charAt() isn't
-        // one of the methods SynchronizedSink guards.
+        // Snapshot the sink into an immutable String before matching. Matching a Matcher
+        // directly against the live SynchronizedSink would race an in-flight put() because
+        // CharSequence#charAt() isn't one of the methods SynchronizedSink guards; toString()
+        // is also synchronized (below), so this snapshot is a single atomic read of the sink's
+        // current contents, same as the synchronized indexOf() reads in waitFor(CharSequence,
+        // long).
         Matcher m = pattern.matcher(sink.toString());
         while (!m.find()) {
             if ((clockMillis.getAsLong() - start) >= maxWait) {
@@ -166,6 +168,11 @@ public class LogCapture {
         @Override
         public synchronized @NotNull CharSequence subSequence(int lo, int hi) {
             return super.subSequence(lo, hi);
+        }
+
+        @Override
+        public synchronized @NotNull String toString() {
+            return super.toString();
         }
     }
 

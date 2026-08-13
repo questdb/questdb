@@ -5269,10 +5269,13 @@ public class WalWriterTest extends AbstractCairoTest {
             // Once a tracker exists, the non-creating accessor returns that same instance.
             Assert.assertSame(created, engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
 
-            // isWalApplySuspended(TableToken, SeqTxnTracker) has no OSS caller -- both call sites
-            // are ENT. Pin its distinctive legs: a null tracker (no lookup in hand yet) skips the
-            // hard-suspension check and falls through to the config list, while a resolved
-            // tracker's hard-suspended flag short-circuits ahead of the config list either way.
+            // No OSS caller passes a pre-resolved tracker to isWalApplySuspended(TableToken,
+            // SeqTxnTracker): the 1-arg overload (CairoEngine:2975) always resolves one before
+            // delegating here, so every OSS write path goes through that leg. The two callers
+            // that pass an already-resolved tracker directly are both ENT. Pin its distinctive
+            // legs: a null tracker (no lookup in hand yet) skips the hard-suspension check and
+            // falls through to the config list, while a resolved tracker's hard-suspended flag
+            // short-circuits ahead of the config list either way.
             final TableToken unconfiguredToken = createTable(testName.getMethodName() + "_unconfigured");
             final SeqTxnTracker unconfiguredTracker = engine.getTableSequencerAPI().getTxnTracker(unconfiguredToken);
             setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, tableToken.getDirName());
