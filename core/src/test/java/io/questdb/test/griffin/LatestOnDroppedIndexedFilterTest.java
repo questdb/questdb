@@ -72,7 +72,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro " +
                     "where account_id = $1 and visible_in_history = true " +
                     "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -97,7 +99,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro " +
                     "where account_id = 'ACCOUNT-DOES-NOT-EXIST' and visible_in_history = true " +
                     "latest on updated_at partition by order_id")
-                    .returnsOnce(expected("account_id\torder_id\tvisible_in_history\tupdated_at\n"));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected("account_id\torder_id\tvisible_in_history\tupdated_at\n"));
         });
     }
 
@@ -108,7 +112,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro " +
                     "where account_id in ('acct-A') and visible_in_history = true " +
                     "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -119,22 +125,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro " +
                     "where account_id in (select 'acct-A'::symbol) and visible_in_history = true " +
                     "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
-        });
-    }
-
-    /**
-     * The indexed predicate is the <em>only</em> predicate, so extraction used to empty the residual
-     * filter completely - the plainest form of the bug and the likeliest real-world shape.
-     */
-    @Test
-    public void testLonePredicateIsApplied() throws Exception {
-        assertMemoryLeak(() -> {
-            createRepro();
-            assertQuery("select * from latest_on_repro " +
-                    "where account_id = 'acct-A' " +
-                    "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -150,8 +143,27 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro4 " +
                     "where account_id = 'acct-A' and updated_at in '2026-01-02' " +
                     "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected("account_id\torder_id\tvisible_in_history\tupdated_at\n" +
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected("account_id\torder_id\tvisible_in_history\tupdated_at\n" +
                             "acct-A\to1\ttrue\t2026-01-02T00:00:00.000000Z\n"));
+        });
+    }
+
+    /**
+     * The indexed predicate is the <em>only</em> predicate, so extraction used to empty the residual
+     * filter completely - the plainest form of the bug and the likeliest real-world shape.
+     */
+    @Test
+    public void testLonePredicateIsApplied() throws Exception {
+        assertMemoryLeak(() -> {
+            createRepro();
+            assertQuery("select * from latest_on_repro " +
+                    "where account_id = 'acct-A' " +
+                    "latest on updated_at partition by order_id order by updated_at")
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -162,7 +174,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro " +
                     "where account_id = 'acct-A' and visible_in_history = true " +
                     "latest on updated_at partition by order_id, account_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -173,21 +187,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select /*+ no_index(latest_on_repro account_id) */ * from latest_on_repro " +
                     "where account_id = 'acct-A' and visible_in_history = true " +
                     "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
-        });
-    }
-
-    @Test
-    public void testNotEqIsApplied() throws Exception {
-        assertMemoryLeak(() -> {
-            createRepro();
-            assertQuery("select * from latest_on_repro " +
-                    "where account_id != 'acct-C' and visible_in_history = true " +
-                    "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected("account_id\torder_id\tvisible_in_history\tupdated_at\n" +
-                            "acct-B\to1\ttrue\t2026-01-01T00:00:01.000000Z\n" +
-                            "acct-A\to2\ttrue\t2026-01-01T00:00:02.000000Z\n" +
-                            "acct-B\to3\ttrue\t2026-01-01T00:00:03.000000Z\n"));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -202,9 +204,27 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro3 " +
                     "where account_id = 'acct-A' and visible_in_history = true " +
                     "latest on updated_at partition by order_num order by updated_at")
-                    .returnsOnce(expected("account_id\torder_num\tvisible_in_history\tupdated_at\n" +
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected("account_id\torder_num\tvisible_in_history\tupdated_at\n" +
                             "acct-A\t1\ttrue\t2026-01-01T00:00:00.000000Z\n" +
                             "acct-A\t2\ttrue\t2026-01-01T00:00:02.000000Z\n"));
+        });
+    }
+
+    @Test
+    public void testNotEqIsApplied() throws Exception {
+        assertMemoryLeak(() -> {
+            createRepro();
+            assertQuery("select * from latest_on_repro " +
+                    "where account_id != 'acct-C' and visible_in_history = true " +
+                    "latest on updated_at partition by order_id order by updated_at")
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected("account_id\torder_id\tvisible_in_history\tupdated_at\n" +
+                            "acct-B\to1\ttrue\t2026-01-01T00:00:01.000000Z\n" +
+                            "acct-A\to2\ttrue\t2026-01-01T00:00:02.000000Z\n" +
+                            "acct-B\to3\ttrue\t2026-01-01T00:00:03.000000Z\n"));
         });
     }
 
@@ -215,7 +235,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro " +
                     "where account_id not in ('acct-B', 'acct-C') and visible_in_history = true " +
                     "latest on updated_at partition by order_id order by updated_at")
-                    .returnsOnce(expected(ACCT_A_LATEST));
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected(ACCT_A_LATEST));
         });
     }
 
@@ -249,7 +271,9 @@ public class LatestOnDroppedIndexedFilterTest extends AbstractCairoTest {
             assertQuery("select * from latest_on_repro2 " +
                     "where account_id = 'acct-A' and visible_in_history = true " +
                     "latest on updated_at partition by status order by updated_at")
-                    .returnsOnce(expected("account_id\torder_id\tvisible_in_history\tstatus\tupdated_at\n" +
+                    .timestamp("updated_at")
+                    .expectSize()
+                    .returns(expected("account_id\torder_id\tvisible_in_history\tstatus\tupdated_at\n" +
                             "acct-A\to2\ttrue\tNEW\t2026-01-01T00:00:02.000000Z\n"));
         });
     }

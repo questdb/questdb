@@ -47,6 +47,11 @@ import org.junit.Test;
  * The generator deliberately varies the two things that decide whether extraction happens and
  * whether anything consumes it: whether the predicate column is indexed, and the type of the
  * LATEST ON key.
+ * <p>
+ * The nested form is only a valid oracle while the optimizer keeps the sub-query distinct rather
+ * than flattening it up into the LATEST ON model; LATEST ON acts as a merge barrier today, and the
+ * fuzz fails on a fix-reverted build, which is what shows the pair still discriminates. The
+ * no_index form is checked alongside it so the test does not rest on that property alone.
  */
 public class LatestOnFilterMetamorphicFuzzTest extends AbstractCairoTest {
 
@@ -59,8 +64,8 @@ public class LatestOnFilterMetamorphicFuzzTest extends AbstractCairoTest {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             for (int iteration = 0; iteration < 40; iteration++) {
                 final String table = "fuzz_" + iteration;
-                final boolean indexed = rnd.nextBoolean();
-                createTable(table, indexed, rnd);
+                final boolean isIndexed = rnd.nextBoolean();
+                createTable(table, isIndexed, rnd);
 
                 final String key = KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)];
                 final String predicate = randomPredicate(rnd);
@@ -71,20 +76,25 @@ public class LatestOnFilterMetamorphicFuzzTest extends AbstractCairoTest {
                         + " where " + predicate + latestOn + ") order by ts, " + key;
                 final String nested = "select * from (select * from (select * from " + table
                         + " where " + predicate + ")" + latestOn + ") order by ts, " + key;
+                // a second, independent oracle: the hint blocks extraction at the same query level,
+                // so this one holds even if the planner ever flattens the sub-query above
+                final String hinted = "select * from (select /*+ no_index(" + table + " sym) */ * from "
+                        + table + " where " + predicate + latestOn + ") order by ts, " + key;
 
                 try {
                     assertSqlCursors(nested, flat);
+                    assertSqlCursors(hinted, flat);
                 } catch (AssertionError e) {
-                    throw new AssertionError("flat form dropped a predicate: indexed=" + indexed
+                    throw new AssertionError("flat form dropped a predicate: indexed=" + isIndexed
                             + ", key=" + key + ", predicate=" + predicate + "\nflat=" + flat + "\n" + e, e);
                 }
             }
         });
     }
 
-    private void createTable(String table, boolean indexed, Rnd rnd) throws Exception {
+    private void createTable(String table, boolean isIndexed, Rnd rnd) throws Exception {
         execute("create table " + table + " (" +
-                "sym symbol" + (indexed ? " index" : "") + ", " +
+                "sym symbol" + (isIndexed ? " index" : "") + ", " +
                 "other_sym symbol, " +
                 "flag boolean, " +
                 "key_varchar varchar, " +

@@ -87,6 +87,43 @@ public class LatestOnWithinPrefixTest extends AbstractCairoTest {
     }
 
     /**
+     * The optimisation is opt-in and off by default, so its off answer is the reference answer. Every
+     * shape whose behaviour this fix changes must now agree with it - that equality is the claim the
+     * fix rests on, and the other tests here only assert the on side of it.
+     */
+    @Test
+    public void testOptimisationOffReturnsSameRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            final String matchingRow = """
+                    s1\ts2\ts3\tg\tts
+                    a\tp\tm\tdr5rsjutvshf\t2026-01-01T00:00:00.000000Z
+                    """;
+            final String noRows = """
+                    s1\ts2\ts3\tg\tts
+                    """;
+            assertQuery("SELECT * FROM trips WHERE s1 = 'b' AND g WITHIN(#dr5) LATEST ON ts PARTITION BY s1")
+                    .timestamp("ts")
+                    .returns(noRows);
+            assertQuery("SELECT * FROM trips WHERE g WITHIN(#dr5) AND g WITHIN(#ez) LATEST ON ts PARTITION BY s1")
+                    .timestamp("ts")
+                    .returns(noRows);
+            assertQuery("SELECT * FROM trips WHERE g WITHIN(#dr5) LATEST ON ts PARTITION BY s1, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(matchingRow);
+            assertQuery("SELECT * FROM trips WHERE g WITHIN(#dr5) AND s3 != 'z' LATEST ON ts PARTITION BY s1")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(matchingRow);
+            assertQuery("SELECT * FROM trips WHERE g WITHIN(#dr5) LATEST ON ts PARTITION BY s3")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(matchingRow);
+        });
+    }
+
+    /**
      * Two WITHIN predicates cannot both become a prefix scan. The pre-extraction pass used to reject
      * the query outright; now they stay in the filter and intersect, which is what the same query
      * already did with the optimisation off.

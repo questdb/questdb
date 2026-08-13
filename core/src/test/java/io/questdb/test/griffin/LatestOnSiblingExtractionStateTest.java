@@ -46,6 +46,10 @@ public class LatestOnSiblingExtractionStateTest extends AbstractCairoTest {
                     "      WHERE flag = true LATEST ON updated_at PARTITION BY k1, k2) b " +
                     "ON a.account_id = b.account_id " +
                     "WHERE a.account_id != 'acct-C'")
+                    // the empty result is the same before and after the fix, so pin the two
+                    // preconditions that make this shape exercise the leak at all: the master scan
+                    // must extract the predicate, and orders must be the master
+                    .withPlanContaining("account_id not in ['acct-C']", "Hash Join")
                     .timestamp("updated_at")
                     .noRandomAccess()
                     .returns("""
