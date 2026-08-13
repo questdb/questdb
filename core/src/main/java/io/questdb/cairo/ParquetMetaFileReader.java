@@ -188,6 +188,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private IntIntHashMap columnIdToIndex;
     private long fileSize;
     private long footerAddr;
+    // How many MVCC footer resolves this reader has been asked for, over its
+    // whole lifetime. Deliberately NOT reset by of() or clear(): it counts
+    // resolves, and a caller that resolves per call rebinds per call, so a
+    // counter reset on rebind would read zero for exactly the shape it exists
+    // to detect. Contrast checksumVerifications, which is a cost model of ONE
+    // binding's chain walk and so is right to reset.
+    private long footerResolves;
     private boolean isColumnIdToIndexBuilt;
     // Committed _pm snapshot size the native handle was parsed at.
     // Meaningful only while nativeReaderPtr != 0.
@@ -370,6 +377,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     @TestOnly
     public int getChecksumVerifications() {
         return checksumVerifications;
+    }
+
+    /**
+     * How many times {@link #resolveFooter(long)} has been called on this reader
+     * since it was constructed. Exposed so a test can assert that an answer is
+     * resolved once per partition open rather than once per call, as a count
+     * rather than as a duration -- a stopwatch passes on a fast machine whatever
+     * the call count is.
+     */
+    @TestOnly
+    public long getFooterResolveCount() {
+        return footerResolves;
     }
 
     public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
@@ -806,6 +825,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveFooter(long parquetFileSize) {
+        footerResolves++;
         final long addr = this.addr;
         // Walk the MVCC chain back from the mapped tail: each step reads the
         // trailer at currentSize-4 for the footer length, derives the footer,

@@ -42,10 +42,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -62,7 +62,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.lang.reflect.Field;
 
 /**
  * Covers the covering-index seal that emits {@code <col>.pidx.<indexTxn>.parquet}
@@ -2006,80 +2005,147 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
      * a pooled reader is evicted by the DDL and comes back with a fresh
      * {@code openPartitionInfo}, which makes the shape vacuous.
      */
+    /**
+     * A partition slot outlives the partition it describes, so the cached index
+     * forms must not.
+     * <p>
+     * A stale form here is a silent wrong answer rather than an error in both
+     * directions. Left saying PARQUET over an incarnation that is now natively
+     * indexed, it refuses a read that would have been served; left naming the
+     * PREVIOUS incarnation's {@code index_txn}, it names an artifact pair that
+     * incarnation's reseal superseded and the purge may already have unlinked.
+     * <p>
+     * Three incarnations of one partition, each written into a new directory
+     * under a new name txn while the slot index stays put: parquet-sealed,
+     * converted to native, converted back to parquet and resealed. The last
+     * assertion goes through {@code getIndexReader}, whose refusal names the
+     * {@code index_txn} it decided on, so the check is on the production path
+     * rather than on an accessor only a test calls.
+     */
     @Test
-    public void testAPartitionIncarnationChangeDropsTheRefusalProbeMemo() throws Exception {
+    public void testAPartitionIncarnationChangeDropsTheCachedIndexForm() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
-            // Default format: the seal is native, so the _pm names no covering
-            // index and the probe memoises exactly that.
             createIndexedSparseKeyTable();
-            final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-            try (TableReader reader = engine.getReader(tableToken)) {
-                Assert.assertTrue(reader.openPartition(0) > 0);
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
                 final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
-                // Answers, and in answering populates the memo.
-                Assert.assertNotNull(reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD));
+                Assert.assertTrue(reader.openPartition(0) > 0);
 
-                final long memoMetaSize = probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE");
-                final long memoParquetSize = probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE");
-                // Fixture guard: with no memo to survive, the assertion below is
-                // true before the DDL and proves nothing.
+                // Incarnation 1: sealed as parquet, so the _pm publishes a token.
                 Assert.assertEquals(
-                        "the fixture must populate the memo's _pm word, or nothing is being invalidated",
-                        reader.getParquetMetadataSize(0),
-                        memoMetaSize
+                        "the fixture must seal the index as parquet, or nothing is cached to go stale",
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
                 );
-                Assert.assertTrue("the fixture must populate the memo's parquet word", memoParquetSize > 0);
+                final long firstIndexTxn = reader.getPartitionIndexTxn(0, symColumnIndex);
+                Assert.assertTrue("a published token names a real index txn", firstIndexTxn >= 0);
+                Assert.assertTrue(
+                        "a published token names a real _im size",
+                        reader.getPartitionIndexImFileSize(0, symColumnIndex) > 0
+                );
+                final long firstNameTxn = reader.getTxFile().getPartitionNameTxn(0);
 
-                final long nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
-
-                // Two CONVERTs, each of which writes the partition into a NEW
-                // directory under a new name txn. The slot index does not move
-                // (same timestamp, same partition count) and the partition is
-                // parquet again at the end, so this is the same slot describing a
-                // third incarnation of the same partition.
+                // Incarnation 2: native. The new directory has no _pm at all, so
+                // there is nothing to publish and the index is native again.
                 execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO NATIVE LIST '" + INDEXED_PARTITION + "'");
                 drainWalQueue();
                 Assert.assertTrue("the reader must have something to reload", reader.reload());
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                Assert.assertEquals(
+                        "a partition with no _pm publishes no covering index",
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
+                );
+                Assert.assertEquals(-1, reader.getPartitionIndexTxn(0, symColumnIndex));
+                Assert.assertEquals(0, reader.getPartitionIndexImFileSize(0, symColumnIndex));
+                Assert.assertNotNull(
+                        "the rebuilt native index must be readable",
+                        reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD)
+                );
+
+                // Incarnation 3: parquet again, resealed under a NEW index txn.
                 execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
                 drainWalQueue();
                 Assert.assertTrue("the reader must have something to reload", reader.reload());
+                Assert.assertTrue(reader.openPartition(0) > 0);
 
-                // Fixture guard: a new incarnation is exactly a new name txn.
+                // Fixture guards: a new incarnation is exactly a new name txn, and
+                // the two index txns must differ or the assertion below cannot
+                // tell a refreshed cache from a retained one.
                 Assert.assertNotEquals(
                         "the fixture must change the partition incarnation",
-                        nameTxnBefore,
+                        firstNameTxn,
                         reader.getTxFile().getPartitionNameTxn(0)
                 );
-                // The sharp part. Both key words repeat EXACTLY across this
-                // incarnation change: the round trip re-encodes the same rows to
-                // a byte-identical data.parquet length and writes a _pm of the
-                // same length. So the surviving memo would not merely sit in the
-                // slot, it would be HIT by a partition it was never computed
-                // from. Measured, not assumed -- if a future encoder change
-                // breaks the repeat, this fails and the test below degrades from
-                // "the memo would be served" to "the memo is retained", which is
-                // a weaker thing to be asserting; rebuild the fixture rather than
-                // relaxing these two.
+                final long thirdIndexTxn = reader.getPartitionIndexTxn(0, symColumnIndex);
+                Assert.assertTrue(
+                        "the fixture must reseal under a new index txn, or the stale and fresh answers coincide"
+                                + " [first=" + firstIndexTxn + ", third=" + thirdIndexTxn + ']',
+                        thirdIndexTxn > firstIndexTxn
+                );
+                Assert.assertEquals(
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
+                );
+
+                try {
+                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                    Assert.fail("the parquet-form posting index must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + thirdIndexTxn);
+                }
+            }
+        });
+    }
+
+    /**
+     * The cost this task exists to remove. {@code checkPostingIndexIsReadable}
+     * used to resolve the partition's {@code _pm} footer and scan its
+     * covering-index section on EVERY {@code getIndexReader} call, and that call
+     * is made per page frame, per column and per KEY by the covering factory.
+     * <p>
+     * Asserted as a resolve count, not a duration: a stopwatch passes on a fast
+     * machine whatever the call count is. The count also does not depend on the
+     * memo the cache replaces -- that memo only ever recorded the EMPTY answer,
+     * so on this fixture, whose section is not empty, every one of the calls
+     * below used to miss it and resolve.
+     */
+    @Test
+    public void testTheOnDiskIndexFormIsResolvedOncePerPartitionOpenNotOncePerCall() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
                 Assert.assertTrue(reader.openPartition(0) > 0);
+                // Fixture guard: without a published token the loop below takes
+                // the "nothing to refuse" exit and resolves nothing for a reason
+                // that has nothing to do with the cache.
                 Assert.assertEquals(
-                        "the fixture must reproduce the _pm size, or the memo would miss anyway",
-                        memoMetaSize,
-                        reader.getParquetMetadataSize(0)
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        reader.getPartitionIndexForm(0, symColumnIndex)
                 );
-                Assert.assertEquals(
-                        "the fixture must reproduce the data.parquet size, or the memo would miss anyway",
-                        memoParquetSize,
-                        reader.getTxFile().getPartitionParquetFileSize(0)
+
+                final long before = reader.getParquetMetaReaderForTest().getFooterResolveCount();
+                // Fixture guard: the counter must be the one the partition open
+                // moved, or a zero delta below would prove only that it is dead.
+                Assert.assertTrue(
+                        "opening the partition must itself resolve a footer [before=" + before + ']',
+                        before > 0
                 );
+                for (int i = 0; i < 64; i++) {
+                    try {
+                        reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                        Assert.fail("the refusal must still fire in this task");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "sealed as parquet and has no reader yet");
+                    }
+                }
                 Assert.assertEquals(
-                        "the memo's _pm word must not survive a partition incarnation change",
-                        -1,
-                        probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE")
-                );
-                Assert.assertEquals(
-                        "the memo's data.parquet word must not survive a partition incarnation change",
-                        -1,
-                        probeMemoWord(reader, 0, "PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE")
+                        "the on-disk index form must be resolved at partition-open time,"
+                                + " not once per getIndexReader call",
+                        0,
+                        reader.getParquetMetaReaderForTest().getFooterResolveCount() - before
                 );
             }
         });
@@ -2531,30 +2597,6 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 files.length
         );
         return files[0].getName();
-    }
-
-    /**
-     * Reads one word of {@code checkPostingIndexIsReadable}'s per-partition memo
-     * out of the reader's {@code openPartitionInfo} slot. Reflective because the
-     * memo has no reader-facing accessor and should not grow one: it is interim
-     * state that Phase 2C Task 2 replaces with a per-(partition, column) form
-     * cache. The slot geometry is read from the class's own constants rather than
-     * hardcoded, so a slot-layout change fails here loudly instead of silently
-     * reading the wrong word.
-     */
-    private static long probeMemoWord(TableReader reader, int partitionIndex, String offsetConstantName) throws Exception {
-        final Field infoField = TableReader.class.getDeclaredField("openPartitionInfo");
-        infoField.setAccessible(true);
-        final LongList openPartitionInfo = (LongList) infoField.get(reader);
-        return openPartitionInfo.getQuick(
-                partitionIndex * intConstant("PARTITIONS_SLOT_SIZE") + intConstant(offsetConstantName)
-        );
-    }
-
-    private static int intConstant(String name) throws Exception {
-        final Field field = TableReader.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.getInt(null);
     }
 
     private static String onlyFileNamed(Path partitionPath, String prefix, String suffix) {
