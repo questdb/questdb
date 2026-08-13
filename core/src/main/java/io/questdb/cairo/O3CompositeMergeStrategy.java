@@ -59,14 +59,20 @@ public class O3CompositeMergeStrategy {
     /**
      * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowCount}.
      */
-    public static final int LONGS_PER_BOUND = 3;
-    private static final int BOUND_ROW_COUNT = 2;
+    public static final int LONGS_PER_BOUND = 4;
+    private static final int BOUND_ROW_COUNT = 3;
+    private static final int BOUND_ROW_OFFSET = 2;
     private static final int BOUND_TS_HI = 1;
     private static final int BOUND_TS_LO = 0;
 
-    public static void addPieceBounds(LongList bounds, long tsLo, long tsHi, long rowCount) {
+    /**
+     * @param rowOffset the FILE row this piece's first row sits at. Carried through the plan because the
+     *                  executor reads a piece straight out of the partition's files, so it needs to know
+     *                  where the piece is, not merely how big it is.
+     */
+    public static void addPieceBounds(LongList bounds, long tsLo, long tsHi, long rowOffset, long rowCount) {
         bounds.add(tsLo, tsHi);
-        bounds.add(rowCount);
+        bounds.add(rowOffset, rowCount);
     }
 
     /**
@@ -92,11 +98,15 @@ public class O3CompositeMergeStrategy {
             return false;
         }
         final int at = piece * LONGS_PER_BOUND;
+        // Both halves address the SAME files at the same places - that is what makes a cut free. The lower
+        // half keeps the row offset it had; the upper half starts that many rows further in.
+        final long rowOffset = getRowOffset(bounds, piece);
         bounds.setQuick(at + BOUND_TS_HI, cutTs - 1);
         bounds.setQuick(at + BOUND_ROW_COUNT, below);
         bounds.insert(at + LONGS_PER_BOUND, LONGS_PER_BOUND);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_LO, cutTs);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_HI, tsHi);
+        bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_OFFSET, rowOffset + below);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_COUNT, rows - below);
         return true;
     }
@@ -280,6 +290,13 @@ public class O3CompositeMergeStrategy {
 
     public static long getRowCount(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_COUNT);
+    }
+
+    /**
+     * The FILE row this piece's first row sits at.
+     */
+    public static long getRowOffset(LongList bounds, int piece) {
+        return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_ROW_OFFSET);
     }
 
     public static long getTsHi(LongList bounds, int piece) {

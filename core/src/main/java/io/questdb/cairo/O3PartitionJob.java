@@ -155,6 +155,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     boundsOut,
                     geometry.getPieceTimestampLo(partitionIndex, p),
                     geometry.getPieceTimestampHi(partitionIndex, p),
+                    geometry.getPieceRowOffset(partitionIndex, p),
                     geometry.getPieceRowCount(partitionIndex, p)
             );
         }
@@ -254,11 +255,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         piecesOut.clear();
         long e = partitionE;
-        // Cumulative row of the piece being read, in the partition's own row space.
-        long cumulativeLo = 0;
         try (
                 Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), partitionE);
-                Frame source = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), partitionE);
                 Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax)
         ) {
             for (int i = 0; i < actionCount; i++) {
@@ -266,9 +264,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long o3Rows = action.getO3RowCount();
                 switch (action.type) {
                     case KEEP -> {
-                        final long rows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
-                        addPiece(piecesOut, bounds, action.pieceIndex, cumulativeLo, rows, 0);
-                        cumulativeLo += rows;
+                        // Nothing is read and nothing is written. The piece keeps the file rows it already
+                        // had, which is the entire point of the action.
+                        addNewPiece(
+                                piecesOut,
+                                O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                O3CompositeMergeStrategy.getTsHi(bounds, action.pieceIndex),
+                                O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex),
+                                O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex)
+                        );
                     }
                     case NEW_PIECE -> {
                         final long at = e;
@@ -286,17 +290,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     case MERGE -> {
                         final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                        final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                        final long pieceHi = pieceLo + pieceRows;
                         final long at = e;
                         final long mergeRows = pieceRows + o3Rows;
                         final long indexSize = mergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                         final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
-                        try {
-                            // The piece's designated timestamps, read out of the partition's own file at
-                            // the rows the piece occupies.
-                            final long pieceTimestampAddr = timestampAddressOf(source, metadata.getTimestampIndex(), cumulativeLo + pieceRows);
+                        // A frame of its OWN, read-only, reaching no further than the piece it reads. Only
+                        // the target writes, and it writes at E - above every row any source reads - so the
+                        // same files carry one writer and any number of readers. Sizing it to the piece
+                        // rather than to E is what keeps the mapping proportional to the data being
+                        // rewritten, which is the whole claim this design makes.
+                        try (
+                                Frame source = frameFactory.openRO(
+                                        partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), pieceHi
+                                )
+                        ) {
+                            final long pieceTimestampAddr = timestampAddressOf(source, metadata.getTimestampIndex(), pieceHi);
                             Vect.mergeTwoLongIndexesAsc(
                                     pieceTimestampAddr,
-                                    cumulativeLo,
+                                    pieceLo,
                                     pieceRows,
                                     sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
                                     o3Rows,
@@ -305,8 +318,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             FrameAlgebra.merge(
                                     target,
                                     source,
-                                    cumulativeLo,
-                                    cumulativeLo + pieceRows,
+                                    pieceLo,
+                                    pieceHi,
                                     o3,
                                     action.o3Lo,
                                     action.o3Hi + 1,
@@ -330,26 +343,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 at,
                                 mergeRows
                         );
-                        cumulativeLo += pieceRows;
                     }
                 }
             }
         }
         return e;
-    }
-
-    /**
-     * Records a piece the plan CARRIED FORWARD unchanged: its bytes were never touched, so it keeps the
-     * row offset it already had, which is its cumulative position plus whatever shift it was sitting at.
-     */
-    private static void addPiece(LongList piecesOut, LongList bounds, int pieceIndex, long cumulativeLo, long rows, long shift) {
-        addNewPiece(
-                piecesOut,
-                O3CompositeMergeStrategy.getTsLo(bounds, pieceIndex),
-                O3CompositeMergeStrategy.getTsHi(bounds, pieceIndex),
-                cumulativeLo + shift,
-                rows
-        );
     }
 
     /**

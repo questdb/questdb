@@ -44,14 +44,14 @@ public class O3CompositeMergeStrategyTest {
         // A cut at or below the floor, above the last row, or on a piece whose data is unbounded, leaves
         // the list untouched - the caller applies cuts blind and reads the answer off the list.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 100);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 100);
         Assert.assertFalse(O3CompositeMergeStrategy.applyCut(bounds, 0, 100));
         Assert.assertFalse(O3CompositeMergeStrategy.applyCut(bounds, 0, 99));
         Assert.assertFalse(O3CompositeMergeStrategy.applyCut(bounds, 0, 200));
         Assert.assertEquals("P0(tsLo=100,tsHi=199,rows=100)", formatBounds(bounds));
 
         final LongList unbounded = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(unbounded, 100, Numbers.LONG_NULL, 100);
+        O3CompositeMergeStrategy.addPieceBounds(unbounded, 100, Numbers.LONG_NULL, 0, 100);
         Assert.assertFalse(O3CompositeMergeStrategy.applyCut(unbounded, 0, 150));
     }
 
@@ -61,8 +61,8 @@ public class O3CompositeMergeStrategyTest {
         // does to the geometry. Rows are apportioned by timestamp position, the same estimate computeCuts
         // decided on.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 1000, 1999, 500);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 1000, 1999, 0, 500);
         Assert.assertTrue(O3CompositeMergeStrategy.applyCut(bounds, 0, 400));
         Assert.assertEquals(
                 "P0(tsLo=0,tsHi=399,rows=400) P1(tsLo=400,tsHi=999,rows=600) P2(tsLo=1000,tsHi=1999,rows=500)",
@@ -75,7 +75,7 @@ public class O3CompositeMergeStrategyTest {
         // Clustering proposes cuts from the shape of the incoming work, so a cut can name a timestamp no
         // piece holds. It is dropped, not guessed at.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 100);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 100);
         Assert.assertFalse(O3CompositeMergeStrategy.applyCutAt(bounds, 50));
         Assert.assertFalse(O3CompositeMergeStrategy.applyCutAt(bounds, 500));
         Assert.assertEquals("P0(tsLo=100,tsHi=199,rows=100)", formatBounds(bounds));
@@ -91,7 +91,7 @@ public class O3CompositeMergeStrategyTest {
         // decision per piece: the cold gap and the untouched tail are KEPT - not copied, not read - and
         // only the sliver the batch actually overlaps is MERGED.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
 
         final LongList clusterCuts = new LongList();
         clusterCuts.add(300);  // start of the cold gap
@@ -132,7 +132,7 @@ public class O3CompositeMergeStrategyTest {
         // The shape batchBelowPieceRows carries today behind an isCommitReplaceMode gate, and the shape
         // the phantom-floor rescue founds a second _txn record for. Here it is just a gap action.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
         withTimestamps(new long[]{10, 20, 30}, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
             final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 2, 0, actions);
@@ -145,8 +145,8 @@ public class O3CompositeMergeStrategyTest {
     @Test
     public void testBatchBetweenTwoPiecesBecomesItsOwnPiece() {
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 50);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 50);
         withTimestamps(new long[]{250, 260}, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
             final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
@@ -161,9 +161,9 @@ public class O3CompositeMergeStrategyTest {
     public void testBatchOverlappingOnePieceMergesOnlyThatPiece() {
         // The whole point of the design: three pieces, and only the one the batch lands in is rewritten.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 50);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 60);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 300, 399, 70);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 0, 60);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 300, 399, 0, 70);
         withTimestamps(new long[]{250, 251}, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
             final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
@@ -178,7 +178,7 @@ public class O3CompositeMergeStrategyTest {
     public void testCutsAreNotProposedForASliver() {
         // A cut that spares fewer than minPieceRows costs a record and saves nothing.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
         withTimestamps(new long[]{5, 995}, addr -> {
             final LongList cuts = new LongList();
             final int n = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
@@ -191,7 +191,7 @@ public class O3CompositeMergeStrategyTest {
         // One piece covering a whole day, a batch landing in the middle: without a cut the whole day is
         // rewritten. Two cuts leave only the middle to merge.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
         withTimestamps(new long[]{500, 510}, addr -> {
             final LongList cuts = new LongList();
             final int n = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
@@ -202,7 +202,7 @@ public class O3CompositeMergeStrategyTest {
     @Test
     public void testCutsStopAtTheBudget() {
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
         withTimestamps(new long[]{500, 510}, addr -> {
             final LongList cuts = new LongList();
             Assert.assertEquals(1, O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 1, cuts));
@@ -216,7 +216,7 @@ public class O3CompositeMergeStrategyTest {
         // the whole 1000 rows rewritten for 2 new ones. With them the merge is 11 rows wide and the data
         // on either side is KEPT, which is the write amplification the design exists to remove.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 999, 0, 1000);
         withTimestamps(new long[]{500, 510}, addr -> {
             final LongList cuts = new LongList();
             final int cutCount = O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 1, 100, 8, cuts);
@@ -241,7 +241,7 @@ public class O3CompositeMergeStrategyTest {
     public void testNoCutWhenTsHiIsUnknown() {
         // Nothing bounds the piece's data, so there is no basis for apportioning rows to a cut point.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, Numbers.LONG_NULL, 1000);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, Numbers.LONG_NULL, 0, 1000);
         withTimestamps(new long[]{500}, addr -> {
             final LongList cuts = new LongList();
             Assert.assertEquals(0, O3CompositeMergeStrategy.computeCuts(bounds, addr, 0, 0, 10, 8, cuts));
@@ -253,8 +253,8 @@ public class O3CompositeMergeStrategyTest {
         // The common workload. Every existing piece is KEPT and the batch becomes one new piece, so the
         // commit writes only the rows it brought - no amplification at all.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 50);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 60);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 0, 60);
         withTimestamps(new long[]{500, 501, 502}, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
             final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 2, 0, actions);
@@ -270,9 +270,9 @@ public class O3CompositeMergeStrategyTest {
         // The invariant that matters most: the action list must partition the batch. A row claimed twice
         // is duplicated, a row claimed by nobody is lost, and neither throws.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 50);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 300, 399, 50);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 500, 599, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 300, 399, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 500, 599, 0, 50);
         final long[] ts = {10, 150, 151, 250, 350, 450, 550, 900};
         withTimestamps(ts, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
@@ -295,7 +295,7 @@ public class O3CompositeMergeStrategyTest {
     public void testSmallPieceAbsorbsAdjacentGapInsteadOfFoundingAPiece() {
         // The same trade parquet's smallRowGroupThreshold makes: do not found a piece next to a tiny one.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 5);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 5);
         withTimestamps(new long[]{10, 20}, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
             final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 1000, actions);
@@ -310,8 +310,8 @@ public class O3CompositeMergeStrategyTest {
         // claim its whole routing range - otherwise rows that may already be in it become a second piece
         // at an overlapping timestamp.
         final LongList bounds = new LongList();
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, Numbers.LONG_NULL, 50);
-        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, Numbers.LONG_NULL, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 50);
         withTimestamps(new long[]{250, 260}, addr -> {
             final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
             final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
