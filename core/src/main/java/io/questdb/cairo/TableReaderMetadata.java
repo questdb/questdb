@@ -280,6 +280,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             Misc.free(metaCopyMem);
             metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
             TableUtils.validateMeta(path, metaMem, null, ColumnType.VERSION);
+            TableUtils.verifyMetaBodyChecksum(path, metaMem, metaMem.size());
             readFromMem(metaMem);
         } catch (Throwable e) {
             clear();

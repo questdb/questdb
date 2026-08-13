@@ -119,9 +119,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 4;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 5;
     public static final short META_FORMAT_MINOR_VERSION_COMMIT_MODE = 3;
     public static final short META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE = 4;
+    public static final short META_FORMAT_MINOR_VERSION_BODY_CHECKSUM = 5;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -158,6 +159,20 @@ public final class TableUtils {
     // it is not rewritten at all, so a stale non-ADAPTIVE value is normal and answers the question above
     // correctly. Additive field at the meta tail, gated by META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE.
     public static final long META_OFFSET_ENROLLED_COMMIT_MODE = META_OFFSET_COMMIT_MODE + 4; // INT
+    // Body length and body checksum of the live _meta, gated by META_FORMAT_MINOR_VERSION_BODY_CHECKSUM.
+    //
+    // They live INSIDE the record rather than in a trailer at the end of the file for one measured
+    // reason: _meta's on-disk length is page-rounded and is NOT authoritative. The create path reuses
+    // its MemoryMARW for the symbol-map files instead of closing it, so the file is left extended to a
+    // page boundary and an end-of-file trailer is simply never found. The reader already knows how to
+    // find version-gated fields, so the length rides here with everything else.
+    //
+    // The pair occupies previously unused padding between META_OFFSET_ENROLLED_COMMIT_MODE (ends at 61)
+    // and META_OFFSET_COLUMN_TYPES (128), so no file grows. [64,80) is EXCLUDED from the checksum it
+    // stores -- see calculateMetaBodyChecksum -- for the same reason _txn excludes its own slot.
+    public static final long META_OFFSET_BODY_LEN_64 = 64; // LONG
+    public static final long META_OFFSET_BODY_CHECKSUM_64 = 72; // LONG
+    private static final long META_BODY_CHECKSUM_SKIP_HI = META_OFFSET_BODY_CHECKSUM_64 + 8;
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -486,6 +501,59 @@ public final class TableUtils {
      * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
      * @return a non-zero 64-bit checksum
      */
+    /**
+     * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, EXCLUDING the 16 bytes at
+     * {@code [META_OFFSET_BODY_LEN_64, META_OFFSET_BODY_CHECKSUM_64 + 8)} that carry the length and the
+     * checksum itself -- a field cannot cover its own value.
+     *
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateMetaBodyChecksum(long metaBaseAddr, long bodyLen) {
+        long h = hashTxnBodyRange(metaBaseAddr, 0, META_OFFSET_BODY_LEN_64, 0);
+        if (META_BODY_CHECKSUM_SKIP_HI < bodyLen) {
+            h = hashTxnBodyRange(metaBaseAddr, META_BODY_CHECKSUM_SKIP_HI, bodyLen, h);
+        }
+        h = xxh3Avalanche64(h);
+        // 0 is reserved as the "absent" sentinel; never emit it for a real record.
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * Stamps the body length and body checksum into a freshly written (or freshly mutated) {@code _meta}.
+     * Call AFTER the whole record is in memory and BEFORE it is synced, so the checksum is made durable
+     * with the bytes it describes.
+     * <p>
+     * Any path that mutates {@code _meta} in place must call this again, or it invalidates the checksum
+     * it left behind.
+     */
+    public static void storeMetaBodyChecksum(MemoryMARW mem, long bodyLen) {
+        mem.putLong(META_OFFSET_BODY_LEN_64, bodyLen);
+        mem.putLong(META_OFFSET_BODY_CHECKSUM_64, calculateMetaBodyChecksum(mem.addressOf(0), bodyLen));
+    }
+
+    /**
+     * Verifies the {@code _meta} body checksum when the file carries one. A file written before the
+     * field existed fails the version gate and loads exactly as before.
+     */
+    public static void verifyMetaBodyChecksum(Utf8Sequence metaPath, MemoryR metaMem, long memSize) {
+        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_BODY_CHECKSUM)) {
+            return;
+        }
+        final long bodyLen = metaMem.getLong(META_OFFSET_BODY_LEN_64);
+        if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI || bodyLen > memSize) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("_meta body length is impossible [path=").put(metaPath)
+                    .put(", bodyLen=").put(bodyLen).put(", memSize=").put(memSize).put(']');
+        }
+        final long stored = metaMem.getLong(META_OFFSET_BODY_CHECKSUM_64);
+        final long computed = calculateMetaBodyChecksum(metaMem.addressOf(0), bodyLen);
+        if (stored != computed) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("_meta checksum mismatch [path=").put(metaPath)
+                    .put(", expected=").put(stored).put(", actual=").put(computed).put(']');
+        }
+    }
+
     public static long calculateCvAreaChecksum(long areaBaseAddr, long size) {
         // The whole area is commit-immutable (fully rewritten each commit, never mutated in place under a
         // stable version), so cover [0, size) with no exclusions.
@@ -663,6 +731,61 @@ public final class TableUtils {
                         Numbers.decodeHighShort(minorVersionField)
                 )
         );
+        // Last: this rewrote bytes inside the checksummed range, so the stored body checksum now
+        // describes the PREVIOUS contents. Recomputing here rather than at the call sites makes it
+        // correct by construction -- REBASE (WalUtils) and table conversion (TableConverter) both
+        // mutate _meta in place through this method, and any future in-place mutator gets it free.
+        refreshMetaBodyChecksum(metaMem);
+    }
+
+    /**
+     * Recomputes the stored body checksum after an in-place mutation of {@code _meta}. No-op on a file
+     * that carries no checksum, and on one whose recorded body length is unusable.
+     */
+    /**
+     * Recomputes the stored body checksum after an in-place mutation made through a raw file
+     * descriptor rather than a mapped memory -- the adaptive enrolment record is written that way on
+     * purpose, so that durability bookkeeping does not present itself as a schema change.
+     * <p>
+     * No-op on a {@code _meta} that carries no checksum. Never throws for a file it cannot interpret:
+     * losing the checksum costs detection, whereas failing here would fail the enrolment itself.
+     */
+    public static void refreshMetaBodyChecksumOnFd(FilesFacade ff, long fd, long tempMem) {
+        final long bodyLen = ff.readNonNegativeLong(fd, META_OFFSET_BODY_LEN_64);
+        if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI) {
+            return; // absent or unusable: legacy _meta
+        }
+        final long buf = Unsafe.malloc(bodyLen, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            if (ff.read(fd, buf, bodyLen, 0) != bodyLen) {
+                return;
+            }
+            // Same gate the reader applies, evaluated on the bytes we just read.
+            final int minorField = Unsafe.getUnsafe().getInt(buf + META_OFFSET_META_FORMAT_MINOR_VERSION);
+            final short savedChecksum = Numbers.decodeLowShort(minorField);
+            final short actualChecksum = checksumForMetaFormatMinorVersionField(
+                    Unsafe.getUnsafe().getLong(buf + META_OFFSET_METADATA_VERSION),
+                    Unsafe.getUnsafe().getInt(buf + META_OFFSET_COUNT)
+            );
+            if (savedChecksum != actualChecksum
+                    || Numbers.decodeHighShort(minorField) < META_FORMAT_MINOR_VERSION_BODY_CHECKSUM) {
+                return;
+            }
+            Unsafe.getUnsafe().putLong(tempMem, calculateMetaBodyChecksum(buf, bodyLen));
+            ff.write(fd, tempMem, Long.BYTES, META_OFFSET_BODY_CHECKSUM_64);
+        } finally {
+            Unsafe.free(buf, bodyLen, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+    }
+
+    public static void refreshMetaBodyChecksum(MemoryMARW metaMem) {
+        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_BODY_CHECKSUM)) {
+            return;
+        }
+        final long bodyLen = metaMem.getLong(META_OFFSET_BODY_LEN_64);
+        if (bodyLen > META_BODY_CHECKSUM_SKIP_HI) {
+            metaMem.putLong(META_OFFSET_BODY_CHECKSUM_64, calculateMetaBodyChecksum(metaMem.addressOf(0), bodyLen));
+        }
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -949,6 +1072,7 @@ public final class TableUtils {
             mem.jumpTo(0);
             path.trimTo(rootLen);
             writeMetadata(structure, tableVersion, tableId, mem);
+            storeMetaBodyChecksum(mem, mem.getAppendOffset());
             mem.sync(false);
 
             // create symbol maps

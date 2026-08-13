@@ -145,6 +145,11 @@ public class TableConverter {
                                     }
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
+                                // Last in-place mutation of _meta on this path, and it lands inside the
+                                // checksummed range -- so the checksum resetMetadataVersion recomputed
+                                // above now describes the PREVIOUS contents. Refresh after the final
+                                // write, not before it.
+                                TableUtils.refreshMetaBodyChecksum(metaMem);
                                 convertedTables.add(token);
 
                                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

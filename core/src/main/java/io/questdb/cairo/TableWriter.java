@@ -229,7 +229,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final IntList coveringTypes = new IntList();
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
-    private final MemoryMAR ddlMem;
+    private final MemoryMARW ddlMem;
     private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
     private final ObjList<PostingSealPurgeTask> deferredPostingSealPurges = new ObjList<>();
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
@@ -14387,6 +14387,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
+            TableUtils.storeMetaBodyChecksum(ddlMem, ddlMem.getAppendOffset());
             ddlMem.sync(false);
             if (CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode()) != CommitMode.NOSYNC) {
                 try {
