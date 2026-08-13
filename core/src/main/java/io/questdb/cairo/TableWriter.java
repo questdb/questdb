@@ -311,8 +311,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // two longs per entry.
     private final LongList parquetSweepScratchTokens = new LongList();
     // Timestamps of the partitions whose _pm this writer appended a covering
-    // index footer to since the last commit, with the committed txn they were
-    // appended against. A publish makes the _pm durable before the _txn commit,
+    // index footer to since the last commit, one entry per partition TIMESTAMP.
+    // Not per (timestamp, name txn): the only consumer, rollback(), discards a
+    // recorded name txn and re-resolves the partition from the reloaded _txn by
+    // timestamp alone, so two entries for one timestamp at two name txns would
+    // land on one partition and stamp it twice for one publish window.
+    // A publish makes the _pm durable before the _txn commit,
     // so a rollback has to re-apply the reader-facing marks the publish made in
     // txWriter and unsafeLoadAll then threw away. Keyed on "a publish happened",
     // not on "a purge task is pending": a first seal supersedes nothing and
@@ -3498,7 +3502,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // reader to drop the pre-publish mapping and still tells a
                     // per-partition consumer the directory moved.
                     txWriter.bumpPartitionTableVersion();
-                    for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i += 2) {
+                    for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i++) {
                         final long publishedTimestamp = parquetIndexPublishedPartitions.getQuick(i);
                         // Re-resolved against the reloaded _txn rather than taken
                         // from the recorded pair: the rollback may have taken the
@@ -12643,18 +12647,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // window -- resealParquetIndexesAfterSwitch followed by
         // resealParquetCoveringForPartition on the same partition -- and a
         // rollback would then advance the counter by two for one publish window.
-        // Linear scan: the list holds the partitions published since the last
-        // commit, which is one or a handful.
-        boolean alreadyRecorded = false;
-        for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i += 2) {
-            if (parquetIndexPublishedPartitions.getQuick(i) == partitionTimestamp
-                    && parquetIndexPublishedPartitions.getQuick(i + 1) == partitionNameTxn) {
-                alreadyRecorded = true;
-                break;
-            }
-        }
-        if (!alreadyRecorded) {
-            parquetIndexPublishedPartitions.add(partitionTimestamp, partitionNameTxn);
+        //
+        // Keyed on the timestamp ALONE, and the name txn deliberately not
+        // recorded. rollback() re-resolves the partition from the reloaded _txn
+        // by timestamp (see the call site's own note: the rollback may have
+        // taken the name txn back, or the partition away), so it stamps once per
+        // DISTINCT TIMESTAMP in this list however the name txns differ. A
+        // (timestamp, name txn) key admits two entries that the consumer then
+        // collapses onto one partition, which is the double stamp this dedup
+        // exists to prevent. Linear scan: the list holds the partitions
+        // published since the last commit, which is one or a handful.
+        if (parquetIndexPublishedPartitions.indexOf(partitionTimestamp) < 0) {
+            parquetIndexPublishedPartitions.add(partitionTimestamp);
         }
         for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
             purgeSupersededParquetIndexArtifacts(
