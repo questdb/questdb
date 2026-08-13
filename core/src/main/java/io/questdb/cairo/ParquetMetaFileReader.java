@@ -851,6 +851,33 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * this one. Callers that must establish "no footer, live or superseded, names
      * X" enumerate rather than resolve.
      * <p>
+     * <b>That suffix property is NOT a property of the format, and a future
+     * {@code _pm} compaction will break it. Read this before writing one.</b>
+     * It holds only because {@code prev_parquet_meta_file_size} is written as
+     * the <i>parse anchor</i> -- the committed head resolved from {@code _txn},
+     * never the raw {@code _pm} header
+     * ({@code O3PartitionJob}'s {@code updaterParquetMetaFileSize =
+     * parquetMetaReader.getResolvedFileSize()}, {@code TableWriter}'s
+     * {@code parseAnchor} in {@code publishParquetIndexTokens}, and
+     * {@code qdb-parquet-meta}'s
+     * {@code fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size)}).
+     * So the chain is a sequence of <i>committed heads</i>: every value that was
+     * ever committed is the anchor of the next append and hence a link, which is
+     * what makes an older reader's walk a literal suffix of this one. And no
+     * path today re-roots or truncates a chain inside a directory that can also
+     * hold {@code pidx} pairs -- the O3 rewrite, the native/parquet conversions
+     * and the format switch all land in a NEW partition directory, and the
+     * switch copies the {@code _pm} forward whole rather than rebuilding it.
+     * <p>
+     * A {@code _pm} compaction rewrites the chain in place: the surviving
+     * footers acquire new committed heads, and a reader still holding the
+     * pre-compaction mapping walks a chain that is no longer a suffix of this
+     * one. Every consumer that treats this enumeration as "every footer any
+     * reader can reach" -- {@code TableWriter}'s orphan sweep is one, and it
+     * unlinks files on the strength of it -- has to have its licence re-derived
+     * at that point, or compaction silently deletes data a pinned reader still
+     * resolves.
+     * <p>
      * Each step re-binds the native handle to the newly selected footer, so
      * accessors that read through the handle (the covering-index section among
      * them) describe the footer this call settled on and not the one before it.
