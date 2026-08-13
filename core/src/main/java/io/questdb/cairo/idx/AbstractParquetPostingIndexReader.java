@@ -73,18 +73,8 @@ import java.util.Arrays;
  */
 public abstract class AbstractParquetPostingIndexReader implements PostingIndexReader {
     private static final Log LOG = LogFactory.getLog(AbstractParquetPostingIndexReader.class);
-    protected final ParquetFileDecoder decoder = new ParquetFileDecoder();
     protected final IndexMetaFileReader imReader = new IndexMetaFileReader();
-    protected final DirectIntList projection = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT);
-    // keepClosed: a pooled reader is closed and rebound many times, and close()
-    // destroys the native buffers. Allocating eagerly here would leave every
-    // rebound reader with a destroyed pointer, which the decoder reports as
-    // "row group buffers pointer is null". reopen() before each decode is the
-    // pattern ParquetTimestampFinder and ReadParquetRecordCursor use.
-    protected final RowGroupBuffers rowGroupBuffers =
-            new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     protected long columnTop;
-    protected int[] coverChunkOrdinal;
     protected long decodedRowGroupCount;
     protected long indexTxn = -1;
     protected long partitionTimestamp;
@@ -102,9 +92,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     @Override
     public void close() {
         open = false;
-        Misc.free(decoder);
-        Misc.free(rowGroupBuffers);
-        Misc.free(projection);
         if (pidxAddr != 0) {
             ff.munmap(pidxAddr, pidxSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxAddr = 0;
@@ -113,25 +100,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         // Releases the _im mapping this reader owns; safe on a reader that was
         // never bound and safe to repeat.
         imReader.clear();
-    }
-
-    /**
-     * Projects exactly the two synthetic columns every index parquet carries:
-     * {@code key_id} as INT and {@code row_id} as LONG. Their positions come
-     * from the {@code _im} header rather than being assumed, because the seal
-     * is free to move them and the header is what names them.
-     * <p>
-     * Rebuilt on each call rather than cached because {@code DirectIntList} is
-     * cheap to refill and a stale projection would decode the wrong columns
-     * after a rebind.
-     */
-    protected DirectIntList decodeProjection() {
-        projection.clear();
-        projection.add(imReader.getKeyIdColumn());
-        projection.add(ColumnType.INT);
-        projection.add(imReader.getRowIdColumn());
-        projection.add(ColumnType.LONG);
-        return projection;
     }
 
     /**
@@ -175,58 +143,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
-     * Builds the decode projection for a covering cursor: {@code key_id},
-     * {@code row_id}, then one entry per requested cover slot, and records
-     * where each slot's chunk lands.
-     * <p>
-     * <b>Three index spaces meet here and must not be confused.</b>
-     * {@code requiredCoverColumns} are COVER SLOTS.
-     * {@link IndexMetaFileReader#getCoverColumnIndex(int)} maps a slot to a
-     * DESCRIPTOR INDEX, which is also the parquet column index -- that is what
-     * the decoder wants. A descriptor's {@code ID} is the covered column's
-     * WRITER INDEX and is not a lookup key on this path at all.
-     * <p>
-     * Chunk ordinals follow the projection's order, so slot {@code s} lands at
-     * {@code 2 + its position in requiredCoverColumns}, never at {@code s}.
-     * The two are equal only when the caller asks for a dense prefix of the
-     * slots, which is exactly the case a wrong mapping would still pass.
-     */
-    protected DirectIntList coveringProjection(int[] requiredCoverColumns) {
-        projection.clear();
-        projection.add(imReader.getKeyIdColumn());
-        projection.add(ColumnType.INT);
-        projection.add(imReader.getRowIdColumn());
-        projection.add(ColumnType.LONG);
-
-        final int coverCount = imReader.getColumnCount() - imReader.getFirstCoverColumn();
-        if (coverChunkOrdinal == null || coverChunkOrdinal.length < coverCount) {
-            coverChunkOrdinal = new int[Math.max(coverCount, 8)];
-        }
-        Arrays.fill(coverChunkOrdinal, 0, coverChunkOrdinal.length, -1);
-        if (requiredCoverColumns == null) {
-            return projection;
-        }
-        int ordinal = 2;
-        for (int i = 0; i < requiredCoverColumns.length; i++) {
-            final int slot = requiredCoverColumns[i];
-            if (slot < 0 || slot >= coverCount) {
-                throw CairoException.critical(0)
-                        .put("cover slot out of range [slot=").put(slot)
-                        .put(", coverCount=").put(coverCount)
-                        .put(", column=").put(columnName).put(']');
-            }
-            if (coverChunkOrdinal[slot] >= 0) {
-                continue; // asked for twice; one chunk serves both
-            }
-            final int descriptor = imReader.getCoverColumnIndex(slot);
-            projection.add(descriptor);
-            projection.add(imReader.getColumnType(descriptor));
-            coverChunkOrdinal[slot] = ordinal++;
-        }
-        return projection;
-    }
-
-    /**
      * Resolves {@code key} to its inclusive index row-group run through the
      * {@code _im} directory. Pruning level 1: exact, and it reads no byte of
      * the index parquet.
@@ -257,7 +173,102 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * seal's restriction is ever relaxed without revisiting this class.
      */
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
+        // Owned per cursor, not per reader. getDetachedCursor hands N workers N
+        // cursors over ONE frozen reader, and they decode concurrently: shared
+        // buffers would interleave two groups in one allocation, and a shared
+        // slot->ordinal map would have each cursor's projection overwrite the
+        // other's. Only the _im and parquet mappings are shared, and those are
+        // immutable while frozen.
+        // The decoder is per-cursor for the same reason the buffers are, and
+        // it is the one that bites: ParquetFileDecoder caches a lazily-created
+        // native decode context, so N workers decoding through one instance
+        // race on it. That does not fail loudly -- it returns another group's
+        // rows, which the concurrency test caught as two cursors disagreeing
+        // about a posting 15000 rows in.
+        protected final ParquetFileDecoder decoder = new ParquetFileDecoder();
+        protected final DirectIntList projection = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT);
+        protected final RowGroupBuffers rowGroupBuffers =
+                new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
+        protected int[] coverChunkOrdinal;
         protected long emittedRow = -1;
+        private boolean decoderBound;
+
+        /**
+         * Binds this cursor's decoder to the reader's parquet mapping. The
+         * mapping is immutable while the reader is bound, so every cursor may
+         * hold its own decoder over the same bytes.
+         */
+        protected ParquetFileDecoder decoder() {
+            if (!decoderBound) {
+                decoder.of(pidxAddr, pidxSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                decoderBound = true;
+            }
+            return decoder;
+        }
+
+        /**
+         * Releases everything this cursor owns. Called when the READER closes
+         * for its pooled cursor, and by {@link #close()} for a detached one,
+         * which no reader will ever come back for.
+         */
+        protected void freeResources() {
+            Misc.free(decoder);
+            Misc.free(rowGroupBuffers);
+            Misc.free(projection);
+            decoderBound = false;
+        }
+
+        /**
+         * Builds the decode projection for a covering cursor: {@code key_id},
+         * {@code row_id}, then one entry per requested cover slot, and records
+         * where each slot's chunk lands.
+         * <p>
+         * <b>Three index spaces meet here and must not be confused.</b>
+         * {@code requiredCoverColumns} are COVER SLOTS.
+         * {@link IndexMetaFileReader#getCoverColumnIndex(int)} maps a slot to a
+         * DESCRIPTOR INDEX, which is also the parquet column index -- that is what
+         * the decoder wants. A descriptor's {@code ID} is the covered column's
+         * WRITER INDEX and is not a lookup key on this path at all.
+         * <p>
+         * Chunk ordinals follow the projection's order, so slot {@code s} lands at
+         * {@code 2 + its position in requiredCoverColumns}, never at {@code s}.
+         * The two are equal only when the caller asks for a dense prefix of the
+         * slots, which is exactly the case a wrong mapping would still pass.
+         */
+        protected DirectIntList coveringProjection(int[] requiredCoverColumns) {
+            projection.clear();
+            projection.add(imReader.getKeyIdColumn());
+            projection.add(ColumnType.INT);
+            projection.add(imReader.getRowIdColumn());
+            projection.add(ColumnType.LONG);
+
+            final int coverCount = imReader.getColumnCount() - imReader.getFirstCoverColumn();
+            if (coverChunkOrdinal == null || coverChunkOrdinal.length < coverCount) {
+                coverChunkOrdinal = new int[Math.max(coverCount, 8)];
+            }
+            Arrays.fill(coverChunkOrdinal, 0, coverChunkOrdinal.length, -1);
+            if (requiredCoverColumns == null) {
+                return projection;
+            }
+            int ordinal = 2;
+            for (int i = 0; i < requiredCoverColumns.length; i++) {
+                final int slot = requiredCoverColumns[i];
+                if (slot < 0 || slot >= coverCount) {
+                    throw CairoException.critical(0)
+                            .put("cover slot out of range [slot=").put(slot)
+                            .put(", coverCount=").put(coverCount)
+                            .put(", column=").put(columnName).put(']');
+                }
+                if (coverChunkOrdinal[slot] >= 0) {
+                    continue; // asked for twice; one chunk serves both
+                }
+                final int descriptor = imReader.getCoverColumnIndex(slot);
+                projection.add(descriptor);
+                projection.add(imReader.getColumnType(descriptor));
+                coverChunkOrdinal[slot] = ordinal++;
+            }
+            return projection;
+        }
 
         @Override
         public ArrayView getCoveredArray(int includeIdx, int columnType) {
@@ -653,7 +664,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             }
             pidxAddr = TableUtils.mapRO(ff, pidxFile, LOG, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxSize = size;
-            decoder.of(pidxAddr, pidxSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             open = true;
         } catch (Throwable th) {
             close();

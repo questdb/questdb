@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -37,6 +38,35 @@ import io.questdb.std.Unsafe;
  */
 public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexReader {
     private final FwdCursor cursor = new FwdCursor();
+
+    /**
+     * Frees the pooled cursor's decode buffers alongside the reader's mappings.
+     * Detached cursors are the worker's to close -- they are handed out one per
+     * call and never returned here.
+     */
+    @Override
+    public void close() {
+        cursor.freeResources();
+        super.close();
+    }
+
+    /**
+     * A cursor a single worker owns outright, for the parallel covered decode.
+     * <p>
+     * Never drawn from or returned to the reader's pooled cursor, so N workers
+     * may iterate N of these over ONE reader: each owns its decode buffers, its
+     * projection and its cover slot-to-chunk map, sharing only the _im and
+     * parquet mappings, which do not move while the reader is frozen. Sharing
+     * any of the three would interleave two groups in one allocation or let one
+     * cursor's projection overwrite another's.
+     */
+    @Override
+    public RowCursor getDetachedCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        final FwdCursor detached = new FwdCursor();
+        detached.detached = true;
+        detached.of(key, minValue, maxValue, requiredCoverColumns);
+        return detached;
+    }
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
@@ -90,6 +120,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private int rg;
         private int rgHi;
         private long rowIdPtr;
+        private boolean detached;
         private int[] requiredCoverColumns;
         private long rowInGroup;
 
@@ -103,7 +134,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          */
         @Override
         public void close() {
-            rowGroupBuffers.close();
+            if (detached) {
+                freeResources();
+            } else {
+                rowGroupBuffers.close();
+            }
             keyIdPtr = 0;
             rowIdPtr = 0;
             hasNext = false;
@@ -170,7 +205,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 // No-op once allocated; the buffers are destroyed by close() and
                 // a pooled reader is rebound without being reconstructed.
                 rowGroupBuffers.reopen();
-                decoder.decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
+                decoder().decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
                 onRowGroupDecoded();
                 // Chunk ordinals follow the projection's order, not the parquet
                 // file's: key_id was added first, row_id second.
@@ -182,7 +217,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             return false;
         }
 
-        private void of(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        void of(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
             this.requiredCoverColumns = requiredCoverColumns;
             this.key = key;
             this.minValue = minValue;

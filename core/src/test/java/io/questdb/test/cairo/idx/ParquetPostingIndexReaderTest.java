@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
+import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.ParquetPostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
@@ -39,6 +40,10 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Dispatch: a partition whose {@code _pm} publishes a covering-index token must
@@ -375,6 +380,83 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                         1000 - (1000 / 16),
                         narrowRows
                 );
+            }
+        });
+    }
+
+    /**
+     * N detached cursors over ONE frozen reader must each return the whole
+     * answer, concurrently.
+     * <p>
+     * This is the property the parallel covered decode needs and the one that
+     * shared decode state silently breaks: with buffers or a cover slot-to-chunk
+     * map shared, two workers interleave one allocation and each sees the
+     * other's group. Running them on real threads and comparing every cursor's
+     * output to the serial answer is what catches that -- a single-threaded
+     * "does getDetachedCursor return something" test would not.
+     */
+    @Test
+    public void testDetachedCursorsCanRunConcurrentlyOverOneReader() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+                final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+                final int[] covers = new int[]{0, 1};
+
+                final LongList expected = new LongList();
+                try (RowCursor c = indexReader.getCursor(key, 0, Long.MAX_VALUE, covers)) {
+                    while (c.hasNext()) {
+                        expected.add(c.next());
+                    }
+                }
+                Assert.assertTrue("the key must have postings", expected.size() > 0);
+
+                // Frozen: the mappings must not move under the workers.
+                indexReader.setFrozen(true);
+                final int workers = 4;
+                final CountDownLatch start = new CountDownLatch(1);
+                final CountDownLatch done = new CountDownLatch(workers);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                for (int w = 0; w < workers; w++) {
+                    new Thread(() -> {
+                        try {
+                            start.await();
+                            final LongList mine = new LongList();
+                            try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, covers)) {
+                                while (c.hasNext()) {
+                                    final CoveringRowCursor crc = (CoveringRowCursor) c;
+                                    final long rowId = c.next();
+                                    mine.add(rowId);
+                                    // Touch a covered value too: a shared chunk
+                                    // map shows up here rather than in the ids.
+                                    crc.getCoveredDouble(0);
+                                }
+                            }
+                            if (mine.size() != expected.size()) {
+                                throw new AssertionError("detached cursor saw " + mine.size()
+                                        + " postings, serial saw " + expected.size());
+                            }
+                            for (int i = 0, n = mine.size(); i < n; i++) {
+                                if (mine.getQuick(i) != expected.getQuick(i)) {
+                                    throw new AssertionError("detached cursor diverged at " + i
+                                            + ": " + mine.getQuick(i) + " != " + expected.getQuick(i));
+                                }
+                            }
+                        } catch (Throwable t) {
+                            failure.compareAndSet(null, t);
+                        } finally {
+                            done.countDown();
+                        }
+                    }).start();
+                }
+                start.countDown();
+                Assert.assertTrue("workers did not finish", done.await(60, TimeUnit.SECONDS));
+                indexReader.setFrozen(false);
+                if (failure.get() != null) {
+                    throw new AssertionError(failure.get());
+                }
             }
         });
     }
