@@ -4300,7 +4300,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // kickstart on the persisted-state path below; timer/period views are driven by the
                     // timer job and need no incremental kickstart here.
                     if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                        matViewStateStore.enqueueIncrementalRefresh(tableToken);
+                        target.enqueueIncrementalRefresh(tableToken);
                     }
                     return;
                 }

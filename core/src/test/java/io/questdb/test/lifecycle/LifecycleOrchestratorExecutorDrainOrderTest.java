@@ -104,14 +104,14 @@ public class LifecycleOrchestratorExecutorDrainOrderTest {
             this.closerAtDrain = closerAtDrain;
         }
 
-        void submitToExecutor(Runnable task) {
-            executor.execute(task);
-        }
-
         @Override
         protected boolean awaitInFlightWork() {
             closerAtDrain.countDown();
             return super.awaitInFlightWork();
+        }
+
+        void submitToExecutor(Runnable task) {
+            executor.execute(task);
         }
     }
 }
