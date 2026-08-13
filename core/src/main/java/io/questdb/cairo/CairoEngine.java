@@ -1161,7 +1161,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Repopulates {@code target} from the view graph and the on-disk {@code _mv} state, for every
-     * mat-view already present in {@code matViewGraph}. Unlike {@link #buildViewGraphs()} (which
+     * mat-view already present in {@code dependentViewGraph}. Unlike {@link #buildViewGraphs()} (which
      * only creates state for views not yet in the graph), this forces {@code createViewState} for
      * each graph view that has no state yet, so a freshly built store on a role promote ends up
      * populated rather than empty. Idempotent: a view that already has state is re-initialized from
