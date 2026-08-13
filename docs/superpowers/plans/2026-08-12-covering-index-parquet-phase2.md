@@ -597,7 +597,11 @@ The artifacts exist but nothing references them, `linkPartitionIndexFiles` still
 
 **Dropping the token is not retiring the artifact.** `clear_covering_index()` — and the release-mode fallback — removes the *pointer* while leaving `<col>.pidx.<txn>.parquet` and `<col>.pidx.<txn>._im` on disk. The drop decision and the unlink decision must be the same decision point, or every O3 update over an indexed Parquet partition leaks two files.
 
-**Superseded is not sufficient grounds to delete.** The `_pm` MVCC chain deliberately preserves the prior footer's entry, reachable via `find_footer_for_parquet_size`, so a reader pinned to the prior snapshot still resolves the *old* `index_txn`. Purging must be gated on no reader being able to resolve a footer naming the artifact — not on the token having been superseded. This is also why Step 3 copies `_pm` rather than hard-linking it: copying keeps the two directories' MVCC chains independent enough for the purge to be decidable per-directory.
+**Superseded is not sufficient grounds to delete.** A reader pinned to the prior snapshot still resolves the *old* `index_txn`, so purging must be gated on no reader being able to reach the artifact — not on the token having been superseded.
+
+**What keeps that prior entry reachable is the reader's own `_pm` mapping, NOT the MVCC chain.** A token publish restates the same `parquet_footer_offset`/`parquet_footer_length`, so the appended footer derives the same `data.parquet` size as the one it replaces and `find_footer_for_parquet_size` — which returns the *newest* match — shadows the prior entry for every mapping made after the header patch. The prior footer is still in the file and is no longer selectable. A reader is safe only because it maps the `_pm` at the size its own snapshot's header named and resolves from that tail. The purge window is therefore expressed in table txns over the scoreboard, and the publish must restamp something a reloading reader reconciles on, or a reader can advance past the seal's txn still holding the pre-publish mapping. See `docs/parquet-metadata.md`, "Token-only appends".
+
+This is also why Step 3 copies `_pm` rather than hard-linking it: copying keeps the two directories' MVCC chains independent enough for the purge to be decidable per-directory.
 
 Expect test churn as well: existing tests that build a `_pm` carrying a covering index and then run an in-place update will start panicking in debug once this task writes the bit.
 
