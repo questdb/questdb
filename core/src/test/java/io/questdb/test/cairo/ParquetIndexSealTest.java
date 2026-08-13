@@ -39,6 +39,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.mp.MPSequence;
@@ -368,6 +369,80 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     SKEWED_ROW_COUNT / 4,
                     countIndexedRows()
             );
+        });
+    }
+
+    /**
+     * I8a: the squash stamp a token publish makes must not be on a per-commit
+     * trigger, because the counter it stamps is 16 bits.
+     * <p>
+     * {@code TxWriter.incrementPartitionSquashCounter} saturates at
+     * {@code PARTITION_SQUASH_COUNTER_MAX} (0xFFFF) and is reset only by
+     * {@code updatePartitionSizeAndTxnByRawIndex}, i.e. by a partition-version
+     * rewrite. O3 into a parquet partition that runs IN PLACE takes
+     * {@code updatePartitionSizeByRawIndex} instead and never resets it, so a
+     * stamp on every O3 reseal saturates after 65 535 commits into one
+     * partition and every publish after that takes the {@code .squash_ts} file
+     * write, forever, with nothing to reset it.
+     * <p>
+     * The stamp is skipped exactly where it is redundant: an O3 commit has
+     * already moved the partition's own {@code _txn} record, so a per-partition
+     * consumer sees the change without it. This asserts both halves per commit
+     * -- that the counter does NOT move, and that something else in the record
+     * DOES -- because "the counter did not move" alone would also pass if the
+     * publish had not run at all.
+     * <p>
+     * The complementary case, a token-only DDL commit where the stamp IS the
+     * only signal, is {@link #testATokenPublishRestampsThePartitionsChangeToken}.
+     */
+    @Test
+    public void testARepeatedO3PublishDoesNotWalkThePartitionsSquashCounter() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+
+            final TableToken token = engine.verifyTableName(TABLE_NAME);
+            int previousSquashCount;
+            long previousRecord;
+            try (TableReader reader = engine.getReader(token)) {
+                previousSquashCount = reader.getTxFile().getPartitionSquashCount(0);
+                previousRecord = partitionRecordDigest(reader);
+            }
+
+            for (int i = 0; i < 6; i++) {
+                // Out of order into the sealed parquet partition, which is what
+                // drives resealParquetCoveringForPartition and its publish.
+                execute("INSERT INTO " + TABLE_NAME + " VALUES ('2024-01-01T00:00:00.0000"
+                        + (20 + i) + "Z', 's0', 1.0, 1)");
+                drainWalQueue();
+                engine.releaseInactive();
+                try (TableReader reader = engine.getReader(token)) {
+                    final long record = partitionRecordDigest(reader);
+                    Assert.assertNotEquals(
+                            "premise: the O3 commit must move the partition's own _txn record, or skipping"
+                                    + " the stamp would leave a per-partition consumer with no signal at all"
+                                    + " [commit=" + i + ']',
+                            previousRecord,
+                            record
+                    );
+                    previousRecord = record;
+                    // Not equality: a parquet O3 rewrite resets the counter to
+                    // zero (updatePartitionSizeAndTxnByRawIndex), which is a
+                    // legitimate move in the other direction. What must never
+                    // happen is an advance, because that is the per-commit
+                    // increment that walks a 16-bit field toward saturation.
+                    final int squashCount = reader.getTxFile().getPartitionSquashCount(0);
+                    Assert.assertTrue(
+                            "a per-commit publish must not advance the partition's 16-bit squash counter:"
+                                    + " it saturates at 65535 and every publish after that takes the"
+                                    + " .squash_ts file write forever [commit=" + i
+                                    + ", before=" + previousSquashCount + ", after=" + squashCount + ']',
+                            squashCount <= previousSquashCount
+                    );
+                    previousSquashCount = squashCount;
+                }
+            }
         });
     }
 
@@ -2155,6 +2230,21 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             return reader.getTxn();
         }
+    }
+
+    /**
+     * The fields of the partition's own {@code _txn} record a per-partition
+     * consumer can compare, folded together: row count, name txn and the
+     * offset-3 value word (the {@code data.parquet} size for a parquet
+     * partition). Deliberately excludes the squash counter, which is the thing
+     * under test.
+     */
+    private static long partitionRecordDigest(TableReader reader) {
+        final TxReader tx = reader.getTxFile();
+        long h = tx.getPartitionSize(0);
+        h = h * 31 + tx.getPartitionNameTxn(0);
+        h = h * 31 + tx.getPartitionParquetFileSize(0);
+        return h;
     }
 
     private long committedPartitionTableVersion(String tableName) {

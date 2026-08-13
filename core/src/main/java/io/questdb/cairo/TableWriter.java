@@ -8312,7 +8312,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishParquetIndexTokens(
                 timestamp,
                 txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp),
-                txWriter.getPartitionParquetFileSize(partitionIndex)
+                txWriter.getPartitionParquetFileSize(partitionIndex),
+                // ADD INDEX writes no row: the partition's _txn record does not
+                // move, so the squash stamp is the only per-partition signal.
+                false
         );
     }
 
@@ -11097,7 +11100,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (processed) {
             // The seals above staged their tokens; nothing references the
             // artifacts until the _pm footer names them.
-            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, txWriter.getPartitionParquetFileSize(partitionIndex));
+            // The only per-commit publish there is, and the only caller that
+            // passes true. It is reached from sealPostingIndexForPartition,
+            // which runs for a partition an O3 partition task just rewrote --
+            // in place (updatePartitionSizeByRawIndex plus
+            // setPartitionParquetFileSizeByRawIndex), as a new version
+            // (updatePartitionSizeAndTxnByRawIndex, which also resets the
+            // counter), or via a squash (same call). Every one of those moves
+            // the partition's own _txn record, so the consumer already sees the
+            // change and a stamp here would only walk the 16-bit counter toward
+            // saturation once per commit.
+            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, txWriter.getPartitionParquetFileSize(partitionIndex), true);
         }
         return processed;
     }
@@ -12363,8 +12376,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * this footer at all. That is exactly the population the superseded
      * artifacts must outlive, and it is what the purge's scoreboard window has
      * to cover -- see {@link #purgeSupersededParquetIndexArtifacts}.
+     *
+     * @param partitionRecordAlreadyMoved true when the transaction this publish
+     *                                    belongs to has already moved the
+     *                                    partition's own {@code _txn} record, so
+     *                                    a per-partition consumer can see the
+     *                                    change without the squash stamp. Set
+     *                                    ONLY by the per-commit O3 reseal path;
+     *                                    see the stamp below for why the
+     *                                    distinction has to exist.
      */
-    private void publishParquetIndexTokens(long partitionTimestamp, long partitionNameTxn, long parquetFileSize) {
+    private void publishParquetIndexTokens(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetFileSize,
+            boolean partitionRecordAlreadyMoved
+    ) {
         if (parquetIndexTokens.size() == 0 && parquetIndexRetiredColumnIds.size() == 0) {
             return;
         }
@@ -12559,7 +12586,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // squash counter (and .squash_ts on its 16-bit overflow) as part of the
         // partition's identity, not only as a squash signal: for this event it is
         // the ONLY field that moves.
-        stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
+        //
+        // Bounded, and it has to be: the counter is 16 bits (TxReader
+        // PARTITION_SQUASH_COUNTER_MAX = 0xFFFF) and is reset only by
+        // updatePartitionSizeAndTxnByRawIndex, i.e. by a partition-version
+        // rewrite. O3 into a parquet partition that runs IN PLACE
+        // (o3ConsumePartitionUpdateSink's parquetFileSize > -1 mutate branch)
+        // takes updatePartitionSizeByRawIndex instead and never resets it. On a
+        // per-commit trigger that saturates after 65 535 commits into one
+        // partition -- minutes to hours of continuous late-data ingest -- after
+        // which every publish forever takes the .squash_ts file write.
+        //
+        // Which for a parquet partition is not even read: the incremental-backup
+        // consumer falls back to .squash_ts only for a NATIVE partition, and for
+        // a parquet one reads data.parquet's last-modified time, which a token
+        // publish does not touch. So saturation does not degrade to a slower
+        // signal, it loses the signal -- and the fix has to be to keep the
+        // counter off the cliff, not to improve the fallback.
+        //
+        // Skipping the stamp when the transaction already moved the partition's
+        // own _txn record does exactly that, and costs nothing: on that path the
+        // consumer sees the row count, the data.parquet size or the name txn
+        // move anyway. Only the O3 reseal path is per-commit, and it is the only
+        // caller that passes true. What is left -- ADD INDEX, DROP INDEX's
+        // retirement, the native/parquet switch -- is DDL, so saturation now
+        // needs 65 535 index DDLs on one partition.
+        if (!partitionRecordAlreadyMoved) {
+            stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
+        }
         // Recorded so rollback() can re-apply both marks. The _pm append is
         // durable before the _txn commit, and unsafeLoadAll throws the marks
         // away; the list is what tells the rollback they were ever made. Reset
@@ -14014,7 +14068,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             path.trimTo(pathSize);
         }
-        publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
+        publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize, false);
     }
 
     /**
@@ -14072,7 +14126,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(pathSize);
             }
             parquetIndexRetiredColumnIds.add(writerIndex);
-            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize);
+            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize, false);
             retiredAny = true;
         }
         return retiredAny;
