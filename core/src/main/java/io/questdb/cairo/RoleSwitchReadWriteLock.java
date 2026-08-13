@@ -521,11 +521,11 @@ final class RoleSwitchReadWriteLock {
                 }
             } finally {
                 try {
+                    pendingWriterCount.decrementAndGet();
+                } finally {
                     if (isGateAcquired) {
                         writerGate.release();
                     }
-                } finally {
-                    pendingWriterCount.decrementAndGet();
                 }
             }
         }

@@ -24,21 +24,35 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.math.Atan2DoubleFunctionFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class Atan2DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testArgumentsAreClosed() throws Exception {
-        assertQuery("SELECT count(*) cnt FROM tab WHERE atan2(length((s)::symbol), 1.0) >= 0.0")
-                .ddl("CREATE TABLE tab AS (SELECT rnd_symbol('a','bb','ccc') s FROM long_sequence(100))")
-                .noRandomAccess()
-                .expectSize()
-                .returns("cnt\n100\n");
+    public void testArgumentsAreClosed() throws SqlException {
+        final CascadeSpy y = new CascadeSpy();
+        final CascadeSpy x = new CascadeSpy();
+        final ObjList<Function> args = new ObjList<>();
+        args.add(y);
+        args.add(x);
+        final IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(0);
+        new Atan2DoubleFunctionFactory()
+                .newInstance(0, args, argPositions, configuration, sqlExecutionContext)
+                .close();
+        Assert.assertTrue(y.isClosed);
+        Assert.assertTrue(x.isClosed);
     }
 
     @Test
@@ -84,5 +98,19 @@ public class Atan2DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new Atan2DoubleFunctionFactory();
+    }
+
+    private static class CascadeSpy extends DoubleFunction {
+        private boolean isClosed;
+
+        @Override
+        public void close() {
+            isClosed = true;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return 1.0;
+        }
     }
 }

@@ -213,6 +213,11 @@ public class ServerMain implements Closeable {
         getEngine().awaitTxn(tableName, txn, 15, TimeUnit.SECONDS);
     }
 
+    /**
+     * Blocks until teardown completes and frees the object graph even when a component stop fails.
+     * A wedged carrier can therefore make this call wait indefinitely; the SIGTERM hook uses the
+     * bounded, retryable {@link #closeByForTesting(long)} path instead.
+     */
     @Override
     public void close() {
         requestClose();
@@ -667,7 +672,9 @@ public class ServerMain implements Closeable {
                         .I$();
             } catch (Throwable ignore) {
             }
-            return;
+            if (isBounded) {
+                return;
+            }
         }
         boolean isMinHttpHaltComplete = true;
         if (orchestrator != null) {
@@ -717,7 +724,9 @@ public class ServerMain implements Closeable {
                         .I$();
             } catch (Throwable ignore) {
             }
-            return;
+            if (isBounded) {
+                return;
+            }
         }
         Throwable cleanupFailure = workerPoolManager != null ? workerPoolManager.getHaltFailure() : null;
         try {
