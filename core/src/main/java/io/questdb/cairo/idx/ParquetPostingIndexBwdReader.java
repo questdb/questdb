@@ -40,7 +40,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
-        cursor.of(key, minValue, maxValue);
+        cursor.of(key, minValue, maxValue, null);
         return cursor;
     }
 
@@ -49,12 +49,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
      */
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
-        if (requiredCoverColumns != null && requiredCoverColumns.length > 0) {
-            throw CairoException.critical(0)
-                    .put("parquet-form covering index cannot project covered columns yet [column=")
-                    .put(columnName).put(", indexTxn=").put(indexTxn).put(']');
-        }
-        return getCursor(key, minValue, maxValue);
+        cursor.of(key, minValue, maxValue, requiredCoverColumns);
+        return cursor;
     }
 
     /**
@@ -70,7 +66,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
      * The two in-group filters and the zone-map skip are identical to the
      * forward cursor's -- only the traversal order differs.
      */
-    private class BwdCursor implements RowCursor {
+    private class BwdCursor extends AbstractCoveringCursor {
         private long groupRows;
         private boolean hasNext;
         private int key;
@@ -81,6 +77,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private int rg;
         private int rgLo;
         private long rowIdPtr;
+        private int[] requiredCoverColumns;
         private long rowInGroup;
 
         /**
@@ -112,6 +109,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     if (rowId < minValue || rowId > maxValue) {
                         continue;
                     }
+                    setEmittedRow(i);
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -129,6 +127,19 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             return next;
         }
 
+        /**
+         * The first row a backward cursor yields IS the last in row order, so
+         * this is one step rather than a scan -- the reason the covering
+         * LATEST ON path asks a backward reader for it.
+         */
+        @Override
+        public long seekToLast() {
+            if (hasNext()) {
+                return next();
+            }
+            return -1;
+        }
+
         private boolean decodeCurrentGroup() {
             while (rg >= rgLo) {
                 groupRows = imReader.getRowGroupNumRows(rg);
@@ -140,7 +151,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     rg--;
                     continue;
                 }
-                final DirectIntList columns = decodeProjection();
+                final DirectIntList columns = coveringProjection(requiredCoverColumns);
                 rowGroupBuffers.reopen();
                 decoder.decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
                 onRowGroupDecoded();
@@ -153,7 +164,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             return false;
         }
 
-        private void of(int key, long minValue, long maxValue) {
+        private void of(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+            this.requiredCoverColumns = requiredCoverColumns;
             this.key = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
@@ -163,6 +175,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.rowIdPtr = 0;
             this.rowInGroup = 0;
             this.groupRows = 0;
+            setEmittedRow(-1);
 
             final long range = rowGroupRangeForKey(key);
             if (range == IndexMetaFileReader.KEY_ABSENT) {

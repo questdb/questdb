@@ -40,30 +40,23 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
-        cursor.of(key, minValue, maxValue);
+        cursor.of(key, minValue, maxValue, null);
         return cursor;
     }
 
     /**
-     * Refuses when the caller wants covered values, because this reader cannot
-     * supply them yet -- Task 7 projects the covered columns into a
-     * {@link io.questdb.cairo.idx.CoveringRowCursor}.
+     * Serves the postings AND the requested covered values from one decode.
      * <p>
-     * The default implementation on {@link IndexReader} drops the argument and
-     * delegates to the three-arg cursor. Inheriting that would hand the covering
-     * factory a plain row cursor carrying no covered values, and the query would
-     * return NO ROWS with no error -- the silent empty result this whole
-     * dispatch exists to prevent, arriving one task later through a different
-     * door. Refusing keeps an unfinished 2C impossible to ship quietly.
+     * {@code requiredCoverColumns} are cover SLOTS; the projection maps each to
+     * its descriptor index, which is the parquet column index. Only the
+     * requested slots are decoded, so an unused covered column costs nothing --
+     * the improvement over the native {@code .pc} layout, where each covered
+     * column is a separate file read.
      */
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
-        if (requiredCoverColumns != null && requiredCoverColumns.length > 0) {
-            throw CairoException.critical(0)
-                    .put("parquet-form covering index cannot project covered columns yet [column=")
-                    .put(columnName).put(", indexTxn=").put(indexTxn).put(']');
-        }
-        return getCursor(key, minValue, maxValue);
+        cursor.of(key, minValue, maxValue, requiredCoverColumns);
+        return cursor;
     }
 
     /**
@@ -86,7 +79,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
      * decode -- pruning level 2, exact because row id is monotone in the
      * designated timestamp within a partition.
      */
-    private class FwdCursor implements RowCursor {
+    private class FwdCursor extends AbstractCoveringCursor {
         private long groupRows;
         private boolean hasNext;
         private int key;
@@ -97,6 +90,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private int rg;
         private int rgHi;
         private long rowIdPtr;
+        private int[] requiredCoverColumns;
         private long rowInGroup;
 
         /**
@@ -133,6 +127,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     if (rowId < minValue || rowId > maxValue) {
                         continue;
                     }
+                    setEmittedRow(i);
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -171,7 +166,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     rg++;
                     continue;
                 }
-                final DirectIntList columns = decodeProjection();
+                final DirectIntList columns = coveringProjection(requiredCoverColumns);
                 // No-op once allocated; the buffers are destroyed by close() and
                 // a pooled reader is rebound without being reconstructed.
                 rowGroupBuffers.reopen();
@@ -187,7 +182,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             return false;
         }
 
-        private void of(int key, long minValue, long maxValue) {
+        private void of(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+            this.requiredCoverColumns = requiredCoverColumns;
             this.key = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
@@ -197,6 +193,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             this.rowIdPtr = 0;
             this.rowInGroup = 0;
             this.groupRows = 0;
+            setEmittedRow(-1);
 
             final long range = rowGroupRangeForKey(key);
             if (range == IndexMetaFileReader.KEY_ABSENT) {

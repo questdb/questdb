@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.IndexMetaFileWriter;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
@@ -41,10 +42,15 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+
+import java.util.Arrays;
 
 /**
  * Reads a covering index that was sealed into a partition's
@@ -78,6 +84,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     protected final RowGroupBuffers rowGroupBuffers =
             new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     protected long columnTop;
+    protected int[] coverChunkOrdinal;
     protected long decodedRowGroupCount;
     protected long indexTxn = -1;
     protected long partitionTimestamp;
@@ -168,6 +175,58 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * Builds the decode projection for a covering cursor: {@code key_id},
+     * {@code row_id}, then one entry per requested cover slot, and records
+     * where each slot's chunk lands.
+     * <p>
+     * <b>Three index spaces meet here and must not be confused.</b>
+     * {@code requiredCoverColumns} are COVER SLOTS.
+     * {@link IndexMetaFileReader#getCoverColumnIndex(int)} maps a slot to a
+     * DESCRIPTOR INDEX, which is also the parquet column index -- that is what
+     * the decoder wants. A descriptor's {@code ID} is the covered column's
+     * WRITER INDEX and is not a lookup key on this path at all.
+     * <p>
+     * Chunk ordinals follow the projection's order, so slot {@code s} lands at
+     * {@code 2 + its position in requiredCoverColumns}, never at {@code s}.
+     * The two are equal only when the caller asks for a dense prefix of the
+     * slots, which is exactly the case a wrong mapping would still pass.
+     */
+    protected DirectIntList coveringProjection(int[] requiredCoverColumns) {
+        projection.clear();
+        projection.add(imReader.getKeyIdColumn());
+        projection.add(ColumnType.INT);
+        projection.add(imReader.getRowIdColumn());
+        projection.add(ColumnType.LONG);
+
+        final int coverCount = imReader.getColumnCount() - imReader.getFirstCoverColumn();
+        if (coverChunkOrdinal == null || coverChunkOrdinal.length < coverCount) {
+            coverChunkOrdinal = new int[Math.max(coverCount, 8)];
+        }
+        Arrays.fill(coverChunkOrdinal, 0, coverChunkOrdinal.length, -1);
+        if (requiredCoverColumns == null) {
+            return projection;
+        }
+        int ordinal = 2;
+        for (int i = 0; i < requiredCoverColumns.length; i++) {
+            final int slot = requiredCoverColumns[i];
+            if (slot < 0 || slot >= coverCount) {
+                throw CairoException.critical(0)
+                        .put("cover slot out of range [slot=").put(slot)
+                        .put(", coverCount=").put(coverCount)
+                        .put(", column=").put(columnName).put(']');
+            }
+            if (coverChunkOrdinal[slot] >= 0) {
+                continue; // asked for twice; one chunk serves both
+            }
+            final int descriptor = imReader.getCoverColumnIndex(slot);
+            projection.add(descriptor);
+            projection.add(imReader.getColumnType(descriptor));
+            coverChunkOrdinal[slot] = ordinal++;
+        }
+        return projection;
+    }
+
+    /**
      * Resolves {@code key} to its inclusive index row-group run through the
      * {@code _im} directory. Pruning level 1: exact, and it reads no byte of
      * the index parquet.
@@ -180,6 +239,175 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     protected long rowGroupRangeForKey(int key) {
         return imReader.getRowGroupRangeForKey(key);
+    }
+
+    /**
+     * The covered-value half of both cursors: everything depending on the
+     * decoded chunks and the current row, but not on traversal order.
+     * <p>
+     * Subclasses own traversal and must call {@link #setEmittedRow(long)} with
+     * the index of the row they are about to return, because every accessor
+     * reads that row of the decoded group.
+     * <p>
+     * Only fixed-width covered types are reachable: the seal refuses
+     * {@code isVarSize} and symbol covered columns outright, so a covered
+     * string, varchar, binary or array cannot exist in an index parquet. Those
+     * accessors throw rather than returning null -- an unreachable branch that
+     * returns a plausible value is how a silent wrong answer ships if the
+     * seal's restriction is ever relaxed without revisiting this class.
+     */
+    protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
+        protected long emittedRow = -1;
+
+        @Override
+        public ArrayView getCoveredArray(int includeIdx, int columnType) {
+            throw unsupportedCoveredType("ARRAY", includeIdx);
+        }
+
+        @Override
+        public BinarySequence getCoveredBin(int includeIdx) {
+            throw unsupportedCoveredType("BINARY", includeIdx);
+        }
+
+        @Override
+        public long getCoveredBinLen(int includeIdx) {
+            throw unsupportedCoveredType("BINARY", includeIdx);
+        }
+
+        @Override
+        public byte getCoveredByte(int includeIdx) {
+            return Unsafe.getUnsafe().getByte(coveredAddress(includeIdx, 1));
+        }
+
+        @Override
+        public double getCoveredDouble(int includeIdx) {
+            return Unsafe.getUnsafe().getDouble(coveredAddress(includeIdx, 8));
+        }
+
+        @Override
+        public float getCoveredFloat(int includeIdx) {
+            return Unsafe.getUnsafe().getFloat(coveredAddress(includeIdx, 4));
+        }
+
+        @Override
+        public int getCoveredInt(int includeIdx) {
+            return Unsafe.getUnsafe().getInt(coveredAddress(includeIdx, 4));
+        }
+
+        @Override
+        public long getCoveredLong(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 8));
+        }
+
+        @Override
+        public long getCoveredLong128Hi(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 16) + 8);
+        }
+
+        @Override
+        public long getCoveredLong128Lo(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 16));
+        }
+
+        @Override
+        public long getCoveredLong256_0(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 32));
+        }
+
+        @Override
+        public long getCoveredLong256_1(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 32) + 8);
+        }
+
+        @Override
+        public long getCoveredLong256_2(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 32) + 16);
+        }
+
+        @Override
+        public long getCoveredLong256_3(int includeIdx) {
+            return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 32) + 24);
+        }
+
+        @Override
+        public short getCoveredShort(int includeIdx) {
+            return Unsafe.getUnsafe().getShort(coveredAddress(includeIdx, 2));
+        }
+
+        @Override
+        public CharSequence getCoveredStrA(int includeIdx) {
+            throw unsupportedCoveredType("STRING", includeIdx);
+        }
+
+        @Override
+        public CharSequence getCoveredStrB(int includeIdx) {
+            throw unsupportedCoveredType("STRING", includeIdx);
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharA(int includeIdx) {
+            throw unsupportedCoveredType("VARCHAR", includeIdx);
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharB(int includeIdx) {
+            throw unsupportedCoveredType("VARCHAR", includeIdx);
+        }
+
+        /**
+         * A slot is available when the caller asked for it AND a row has been
+         * emitted. Answering true for an unrequested slot would hand back
+         * another column's bytes, so this keys on the projection actually
+         * built, not on what the index happens to cover.
+         */
+        @Override
+        public boolean isCoveredAvailable(int includeIdx) {
+            return emittedRow >= 0
+                    && coverChunkOrdinal != null
+                    && includeIdx >= 0
+                    && includeIdx < coverChunkOrdinal.length
+                    && coverChunkOrdinal[includeIdx] >= 0;
+        }
+
+        /**
+         * Refused on a forward cursor, matching
+         * {@code AbstractPostingIndexReader}: reaching the last posting
+         * forwards is O(n) over the key's whole run, and the caller
+         * (LATEST ON's covering path) always has a backward reader available.
+         * The backward cursor overrides it.
+         */
+        @Override
+        public long seekToLast() {
+            throw new UnsupportedOperationException(
+                    "seekToLast: use a backward index reader; forward iteration is O(n)");
+        }
+
+        /**
+         * Address of {@code includeIdx}'s value for the row last emitted.
+         * {@code width} is the fixed element width, which is what makes this a
+         * multiply rather than an offset lookup -- correct only because every
+         * reachable covered type is fixed-width.
+         */
+        protected long coveredAddress(int includeIdx, int width) {
+            if (!isCoveredAvailable(includeIdx)) {
+                throw CairoException.critical(0)
+                        .put("covered slot was not projected [slot=").put(includeIdx)
+                        .put(", column=").put(columnName).put(']');
+            }
+            return rowGroupBuffers.getChunkDataPtr(coverChunkOrdinal[includeIdx]) + emittedRow * width;
+        }
+
+        protected void setEmittedRow(long row) {
+            this.emittedRow = row;
+        }
+
+        private CairoException unsupportedCoveredType(String type, int includeIdx) {
+            return CairoException.critical(0)
+                    .put("parquet covering index does not carry a covered ").put(type)
+                    .put(" [slot=").put(includeIdx)
+                    .put(", column=").put(columnName)
+                    .put("]; the seal refuses var-size and symbol covered columns");
+        }
     }
 
     /**

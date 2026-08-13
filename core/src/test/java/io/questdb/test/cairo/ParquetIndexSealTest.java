@@ -2213,12 +2213,18 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             // makes this an oracle. A literal would still pass if the cursor and
             // the seal drifted together; the scan reads the parquet partition
             // without consulting the index at all.
-            // Task 4 gave the reader a working row cursor, but the covering
-            // path also needs the covered values, which Task 7 projects. Until
-            // then this refuses rather than returning the rows with no price
-            // and qty -- or, worse, no rows at all.
-            assertQuery(COVERED_QUERY)
-                    .failsWith("parquet-form covering index cannot project covered columns yet");
+            // The covered query end to end: the parquet reader serves the
+            // postings AND the covered price/qty from the index parquet.
+            //
+            // The expected side casts the symbol, which stops the planner
+            // reaching for the index, so it scans the parquet partition
+            // directly. Both sides read the same partition; only one consults
+            // the covering index. Comparing against a literal would still pass
+            // if the cursor and the seal drifted together.
+            assertSqlCursors(
+                    "select price, qty from t_pidx where ts in '2024-01-01' and cast(sym as varchar) = 's0'",
+                    COVERED_QUERY
+            );
         });
     }
 
@@ -2234,12 +2240,16 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             // answer it with an empty cursor.
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
             engine.releaseInactive();
-            // Dispatch keys on the published token, so the parquet reader is
-            // still the one that serves this -- proved by WHICH refusal comes
-            // back. A format-keyed dispatch would have sent it to the native
-            // reader, which answers an empty cursor with no error at all.
-            assertQuery(COVERED_QUERY)
-                    .failsWith("parquet-form covering index cannot project covered columns yet");
+            // Dispatch keys on the published token, so the parquet reader
+            // still serves this and returns the same rows an unindexed scan
+            // does. A format-keyed dispatch would send it to the native reader,
+            // which answers an empty cursor with no error at all -- which is
+            // why the assertion compares ROWS rather than checking for absence
+            // of an exception.
+            assertSqlCursors(
+                    "select price, qty from t_pidx where ts in '2024-01-01' and cast(sym as varchar) = 's0'",
+                    COVERED_QUERY
+            );
         });
     }
 
