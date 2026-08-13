@@ -15590,13 +15590,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (parquetSweepTokensFullChain) {
             return true;
         }
-        // Only the last footer has been read, and it is not the one a reader
-        // resolves: it can be an append this commit has not committed yet, or an
-        // orphan a rolled-back in-place update left at the tail, and both drop
-        // the covering section outright (PartitionUpdater.updateFileMetadata's
-        // (0,0,0) contract). Deleting on that reading would unlink a pair the
-        // footer a reader DOES resolve still names. Re-read across the whole
-        // chain before licensing the unlink.
+        // Only the last footer has been read, and it is not in general the one a
+        // reader resolves. It can be an append this commit has not committed yet,
+        // or an orphan a rolled-back in-place update left at the tail -- both of
+        // which drop the covering section outright (PartitionUpdater's
+        // updateFileMetadata(0, 0, 0) contract) -- or an orphan a rolled-back
+        // TOKEN PUBLISH left, which CARRIES a covering section. The three do not
+        // fail the same way, so do not read this as an exhaustive two-case
+        // split: the first two under-report and the third over-reports. Only
+        // under-reporting is what this escalation exists for -- deleting on it
+        // would unlink a pair the footer a reader DOES resolve still names --
+        // but neither is safe to license an unlink on. Re-read across the whole
+        // chain before licensing one.
         // Passing the candidate lets the walk stop at the first footer that
         // answers the question, instead of always enumerating to the end of the
         // chain. That matters because the state that arms this escalation is
@@ -15620,11 +15625,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * ({@code TableReader.readTxnSlow} -> {@code resolveFooter}), and the last
      * footer can be an append whose {@code _txn} commit has not happened yet --
      * the O3 in-place update patches the {@code _pm} header on the worker,
-     * before the commit -- or the orphan a rolled-back one left behind.
-     * Both of those drop the covering section outright, so reading only the
-     * last footer under-reports what is published. Under-reporting can only
-     * make the sweep hold on to a pair, never delete one, which is why the
-     * cheap read is allowed to be the common path.
+     * before the commit -- or the orphan a rolled-back one left behind. Those
+     * two drop the covering section outright, so reading only the last footer
+     * under-reports what is published. A third case exists and is not a
+     * variation on those two: the orphan a rolled-back TOKEN PUBLISH leaves
+     * carries a covering section, so the cheap read over-reports instead.
+     * Neither direction licenses an unlink, which is the only thing this method
+     * is asked about, and under-reporting can only make the sweep hold on to a
+     * pair, which is why the cheap read is allowed to be the common path.
      * <p>
      * With {@code walkChain} true the whole {@code prev} chain is enumerated and
      * {@code out} carries the union, a column appearing once per footer that
