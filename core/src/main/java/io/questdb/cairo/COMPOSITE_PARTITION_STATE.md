@@ -44,7 +44,9 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 10 | Routing behind `cairo.o3.partition.merge.append.enabled` | **BUILT**, default OFF |
 | 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
 | 12 | Var-size column merge | **BUILT**, all four var types |
-| 13 | Index maintenance for merged rows | NOT STARTED |
+| 13 | Index maintenance for merged rows | **BUILT**, BITMAP; read path is piece-aware |
+| 14 | In-order append into a COMPOSITE last partition | **BROKEN** - see below |
+| 15 | Merge that reads below a column top | **NOT BUILT** - see below |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
 
@@ -151,6 +153,10 @@ search over the whole column would cross into another piece's rows.
 **A piece's bounds describe the rows it holds, not the range it routes.** The halves of a cut taken across
 a data gap are bounded by their own last and first rows, so the gap belongs to neither, and a later batch
 landing in it founds a piece of its own instead of merging into a neighbour that holds nothing near it.
+The same rule binds a MERGE: its image spans both sides, so it records the OUTER pair. The low side needs
+the min as much as the high side needs the max, because a batch in a gap is folded into the piece ABOVE it
+when that piece is small enough that rewriting it beats carrying an extra piece - and those rows sit below
+that piece's old floor. Keeping the floor left the piece claiming a `tsLo` above rows it held.
 Recording `cutTs - 1` and `cutTs` instead makes the lower half claim a hole it has no rows in, and the
 batch merges into it - rewriting the whole piece to add rows sitting hours above everything it holds.
 
@@ -234,10 +240,48 @@ a STRING and a BINARY for the N+1 aux shape, and a `DOUBLE[]`. Their values are 
 the UNION ALL oracle reproduces them exactly, and a separate aggregate pins their non-null counts and sums
 so a column that came back empty could not pass.
 
+## The ported pre-split suite
+
+`O3PartitionPreSplitTest` carries 30 scenarios ported from the earlier split implementation - everything
+there that does not turn on a replace commit or on compaction. 12 run and pass; 18 carry an `@Ignore`
+naming the gap that blocks them, so the ignored list IS the to-do list and the suite stays runnable.
+
+The port is what found gaps 14 and 15. Three of the ignored tests do not merely fail, they take the JVM
+down with a SIGSEGV, which is why they are marked rather than left red.
+
+### 14. The ACTIVE partition is written at its LIVE row count, not at `E`
+
+`openLastPartitionAndSetAppendPosition`, `setAppendPosition` and `closeActivePartition` all place the last
+partition's column files at `txWriter.getTransientRowCount()`. That is the partition's LIVE row count, and
+a composite partition's files run to `E`. So an in-order append writes straight over a piece that a merge
+relocated above the last one, and closing the writer truncates that piece away.
+
+Proven rather than inferred: `testPreSplitsLastLogicalPartition` loses rows, and the identical scenario
+passes once a later day is added so the cut day is no longer the active partition.
+
+Fixing it is two halves. The file position has to come from `getPartitionPhysicalRowCount`, and the rows an
+append lands at `E` have to reach the geometry - either by growing the last piece when it already ends at
+`E`, or by recording a new piece at `[E, E + n)` when a relocated sibling sits between.
+
+### 15. A merge that reads below a column top is refused, and the refusal is swallowed
+
+`rowZeroAddr` / `rowZeroAuxAddr` throw rather than read the wrong bytes, which is right. What is not right
+is the caller: the `catch (Throwable)` around `processCompositePartition` logs and bumps the error count, so
+the partition is silently left uncut, or the commit comes back with the wrong rows, or the apply suspends
+the table. Whatever the merge ends up doing about tops, the refusal must not be swallowed.
+
+Seven ported scenarios sit behind this - every one that adds a column and then backdates into the rows
+below it.
+
 ## Known gaps
 
-- **Indexed columns**: `ContiguousFileIndexedFrameColumn` inherits the fixed merge, but index entries for
-  merged rows are not maintained.
+- **ALTER COLUMN TYPE over a composite partition** reads a var-size column at the wrong extent:
+  `AssertionError` in `VarcharTypeDriver.getDataVectorSize`, reached through `TableReader.openPartition0`.
+  Two ported scenarios.
+- **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
+  duplicate commit rewrites the piece instead of writing nothing.
+- **Three ported scenarios fail unattributed** - two dedup ones around the batch boundary, and the index
+  build over a composite partition. Leads, not diagnoses.
 - **`NEW_PIECE`'s floor**: the executor records the new piece's `tsLo` as the batch's FIRST timestamp, not
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.

@@ -491,11 +491,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                         tableWriter.addPhysicallyWrittenRows(mergeRows);
                         e += mergeRows;
-                        // The merged image keeps the piece's floor - rows between that floor and the first
-                        // row it now holds still route here - and takes whichever side ends higher.
+                        // The merged image spans BOTH sides, so its bounds are the outer pair. The low side
+                        // needs the min as much as the high side needs the max: a batch landing in a gap
+                        // is folded into the piece ABOVE it when that piece is small enough that rewriting
+                        // it beats carrying an extra piece, and those rows sit BELOW the piece's old
+                        // floor. Keeping the old floor would leave the piece recording a tsLo above rows
+                        // it holds, so the next batch aimed at them routes to the piece below instead.
                         addNewPiece(
                                 piecesOut,
-                                O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                Math.min(
+                                        O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                        getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo)
+                                ),
                                 Math.max(
                                         O3CompositeMergeStrategy.getTsHi(bounds, action.pieceIndex),
                                         getTimestampIndexValue(sortedTimestampsAddr, action.o3Hi)
