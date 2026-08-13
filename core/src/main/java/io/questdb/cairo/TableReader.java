@@ -972,12 +972,32 @@ public class TableReader implements Closeable, SymbolTableSource {
      *     starts that incarnation with no memo. Without this the clause below
      *     would hold only for rewrites of the SAME file.</li>
      * </ul>
-     * The one thing that would break it is a {@code _pm} rewritten to exactly
-     * its previous length with different covering entries for the same parquet
-     * size. No such path exists: appends grow the file, and there is no
-     * {@code _pm} compaction (see {@code ParquetMetaFileReader.resolvePrevFooter},
-     * which carries the same obligation for the orphan sweep). Whoever writes one
-     * must invalidate this memo.
+     * The one thing that would break it is a {@code _pm} rewritten IN PLACE to
+     * exactly its previous length with different covering entries for the same
+     * parquet size. No such path exists -- but "there is no {@code _pm}
+     * compaction" is the wrong way to say why, and reads as flatly contradicting
+     * {@code ParquetMetaFileReader.resolveFooter}, which says {@code O3PartitionJob}
+     * rewrites the whole {@code _pm} once unused bytes pass the configured ratio
+     * or byte cap. It does ({@code O3PartitionJob}'s {@code isRewrite}
+     * disjunction). Two things make that rewrite consistent with the memo rather
+     * than a counter-example, neither of which is derivable from the word
+     * "compaction":
+     * <ul>
+     *     <li>It is not in place. The rewrite arm names the partition after the
+     *     new txn ({@code final long txnName = isRewrite ? txn : srcNameTxn}), so
+     *     the fresh {@code _pm} is a different file in a different partition
+     *     directory. That is an incarnation change, which the close-path reset
+     *     above already covers -- it is not a same-file rewrite at all.</li>
+     *     <li>The file a reader holds is never shortened under it. The
+     *     update-mode arm truncates {@code data.parquet} back on failure and
+     *     states that {@code _pm} is never truncated, so WITHIN one incarnation
+     *     committed {@code _pm} sizes only ever grow.</li>
+     * </ul>
+     * So the key can repeat only across incarnations, and it is dropped at every
+     * incarnation boundary. Whoever adds a path that rewrites a live {@code _pm}
+     * in place must invalidate this memo -- as must whoever changes the orphan
+     * sweep, which carries the same obligation at
+     * {@code ParquetMetaFileReader.resolvePrevFooter}.
      * <p>
      * Only the EMPTY section is memoised, which is the case this is about: the
      * default format never seals a parquet-form index, so the section is empty
