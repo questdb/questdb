@@ -34,6 +34,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.WalTxnClusterer;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -78,6 +79,9 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
+    // Bin cap for transaction clustering: the finest bin is a minute, widened when a partition's span
+    // needs more bins than this.
+    private static final int O3_CLUSTER_MAX_BINS = 4096;
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
     /**
      * Per-worker scratch for the composite plan, held the same way the parquet path holds its context: the
@@ -147,7 +151,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooHi,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
-            @Nullable LongList clusterCutTimestamps,
+            @Nullable WalTxnClusterer clusterer,
             LongList boundsOut,
             LongList cutsOut,
             ObjList<O3CompositeMergeStrategy.Action> actionsOut
@@ -207,12 +211,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             //
             // Clustering goes first: it is the coarser division, and the batch-edge cuts then refine
             // whichever piece the batch actually lands in.
-            if (clusterCutTimestamps != null) {
-                for (int i = 0, n = clusterCutTimestamps.size(); i < n; i++) {
+            if (clusterer != null && tableWriter.getO3ClusterTxnRanges().size() > 0) {
+                final LongList clusterCuts = clusterPartition(clusterer, boundsOut, minPieceRows, tableWriter);
+                for (int i = 0, n = clusterCuts.size(); i < n; i++) {
                     // A clustering cut is a TIMESTAMP and no piece index - it was chosen from the incoming
                     // work, not from the piece list - so the piece is located afresh, which is also what
                     // makes these cuts order-independent.
-                    final long cutTs = clusterCutTimestamps.getQuick(i);
+                    final long cutTs = clusterCuts.getQuick(i);
                     final int piece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, cutTs);
                     if (piece > -1) {
                         applyCutResolved(boundsOut, piece, cutTs, tsAddr);
@@ -287,7 +292,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcOooHi,
                 sortedTimestampsAddr,
                 tableWriter,
-                null,
+                ctx.clusterer,
                 ctx.bounds,
                 ctx.cuts,
                 ctx.actions
@@ -425,6 +430,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     case NEW_PIECE -> {
                         final long at = e;
                         FrameAlgebra.append(target, o3, action.o3Lo, action.o3Hi + 1, upcomingTableTxn, commitMode);
+                        tableWriter.addPhysicallyWrittenRows(o3Rows);
                         e += o3Rows;
                         // A new piece is founded at the first timestamp it carries - nothing below that
                         // routes to it - and it holds only the batch.
@@ -483,6 +489,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         } finally {
                             Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
                         }
+                        tableWriter.addPhysicallyWrittenRows(mergeRows);
                         e += mergeRows;
                         // The merged image keeps the piece's floor - rows between that floor and the first
                         // row it now holds still route here - and takes whichever side ends higher.
@@ -501,6 +508,48 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
         return e;
+    }
+
+    /**
+     * Clusters the block's transaction ranges against ONE partition and returns the timestamps it is worth
+     * cutting at.
+     * <p>
+     * The batch-edge cuts below answer "where does THIS batch land inside a piece". This answers a
+     * different question: over all the transactions being applied together, which stretches of the
+     * partition does the work leave alone? Those cold stretches are what a cut spares, and no single batch
+     * can see them.
+     * <p>
+     * The partition's data range comes from the piece bounds, which step 1 has just resolved against the
+     * column, so the histogram is built over the rows that actually exist rather than over the day.
+     */
+    private static LongList clusterPartition(
+            WalTxnClusterer clusterer,
+            LongList bounds,
+            long minPieceRows,
+            TableWriter tableWriter
+    ) {
+        final int pieceCount = bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
+        final long t0 = O3CompositeMergeStrategy.getTsLo(bounds, 0);
+        final long t1 = O3CompositeMergeStrategy.getTsHi(bounds, pieceCount - 1);
+        long rowCount = 0;
+        for (int p = 0; p < pieceCount; p++) {
+            rowCount += O3CompositeMergeStrategy.getRowCount(bounds, p);
+        }
+
+        clusterer.clear();
+        final LongList txnRanges = tableWriter.getO3ClusterTxnRanges();
+        for (int i = 0, n = txnRanges.size(); i < n; i += 2) {
+            clusterer.addTxnRange(txnRanges.getQuick(i), txnRanges.getQuick(i + 1));
+        }
+        return clusterer.computeCuts(
+                t0,
+                t1,
+                ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType()).fromMinutes(1),
+                O3_CLUSTER_MAX_BINS,
+                minPieceRows,
+                rowCount,
+                tableWriter.getConfiguration().getO3PartitionPreSplitMaxCuts()
+        );
     }
 
     /**
@@ -4462,6 +4511,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static class O3CompositeContext implements Mutable {
         private final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
         private final LongList bounds = new LongList();
+        private final WalTxnClusterer clusterer = new WalTxnClusterer();
         private final LongList cuts = new LongList();
         // Flat quads describing what the executor actually wrote: tsLo, tsHi, rowOffset, rowCount.
         private final LongList pieces = new LongList();

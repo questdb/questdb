@@ -161,6 +161,17 @@ incoming transaction covers as hot, and cuts at the edges of the cold gaps worth
 block, so it spares data no single batch straddles. The batch edges then cut around where one batch lands
 inside a piece. Clustering runs first, as the coarser division.
 
+The two are wired differently because they know different things. The transaction ranges are known on the
+WRITER thread, so `commitWalInsertTransactions` buffers them (`bufferClusterTxnRanges`) before the O3
+fan-out and the workers only read them. The partition's own data range is known on the WORKER, after step 1
+has resolved the piece bounds against the timestamp column, so the histogram is built there - over the rows
+that exist, not over the day. A range-replace transaction contributes its DECLARED range rather than the
+span its rows cover, because the apply rewrites the whole declared range.
+
+Clustering is worth its keep: the block-apply scenario in `O3PartitionPreSplitTest` writes 5114 rows with
+it suppressed and 1352 with it on. Batch edges alone cannot see the cold stretch BETWEEN two hot strides -
+one batch's own edges say nothing about the gaps its neighbours leave.
+
 A clustering cut is a TIMESTAMP, not a piece index - it was chosen from incoming work, not from the piece
 list - so `applyCutAt` locates the piece containing it, re-finding it per call so cuts are
 order-independent, and declines a timestamp no piece holds rather than guessing.
@@ -231,11 +242,6 @@ so a column that came back empty could not pass.
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.
 - **Dedup**: the plan has no dedup term at all. `liveRows` is the plain sum of piece rows.
-- **Transaction clustering is not wired in.** `WalTxnClusterer` exists and is unit-tested, and
-  `processCompositePartition` takes a cut list, but the live caller passes `null`: only BATCH EDGE cuts
-  fire. The earlier tree ran clustering on the writer thread over the whole WAL block
-  (`preSplitClusteredPartitions`), binning the partition's range with a 1-minute floor and cutting at the
-  cold gaps, which is what spares data no single batch straddles.
 - **A merge below a column top throws**, for var-size columns as well as fixed. Each source offsets by its
   own top, but a row BELOW a top is not in the file at all and has to be written as a null, which needs a
   kernel neither merge has. `rowZeroAddr` / `rowZeroAuxAddr` refuse rather than reading the wrong bytes.

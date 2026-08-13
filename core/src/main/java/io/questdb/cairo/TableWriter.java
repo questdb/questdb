@@ -264,6 +264,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final long[] o3LastTimestampSpreads;
+    // Flat pairs holding the [minTs, maxTs] of every transaction in the block being applied. Read by the
+    // composite planner on the O3 workers, which cluster them against a partition to decide where to cut.
+    private final LongList o3ClusterTxnRanges = new LongList();
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final boolean o3QuickSortEnabled;
     private final LongList o3SealAddrs = new LongList();
@@ -1530,6 +1533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        bufferClusterTxnRanges(seqTxn, transactionBlock);
         // Capture wall clock once to reduce syscalls. Used for:
         // - commit latency threshold check in processWalCommit()
         // - recording last WAL commit timestamp
@@ -2298,6 +2302,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    /**
+     * The timestamp ranges of the transactions in the block being applied, as flat {@code [minTs, maxTs]}
+     * pairs, or empty when nothing should be clustered. Written on the writer thread before the O3 fan-out
+     * and only read after it, so the workers see a fixed list.
+     */
+    public LongList getO3ClusterTxnRanges() {
+        return o3ClusterTxnRanges;
     }
 
     public long getMaxTimestamp() {
@@ -4595,6 +4608,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
+    /**
+     * Buffers the timestamp range of every transaction in the block about to be applied, for the composite
+     * planner to cluster. A block that scatters into a few narrow strides of a partition should rewrite
+     * only those strides, and the cold gaps between them can only be seen by looking at the transactions
+     * TOGETHER - a single batch's own edges say nothing about the gaps its neighbours leave.
+     * <p>
+     * This runs on the writer thread because that is where the transactions are known; the ranges are read
+     * on the O3 workers, after the fan-out, against a partition each. One transaction clusters exactly like
+     * a block of them: the slow drip of one small backdated transaction at a time is the write
+     * amplification this exists to remove.
+     * <p>
+     * Cleared rather than filled when nothing may be cut: with the merge-append switch off a commit falls
+     * back to rewriting a partition into a fresh directory, and cutting only pays where the merges stay in
+     * place. Lag rows are excluded because they are not yet in a partition to cut.
+     */
+    private void bufferClusterTxnRanges(long startSeqTxn, int blockTxnCount) {
+        o3ClusterTxnRanges.clear();
+        if (!configuration.isO3PartitionMergeAppendEnabled()
+                || !PartitionBy.isPartitioned(partitionBy)
+                || txWriter.getLagRowCount() > 0) {
+            return;
+        }
+        for (long seqTxn = startSeqTxn, hi = startSeqTxn + blockTxnCount; seqTxn < hi; seqTxn++) {
+            final long minTs = clusterTxnRangeLo(seqTxn);
+            if (minTs < 0) {
+                continue;
+            }
+            o3ClusterTxnRanges.add(minTs, clusterTxnRangeHi(seqTxn));
+        }
+    }
+
     private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
         if (txWriter.getLagRowCount() > 0) {
             pressureControl.updateInflightTxnBlockLength(
@@ -4609,6 +4653,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // batching more transactions to reduce the number of expensive parquet O3 merges.
         long inOrderMinTimestamp = isLastPartitionParquet() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
         return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
+    }
+
+    /**
+     * The upper edge of the timestamp range a WAL transaction makes HOT for clustering. See
+     * {@link #clusterTxnRangeLo(long)}.
+     */
+    private long clusterTxnRangeHi(long seqTxn) {
+        if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                && walTxnDetails.getReplaceRangeTsHi(seqTxn) > walTxnDetails.getReplaceRangeTsLow(seqTxn)) {
+            return walTxnDetails.getReplaceRangeTsHi(seqTxn) - 1;
+        }
+        return walTxnDetails.getMaxTimestamp(seqTxn);
+    }
+
+    /**
+     * The lower edge of the timestamp range a WAL transaction makes HOT for clustering, which for a
+     * range-replace transaction is its DECLARED range rather than the span its rows happen to cover. The
+     * apply rewrites the whole declared range, so clustering on the data range would cut inside a region
+     * the apply then replaces whole, and would never propose the two cuts that pay: the range's own edges,
+     * which leave the pieces outside it untouched. A delete-only replace carries no rows at all and on the
+     * data range clips to an empty span, skipping the cut entirely - the one shape where cutting at the
+     * edges turns a whole-partition rewrite into a piece drop.
+     */
+    private long clusterTxnRangeLo(long seqTxn) {
+        if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                && walTxnDetails.getReplaceRangeTsHi(seqTxn) > walTxnDetails.getReplaceRangeTsLow(seqTxn)) {
+            return walTxnDetails.getReplaceRangeTsLow(seqTxn);
+        }
+        return walTxnDetails.getMinTimestamp(seqTxn);
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {

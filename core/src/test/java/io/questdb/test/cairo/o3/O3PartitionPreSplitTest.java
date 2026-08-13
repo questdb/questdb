@@ -116,10 +116,13 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             // The mid partition was cut into pieces, and the cold ones cost nothing to keep.
             Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 4);
             assertNoOverlappingPieces("x");
-            // The write-amplification win: rewriting the whole day would be 5760 rows plus the batches.
+            // The write-amplification win. Merging this block into the day as one piece rewrites the
+            // whole 5760 rows; cutting at the cold gap between the two clusters rewrites only the two hot
+            // strides. The bound sits between the two: this scenario measures 5114 rows with clustering
+            // suppressed and 1352 with it.
             Assert.assertTrue(
                     "physically written rows too high, the pre-split was ineffective: " + physicalRows,
-                    physicalRows < 3000
+                    physicalRows < 1500
             );
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, union.toString(), "x", LOG);
