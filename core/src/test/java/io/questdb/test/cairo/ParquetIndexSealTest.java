@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileReader;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
@@ -45,6 +46,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
@@ -108,6 +110,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     // the _pm records as a column id.
     private static final int SYM_COLUMN_ID = 1;
     private static final String RESIDUE_TABLE_NAME = "t_pidx_residue";
+    private static final String ROLLBACK_TABLE_NAME = "t_pidx_rollback";
     private static final String SWITCH_INDEXED_TABLE_NAME = "t_pidx_switch_idx";
     private static final String SWITCH_TABLE_NAME = "t_pidx_switch";
     private static final String TABLE_NAME = "t_pidx";
@@ -364,6 +367,113 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     "a crash between the _pm retirement and the drop's commit must not silently empty the column",
                     SKEWED_ROW_COUNT / 4,
                     countIndexedRows()
+            );
+        });
+    }
+
+    /**
+     * I2b: a rollback must re-apply the reader-facing marks a token publish made,
+     * and the trigger for that is "a publish happened", not "a purge task is
+     * pending".
+     * <p>
+     * {@code publishParquetIndexTokens} makes the {@code _pm} append durable
+     * before the {@code _txn} commit and marks the partition in {@code txWriter}
+     * -- a partition table version bump plus a squash-counter stamp -- so a
+     * reloading reader drops its pre-publish mapping. {@code rollback()}'s
+     * {@code unsafeLoadAll()} throws both marks away while the append stays on
+     * disk, so they have to be re-applied. The old gate asked whether a
+     * parquet-form purge task was pending, which is true only for a publish that
+     * SUPERSEDES something: a first seal on a partition queues no task at all,
+     * and its marks were silently dropped.
+     * <p>
+     * Driven on the first seal, which is exactly the case the old gate missed,
+     * and through {@code TableWriter.rollback()} itself. {@code BYPASS WAL}
+     * because a WAL apply would suspend and then retry the failed alter, and the
+     * retry republishes the token -- restoring the very mark this test has to
+     * observe the loss of.
+     * <p>
+     * The premise is asserted, not assumed: a plain in-order append is measured
+     * first and must NOT move the partition table version, or the final
+     * comparison would be satisfied by the append alone.
+     */
+    @Test
+    public void testARollbackReappliesTheMarksOfAFirstSealThatSupersededNothing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final boolean[] armedMetaSwap = {false};
+        final boolean[] metaSwapRefused = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armedMetaSwap[0] && name != null && Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    metaSwapRefused[0] = true;
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            execute("CREATE TABLE " + ROLLBACK_TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO " + ROLLBACK_TABLE_NAME + " SELECT" +
+                    " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " CASE WHEN x % 4 = 0 THEN 's0' WHEN x % 4 = 1 THEN 's7' ELSE 's15' END," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(20000)");
+            execute("INSERT INTO " + ROLLBACK_TABLE_NAME + " VALUES ('2024-01-02T00:00:00Z', 's0', 1.0, 1)");
+            execute("ALTER TABLE " + ROLLBACK_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            engine.releaseInactive();
+
+            final long versionBeforeAppend = committedPartitionTableVersion(ROLLBACK_TABLE_NAME);
+            execute("INSERT INTO " + ROLLBACK_TABLE_NAME + " VALUES ('2024-01-02T00:00:01Z', 's0', 1.0, 1)");
+            engine.releaseInactive();
+            final long versionAfterAppend = committedPartitionTableVersion(ROLLBACK_TABLE_NAME);
+            Assert.assertEquals(
+                    "premise: a plain in-order append must not move the partition table version, or the"
+                            + " final comparison is satisfied by the append rather than by the re-applied mark",
+                    versionBeforeAppend,
+                    versionAfterAppend
+            );
+
+            final TableToken token = engine.verifyTableName(ROLLBACK_TABLE_NAME);
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                final ObjList<CharSequence> covering = new ObjList<>();
+                covering.add("price");
+                covering.add("qty");
+                armedMetaSwap[0] = true;
+                try {
+                    writer.addIndex("sym", configuration.getIndexValueBlockSize(), IndexType.POSTING, covering);
+                    Assert.fail("the _meta.swp open was not refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Cannot open indexed file");
+                } finally {
+                    armedMetaSwap[0] = false;
+                }
+                Assert.assertTrue("the _meta.swp open was never refused", metaSwapRefused[0]);
+                // The first seal published its token and fsynced the _pm header
+                // patch before the failure. Nothing was superseded, so there is
+                // no parquet-form purge task for the old gate to see.
+                writer.rollback();
+                // A commit that moves nothing in the partition table on its own,
+                // measured above, so the version can only move if the rollback
+                // re-applied the publish's mark.
+                final TableWriter.Row row = writer.newRow(writer.getMaxTimestamp() + 1);
+                row.putSym(1, "s0");
+                row.putDouble(2, 1.0);
+                row.putLong(3, 1);
+                row.append();
+                writer.commit();
+            }
+            engine.releaseInactive();
+
+            final long versionAfterRollback = committedPartitionTableVersion(ROLLBACK_TABLE_NAME);
+            Assert.assertTrue(
+                    "the rollback dropped the partition table version bump a durable _pm append had"
+                            + " already earned, so a reloading reader keeps its pre-publish mapping"
+                            + " [before=" + versionAfterAppend + ", after=" + versionAfterRollback + ']',
+                    versionAfterRollback > versionAfterAppend
             );
         });
     }
@@ -2044,6 +2154,12 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private long committedTxn(String tableName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             return reader.getTxn();
+        }
+    }
+
+    private long committedPartitionTableVersion(String tableName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            return reader.getTxFile().getPartitionTableVersion();
         }
     }
 

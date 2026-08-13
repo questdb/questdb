@@ -310,12 +310,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // committed covering-index tokens: column id (writer index) then index txn,
     // two longs per entry.
     private final LongList parquetSweepScratchTokens = new LongList();
+    // Timestamps of the partitions whose _pm this writer appended a covering
+    // index footer to since the last commit, with the committed txn they were
+    // appended against. A publish makes the _pm durable before the _txn commit,
+    // so a rollback has to re-apply the reader-facing marks the publish made in
+    // txWriter and unsafeLoadAll then threw away. Keyed on "a publish happened",
+    // not on "a purge task is pending": a first seal supersedes nothing and
+    // queues no task, and its append is exactly as durable.
+    private final LongList parquetIndexPublishedPartitions = new LongList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     // Accompanies parquetSweepScratchTokens: true only when the partition's
     // committed _pm was mapped AND its footer resolved, so that "the footer
     // publishes nothing" is distinguishable from "the footer could not be
     // read". Only the first licenses the sweep's committed-txn fallback.
     private boolean parquetSweepTokensResolved;
+    // The committed txn parquetIndexPublishedPartitions was recorded against.
+    // getTxn() does not move until the commit, so equality with it is what makes
+    // the list mean "published in the CURRENT uncommitted window".
+    private long parquetIndexPublishBaseTxn = -1;
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
     // at once; the writer-thread paths touch the same list only after the O3 workers
@@ -3464,15 +3476,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     checkDistressed();
                 }
                 freeColumns(false);
-                final boolean parquetIndexTokensDurable = deferredParquetFormPostingSealPurgesPending();
+                // Gated on "a _pm token publish happened in this window", not on
+                // "a parquet-form purge task is pending". The two are not the
+                // same set: a publish that supersedes nothing -- a first seal on
+                // a partition -- queues no task at all, while its _pm append is
+                // exactly as durable, and the old gate silently skipped it.
+                final boolean parquetIndexTokensDurable =
+                        parquetIndexPublishBaseTxn == txWriter.getTxn() && parquetIndexPublishedPartitions.size() > 0;
                 txWriter.unsafeLoadAll();
                 if (parquetIndexTokensDurable) {
-                    // unsafeLoadAll just discarded the in-memory partition table
-                    // version bump publishParquetIndexTokens made, but the _pm
-                    // append it accompanied is durable. Re-apply it so the next
-                    // commit still tells readers to drop the pre-publish mapping.
+                    // unsafeLoadAll just discarded the partition table version
+                    // bump and the per-partition squash stamp
+                    // publishParquetIndexTokens made, but the _pm append they
+                    // accompanied is durable and the partition directory really
+                    // did change. Re-apply both, so the next commit still tells a
+                    // reader to drop the pre-publish mapping and still tells a
+                    // per-partition consumer the directory moved.
                     txWriter.bumpPartitionTableVersion();
+                    for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i += 2) {
+                        final long publishedTimestamp = parquetIndexPublishedPartitions.getQuick(i);
+                        // Re-resolved against the reloaded _txn rather than taken
+                        // from the recorded pair: the rollback may have taken the
+                        // partition's name txn back, or the partition away.
+                        final long publishedNameTxn =
+                                txWriter.getPartitionNameTxnByPartitionTimestamp(publishedTimestamp, Long.MIN_VALUE);
+                        if (publishedNameTxn != Long.MIN_VALUE) {
+                            stampParquetIndexPublishOnPartition(publishedTimestamp, publishedNameTxn);
+                        }
+                    }
                 }
+                parquetIndexPublishedPartitions.clear();
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
@@ -12526,10 +12559,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // squash counter (and .squash_ts on its 16-bit overflow) as part of the
         // partition's identity, not only as a squash signal: for this event it is
         // the ONLY field that moves.
-        final int publishedPartitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (publishedPartitionIndex > -1 && !txWriter.incrementPartitionSquashCounter(publishedPartitionIndex)) {
-            squashSplitPartitions_updateSquashTimestampFile(partitionTimestamp, partitionNameTxn);
+        stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
+        // Recorded so rollback() can re-apply both marks. The _pm append is
+        // durable before the _txn commit, and unsafeLoadAll throws the marks
+        // away; the list is what tells the rollback they were ever made. Reset
+        // on the first publish of each new committed txn, so it only ever
+        // describes the current uncommitted window.
+        if (parquetIndexPublishBaseTxn != txWriter.getTxn()) {
+            parquetIndexPublishedPartitions.clear();
+            parquetIndexPublishBaseTxn = txWriter.getTxn();
         }
+        parquetIndexPublishedPartitions.add(partitionTimestamp, partitionNameTxn);
         for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
             purgeSupersededParquetIndexArtifacts(
                     supersededColumnIds.getQuick(i),
@@ -14361,17 +14401,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean deferredParquetFormPostingSealPurgesPending() {
-        synchronized (parquetSealPurgeLock) {
-            for (int i = 0, n = deferredPostingSealPurges.size(); i < n; i++) {
-                if (deferredPostingSealPurges.getQuick(i).getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     private void rollbackDeferredPostingSealPurges() {
         long currentTableTxn = txWriter.getTxn();
         publishDeferredPostingSealPurges(currentTableTxn, false);
@@ -15459,6 +15488,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Stamps the per-partition change token a covering-index token publish is
+     * otherwise invisible to: the publish grows the partition's {@code _pm} and
+     * adds a {@code pidx} pair without moving anything in the partition's own
+     * {@code _txn} record. Falls back to {@code .squash_ts} when the 16-bit
+     * counter has no room left.
+     */
+    private void stampParquetIndexPublishOnPartition(long partitionTimestamp, long partitionNameTxn) {
+        final int publishedPartitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (publishedPartitionIndex > -1 && !txWriter.incrementPartitionSquashCounter(publishedPartitionIndex)) {
+            squashSplitPartitions_updateSquashTimestampFile(partitionTimestamp, partitionNameTxn);
         }
     }
 
