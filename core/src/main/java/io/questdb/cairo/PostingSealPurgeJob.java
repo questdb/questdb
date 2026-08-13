@@ -599,7 +599,14 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                         .$(", unattributed=").$(unattributed).I$();
             }
             if (unattributed > 0) {
-                LOG.critical().$("posting seal purge: recovered purge-log rows predate artifact-form tagging and were dropped without unlinking; the superseded sidecars they named stay on disk [rows=")
+                // Deliberately does NOT name a cause. The counter above
+                // increments for ANY value failing isValidArtifactForm --
+                // a NULL from a pre-upgrade row, a missing column, and equally
+                // a corrupt 99 -- and nothing here can tell those apart. The
+                // sibling message in TableWriter can, because it is gated on
+                // format == POSTING_SEAL_PURGE_PENDING_FORMAT_V1; this one is
+                // not, so it reports the effect and the value, not a diagnosis.
+                LOG.critical().$("posting seal purge: recovered purge-log rows carried no usable artifact form and were dropped without unlinking (a row written before artifact-form tagging, or an unrecognised value); the superseded sidecars they named stay on disk [rows=")
                         .$(unattributed).I$();
             }
         } catch (Throwable th) {

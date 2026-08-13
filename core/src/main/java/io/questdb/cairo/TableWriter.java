@@ -8361,6 +8361,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * True when {@code cairo.posting.index.parquet.partition.format} selects
+     * {@code parquet}, that is when a covering index over a parquet partition is
+     * sealed as {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im}
+     * instead of the native {@code .pv} / {@code .pc*} sidecars.
+     */
+    private boolean isParquetIndexFormat() {
+        return configuration.getPostingIndexParquetPartitionFormat() == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+    }
+
+    /**
      * Checks whether a partition already has a sealed posting index for the
      * given column. The v2 .pk chain has at least one published entry
      * (sealTxn >= 0) iff at least one seal landed for this partition; the
@@ -8372,16 +8382,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the posting index key file exists with a non-empty
      * v2 chain (at least one published seal entry).
      */
-    /**
-     * True when {@code cairo.posting.index.parquet.partition.format} selects
-     * {@code parquet}, that is when a covering index over a parquet partition is
-     * sealed as {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im}
-     * instead of the native {@code .pv} / {@code .pc*} sidecars.
-     */
-    private boolean isParquetIndexFormat() {
-        return configuration.getPostingIndexParquetPartitionFormat() == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
-    }
-
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
         LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
                 path.trimTo(plen), columnName, columnNameTxn);
