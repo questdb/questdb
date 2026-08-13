@@ -265,6 +265,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
+            partitionGeometry = Misc.free(partitionGeometry);
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
@@ -582,9 +583,13 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
-            partitionGeometry = new PartitionGeometry().of(
-                    ff, txFile, path.trimTo(rootLen).toString(), metadata.getTimestampType(), getPartitionedBy()
-            );
+            // The root is built afresh rather than trimmed out of `path`. Callers reach this while `path`
+            // holds a partition directory they are about to open - openPartition0 passes it as an argument
+            // in the same call - and trimming it under them truncates the directory name.
+            try (Path root = new Path()) {
+                root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                partitionGeometry = new PartitionGeometry().of(ff, txFile, root.toString(), timestampType, partitionBy);
+            }
         }
         return partitionGeometry;
     }

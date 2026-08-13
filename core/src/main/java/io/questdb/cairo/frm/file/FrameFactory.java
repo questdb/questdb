@@ -128,6 +128,25 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
+     * Opens a frame over the O3 buffers whose designated timestamp comes from the SORTED TIMESTAMP INDEX.
+     * The O3 buffers hold no timestamp column of their own - depending on how the commit arrived, that slot
+     * is either the index itself or a WAL segment's own encoding - so the index is the one source that
+     * always answers, which is why the per-column O3 path reads it too.
+     *
+     * @param timestampIndexAddr native address of the sorted timestamp index, 16 bytes per row
+     */
+    public Frame openROFromMemoryColumns(
+            ReadOnlyObjList<? extends MemoryCR> columns,
+            TableWriterMetadata metadata,
+            long rowCount,
+            long timestampIndexAddr
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.createROFromMemoryColumns(columns, metadata, rowCount, timestampIndexAddr);
+        return frame;
+    }
+
+    /**
      * Opens a frame for reading. This method is thread safe.
      *
      * @param tablePath          the path to the table directory

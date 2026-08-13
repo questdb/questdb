@@ -141,6 +141,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * @return the number of actions planned
      */
     public static int processCompositePartition(
+            Path pathToTable,
             int partitionIndex,
             long srcOooLo,
             long srcOooHi,
@@ -153,17 +154,37 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         final TxReader txReader = tableWriter.getTxReader();
         final PartitionGeometry geometry = tableWriter.getGeometry();
+        final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+        final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
 
         // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
         boundsOut.clear();
         final int pieceCount = geometry.getPieceCount(partitionIndex);
         for (int p = 0; p < pieceCount; p++) {
+            final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+            final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+            long tsHi = geometry.getPieceTimestampHi(partitionIndex, p);
+            if (tsHi == Numbers.LONG_NULL && rowCount > 0) {
+                // A partition that has never been written as a composite records no upper bound - _txn
+                // holds a row count and nothing about timestamps - and an unbounded piece claims every
+                // incoming row, so it can be neither cut nor kept. That would make the FIRST write to any
+                // partition rewrite the whole of it, which is the one case the design has to get right, so
+                // the bound is read from the piece's last row. One 8-byte read, and only for a piece the
+                // geometry does not already describe.
+                tsHi = readPieceTimestampHi(
+                        pathToTable,
+                        partitionTimestamp,
+                        srcNameTxn,
+                        rowOffset + rowCount - 1,
+                        tableWriter
+                );
+            }
             O3CompositeMergeStrategy.addPieceBounds(
                     boundsOut,
                     geometry.getPieceTimestampLo(partitionIndex, p),
-                    geometry.getPieceTimestampHi(partitionIndex, p),
-                    geometry.getPieceRowOffset(partitionIndex, p),
-                    geometry.getPieceRowCount(partitionIndex, p)
+                    tsHi,
+                    rowOffset,
+                    rowCount
             );
         }
 
@@ -242,6 +263,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final PartitionGeometry geometry = tableWriter.getGeometry();
 
         final int actionCount = processCompositePartition(
+                pathToTable,
                 partitionIndex,
                 srcOooLo,
                 srcOooHi,
@@ -353,11 +375,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long e = partitionE;
         try (
                 Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), partitionE);
-                Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax)
+                Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
         ) {
             for (int i = 0; i < actionCount; i++) {
                 final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                 final long o3Rows = action.getO3RowCount();
+                LOG.debug().$("composite action [table=").$safe(tableWriter.getTableToken().getTableName())
+                        .$(", partitionTs=").$ts(partitionTimestamp)
+                        .$(", i=").$(i).$('/').$(actionCount)
+                        .$(", action=").$(action.type)
+                        .$(", pieceIndex=").$(action.pieceIndex)
+                        .$(", pieceLo=").$(action.pieceIndex > -1 ? O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex) : -1)
+                        .$(", pieceRows=").$(action.pieceIndex > -1 ? O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) : -1)
+                        .$(", o3Lo=").$(action.o3Lo)
+                        .$(", o3Hi=").$(action.o3Hi)
+                        .$(", o3Rows=").$(o3Rows)
+                        .$(", e=").$(e)
+                        .I$();
                 switch (action.type) {
                     case KEEP -> {
                         // Nothing is read and nothing is written. The piece keeps the file rows it already
@@ -449,6 +483,44 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
         return e;
+    }
+
+    /**
+     * The timestamp at one FILE row of a partition's designated-timestamp column.
+     * <p>
+     * The same read {@link #processPartition} performs on an archive partition to learn its upper bound,
+     * narrowed to a single row: a piece's bound is its last row, and every other row of the column is of no
+     * interest here.
+     */
+    private static long readPieceTimestampHi(
+            Path pathToTable,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long fileRow,
+            TableWriter tableWriter
+    ) {
+        final RecordMetadata metadata = tableWriter.getMetadata();
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        final Path path = Path.getThreadLocal2(pathToTable);
+        TableUtils.setPathForNativePartition(
+                path,
+                metadata.getTimestampType(),
+                tableWriter.getPartitionBy(),
+                partitionTimestamp,
+                srcNameTxn
+        );
+        final long fd = TableUtils.openRO(ff, dFile(path, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE), LOG);
+        try {
+            final long size = (fileRow + 1) * Long.BYTES;
+            final long addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_O3);
+            try {
+                return Unsafe.getLong(addr + size - Long.BYTES);
+            } finally {
+                ff.munmap(addr, size, MemoryTag.MMAP_O3);
+            }
+        } finally {
+            ff.close(fd);
+        }
     }
 
     /**

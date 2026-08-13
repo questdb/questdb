@@ -120,6 +120,36 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     }
                 }
             }
+        } else if (sourceColumn.getStorageType() == COLUMN_MEMORY) {
+            // The O3 buffers. They are already in timestamp order by the time a partition task sees them,
+            // so the slice goes down as one run - the same contiguous copy the per-column O3 path makes for
+            // a pure-O3 block.
+            appendOffsetRowCount -= columnTop;
+            assert sourceLo >= 0;
+            assert appendOffsetRowCount >= 0;
+
+            if (sourceHi > sourceLo) {
+                final long size = (sourceHi - sourceLo) << shl;
+                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
+                long dstAddress = 0;
+                try {
+                    dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
+                    if (sourceColumn.isTimestampIndex()) {
+                        // The designated timestamp arrives as the 16-bytes-per-row sorted INDEX rather than
+                        // as a column, so its rows are de-interleaved out of the index instead of copied.
+                        Vect.copyFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi - 1, dstAddress);
+                    } else {
+                        Vect.memcpy(dstAddress, sourceColumn.getContiguousDataAddr(sourceHi) + (sourceLo << shl), size);
+                    }
+                    if (commitMode != CommitMode.NOSYNC) {
+                        TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
+                    }
+                } finally {
+                    if (dstAddress != 0) {
+                        TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
+                    }
+                }
+            }
         } else {
             throw new UnsupportedOperationException();
         }
@@ -130,35 +160,39 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             long appendOffsetRowCount,
             FrameColumn sourceColumn1,
             long source1Lo,
+            long source1Hi,
             FrameColumn sourceColumn2,
             long source2Lo,
+            long source2Hi,
             long mergeIndexAddr,
             long mergeIndexRows,
             int commitMode
     ) {
-        // Each side offsets by its OWN column top, exactly as append does. A row below a column's top is
-        // not in that column's file at all, so the top is the difference between the row a caller names and
-        // the row the file holds - and it is the column that knows it, which is why none of this has to be
-        // reasoned about a level up.
-        source1Lo -= sourceColumn1.getColumnTop();
-        source2Lo -= sourceColumn2.getColumnTop();
+        // The target offsets by its OWN column top, exactly as append does: a row below the top is not in
+        // the file at all, so the top is the difference between the row a caller names and the row the file
+        // holds, and it is the column that knows it. Each SOURCE does the same in rowZeroAddr below.
         appendOffsetRowCount -= columnTop;
 
-        assert source1Lo >= 0;
-        assert source2Lo >= 0;
         assert appendOffsetRowCount >= 0;
+        assert (source1Hi - source1Lo) + (source2Hi - source2Lo) == mergeIndexRows;
 
         final long size = mergeIndexRows << shl;
         TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
 
-        // The shuffle reads both sources by absolute row id out of the merge index, so each source is
-        // addressed from ITS row 0 and the index does the rest.
-        final long src1Address = sourceColumn1.getContiguousDataAddr(source1Lo + mergeIndexRows);
-        final long src2Address = sourceColumn2.getContiguousDataAddr(source2Lo + mergeIndexRows);
+        // The shuffle picks rows by the ABSOLUTE row id the merge index carries, so each source is
+        // addressed from ITS row 0 and the index does the rest. The designated timestamp reads neither
+        // source: the merge index was built out of both sides' timestamps and already holds the answer.
+        final boolean isTimestamp = sourceColumn2.isTimestampIndex();
+        final long src1Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
+        final long src2Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn2, source2Lo, source2Hi);
         long dstAddress = 0;
         try {
             dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
-            mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
+            if (isTimestamp) {
+                Vect.oooCopyIndex(mergeIndexAddr, mergeIndexRows, dstAddress);
+            } else {
+                mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
+            }
             if (commitMode != CommitMode.NOSYNC) {
                 TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
             }
@@ -167,6 +201,28 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
             }
         }
+    }
+
+    /**
+     * The address the source's row 0 WOULD be at, which is what the merge index's absolute row ids address.
+     * <p>
+     * A column whose data starts at a top does not hold the rows below it, so its mapping begins that many
+     * rows in and the base steps back by the same amount. That leaves the returned address pointing outside
+     * the mapping, which is safe only because no row below the top is ever read - and that is exactly what
+     * the check below enforces.
+     */
+    private long rowZeroAddr(FrameColumn column, long lo, long hi) {
+        if (lo >= hi) {
+            return 0;
+        }
+        final long top = column.getColumnTop();
+        if (lo < top) {
+            throw CairoException.critical(0).put("merge reads below a column top [column=").put(columnIndex)
+                    .put(", rowLo=").put(lo)
+                    .put(", columnTop=").put(top)
+                    .put(']');
+        }
+        return column.getContiguousDataAddr(hi) - (top << shl);
     }
 
     /**

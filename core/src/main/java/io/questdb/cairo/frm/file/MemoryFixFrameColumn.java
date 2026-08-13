@@ -35,6 +35,7 @@ public final class MemoryFixFrameColumn implements FrameColumn {
     private int columnType;
     private RecycleBin<FrameColumn> recycleBin;
     private long rowCount;
+    private long timestampIndexAddr;
 
     @Override
     public void addTop(long value) {
@@ -86,7 +87,7 @@ public final class MemoryFixFrameColumn implements FrameColumn {
         if (rowHi > rowCount) {
             throw new IllegalArgumentException("rowHi exceeds rowCount");
         }
-        return columnMemory.addressOf(0);
+        return timestampIndexAddr != 0 ? timestampIndexAddr : columnMemory.addressOf(0);
     }
 
     @Override
@@ -104,6 +105,11 @@ public final class MemoryFixFrameColumn implements FrameColumn {
         return COLUMN_MEMORY;
     }
 
+    @Override
+    public boolean isTimestampIndex() {
+        return timestampIndexAddr != 0;
+    }
+
     public void of(
             int columnIndex,
             int columnType,
@@ -114,7 +120,17 @@ public final class MemoryFixFrameColumn implements FrameColumn {
         this.columnMemory = columnMemory;
         this.columnType = columnType;
         this.columnIndex = columnIndex;
+        this.timestampIndexAddr = 0;
         this.closed = false;
+    }
+
+    /**
+     * Re-points this column at the SORTED TIMESTAMP INDEX. The O3 buffers hold no timestamp column of their
+     * own - the index is the only sorted copy of the timestamps - so a frame over them reads its designated
+     * timestamp from here.
+     */
+    public void ofTimestampIndex(long timestampIndexAddr) {
+        this.timestampIndexAddr = timestampIndexAddr;
     }
 
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
@@ -126,8 +142,10 @@ public final class MemoryFixFrameColumn implements FrameColumn {
             long appendOffsetRowCount,
             FrameColumn sourceColumn1,
             long source1Lo,
+            long source1Hi,
             FrameColumn sourceColumn2,
             long source2Lo,
+            long source2Hi,
             long mergeIndexAddr,
             long mergeIndexRows,
             int commitMode

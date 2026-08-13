@@ -58,6 +58,7 @@ public class FrameImpl implements Frame {
     private Path partitionPath = new Path();
     private long partitionTimestamp;
     private long rowCount;
+    private long timestampIndexAddr;
 
     public FrameImpl(FrameColumnPool columnPool) {
         this.columnPool = columnPool;
@@ -93,6 +94,15 @@ public class FrameImpl implements Frame {
     }
 
     public void createROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long size) {
+        createROFromMemoryColumns(columns, metadata, size, 0);
+    }
+
+    /**
+     * @param timestampIndexAddr the sorted timestamp index backing the designated timestamp column, or 0
+     *                           when the frame's timestamp column carries its own timestamps
+     */
+    public void createROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long size, long timestampIndexAddr) {
+        this.timestampIndexAddr = timestampIndexAddr;
         this.metadata = metadata;
         this.crv = null;
         this.rowCount = size;
@@ -114,6 +124,7 @@ public class FrameImpl implements Frame {
         this.canWrite = true;
         this.create = true;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.timestampIndexAddr = 0;
     }
 
     @Override
@@ -135,6 +146,7 @@ public class FrameImpl implements Frame {
         this.canWrite = false;
         this.create = false;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.timestampIndexAddr = 0;
     }
 
     public void openRO(
@@ -161,6 +173,7 @@ public class FrameImpl implements Frame {
         this.canWrite = false;
         this.create = false;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.timestampIndexAddr = 0;
     }
 
     public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
@@ -172,6 +185,7 @@ public class FrameImpl implements Frame {
         this.canWrite = true;
         this.create = false;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.timestampIndexAddr = 0;
     }
 
     public void saveChanges(FrameColumn frameColumn) {
@@ -231,13 +245,19 @@ public class FrameImpl implements Frame {
             return DeletedFrameColumn.INSTANCE;
         }
         FrameColumnTypePool columnTypePool = columnPool.getPool(columnType);
-        return columnTypePool.createFromMemoryColumn(
+        FrameColumn column = columnTypePool.createFromMemoryColumn(
                 columnIndex,
                 columnType,
                 rowCount,
                 columnsMemory.get(TableWriter.getPrimaryColumnIndex(columnIndex)),
                 columnsMemory.get(TableWriter.getSecondaryColumnIndex(columnIndex))
         );
+        if (timestampIndexAddr != 0
+                && columnIndex == metadata.getTimestampIndex()
+                && column instanceof MemoryFixFrameColumn fixColumn) {
+            fixColumn.ofTimestampIndex(timestampIndexAddr);
+        }
+        return column;
     }
 
     void setRecycleBin(RecycleBin<FrameImpl> frameRecycleBin) {

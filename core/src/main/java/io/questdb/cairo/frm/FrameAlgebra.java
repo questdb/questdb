@@ -113,8 +113,10 @@ public class FrameAlgebra {
                                 target.getRowCount(),
                                 sourceColumn1,
                                 source1Lo,
+                                source1Hi,
                                 sourceColumn2,
                                 source2Lo,
+                                source2Hi,
                                 mergeIndexAddr,
                                 mergeIndexRows,
                                 commitMode

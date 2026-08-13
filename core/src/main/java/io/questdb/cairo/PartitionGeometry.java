@@ -531,6 +531,11 @@ public class PartitionGeometry implements Closeable, Mutable {
         for (int s = 0; s < LONGS_PER_RESOLVED; s++) {
             resolved.setQuick(at + s, 0);
         }
+        // The key the slot is found by, stamped here rather than by each caller: a slot carrying a zeroed
+        // key is a slot findResolved cannot return, and the caller that inserted it would be the only one
+        // ever able to reach it.
+        resolved.setQuick(at + RES_PARTITION_TS, partitionTimestamp);
+        resolved.setQuick(at + RES_NAME_TXN, nameTxn);
         return at;
     }
 
@@ -563,8 +568,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         if (slot < 0) {
             slot = insertResolved(partitionTimestamp, nameTxn);
         }
-        resolved.setQuick(slot + RES_PARTITION_TS, partitionTimestamp);
-        resolved.setQuick(slot + RES_NAME_TXN, nameTxn);
         resolved.setQuick(slot + RES_PIECE_LO, lo);
         resolved.setQuick(slot + RES_PIECE_COUNT, count);
         resolved.setQuick(slot + RES_E, geometryFile.getPhysicalRows());

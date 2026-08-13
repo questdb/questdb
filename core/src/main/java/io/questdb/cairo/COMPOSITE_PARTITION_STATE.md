@@ -42,7 +42,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 8 | Executor: KEEP / NEW_PIECE / MERGE | **BUILT** |
 | 9 | Geometry pointer back through the partition sink | **BUILT** |
 | 10 | Routing behind `cairo.o3.partition.merge.append.enabled` | **BUILT**, default OFF |
-| 11 | End-to-end test | **RED** - see below |
+| 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
 | 12 | Var-size column merge | NOT STARTED |
 | 13 | Index maintenance for merged rows | NOT STARTED |
 
@@ -51,6 +51,8 @@ With the flag off - the default - nothing above is reachable and the tree behave
 ## Commits
 
 ```
+            Make the composite write produce the right rows
+23388e278b  Record the implementation state
 8572f15955  Keep _geometry out of TxReader and TxWriter
 e5a8f69414  Integrate the plan with its execution, and test it end to end
 4151a7c636  Read each piece through its own frame, sized to that piece
@@ -67,28 +69,49 @@ b07153036a  Read and write the _geometry file, and point _txn at it
 
 ## WHERE THE WORK STANDS
 
-`O3CompositePartitionTest` is RED. Both cases fail at the same assertion - the table is SUSPENDED after
-`drainWalQueue()`, before any row is compared. So the apply throws; this is a write-side fault, not a read
-one.
+`O3CompositePartitionTest` is GREEN, end to end: a WAL table, fixed-width columns, both a backdated batch
+landing inside a day and a batch landing above everything the day holds. Each case asserts the ROWS against
+a UNION ALL oracle and the GEOMETRY separately, because rows that read back correctly out of a partition
+quietly rewritten whole would prove nothing.
 
-**The apply's error has not been read yet.** That is the next step and it is one run away: run
-`O3CompositePartitionTest` and capture the critical log line around the suspension, which names the throw
-directly. Everything below this line is inference and should be treated as such until that is done.
+Regression, all with 0 failures: 364 tests across `io.questdb.test.cairo.o3`, 641 across the reader, writer
+and WAL-writer suites, 1161 across the frame, squash and clusterer suites.
 
-Two things are known rather than inferred:
+The route from red to green was seven defects, worth recording because most were not where the symptom
+pointed:
 
-- the second case (`testChronologicalAppendRewritesNothing`) produces only KEEP and NEW_PIECE - no MERGE at
-  all - and suspends too. So the fault is NOT in the merge kernel. It is in the append, the geometry
-  publish, or the sink hand-off;
-- an earlier failure at the same point was a JVM SIGSEGV inside `mergeTwoLongIndexesAsc`, caused by a
-  helper that fetched the piece's timestamp address inside try-with-resources: closing the `FrameColumn`
-  released the mapping, and the index build then walked freed memory. Fixed in `e5a8f69414` - the column
-  now stays open across both the index build and the merge, which is the only window the address is valid
-  in. The current failure is a clean throw, not that.
+1. **`merge` read each source over the WHOLE merge index.** `getContiguousDataAddr(srcLo + mergeIndexRows)`
+   asked each side for its own rows PLUS the other side's. The bound is each source's own `Hi`, so
+   `FrameColumn.merge` now takes both, and the row-0 base is derived per column - the shuffle picks by
+   ABSOLUTE row id, so a column with a top maps from its top and steps its base back to where row 0 would
+   be.
+2. **`insertResolved` never stamped the key it is found by.** `commitUpdate` inserted a resolved slot with a
+   zeroed `(partitionTimestamp, nameTxn)`, so the `publish` that followed could not find it and asserted.
+   The key is now stamped by the insert rather than by each caller.
+3. **`NO_GEOMETRY_REF` collided with a real value.** It was `Long.MIN_VALUE`, which is exactly
+   `PARTITION_COMPOSITE_FLAG` with generation 0 at offset 0 - the ref of a partition's FIRST record. So
+   every first composite write published a pointer the sink then discarded as "nothing changed", and the
+   partition read back as one flat piece. It is 0 now: a real ref always carries the flag, so it is never
+   zero.
+4. **An unbounded piece claimed every incoming row.** A partition with no geometry records no `tsHi` -
+   `_txn` holds a row count and nothing about timestamps - so its single piece could be neither cut nor
+   kept, and the FIRST write to any partition rewrote the whole of it. The planner now reads the bound off
+   the piece's last row: one 8-byte read, and only for a piece the geometry does not already describe.
+5. **`getGeometry()` trimmed the live `path`.** `openPartition0` passes `path` to `openPartitionColumns` and
+   evaluates `getPartitionPhysicalRowCount` in the same argument list, so the first resolve truncated the
+   partition directory out from under the open. Both owners now build the root afresh.
+6. **`FrameAlgebra.append` could not read the O3 buffers at all** - `ContiguousFileFixFrameColumn.append`
+   handled only a file source. It now handles a memory source, as one contiguous run: the O3 rows reach a
+   partition task already in timestamp order, which is the same assumption the per-column O3 path makes.
+7. **The designated timestamp is not in the O3 columns.** `publishOpenColumnTasks` takes it from
+   `sortedTimestampsAddr`, never from `oooColumns`, because that slot is the 16-byte index on one path and a
+   WAL segment's own encoding on another. Reading it as a column produced timestamps of 0, 1, 2 microseconds
+   - row ids, not timestamps. The O3 frame now carries the index (`FrameColumn.isTimestampIndex`), `append`
+   de-interleaves it, and `merge` takes the timestamps straight out of the merge index, which already holds
+   both sides'.
 
-A guess I made and should NOT be trusted without evidence: that the empty table root in `TxWriter` was the
-stopper. `8572f15955` removes that possibility entirely - the writer no longer needs a root - and the tests
-fail identically, so either it was never the cause or there is a second one behind it.
+Neither the geometry work nor the frame work was at fault in 1, 4, 6 or 7: each was a place where the
+composite path had to make the same choice the existing O3 path already makes, and made a different one.
 
 ## Decisions
 
@@ -162,6 +185,13 @@ names and the row the file holds - and the column is what knows it. Nothing a le
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.
 - **Dedup**: the plan has no dedup term at all. `liveRows` is the plain sum of piece rows.
+- **A merge below a column top throws.** Each source offsets by its own top, but a row BELOW a top is not
+  in the file at all and has to be written as a null, which needs a kernel the fixed merge does not have.
+  `rowZeroAddr` refuses rather than reading the wrong bytes. Reachable by ADD COLUMN followed by a
+  backdated insert.
+- **The split threshold is in ROWS derived from an average record size**, so a narrow table needs a much
+  smaller `cairo.o3.partition.split.min.size` than a wide one before any cut is proposed. The default 50MB
+  is ~2.6M rows for a 20-byte record, which is why the test sets it to 1K.
 
 ## Working notes
 

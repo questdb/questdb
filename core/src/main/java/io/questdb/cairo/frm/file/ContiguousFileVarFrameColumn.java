@@ -419,8 +419,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             long appendOffsetRowCount,
             FrameColumn sourceColumn1,
             long source1Lo,
+            long source1Hi,
             FrameColumn sourceColumn2,
             long source2Lo,
+            long source2Hi,
             long mergeIndexAddr,
             long mergeIndexRows,
             int commitMode

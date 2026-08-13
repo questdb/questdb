@@ -179,10 +179,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int PARTITION_SINK_SIZE_LONGS = 9;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
     /**
-     * Sink slot 8 when the write left the partition's geometry alone. Not {@code -1}: that is a legal
-     * geometry ref, and not 0 either, which is a legal offset into a geometry file.
+     * Sink slot 8 when the write left the partition's geometry alone. Zero, because a real ref always
+     * carries {@link TxReader#PARTITION_COMPOSITE_FLAG} and so is never zero - whereas the flag ON ITS OWN
+     * is the ref of a partition's FIRST record, generation 0 at offset 0, and would collide with any
+     * sentinel built out of the top bit.
      */
-    public static final long NO_GEOMETRY_REF = Long.MIN_VALUE;
+    public static final long NO_GEOMETRY_REF = 0L;
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
@@ -1484,9 +1486,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
-            partitionGeometry = new PartitionGeometry().of(
-                    ff, txWriter, path.trimTo(pathSize).toString(), timestampType, partitionBy
-            );
+            // Built afresh rather than trimmed out of `path`, which a caller may be holding mid-use.
+            try (Path root = new Path()) {
+                root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                partitionGeometry = new PartitionGeometry().of(ff, txWriter, root.toString(), timestampType, partitionBy);
+            }
         }
         return partitionGeometry;
     }
@@ -6309,6 +6313,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
+        partitionGeometry = Misc.free(partitionGeometry);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
