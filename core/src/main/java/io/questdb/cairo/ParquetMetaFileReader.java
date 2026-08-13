@@ -802,6 +802,11 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * is available to match on and no rolled-back in-place update can have left
      * an orphaned dead footer at the tail -- e.g. a freshly staged or read-only
      * {@code _pm}. Otherwise prefer {@link #resolveFooter(long)}.
+     * <p>
+     * The one other legitimate use is as the entry point of a
+     * {@link #resolvePrevFooter()} enumeration, where the footer selected here
+     * is not trusted as the reader-visible one -- it is merely the first link of
+     * the chain being walked.
      *
      * @return true once the footer is resolved (throws rather than returning false)
      * @throws CairoException if the format is unsupported or corrupt
