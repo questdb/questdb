@@ -82,14 +82,21 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
         // healthy pre-upgrade table.
         assertMemoryLeak(() -> {
             execute("create table v1_legacy (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into v1_legacy values ('2024-01-01T00:00:00.000000Z', 1)");
+            for (int i = 0; i < 5; i++) {
+                execute("insert into v1_legacy values ('2024-01-0" + (i + 1) + "T00:00:00.000000Z', " + i + ")");
+            }
             drainWalQueue();
 
             final TableToken token = engine.verifyTableName("v1_legacy");
+            assertIsV1(token);
             deleteSidecar(token);
 
-            replayFromScratch(token); // must not throw
-            assertQuery("select count() from v1_legacy").noRandomAccess().expectSize().returns("count\n1\n");
+            final int walked = replayFromScratch(token); // must not throw
+            Assert.assertTrue(
+                    "the replay must actually advance over records, or 'it did not throw' proves nothing",
+                    walked > 0
+            );
+            assertQuery("select count() from v1_legacy").noRandomAccess().expectSize().returns("count\n5\n");
         });
     }
 
@@ -110,6 +117,26 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
         }
     }
 
+    private void assertIsV1(TableToken token) {
+        // These tests are ONLY meaningful against V1: V2 carries its CRC in-record and has no
+        // _txnlog.c at all, so a V2 table would make every assertion here pass for the wrong reason.
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(token)
+                    .concat(WalUtils.SEQ_DIR)
+                    .concat(WalUtils.TXNLOG_FILE_NAME);
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                Assert.assertEquals("this test requires the V1 txnlog",
+                        WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1, ff.readNonNegativeInt(fd, 0));
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
     private void deleteSidecar(TableToken token) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path path = new Path()) {
@@ -118,7 +145,12 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
                     .concat(WalUtils.SEQ_DIR)
                     .concat(WalUtils.TXNLOG_CRC_FILE_NAME);
             Assert.assertTrue("sidecar should exist before deletion", ff.exists(path.$()));
+            // Check the removal AND that it stayed removed. Without this the test passes vacuously:
+            // the sidecar survives, the reader verifies against real CRCs, and "a legacy table still
+            // replays" is never actually exercised.
             ff.remove(path.$());
+            Assert.assertFalse("the sidecar must be gone for this to be the legacy case",
+                    ff.exists(path.$()));
         }
     }
 
@@ -157,12 +189,19 @@ public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
      * Walks the sequencer log from txn 0 with a fresh cursor, so the verification runs against what is
      * actually on disk rather than anything cached.
      */
-    private void replayFromScratch(TableToken token) {
+    /**
+     * Walks the sequencer log from txn 1 with a fresh cursor and returns how many records it advanced
+     * over. The COUNT is the point: verification only runs on advance, so a walk that never advances
+     * proves nothing, and a caller asserting "this did not throw" over zero records is vacuous.
+     */
+    private int replayFromScratch(TableToken token) {
         engine.releaseInactive();
+        int walked = 0;
         try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, 1)) {
-            //noinspection StatementWithEmptyBody
             while (cursor.hasNext()) {
+                walked++;
             }
         }
+        return walked;
     }
 }
