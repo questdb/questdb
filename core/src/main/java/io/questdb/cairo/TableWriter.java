@@ -15522,6 +15522,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * committed txn past it. That leaks a pair rather than losing one, which is
      * the recoverable direction.
      * <p>
+     * <b>The scope of what this sweep reclaims, stated plainly, because an
+     * earlier version of this note understated it by a class.</b> This sweep
+     * reclaims exactly the pairs NO footer on the chain ever named. A pair that
+     * ANY footer names is out of its reach for the life of the partition
+     * directory, because the chain is never truncated -- and that is not a
+     * shortfall, it is the licence: a footer that names the pair is a footer
+     * some pinned reader can resolve, so unlinking it is the silent deletion
+     * this predicate exists to prevent.
+     * <p>
+     * A superseded pair therefore has exactly one owner, the reader-gated purge,
+     * and exactly one producer feeds it: the merge loop in
+     * {@link #publishParquetIndexTokens}, via
+     * {@link #purgeSupersededParquetIndexArtifacts}. That merge reads the parse
+     * anchor's covering section. On the O3 in-place reseal path the parse anchor
+     * is the update's own footer, whose covering section
+     * {@code PartitionUpdater.updateFileMetadata(0, 0, 0)} emptied, so the merge
+     * sees nothing to supersede and queues nothing -- and every pair the
+     * partition carried before that commit leaks. Measured on a covering-indexed
+     * parquet partition: two files per O3 commit, accumulating linearly (2, 12,
+     * 22, ... at 5-commit intervals), with the purge job drained between
+     * commits. It is NOT specific to a pair a rolled-back publish stranded;
+     * that is one instance of it. Bound on the damage, also measured: the O3
+     * REWRITE lands the partition in a new directory (name txn 2 -> 68 at the
+     * 61st commit on that fixture) and the whole leaked set goes with the old
+     * one, so the accumulation is bounded by the rewrite period -- dead bytes in
+     * {@code data.parquet} against the configured ratio and byte cap -- not by
+     * the partition's lifetime. Fixing it belongs at the O3 update / publish
+     * boundary and is tracked as the O3 in-place update-mode leak; nothing this
+     * sweep can do reaches it.
+     * <p>
      * DROP INDEX retires a column's token while the pair it named waits for its
      * pinned readers. The retirement's own footer publishes nothing for the
      * column, but the footers behind it still name the pair, so the chain walk
