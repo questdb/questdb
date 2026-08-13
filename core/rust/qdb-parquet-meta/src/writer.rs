@@ -738,6 +738,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         // at `existing_parquet_meta_file_size - 4`.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
         fb.unused_bytes(self.unused_bytes);
+        // `prev` is always the parse anchor, never a raw `_pm` header -- that is
+        // what makes the chain a sequence of committed heads and an older
+        // reader's walk a suffix of a newer one. A future `_pm` compaction that
+        // re-roots the chain in place would break that property and reintroduce
+        // a Critical closed on this branch. See the full argument at
+        // `ParquetMetaFileReader.resolvePrevFooter`'s javadoc (Java side) before
+        // implementing one.
         fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
