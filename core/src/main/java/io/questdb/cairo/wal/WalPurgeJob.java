@@ -324,7 +324,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final long partNo = Numbers.parseLong(walName);
                                 logic.trackSeqPart(partNo);
-                                hasPendingTasks = true;
+                                // A part file EXISTING is not pending work -- it is just where the V2
+                                // txnlog stores its records. Only a part something still holds is.
+                                //
+                                // Reporting mere existence blocked the dropped-table path outright:
+                                // hasPendingTasks feeds exactly one decision (the "table is dropped,
+                                // but has WALs containing segments with pending tasks" branch), and a
+                                // V2 table always has at least part 0, so no V2 table could ever be
+                                // fully dropped and its txn_seq leaked on every DROP. V1 has no part
+                                // files at all, which is why this only surfaced when V2 became the
+                                // default. The genuine sequencer signal -- the .pending marker -- is
+                                // already folded in by discoverWalSegments via sequencerHasPendingTasks().
+                                hasPendingTasks |= walDirectoryPolicy.isSeqPartInUse(
+                                        seqDirPathTl(tableToken),
+                                        partNo
+                                );
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -677,6 +691,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setSegmentPath(TableToken tableName, int walId, int segmentId) {
         return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
+    }
+
+    /**
+     * The sequencer directory, on a THREAD-LOCAL path: the discovery loop holds {@link #path} pinned at
+     * the parts directory while it iterates, so probing must not disturb it.
+     */
+    private Path seqDirPathTl(TableToken tableName) {
+        return Path.getThreadLocal(configuration.getDbRoot())
+                .concat(tableName).concat(WalUtils.SEQ_DIR);
     }
 
     private Path setSeqPartPath(TableToken tableName) {

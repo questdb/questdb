@@ -43,6 +43,15 @@ import org.junit.Test;
  */
 public class TxnLogV1CrcVerifyTest extends AbstractCairoTest {
 
+    @Override
+    public void setUp() {
+        super.setUp();
+        // These are V1 tests. V2 is the default now, so V1 has to be asked for explicitly -- a count
+        // of 0 selects it. Without this the tables under test are V2 and carry their CRC in-record,
+        // so there is no _txnlog.c to corrupt or delete and the assertions measure nothing.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+    }
+
     @Test
     public void testCorruptedV1RecordIsTorn() throws Exception {
         assertMemoryLeak(() -> {

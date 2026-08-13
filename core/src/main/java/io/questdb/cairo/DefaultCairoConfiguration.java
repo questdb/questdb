@@ -330,7 +330,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getDefaultSeqPartTxnCount() {
-        return 0;
+        // Matches PropServerConfiguration. A count of 0 selects V1, so leaving the TEST default at 0
+        // would run the whole suite against the format the per-record CRC does not cover in-record.
+        return 5000;
     }
 
     @Override

@@ -1412,7 +1412,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(installRoot, publicDirectory).getAbsolutePath();
             }
 
-            this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+            // 5000, not 0: a count of 0 selects the V1 txnlog. 5000 is the value server.conf already
+            // documents for replication.primary.sequencer.part.txn.count, so deployments that tuned
+            // that setting keep the part size they already run.
+            this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 5000);
             this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
             // deprecated
             this.httpNetConnectionTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);

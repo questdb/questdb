@@ -571,7 +571,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long findFirst(LPSZ path) {
-                counter.incrementAndGet();
+                // Count SWEEPS, not directory scans. A sweep scans the table directory and, under the
+                // V2 sequencer, the _txn_parts directory as well -- so counting every findFirst would
+                // count 2 per sweep and measure the format rather than the interval this test is about.
+                if (!Utf8s.containsAscii(path, WalUtils.TXNLOG_PARTS_DIR)) {
+                    counter.incrementAndGet();
+                }
                 return super.findFirst(path);
             }
         };
