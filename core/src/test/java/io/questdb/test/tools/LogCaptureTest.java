@@ -35,6 +35,9 @@ import org.junit.Test;
 
 public class LogCaptureTest extends AbstractCairoTest {
     private static Log LOG = LogFactory.getLog(LogCaptureTest.class);
+    // Mirrors the budget LogCapture.waitForRegex(String) applies internally; it takes no timeout
+    // argument, so the fake clock has to jump by exactly this much to land on its deadline.
+    private static final long WAIT_FOR_REGEX_MAX_WAIT_MS = 120_000;
     private static final LogCapture capture = new LogCapture();
 
     @Before
@@ -110,6 +113,48 @@ public class LogCaptureTest extends AbstractCairoTest {
             AssertionError error = Assert.assertThrows(AssertionError.class, () -> capture.waitFor(marker, timeoutMs));
             Assert.assertTrue(
                     "expected the AssertionError message to name the awaited string, got: " + error.getMessage(),
+                    error.getMessage().contains(marker)
+            );
+        } finally {
+            capture.setClockForTest(System::currentTimeMillis);
+            capture.setSleeperForTest(Os::sleep);
+        }
+    }
+
+    @Test
+    public void testWaitForRegexReturnsOnAMatchEvenPastTheDeadline() {
+        // The deadline check must never pre-empt a match that is already in the log: the loop
+        // tests find() first and only then the clock. Pinned with a clock frozen past the
+        // deadline, so moving the timeout check ahead of find() turns this RED.
+        final String marker = "log-capture-regex-present-" + System.nanoTime();
+        LOG.info().$(marker).$();
+        capture.waitFor(marker, 5_000);
+
+        capture.setClockForTest(() -> 1_000_000L + WAIT_FOR_REGEX_MAX_WAIT_MS);
+        capture.setSleeperForTest(ms -> Assert.fail("waitForRegex must not sleep when the regex already matches"));
+        try {
+            capture.waitForRegex(marker);
+        } finally {
+            capture.setClockForTest(System::currentTimeMillis);
+            capture.setSleeperForTest(Os::sleep);
+        }
+    }
+
+    @Test
+    public void testWaitForRegexThrowsOnExactDeadline() {
+        // The waitFor(CharSequence, long) boundary case, for the regex overload: the sleeper jumps
+        // the clock straight to start + the built-in 120s budget and the regex never matches, so
+        // waitForRegex must treat elapsed == maxWait as timed out. The old shape looped on
+        // `elapsed < maxWait` but threw only on `elapsed > maxWait`, returning silently at exactly
+        // the deadline -- a timed-out wait indistinguishable from a matched one.
+        final String marker = "log-capture-regex-exact-deadline-" + System.nanoTime();
+        final long[] clockValue = {1_000_000L};
+        capture.setClockForTest(() -> clockValue[0]);
+        capture.setSleeperForTest(ms -> clockValue[0] = 1_000_000L + WAIT_FOR_REGEX_MAX_WAIT_MS);
+        try {
+            AssertionError error = Assert.assertThrows(AssertionError.class, () -> capture.waitForRegex(marker));
+            Assert.assertTrue(
+                    "expected the AssertionError message to name the awaited regex, got: " + error.getMessage(),
                     error.getMessage().contains(marker)
             );
         } finally {

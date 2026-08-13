@@ -99,15 +99,20 @@ public class LogCapture {
     }
 
     public void waitForRegex(String regex) {
-        long start = System.currentTimeMillis();
-        int maxWait = 120_000;
-        Matcher m = Pattern.compile(regex).matcher(sink);
-        while (!m.find() && (System.currentTimeMillis() - start) < maxWait) {
-            Os.sleep(1);
+        // Same deadline shape as waitFor(CharSequence, long): the timeout check runs BEFORE the
+        // sleep and treats elapsed == maxWait as timed out. The old shape looped on
+        // `elapsed < maxWait` but threw on `elapsed > maxWait`, so landing exactly on the deadline
+        // left the loop with no match and returned silently -- a timed-out wait passing as a
+        // successful one.
+        final long maxWait = 120_000;
+        final long start = clockMillis.getAsLong();
+        final Matcher m = Pattern.compile(regex).matcher(sink);
+        while (!m.find()) {
+            if ((clockMillis.getAsLong() - start) >= maxWait) {
+                throw new AssertionError("timed out waiting for log to match '" + regex + "', captured log: " + sink);
+            }
+            sleeper.accept(1);
             m.reset(sink);
-        }
-        if ((System.currentTimeMillis() - start) > maxWait) {
-            throw new AssertionError("timed out waiting for log to populate");
         }
     }
 
