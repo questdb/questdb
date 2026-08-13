@@ -48,6 +48,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 public class AbstractFuzzTest extends AbstractCairoTest {
@@ -428,5 +430,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
         long dataAppendPageSize = configuration.getDataAppendPageSize();
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+    }
+
+    // Joins every job the caller started, including a partially started batch, so a failure mid-run
+    // does not leave background jobs alive against test teardown.
+    protected void stopAndJoinJobs(AtomicBoolean stop, ObjList<Thread> jobs) {
+        stop.set(true);
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            int k = i;
+            TestUtils.unchecked(() -> jobs.getQuick(k).join());
+        }
     }
 }
