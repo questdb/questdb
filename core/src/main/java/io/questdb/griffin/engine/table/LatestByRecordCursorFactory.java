@@ -27,10 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -60,11 +58,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int RECORD_INDEX_VALUE_IDX = 0;
     private static final int TIMESTAMP_VALUE_IDX = 1;
 
+    private final RecordCursorFactory base;
+    private final LatestByRecordCursor cursor;
     private final RecordSink recordSink;
+    private final DirectLongList rowIndexes;
     private final long rowIndexesInitialCapacity;
-    private RecordCursorFactory base;
-    private LatestByRecordCursor cursor;
-    private DirectLongList rowIndexes;
 
     public LatestByRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -73,23 +71,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull ColumnTypes columnTypes,
             int timestampIndex
     ) {
-        // The cursor selects, per PARTITION BY key, the base row with the highest timestamp, then
-        // replays those winning rows in ascending BASE-CURSOR-ORDINAL-POSITION order (buildMap()
-        // sorts rowIndexes, see below) -- it does NOT re-derive order from timestamp values. That
-        // only coincides with ascending timestamp order when the base itself happens to scan in
-        // ascending timestamp order; base is an arbitrary sub-query factory here (this
-        // constructor is only used when base does not support random access, e.g. a UNION ALL),
-        // so nothing guarantees that. Like LatestByLightRecordCursorFactory (see its constructor
-        // comment and FilterOnValuesRecordCursorFactory, the precedent for this split), the fix
-        // keeps ts DESIGNATED -- via timestampIndex, the column LATEST ON actually named, which
-        // may differ from base's own designated column -- while getScanDirection() below
-        // (overridden to SCAN_DIRECTION_OTHER) independently tells consumers not to trust it as
-        // ordered. Confirmed empirically: base.getMetadata() alone (the pre-fix code) left this
-        // factory's own output with NO designated timestamp at all (getTimestampIndex() == -1)
-        // whenever base itself did not designate one (e.g. a UNION ALL of two tables) -- the same
-        // "unusable as input to a nested time-series op" bug Task 1 fixed for the light sibling,
-        // not merely a scan-direction gap.
-        super(buildMetadata(base, timestampIndex));
+        super(base.getMetadata());
         assert !base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
@@ -113,17 +95,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    // A private static helper (rather than inline in the super(...) call) because a constructor
-    // cannot run statements before its super() call; timestampIndex is the column the LATEST ON
-    // clause actually named (via "LATEST ON <col>"), which the caller resolved and may differ
-    // from base's OWN designated timestamp column, so it -- not base.getMetadata().getTimestampIndex()
-    // -- is the correct index to designate here. Mirrors LatestByLightRecordCursorFactory.buildMetadata().
-    private static GenericRecordMetadata buildMetadata(RecordCursorFactory base, int timestampIndex) {
-        GenericRecordMetadata metadata = GenericRecordMetadata.copyOfSansTimestamp(base.getMetadata());
-        metadata.setTimestampIndex(timestampIndex);
-        return metadata;
-    }
-
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -139,14 +110,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
-    }
-
-    @Override
-    public int getScanDirection() {
-        // See the constructor comment: rows replay in ascending base-cursor-ordinal-position
-        // order, not in timestamp order, so this is neither a forward nor a backward ts-ordered
-        // scan (unless base itself happens to be, which this factory does not track or assume).
-        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -172,16 +135,9 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        final RecordCursorFactory base = this.base;
-        this.base = null;
-        final LatestByRecordCursor cursor = this.cursor;
-        this.cursor = null;
-        final DirectLongList rowIndexes = this.rowIndexes;
-        this.rowIndexes = null;
-        Throwable failure = Misc.freeBestEffort(null, rowIndexes);
-        failure = Misc.freeBestEffort(failure, cursor);
-        failure = Misc.freeBestEffort(failure, base);
-        CairoException.rethrowCleanupFailure(failure);
+        Misc.free(rowIndexes);
+        Misc.free(cursor);
+        Misc.free(base);
     }
 
     private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {

@@ -28,45 +28,32 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
- * A {@code LATEST ON} result keeps the VALUES of its timestamp column, but
- * {@code LatestByLightRecordCursorFactory} (the "latest by over a sub-query" factory, as opposed
- * to the specialized cursors used for a plain {@code LATEST ON} directly over a table) did not
- * DESIGNATE any column as the output's timestamp. That made such a {@code LATEST ON} result
- * unusable as the direct input to a nested time-series operator ({@code SAMPLE BY}, {@code ASOF}
- * JOIN, {@code ORDER BY <ts>}, ...) -- those require {@code getTimestampIndex() != -1} on their
- * base factory and throw loudly otherwise.
+ * The ordering contract of {@code LATEST ON}, and what nesting it inside a time-series operator
+ * therefore requires.
  * <p>
- * {@code x} is wrapped in an inner pass-through sub-query ({@code (select ts, k, v from x)})
- * so that {@code LATEST ON} is applied over a sub-query rather than directly over the table --
- * only that shape routes through {@code LatestByLightRecordCursorFactory}; a bare
- * {@code x latest on ts partition by k} is handled by unrelated specialized factories
- * (e.g. {@code LatestByDeferredListValuesFilteredRecordCursorFactory}) that already carry a
- * designated timestamp and are out of scope here.
+ * THE CONTRACT: {@code LATEST ON} guarantees NOTHING about the order of its output unless an
+ * {@code ORDER BY} is provided. It follows that its output must NOT advertise a designated timestamp
+ * of its own: designating one is an ordering claim, and a consumer that trusts it
+ * ({@code SAMPLE BY}, {@code ASOF}/{@code LT JOIN}, the {@code ORDER BY ts} fast path) would read
+ * rows in whatever order the base happened to scan while believing them ascending.
  * <p>
- * {@code SAMPLE BY} and {@code ASOF} JOIN require their input to ALREADY be in ascending ts
- * order and throw rather than insert a sort of their own -- that is a general, pre-existing
- * QuestDB rule for ANY unordered derived table (empirically confirmed against an unrelated
- * {@code UNION ALL} subquery feeding {@code SAMPLE BY}: same refusal, unrelated to LATEST ON),
- * not a gap this fix needs to close. So the realistic, correct shape adds an explicit
- * {@code ORDER BY ts} inside the LATEST-ON-bearing sub-query; plain {@code ORDER BY} is the one
- * consumer that DOES self-heal by inserting its own sort, which both makes
- * {@code testNestedLatestOnOrderByTs} below pass directly and is what makes the explicit
- * {@code ORDER BY ts} inside the SAMPLE BY/ASOF sub-queries actually take effect.
+ * This file previously asserted the opposite. Two commits on this branch
+ * ({@code d4329522a8}, {@code 69819aed34}) made the LATEST ON factories designate a timestamp --
+ * motivated by nested time-series operators throwing "TIMESTAMP column is required but not
+ * provided" -- and paired it with {@code SCAN_DIRECTION_OTHER} so consumers would not trust the
+ * order. That was the wrong trade, and it silently broke SEVEN upstream tests
+ * ({@code SqlCodeGeneratorTest}, {@code ExplainPlanTest}, {@code NestedSetOperationTest},
+ * {@code TwapGroupByFunctionFactoryTest}) which had been asserting the correct contract all along.
+ * Both changes are reverted.
  * <p>
- * The data set is built so {@code LATEST ON}'s row-emission order (partition-key insertion
- * order into its internal map) provably diverges from ascending timestamp order: key
- * {@code 'a'} is inserted into the map first (so it is emitted first) but is later updated to
- * carry the LARGEST timestamp of the three keys. This makes "materialize LATEST ON into a real
- * table first, then run the time-series op on that table" a genuine correctness oracle -- a real
- * table is always physically stored in ascending designated-timestamp order (a QuestDB commit
- * invariant), so {@code tmp}'s scan is legitimately ts-ordered, whereas the un-materialized
- * {@code LATEST ON} cursor is not. If a fix designates the timestamp but fails to also advertise
- * "not ordered" (see {@code getScanDirection()}), a downstream {@code ORDER BY}/{@code SAMPLE BY}
- * could wrongly take its sort-skip fast path and silently return rows in map order instead of ts
- * order -- these tests would then fail on a cursor mismatch rather than a loud exception.
- * (Empirically confirmed: designating the timestamp without overriding {@code getScanDirection()}
- * makes {@code generateOrderBy} skip the sort entirely, and all three tests below fail on a
- * genuine wrong-order data mismatch against the materialized oracle.)
+ * WHAT NESTING NEEDS INSTEAD: an explicit {@code ORDER BY ts}, which sorts. Verified directly --
+ * a {@code SAMPLE BY} over {@code LATEST ON} whose base is a {@code UNION ALL} is REFUSED without
+ * one and SUCCEEDS with one. Where the base is a real table, the table's own designated timestamp
+ * survives and nesting already works, because that designation reflects genuine storage order.
+ * <p>
+ * {@code x} is wrapped in an inner pass-through sub-query ({@code (select ts, k, v from x)}) so that
+ * {@code LATEST ON} runs over a sub-query rather than directly over the table -- only that shape
+ * routes through the factories this file is about.
  */
 public class LatestByTimestampDesignationTest extends AbstractCairoTest {
 
@@ -316,19 +303,38 @@ public class LatestByTimestampDesignationTest extends AbstractCairoTest {
             final String latestOnSql =
                     "select ts, k, v from (select ts, k, v from tg1 union all select ts, k, v from tg2) latest on ts partition by k";
             assertNestedLatestOnFamily(latestOnSql, true);
-            // Negative control / no-new-silent-wrong guard: SCAN_DIRECTION_OTHER must keep SAMPLE
-            // BY from ever trusting this factory's raw (non-pre-ordered) output as already ASC --
-            // it must throw (per the general, pre-existing QuestDB rule documented in the class
-            // doc), never silently return base-scan-order rows mislabeled as ts order. The
-            // assertion is on "ASC" specifically (not just "TIMESTAMP") because that is what
-            // discriminates the POST-fix reason ("ASC order over TIMESTAMP column is required but
-            // not provided" -- ts IS designated, just not provably ordered) from the PRE-fix
-            // reason ("TIMESTAMP column is required but not provided" -- no designated ts at all,
-            // which also happens to contain "TIMESTAMP" and would otherwise wrongly satisfy a
-            // weaker assertion here even with the buildMetadata() half of the fix reverted --
-            // confirmed empirically via a temporary in-place revert of buildMetadata(), see task
-            // report Sec. 5).
-            assertExceptionNoLeakCheck("select ts, count() from (" + latestOnSql + ") sample by 1h", -1, "ASC order");
+            // The contract, both halves. WITHOUT an explicit ORDER BY, a SAMPLE BY over this LATEST ON
+            // must be REFUSED -- the sub-query has no designated timestamp, because LATEST ON promises
+            // no order, and SAMPLE BY will not invent a sort. WITH an explicit ORDER BY ts it must
+            // SUCCEED, because the sort is what actually establishes the order the operator needs.
+            //
+            // The refusal reason asserted here is "TIMESTAMP column is required but not provided",
+            // which is the honest one: there genuinely is no designated timestamp. (While this branch
+            // designated one anyway, the reason instead read "ASC order ... required" -- ts designated
+            // but not provably ordered. Reverting the designation restores the accurate message.)
+            // The contract itself, asserted directly rather than inferred from an error message:
+            // LATEST ON output carries NO designated timestamp. QueryAssertion expects exactly that by
+            // default -- naming a timestamp requires an explicit timestamp*() step -- so this fails the
+            // moment a factory starts designating one again.
+            assertQuery(latestOnSql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("ts\tk\tv\n"
+                            + "2024-01-01T02:00:00.000000Z\ta\t1.0\n"
+                            + "2024-01-01T00:05:00.000000Z\tb\t2.0\n"
+                            + "2024-01-01T00:10:00.000000Z\tc\t3.0\n");
+
+            assertExceptionNoLeakCheck("select ts, count() from (" + latestOnSql + ") sample by 1h", -1,
+                    "TIMESTAMP column is required but not provided");
+            // ... and the same query with an explicit ORDER BY ts works.
+            assertQuery("select ts, count() from (" + latestOnSql + " order by ts) sample by 1h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestampAsc("ts")
+                    .returns("ts\tcount\n"
+                            + "2024-01-01T00:00:00.000000Z\t2\n"
+                            + "2024-01-01T02:00:00.000000Z\t1\n");
         });
     }
 }
