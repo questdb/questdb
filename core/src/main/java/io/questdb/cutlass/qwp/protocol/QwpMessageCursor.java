@@ -24,9 +24,11 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
@@ -96,6 +98,11 @@ public class QwpMessageCursor implements Mutable {
         releaseDictRollbackScratch();
     }
 
+    @TestOnly
+    public long getRetainedCacheBytes() {
+        return tableBlockCursor.getRetainedCacheBytes();
+    }
+
     /**
      * Returns whether there are more tables to iterate.
      */
@@ -140,9 +147,15 @@ public class QwpMessageCursor implements Mutable {
             );
         }
         int remainingBytes = (int) remaining;
-        int consumed = tableBlockCursor.of(
-                currentTableAddress, remainingBytes, gorillaEnabled,
-                connectionSymbolDict, deltaSymbolDictEnabled);
+        final int consumed;
+        try {
+            consumed = tableBlockCursor.of(
+                    currentTableAddress, remainingBytes, gorillaEnabled,
+                    connectionSymbolDict, deltaSymbolDictEnabled);
+        } catch (QwpParseException e) {
+            tableBlockCursor.releaseCachedResources();
+            throw e;
+        }
         currentTableAddress += consumed;
 
         return tableBlockCursor;
@@ -190,6 +203,11 @@ public class QwpMessageCursor implements Mutable {
         }
 
         this.currentTableIndex = -1;
+    }
+
+    public void releaseCachedResources() {
+        clear();
+        tableBlockCursor.releaseCachedResources();
     }
 
     /**
@@ -329,8 +347,17 @@ public class QwpMessageCursor implements Mutable {
                     );
                 }
 
-                // Read symbol value as UTF-8 directly from memory
-                String symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
+                // Read symbol value as UTF-8 directly from memory. Invalid UTF-8 is a protocol
+                // parse error, not a transient storage failure.
+                final String symbol;
+                try {
+                    symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
+                } catch (CairoException e) {
+                    if (e.isMalformedUtf8()) {
+                        throw QwpParseException.create(QwpParseException.ErrorCode.INVALID_UTF8, e.getFlyweightMessage());
+                    }
+                    throw e;
+                }
                 address += symbolLen;
 
                 // Store in dictionary. Flag a redefinition when an existing client
