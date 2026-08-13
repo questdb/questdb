@@ -94,6 +94,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TxnScoreboard txnScoreboard;
     private int columnCount;
     private int columnCountShl;
+    // Memo for hasPostingIndexedColumn, keyed on the metadata version it was
+    // computed from. -1 means "not computed".
+    private boolean hasPostingIndexedColumn;
+    private long postingIndexedColumnMetadataVersion = -1;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
@@ -990,13 +994,28 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (txnScoreboard.isOutdated(txn)) {
             long partitionTableVersion = txFile.getPartitionTableVersion();
             // Taken before the reload, against this reader's own snapshot, so it
-            // can be compared with the fresh one below. Only reached once the
-            // scoreboard says this txn is outdated, so it is not on the common
-            // release path.
-            long partitionListFingerprint = partitionListFingerprint();
+            // can be compared with the fresh one below. It cannot be deferred:
+            // unsafeLoadAll overwrites the list it walks.
+            //
+            // So it is gated instead. This is an O(partitionCount) walk and
+            // txnScoreboard.isOutdated(txn) is the COMMON case under continuous
+            // ingest, not a rare one -- an earlier comment here claimed the
+            // opposite -- so on a table with thousands of parquet partitions and
+            // high reader churn it would be a real new per-release cost. The
+            // suppression exists for the covering-index token publish, which is
+            // the only per-commit bump that moves no partition directory, and
+            // only a POSTING-indexed column can produce one. Every other table
+            // keeps the behaviour it had before the suppression existed, at zero
+            // added cost.
+            //
+            // Both staleness directions of that predicate are benign: a wrong
+            // false only restores the spurious schedule, a wrong true only pays
+            // for a fingerprint. Neither can produce a wrong answer.
+            final boolean suppressible = hasPostingIndexedColumn();
+            long partitionListFingerprint = suppressible ? partitionListFingerprint() : 0;
             // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive. We do this check at the end.
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
-                if (partitionListFingerprint() == partitionListFingerprint) {
+                if (suppressible && partitionListFingerprint() == partitionListFingerprint) {
                     // The version moved but no partition directory did. This task
                     // means "the partition list moved on while I held this txn, so
                     // directories I pinned may be removable", and there is nothing
@@ -1038,6 +1057,14 @@ public class TableReader implements Closeable, SymbolTableSource {
      * narrower question the purge task exists to act on, and it is compared
      * against the same reader's own pre-reload snapshot rather than against a
      * latched version word.
+     * <p>
+     * It is a 64-bit hash, not the list, so a collision is possible and would
+     * make a needed schedule look unnecessary. It does not matter: the effect is
+     * that this ONE reader release does not queue a discovery task, and the
+     * directories stay on disk until the next release, the next partition change
+     * or any other reader's release schedules one. A collision delays a purge,
+     * it cannot lose data or free something still referenced -- and it takes
+     * two distinct partition lists agreeing in all 64 bits.
      */
     private long partitionListFingerprint() {
         final int n = txFile.getPartitionCount();
@@ -1047,6 +1074,30 @@ public class TableReader implements Closeable, SymbolTableSource {
             h = h * 31 + txFile.getPartitionNameTxn(i);
         }
         return h;
+    }
+
+    /**
+     * Whether this table has a POSTING-indexed column, i.e. whether it can
+     * produce the covering-index token publish that
+     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
+     * suppress. Cached against the metadata version so the walk is paid once per
+     * metadata change rather than once per reader release; see the call site for
+     * why a stale answer in either direction is harmless.
+     */
+    private boolean hasPostingIndexedColumn() {
+        final long metadataVersion = metadata.getMetadataVersion();
+        if (postingIndexedColumnMetadataVersion != metadataVersion) {
+            boolean found = false;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    found = true;
+                    break;
+                }
+            }
+            hasPostingIndexedColumn = found;
+            postingIndexedColumnMetadataVersion = metadataVersion;
+        }
+        return hasPostingIndexedColumn;
     }
 
     private void closeDeletedPartition(int partitionIndex) {
