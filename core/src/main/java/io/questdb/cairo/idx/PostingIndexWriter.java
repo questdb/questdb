@@ -447,6 +447,7 @@ public class PostingIndexWriter implements IndexWriter {
     public void close() {
         try {
             if (keyMem.isOpen()) {
+                boolean isTrimSized = false;
                 try {
                     // v1 trimmed to KEY_FILE_RESERVED because the only live
                     // bytes were the two header pages. v2 keeps chain entries
@@ -482,8 +483,41 @@ public class PostingIndexWriter implements IndexWriter {
                         liveSize = KEY_FILE_RESERVED;
                     }
                     keyMem.setSize(liveSize);
+                    isTrimSized = true;
+                } catch (Throwable th) {
+                    // close() is a cleanup method and callers treat it as one:
+                    // TableWriter.doClose reaches it through
+                    // Misc.freeObjList(indexers) -> SymbolColumnIndexer.close ->
+                    // Misc.free(writer), and neither the list loop nor the indexer
+                    // guards its element. A throw here would abort that loop before
+                    // SymbolColumnIndexer frees its NATIVE_INDEX_READER buffer, before
+                    // the ~25 Misc.free(...) calls that follow, and before
+                    // releaseLock() -- leaking the writer's native memory and stranding
+                    // the table lock. Log and carry on instead. The catch is broad on
+                    // purpose: what the caller needs is to keep freeing, and that does
+                    // not depend on which throwable the sizing raised. Both throw
+                    // sources are here -- peekRegionLimit rejects a damaged header, and
+                    // setSize extends the mapping when the published high-water sits
+                    // past it, which can fail on allocate/mremap.
+                    LOG.critical()
+                            .$("posting index close could not size the .pk trim, releasing without truncation [index=").$safe(indexName)
+                            .$(", err=").$(th)
+                            .I$();
                 } finally {
-                    Misc.free(keyMem);
+                    if (isTrimSized) {
+                        Misc.free(keyMem);
+                    } else if (keyMem.isOpen()) {
+                        // Misc.free(keyMem) truncates the .pk to keyMem's CURRENT append
+                        // offset, which is this instance's stale cached high-water -- the
+                        // exact trim the sizing above exists to prevent. With the header
+                        // unreadable there is no trusted high-water to trim to, so release
+                        // the mapping WITHOUT truncating and leave the file intact for the
+                        // next open. of() reads the length from the header rather than from
+                        // ff.length(), so a .pk carrying an untrimmed tail reopens fine; a
+                        // .pk cut below its published region does not. of()'s own error
+                        // path already makes this same choice.
+                        keyMem.close(false);
+                    }
                 }
             }
         } finally {
