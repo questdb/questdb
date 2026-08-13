@@ -41,6 +41,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.mp.MPSequence;
@@ -1477,12 +1478,11 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         reader.getParquetMetadataSize(0)
                 );
 
-                try {
-                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + secondIndexTxn);
-                }
+                // Having re-mapped, this reader is entitled to the SECOND token
+                // and nothing else: the first token's artifacts are now outside
+                // the purge window protecting them, so a reader still bound to
+                // them could be reading files the purge is free to unlink.
+                assertBoundParquetReader(reader, symColumnIndex, secondIndexTxn);
             }
         });
     }
@@ -1995,9 +1995,11 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
      * Three incarnations of one partition, each written into a new directory
      * under a new name txn while the slot index stays put: parquet-sealed,
      * converted to native, converted back to parquet and resealed. The last
-     * assertion goes through {@code getIndexReader}, whose refusal names the
-     * {@code index_txn} it decided on, so the check is on the production path
-     * rather than on an accessor only a test calls.
+     * assertion goes through {@code getIndexReader}, which binds the reader it
+     * dispatches to the {@code index_txn} it decided on, so the check is on the
+     * production path rather than on an accessor only a test calls. It also
+     * crosses the form twice in one reader, so the cached native reader of
+     * incarnation 2 has to be dropped and rebuilt for incarnation 3.
      */
     @Test
     public void testAPartitionIncarnationChangeDropsTheCachedIndexForm() throws Exception {
@@ -2065,21 +2067,27 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         reader.getPartitionIndexForm(0, symColumnIndex)
                 );
 
-                try {
-                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + thirdIndexTxn);
-                }
+                final IndexReader thirdReader = reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "the resealed partition must dispatch to the parquet reader, got "
+                                + thirdReader.getClass().getName(),
+                        thirdReader instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertEquals(
+                        "the reader must be bound to the index txn this incarnation published",
+                        thirdIndexTxn,
+                        ((AbstractParquetPostingIndexReader) thirdReader).getIndexTxn()
+                );
             }
         });
     }
 
     /**
-     * The cost this task exists to remove. {@code checkPostingIndexIsReadable}
-     * used to resolve the partition's {@code _pm} footer and scan its
+     * The cost the index-form cache exists to remove. The refusal the dispatch
+     * replaced used to resolve the partition's {@code _pm} footer and scan its
      * covering-index section on EVERY {@code getIndexReader} call, and that call
      * is made per page frame, per column and per KEY by the covering factory.
+     * The dispatch reads the same three values, so it must not reintroduce it.
      * <p>
      * Asserted as a resolve count, not a duration: a stopwatch passes on a fast
      * machine whatever the call count is. The count also does not depend on the
@@ -2111,12 +2119,10 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         before > 0
                 );
                 for (int i = 0; i < 64; i++) {
-                    try {
-                        reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
-                        Assert.fail("the refusal must still fire in this task");
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "sealed as parquet and has no reader yet");
-                    }
+                    Assert.assertTrue(
+                            reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD)
+                                    instanceof AbstractParquetPostingIndexReader
+                    );
                 }
                 Assert.assertEquals(
                         "the on-disk index form must be resolved at partition-open time,"
@@ -2182,42 +2188,44 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         reader.getParquetMetadataSize(0)
                 );
 
-                try {
-                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "has no reader yet");
-                }
+                final IndexReader resealed = reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "the resealed partition must dispatch to the parquet reader, got "
+                                + resealed.getClass().getName(),
+                        resealed instanceof AbstractParquetPostingIndexReader
+                );
             }
         });
     }
 
     @Test
-    public void testPostingIndexReadIsRefusedWhileTheParquetFormatIsSelected() throws Exception {
+    public void testPostingIndexReadDispatchesToParquetWhileTheParquetFormatIsSelected() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
             createIndexedSparseKeyTable();
             // The seal wrote the index as parquet and discarded the native chain,
-            // which a reader would otherwise read as "no keys, no rows" and answer
-            // with an empty cursor. Nothing reads the parquet form yet, so the
-            // read must fail rather than answer.
-            assertQuery(COVERED_QUERY).failsWith("has no reader yet");
+            // which a NATIVE reader would read as "no keys, no rows" and answer
+            // with an empty cursor. The parquet reader serves it instead; its
+            // cursor is Task 4's, so this fails loudly rather than answering
+            // nothing. Asserting the message and not just "it failed" is what
+            // distinguishes reaching the parquet reader from any other error.
+            assertQuery(COVERED_QUERY).failsWith("parquet-form posting index cursor is not implemented yet");
         });
     }
 
     @Test
-    public void testPostingIndexReadIsRefusedAfterTheFormatIsFlippedBackToNative() throws Exception {
+    public void testPostingIndexReadDispatchesToParquetAfterTheFormatIsFlippedBackToNative() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
             createIndexedSparseKeyTable();
-            // The hole a format-keyed refusal leaves open. The partition is
+            // The hole a format-keyed dispatch leaves open. The partition is
             // already sealed as parquet and its token is published; flipping the
-            // property back says nothing about what is on disk. A check keyed on
-            // the configured format would wave this read through and answer it
-            // with an empty cursor.
+            // property back says nothing about what is on disk. A dispatch keyed
+            // on the configured format would send this to the native reader and
+            // answer it with an empty cursor.
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
             engine.releaseInactive();
-            assertQuery(COVERED_QUERY).failsWith("has no reader yet");
+            assertQuery(COVERED_QUERY).failsWith("parquet-form posting index cursor is not implemented yet");
         });
     }
 
@@ -2269,12 +2277,18 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         secondIndexTxn > firstIndexTxn
                 );
 
-                try {
-                    pinned.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + firstIndexTxn);
-                }
+                final IndexReader reader = pinned.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "dispatch must bind a parquet-form reader, not a native one [reader="
+                                + reader.getClass().getSimpleName() + ']',
+                        reader instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertEquals(
+                        "the pinned reader must be bound to the token ITS OWN snapshot publishes,"
+                                + " not the writer's latest",
+                        firstIndexTxn,
+                        ((AbstractParquetPostingIndexReader) reader).getIndexTxn()
+                );
             }
         });
     }
@@ -2436,17 +2450,14 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 Assert.assertEquals(0, reader.getPartitionIndexImFileSize(0, symColumnIndex));
 
                 // And on the production path: this reader's metadata still calls
-                // sym POSTING-indexed, so checkPostingIndexIsReadable still runs
-                // and a stale entry would refuse the read naming a retired pair.
-                try {
-                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_BACKWARD);
-                } catch (CairoException e) {
-                    Assert.assertFalse(
-                            "the refusal fired off a form resolved from a mapping this reopen"
-                                    + " replaced [msg=" + e.getFlyweightMessage() + ']',
-                            Chars.contains(e.getFlyweightMessage(), "has no reader yet")
-                    );
-                }
+                // sym POSTING-indexed, so the dispatch still runs, and a stale
+                // entry would send the read to a parquet reader over a retired
+                // artifact pair.
+                Assert.assertFalse(
+                        "the dispatch keyed on a form resolved from a mapping this reopen replaced",
+                        reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_BACKWARD)
+                                instanceof AbstractParquetPostingIndexReader
+                );
             }
         });
     }
@@ -2586,22 +2597,13 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         reader.getPartitionIndexTxn(0, symIndexAfter)
                 );
 
-                // And on the production path, where the refusal names the index
-                // txn it decided on.
-                try {
-                    reader.getIndexReader(0, sym2IndexAfter, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "column=sym2");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + sym2IndexTxn);
-                }
-                try {
-                    reader.getIndexReader(0, symIndexAfter, IndexReader.DIR_FORWARD);
-                    Assert.fail("the parquet-form posting index must be refused");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "column=sym,");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "indexTxn=" + symIndexTxn);
-                }
+                // And on the production path, where dispatch binds each reader to
+                // the token its own column publishes. This is the assertion the
+                // dense (partition, column) layout fails: after the shift, sym2's
+                // reader index addresses what sym's used to, so a cache keyed by
+                // reader index hands sym2 the wrong token -- or none at all.
+                assertBoundParquetReader(reader, sym2IndexAfter, sym2IndexTxn);
+                assertBoundParquetReader(reader, symIndexAfter, symIndexTxn);
             }
         });
     }
@@ -2729,6 +2731,34 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     "key_id\tcount\n1\t75000\n8\t75000\n16\t150000\n"
             );
         });
+    }
+
+    /**
+     * Asserts that {@code getIndexReader} dispatched a PARQUET-form reader for
+     * {@code columnIndex} and bound it to {@code expectedIndexTxn}.
+     * <p>
+     * The txn is the whole point. A parquet-form reader that binds the wrong
+     * generation reads a superseded artifact pair -- one the purge is entitled
+     * to unlink, because the scoreboard window protects only the generation the
+     * partition currently publishes -- and does so without any error. So a test
+     * that asserted only "a parquet reader came back" would pass against a
+     * dispatch that resolves the writer's latest token instead of this
+     * snapshot's, which is the failure the whole cache exists to prevent.
+     */
+    private static void assertBoundParquetReader(TableReader reader, int columnIndex, long expectedIndexTxn) {
+        final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+        Assert.assertTrue(
+                "dispatch must bind a parquet-form reader for a column whose token is published"
+                        + " [column=" + reader.getMetadata().getColumnName(columnIndex)
+                        + ", reader=" + indexReader.getClass().getSimpleName() + ']',
+                indexReader instanceof AbstractParquetPostingIndexReader
+        );
+        Assert.assertEquals(
+                "the reader must be bound to the token this column publishes"
+                        + " [column=" + reader.getMetadata().getColumnName(columnIndex) + ']',
+                expectedIndexTxn,
+                ((AbstractParquetPostingIndexReader) indexReader).getIndexTxn()
+        );
     }
 
     /**
