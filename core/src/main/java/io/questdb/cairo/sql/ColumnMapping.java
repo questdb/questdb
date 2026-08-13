@@ -66,8 +66,22 @@ public class ColumnMapping implements Mutable {
      * {@code cairo.posting.index.auto.include.timestamp} covers. That was not an
      * error, only a wrong answer: {@code key_id} came back as the low 32 bits of
      * each row's timestamp.
+     * <p>
+     * Two bounds on {@code parquetIndex} carry that claim, and the assert makes
+     * them self-checking rather than a comment the maps trust. It must be
+     * non-negative, or {@code -(parquetIndex + 1)} lands back in the
+     * writer-index space this exists to stay out of. And it must be below
+     * {@link Integer#MAX_VALUE}, or the key is {@code MIN_VALUE}, which the maps
+     * keyed by it use as their empty-slot marker: an entry under it is dropped
+     * rather than stored, and on a full table {@code probe()} does not terminate
+     * because {@code MIN_VALUE & mask == 0} makes slot 0 read as free. Reaching
+     * that needs a parquet file with 2^31 columns, whose footer would exhaust
+     * memory first. A negative {@code fieldId} is never a hazard, {@code
+     * MIN_VALUE} included, because it is discarded for the position.
      */
     public static int parquetLookupKey(int fieldId, int parquetIndex) {
+        assert fieldId >= 0 || (parquetIndex >= 0 && parquetIndex < Integer.MAX_VALUE)
+                : "a negative field id must be keyed by a position in [0, MAX_VALUE) [fieldId=" + fieldId + ", parquetIndex=" + parquetIndex + "]";
         return fieldId >= 0 ? fieldId : -(parquetIndex + 1);
     }
 
