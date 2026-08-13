@@ -1300,7 +1300,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
             )) {
@@ -1313,7 +1313,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
@@ -1415,9 +1415,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.HTTP_MIN_ENABLED.getPropertyPath(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestExpLimit),
                     PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestJsonLimit)
             )) {
@@ -2289,12 +2289,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
-                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(fragmentation),
                     PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), exportRoot
             )) {
                 serverMain.execute("CREATE TABLE basic_parquet_test AS (" +

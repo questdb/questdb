@@ -25,10 +25,146 @@
 package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+
 public class VarcharFunctionsTest extends AbstractCairoTest {
+
+    @Test
+    public void testDateAndTimestampConversionsWithConservativeAsciiFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id int, ts_value varchar, date_value varchar, pg_date_value varchar)");
+
+            Utf8String timestamp = asciiWithoutFlag("2026-07-22 13:17:26.136");
+            Utf8String date = asciiWithoutFlag("2026-07-22");
+            Assert.assertFalse(timestamp.isAscii());
+            Assert.assertFalse(date.isAscii());
+
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 1);
+                row.putVarchar(1, timestamp);
+                row.putVarchar(2, date);
+                row.putVarchar(3, date);
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 2);
+                row.putVarchar(1, new Utf8String("2026年07月22日 13:17:26.136"));
+                row.putVarchar(2, new Utf8String("2026年07月22日"));
+                row.putVarchar(3, new Utf8String("é"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 3);
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 4);
+                row.putVarchar(1, asciiWithoutFlag("22 Jul 2026 13:17:26.136"));
+                row.putVarchar(2, asciiWithoutFlag("22 Jul 2026"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 5);
+                row.putVarchar(1, new Utf8String("2026-07-22 13:17:26 Réunion Time"));
+                row.append();
+
+                row = writer.newRow();
+                row.putInt(0, 6);
+                row.putVarchar(1, malformedUtf8("2026年07月22日 13:17:26.136"));
+                row.putVarchar(2, malformedUtf8("2026年07月22日"));
+                row.putVarchar(3, malformedUtf8("2026-07-22"));
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') ts,
+                        to_timestamp_ns(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') ts_ns,
+                        to_date(date_value, 'yyyy-MM-dd') d,
+                        to_pg_date(pg_date_value) pg
+                    from x where id = 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tts_ns\td\tpg
+                            2026-07-22T13:17:26.136000Z\t2026-07-22T13:17:26.136000000Z\t2026-07-22T00:00:00.000Z\t2026-07-22T00:00:00.000Z
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') ts,
+                        to_date(date_value, 'yyyy年MM月dd日') d,
+                        to_pg_date(pg_date_value) is null pg_null
+                    from x where id = 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td\tpg_null
+                            2026-07-22T13:17:26.136000Z\t2026-07-22T00:00:00.000Z\ttrue
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'dd MMM yyyy HH:mm:ss.SSS') ts,
+                        to_timestamp_ns(ts_value, 'dd MMM yyyy HH:mm:ss.SSS') ts_ns,
+                        to_date(date_value, 'dd MMM yyyy') d
+                    from x where id = 4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tts_ns\td
+                            2026-07-22T13:17:26.136000Z\t2026-07-22T13:17:26.136000000Z\t2026-07-22T00:00:00.000Z
+                            """);
+
+            assertQuery("""
+                    select to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss z') ts
+                    from x where id = 5
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts
+                            2026-07-22T09:17:26.000000Z
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') is null ts_null,
+                        to_timestamp_ns(ts_value, 'yyyy-MM-dd HH:mm:ss.SSS') is null ts_ns_null,
+                        to_date(date_value, 'yyyy-MM-dd') is null d_null,
+                        to_pg_date(pg_date_value) is null pg_null
+                    from x where id = 3
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts_null\tts_ns_null\td_null\tpg_null
+                            true\ttrue\ttrue\ttrue
+                            """);
+
+            assertQuery("""
+                    select
+                        to_timestamp(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') is null ts_null,
+                        to_timestamp_ns(ts_value, 'yyyy年MM月dd日 HH:mm:ss.SSS') is null ts_ns_null,
+                        to_date(date_value, 'yyyy年MM月dd日') is null d_null,
+                        to_pg_date(pg_date_value) is null pg_null,
+                        cast(ts_value as string) is null str_null,
+                        cast(ts_value as symbol) is null sym_null
+                    from x where id = 6
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            ts_null\tts_ns_null\td_null\tpg_null\tstr_null\tsym_null
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
+        });
+    }
 
     @Test
     public void testLength() throws Exception {
@@ -323,11 +459,11 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
     @Test
     public void testToDateUkr() throws Exception {
         setProperty(PropertyKey.CAIRO_DATE_LOCALE, "uk");
-        assertQuery("select c from x where to_date(c, 'd MMM y') = '1999-07-05'")
+        assertQuery("select c, to_timestamp(c, 'd MMM y') ts, to_timestamp_ns(c, 'd MMM y') ts_ns from x where to_date(c, 'd MMM y') = '1999-07-05'")
                 .ddl("create table x as (select cast('5 лип. 1999' as varchar) c from long_sequence(1))")
                 .returns("""
-                        c
-                        5 лип. 1999
+                        c\tts\tts_ns
+                        5 лип. 1999\t1999-07-05T00:00:00.000000Z\t1999-07-05T00:00:00.000000000Z
                         """);
     }
 
@@ -376,5 +512,15 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                            \t
                         abc  \tabc
                         """);
+    }
+
+    private static Utf8String asciiWithoutFlag(String value) {
+        return new Utf8String(value.getBytes(StandardCharsets.UTF_8), false);
+    }
+
+    private static Utf8String malformedUtf8(String validPrefix) {
+        final byte[] bytes = (validPrefix + ' ').getBytes(StandardCharsets.UTF_8);
+        bytes[bytes.length - 1] = (byte) 0xC3;
+        return new Utf8String(bytes, false);
     }
 }

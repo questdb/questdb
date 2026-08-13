@@ -297,12 +297,12 @@ public class PostingGenLookup implements Closeable {
      *                    the gen-dir starts at
      *                    {@code entryOffset + V2_ENTRY_HEADER_SIZE}.
      */
-    public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset) {
+    public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset, int coveringFormat, int coverCount) {
         Snapshot s = staging;
         s.clear();
         long prevTxnAtSeal = Long.MIN_VALUE;
         for (int i = 0; i < genCount; i++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i);
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i, coveringFormat, coverCount);
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
             s.genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
             int kc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
