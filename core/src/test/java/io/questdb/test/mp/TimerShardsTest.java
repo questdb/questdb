@@ -28,13 +28,18 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ThreadMXBean;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class TimerShardsTest {
     private static final Log LOG = LogFactory.getLog(TimerShardsTest.class);
@@ -60,6 +65,204 @@ public class TimerShardsTest {
         } finally {
             shards.shutdown();
         }
+    }
+
+    @Test
+    public void testConcurrentHaltAndShutdownSerializeJoin() throws Exception {
+        final TimerShards shards = new TimerShards(1, "test-concurrent-stop", LOG);
+        final CyclicBarrier startBarrier = new CyclicBarrier(3);
+        final AtomicInteger joinCalls = new AtomicInteger();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        shards.setJoinThreadsHook(() -> {
+            joinCalls.incrementAndGet();
+            Assert.assertTrue("join must hold the TimerShards monitor", Thread.holdsLock(shards));
+        });
+
+        final Thread haltThread = new Thread(() -> {
+            try {
+                startBarrier.await(5, TimeUnit.SECONDS);
+                shards.halt();
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        }, "test-concurrent-halt");
+        final Thread shutdownThread = new Thread(() -> {
+            try {
+                startBarrier.await(5, TimeUnit.SECONDS);
+                shards.shutdown();
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        }, "test-concurrent-shutdown");
+
+        try {
+            haltThread.start();
+            shutdownThread.start();
+            startBarrier.await(5, TimeUnit.SECONDS);
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
+        } finally {
+            shards.setJoinThreadsHook(null);
+            haltThread.interrupt();
+            shutdownThread.interrupt();
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
+            shards.halt();
+        }
+
+        Assert.assertFalse("halt thread did not stop", haltThread.isAlive());
+        Assert.assertFalse("shutdown thread did not stop", shutdownThread.isAlive());
+        Assert.assertNull("concurrent lifecycle call failed", failure.get());
+        Assert.assertEquals(2, joinCalls.get());
+    }
+
+    @Test
+    public void testHaltDoesNotRepeatExpiredJoinBudget() throws Exception {
+        final CountDownLatch expireStarted = new CountDownLatch(1);
+        final CountDownLatch haltReturned = new CountDownLatch(1);
+        final CountDownLatch releaseExpire = new CountDownLatch(1);
+        final AtomicReference<Thread> timerThread = new AtomicReference<>();
+        final TimerShards shards = new TimerShards(1, "test-halt-after-timeout", LOG);
+        final Thread haltThread = new Thread(() -> {
+            shards.halt();
+            haltReturned.countDown();
+        }, "test-halt-after-timeout-caller");
+
+        try {
+            shards.start();
+            shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                timerThread.set(Thread.currentThread());
+                expireStarted.countDown();
+                TestUtils.await(releaseExpire);
+            }, null));
+            Assert.assertTrue("timer entry did not start", expireStarted.await(5, TimeUnit.SECONDS));
+
+            // Exhaust this shard's join budget once in shutdown(). halt() must
+            // not apply a fresh budget to the same still-blocked thread.
+            shards.shutdown();
+            haltThread.start();
+            Assert.assertTrue(
+                    "halt repeated the expired shard join budget",
+                    haltReturned.await(500, TimeUnit.MILLISECONDS)
+            );
+        } finally {
+            releaseExpire.countDown();
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+            final Thread timer = timerThread.get();
+            if (timer != null) {
+                timer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+            shards.halt();
+        }
+        Assert.assertFalse("halt thread did not stop", haltThread.isAlive());
+        Assert.assertFalse("shard thread did not stop", timerThread.get().isAlive());
+    }
+
+    @Test
+    public void testInterruptDoesNotSpinAndShardKeepsRunning() throws Exception {
+        final String threadName = "test-interrupted-timer-0";
+        TimerShards shards = new TimerShards(1, "test-interrupted-timer", LOG);
+        shards.start();
+        try {
+            shards.register(new TestEntry(System.currentTimeMillis() + 60_000, null, null));
+
+            Thread timerThread = null;
+            for (Thread thread : Thread.getAllStackTraces().keySet()) {
+                if (threadName.equals(thread.getName())) {
+                    timerThread = thread;
+                    break;
+                }
+            }
+            Assert.assertNotNull("timer thread not found", timerThread);
+            final Thread timer = timerThread;
+            TestUtils.assertEventually(
+                    () -> Assert.assertEquals(Thread.State.TIMED_WAITING, timer.getState()),
+                    5
+            );
+
+            try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadCpuTimeScope()) {
+                ThreadMXBean bean = scope.getBean();
+                Assume.assumeTrue("thread CPU time measurement not supported", bean.isThreadCpuTimeSupported());
+                long cpuBefore = bean.getThreadCpuTime(timer.threadId());
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
+                timer.interrupt();
+                Thread.sleep(500);
+                long cpuAfter = bean.getThreadCpuTime(timer.threadId());
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                Assert.assertTrue(
+                        "interrupted timer burned " + (cpuAfter - cpuBefore) + "ns of CPU time",
+                        cpuAfter - cpuBefore < TimeUnit.MILLISECONDS.toNanos(100)
+                );
+            }
+
+            CountDownLatch fired = new CountDownLatch(1);
+            shards.register(new TestEntry(System.currentTimeMillis(), fired::countDown, null));
+            Assert.assertTrue("interrupted shard stopped firing entries", fired.await(5, TimeUnit.SECONDS));
+        } finally {
+            shards.shutdown();
+        }
+    }
+
+    @Test
+    public void testInterruptedShutdownJoinsShardThreads() throws Exception {
+        final CountDownLatch expireStarted = new CountDownLatch(1);
+        final CountDownLatch releaseExpire = new CountDownLatch(1);
+        final CountDownLatch shutdownReturned = new CountDownLatch(1);
+        final AtomicReference<Throwable> shutdownFailure = new AtomicReference<>();
+        final AtomicReference<Thread> timerThread = new AtomicReference<>();
+        final TimerShards shards = new TimerShards(1, "test-interrupted-shutdown", LOG);
+        final AtomicReference<Boolean> isInterruptRestored = new AtomicReference<>();
+        final Thread shutdownThread = new Thread(() -> {
+            try {
+                Thread.currentThread().interrupt();
+                shards.shutdown();
+                isInterruptRestored.set(Thread.currentThread().isInterrupted());
+            } catch (Throwable th) {
+                shutdownFailure.set(th);
+            } finally {
+                shutdownReturned.countDown();
+            }
+        }, "test-interrupted-shutdown-caller");
+
+        try {
+            shards.start();
+            shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                timerThread.set(Thread.currentThread());
+                expireStarted.countDown();
+                TestUtils.await(releaseExpire);
+            }, null));
+            Assert.assertTrue("timer entry did not start", expireStarted.await(5, TimeUnit.SECONDS));
+
+            shutdownThread.start();
+            TestUtils.assertEventually(() -> {
+                if (shutdownReturned.getCount() == 0) {
+                    return;
+                }
+                Assert.assertFalse("shutdown thread has not consumed its interrupt", shutdownThread.isInterrupted());
+                boolean isJoining = false;
+                for (StackTraceElement frame : shutdownThread.getStackTrace()) {
+                    if (frame.getMethodName().equals("join")) {
+                        isJoining = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("shutdown thread did not wait for the shard", isJoining);
+            }, 1);
+            Assert.assertEquals("shutdown returned while the shard was active", 1, shutdownReturned.getCount());
+            Assert.assertTrue("shard stopped before the callback was released", timerThread.get().isAlive());
+        } finally {
+            releaseExpire.countDown();
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(5));
+            final Thread timer = timerThread.get();
+            if (timer != null) {
+                timer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+            shards.halt();
+        }
+        Assert.assertFalse("shutdown thread did not stop", shutdownThread.isAlive());
+        Assert.assertNull("shutdown failed", shutdownFailure.get());
+        Assert.assertEquals("shutdown did not restore the interrupt flag", Boolean.TRUE, isInterruptRestored.get());
+        Assert.assertFalse("shard thread did not stop", timerThread.get().isAlive());
     }
 
     @Test
