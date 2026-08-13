@@ -327,6 +327,28 @@ public class LatestByTimestampDesignationTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck("select ts, count() from (" + latestOnSql + ") sample by 1h", -1,
                     "TIMESTAMP column is required but not provided");
+            // The caller's OWN escape hatch, and the reason the engine never needed to designate on
+            // LATEST ON's behalf: (sub-query) timestamp(ts) designates the column at the CALL SITE.
+            // That puts the ordering claim where it belongs -- with the caller who knows whether it
+            // holds -- instead of having the factory assert it for every consumer.
+            assertQuery("select ts, count() from (" + latestOnSql + ") timestamp(ts) sample by 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampAsc("ts")
+                    .returns("ts\tcount\n"
+                            + "2024-01-01T00:00:00.000000Z\t2\n"
+                            + "2024-01-01T02:00:00.000000Z\t1\n");
+
+            // Shapes that need no designated timestamp at all work untouched -- it is the SAMPLE BY
+            // family specifically that requires one (bare, ALIGN TO CALENDAR and FILL all refuse).
+            assertQuery("select date_trunc('hour', ts) h, count() from (" + latestOnSql + ") group by h order by h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampAsc("h")
+                    .returns("h\tcount\n"
+                            + "2024-01-01T00:00:00.000000Z\t2\n"
+                            + "2024-01-01T02:00:00.000000Z\t1\n");
+
             // ... and the same query with an explicit ORDER BY ts works.
             assertQuery("select ts, count() from (" + latestOnSql + " order by ts) sample by 1h")
                     .noLeakCheck()
