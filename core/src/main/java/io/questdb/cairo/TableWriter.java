@@ -306,6 +306,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Scratch for retireParquetIndexTokens' pre-read of a partition's published
     // column ids.
     private final IntList parquetRetireScratchColumnIds = new IntList();
+    // Scratch for sweepOrphanParquetIndexArtifacts' pre-read of the partition's
+    // committed covering-index tokens: column id (writer index) then index txn,
+    // two longs per entry.
+    private final LongList parquetSweepScratchTokens = new LongList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -15355,6 +15359,99 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return partitionIndex;
     }
 
+    /**
+     * True when {@code stem} ({@code <col>.pidx.<indexTxn>}) names an index txn
+     * no footer ever published, on either of two grounds: it is above the
+     * writer's committed txn, or it is above the one the partition's committed
+     * {@code _pm} publishes for that column. Index txns are table txns, so both
+     * comparisons run in the same direction -- above means never published,
+     * below means superseded and possibly still reachable by a pinned reader,
+     * which is the reader-gated purge's business and not this sweep's.
+     * <p>
+     * Answers false whenever anything cannot be established: an unparseable
+     * name, a column that is not in metadata, a partition whose committed
+     * tokens could not be read, or a column the footer publishes no token for
+     * at all. The last is deliberately conservative -- DROP INDEX retires a
+     * column's token while the pair it named waits for its pinned readers, and
+     * that pair must survive a sweep triggered by a later ADD INDEX. It leaves
+     * one case uncovered: a first seal that strands a pair and is only swept
+     * after later commits have carried the committed txn past it. That leaks a
+     * pair rather than losing one, which is the recoverable direction.
+     */
+    private boolean isUnpublishedParquetIndexPair(CharSequence stem) {
+        final int infix = Chars.indexOf(stem, 0, stem.length(), ParquetIndexSeal.PIDX_INFIX);
+        if (infix < 1) {
+            return false;
+        }
+        final long indexTxn;
+        try {
+            indexTxn = Numbers.parseLong(stem, infix + ParquetIndexSeal.PIDX_INFIX.length(), stem.length());
+        } catch (NumericException e) {
+            return false;
+        }
+        if (indexTxn > txWriter.getTxn()) {
+            // A published token's index txn is the txn its own batch commits at,
+            // so it never exceeds the committed txn. One above it was named by a
+            // seal whose batch never committed -- nothing can reference it. This
+            // is the rule that catches a first seal, where the footer carries no
+            // prior entry for the column to compare against.
+            return true;
+        }
+        if (parquetSweepScratchTokens.size() == 0) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(stem, 0, infix);
+        if (columnIndex < 0 || metadata.getColumnType(columnIndex) <= 0) {
+            return false;
+        }
+        final long columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+        for (int i = 0, n = parquetSweepScratchTokens.size(); i < n; i += 2) {
+            if (parquetSweepScratchTokens.getQuick(i) == columnId) {
+                return indexTxn > parquetSweepScratchTokens.getQuick(i + 1);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reads the partition's committed {@code _pm} covering-index tokens into
+     * {@code out} as column id / index txn pairs. Resolved from the last footer
+     * within the committed header size, which is the footer a reader at the
+     * committed snapshot resolves: the header is patched last, so every footer
+     * the mapping can reach is already published. Leaves {@code out} empty when
+     * there is no {@code _pm}, it cannot be read, or it publishes nothing.
+     */
+    private void readCommittedParquetIndexTokens(int plen, LongList out) {
+        out.clear();
+        long addr = 0;
+        long fileSize = 0;
+        try {
+            path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0 || !parquetMetaReader.resolveLastFooter()) {
+                return;
+            }
+            fileSize = parquetMetaReader.getFileSize();
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                out.add(parquetMetaReader.getCoveringIndexColumnId(i));
+                out.add(parquetMetaReader.getCoveringIndexTxn(i));
+            }
+        } catch (CairoException e) {
+            out.clear();
+            LOG.error().$("could not read the committed covering index tokens, sweeping conservatively [path=")
+                    .$(path).$(", msg=").$safe(e.getFlyweightMessage()).I$();
+        } finally {
+            if (addr != 0) {
+                fileSize = fileSize == 0 ? parquetMetaReader.getFileSize() : fileSize;
+            }
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(plen);
+        }
+    }
+
     private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
@@ -15391,6 +15488,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * An {@code _im} whose {@code IM_FILE_SIZE} is still zero counts as absent:
      * that is exactly the uncommitted state a crash between the body write and
      * the header patch leaves, and no token was published for it either.
+     * <p>
+     * The same argument reaches one file further, and this is the state a crash
+     * between the {@code _im} commit and the {@code _pm} header patch leaves: a
+     * pair whose {@code _im} <i>is</i> committed but whose index txn no footer
+     * ever named. Every seal in a batch commits its {@code _im} before the
+     * single publish, so a crash or a throw in
+     * {@link #publishParquetIndexTokens} strands the whole batch, and nothing
+     * else would ever reclaim it -- no later publish supersedes it, because the
+     * committed footer still names the pre-batch {@code index_txn}.
+     * <p>
+     * Such a pair is told apart from a superseded one by the direction: index
+     * txns are table txns, so the committed footer names the largest one ever
+     * published for the column. An index txn <b>above</b> it was never
+     * published and is unreferenced on sight; one <b>below</b> it is superseded
+     * and may still be reachable by a pinned reader, so it belongs to the
+     * reader-gated purge and this sweep must not touch it. When the committed
+     * tokens cannot be read at all, or the file's column cannot be resolved,
+     * only the uncommitted-{@code _im} rule applies -- leaving a file behind is
+     * the recoverable direction.
      */
     private void sweepOrphanParquetIndexArtifacts(int plen) {
         orphanParquetIndexNames.clear();
@@ -15407,6 +15523,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         });
         path.trimTo(plen);
+        if (orphanParquetIndexNames.size() == 0) {
+            return;
+        }
+        readCommittedParquetIndexTokens(plen, parquetSweepScratchTokens);
         for (int i = 0, n = orphanParquetIndexNames.size(); i < n; i++) {
             final CharSequence parquetName = orphanParquetIndexNames.getQuick(i);
             final CharSequence stem = parquetName.subSequence(0, parquetName.length() - ParquetIndexSeal.PIDX_SUFFIX.length());
@@ -15421,12 +15541,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             path.trimTo(plen);
-            if (imFileSize > 0) {
+            final boolean unpublished = imFileSize > 0 && isUnpublishedParquetIndexPair(stem);
+            if (imFileSize > 0 && !unpublished) {
                 continue;
             }
             path.trimTo(plen).concat(parquetName).$();
             if (ff.removeQuiet(path.$())) {
-                LOG.info().$("removed orphan parquet index with no committed _im [table=").$(tableToken)
+                LOG.info().$(unpublished
+                                ? "removed a committed parquet index pair no footer ever published [table="
+                                : "removed orphan parquet index with no committed _im [table=").$(tableToken)
                         .$(", file=").$(parquetName)
                         .I$();
             }

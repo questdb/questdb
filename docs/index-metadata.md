@@ -90,15 +90,48 @@ Each committed index version is a **complete, immutable pair of files named by a
 
 The txn is in the name because `_im` is *header*-located: `IM_FILE_SIZE`, the counts and
 `INDEX_SECTIONS_OFFSET` all live in the first 128 bytes, so two versions cannot share one file the
-way two `_pm` footers share one file. `_pm` gets a size-keyed MVCC chain only because it is
-*trailer*-located, where a different committed size selects a different footer.
+way two `_pm` footers share one file.
 
 Without a txn in the name, O3 update mode — which reuses the partition directory — could not publish
 a new index without destroying the one a pinned reader is entitled to open. The native form has
 always solved this the same way, with `<col>.pv.{sealTxn}`.
 
 The `_pm` footer feature section therefore carries `(column_id, index_txn, im_file_size)`. Superseded
-versions are reclaimed by the same GC pass that handles orphan partition directories.
+versions are reclaimed by the reader-gated posting seal purge.
+
+### What preserves a pinned reader's view is the mapping, not the chain
+
+**A token-only append does not leave the prior footer selectable, and no size-keyed walk can recover
+it.** This is the single most misread property of the format, so it is stated here as a rule rather
+than left to be re-derived.
+
+Publishing a covering-index token appends a footer that restates the same `PARQUET_FOOTER_OFFSET`
+and `PARQUET_FOOTER_LENGTH`, because `data.parquet` did not change. The new footer therefore derives
+the *same* parquet file size as the one it replaces, and `resolveFooter(parquetFileSize)` walks back
+from the mapped tail and returns the **newest** match. Both footers stay physically in the file, but
+no mapping made after the header patch can select the older one. Size-keyed resolution separates
+*update mode* versions, where the parquet size moves; it does not separate token-only versions,
+where it does not.
+
+What preserves a pinned reader's own view is the mapping it already holds. `TableReader` maps the
+`_pm` at the size its own snapshot's header named and resolves from that tail, so a reader that
+mapped before the header patch never sees the appended footer at all. Two rules follow, and both are
+normative:
+
+- **A reader must resolve a covering-index token through the `_pm` mapping its own snapshot took,
+  never through a freshly opened one.** A fresh open reads the writer's latest `index_txn`, not the
+  snapshot's.
+- **A superseded pair's purge window is expressed in table txns and must cover every reader holding
+  a pre-publish mapping.** The population is not identified by anything in the `_pm`; it is
+  identified by the txn scoreboard. The window's upper bound is the index txn of the seal that
+  replaced the entry — the txn at which the supersession becomes visible — and the bound is
+  half-open, so it must be that txn and not the one before it.
+
+A corollary for the writer: because a token-only append moves neither the partition's name txn, nor
+its row count, nor its `data.parquet` size, nothing in `_txn` tells a reader to drop the mapping it
+took at partition-open time. The publish must restamp something the reader reconciles on, or a
+reader can advance past the seal's txn while still holding the pre-publish mapping — which puts it
+outside the purge window while it can still reach the superseded artifacts.
 
 ## File header (128 bytes)
 

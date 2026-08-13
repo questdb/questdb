@@ -366,6 +366,142 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * I2: a crash between an {@code _im} commit and the {@code _pm} header patch
+     * strands the whole seal batch, and nothing else can ever reclaim it.
+     * <p>
+     * The old orphan sweep keyed on {@code IM_FILE_SIZE == 0}, so a
+     * committed-but-unreferenced pair never matched -- and no later publish
+     * supersedes it either, because the committed footer still names the
+     * pre-batch {@code index_txn}. The sweep's own argument for removing an
+     * uncommitted pair on sight ("no footer, live or superseded, names it, so no
+     * reader can reach it") applies word for word to this state, and the
+     * predicate contradicted it.
+     * <p>
+     * Simulated at exactly the boundary: the {@code pidx.parquet} and the
+     * {@code _im} are written and committed for real, then the {@code _pm}
+     * header patch is refused. The alter fails, the batch is stranded, and the
+     * fixture asserts the {@code _im} really is committed -- without that the
+     * old predicate would match and the test would prove nothing.
+     */
+    @Test
+    public void testASealStrandedBeforeItsTokenIsPublishedIsSwept() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final boolean[] armed = {false};
+        final boolean[] fired = {false};
+        final long[] pmFd = {-1};
+        // Set once the stranded pair's name is known; the counter is the test's
+        // observable, because the file state afterwards is identical whether the
+        // sweep ran or not -- see the comment at the resume below.
+        final String[] watchedParquet = {null};
+        final int[] watchedUnlinks = {0};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (armed[0] && fd > -1 && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                    pmFd[0] = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (watchedParquet[0] != null && name != null && Utf8s.endsWithAscii(name, watchedParquet[0])) {
+                    watchedUnlinks[0]++;
+                }
+                return super.removeQuiet(name);
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (armed[0] && fd == pmFd[0] && offset == 0 && len == Long.BYTES) {
+                    // Refuse the header patch. The appended footer is already on
+                    // disk as an invisible dead tail; the _im beside the pidx is
+                    // committed. That is the stranded state.
+                    armed[0] = false;
+                    fired[0] = true;
+                    return 0;
+                }
+                return super.write(fd, address, len, offset);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            createSparseKeyTable();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            armed[0] = true;
+            try {
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+            } finally {
+                armed[0] = false;
+            }
+            Assert.assertTrue("the _pm header patch was never refused, so nothing is stranded", fired[0]);
+            engine.releaseInactive();
+
+            final String strandedMeta;
+            try (Path path = new Path()) {
+                strandedMeta = onlyFileNamed(partitionPath(path), "sym.pidx.", "._im");
+                // The half that makes this a different leak from the one the old
+                // predicate covered: the _im committed, so IM_FILE_SIZE is not
+                // zero and the old sweep would pass straight over it.
+                Assert.assertTrue(
+                        "the stranded _im must be committed, or this is the already-covered case",
+                        imFileSizeField(partitionPath(path).concat(strandedMeta).$()) > 0
+                );
+                assertNoCoveringIndexToken(path, TABLE_NAME, currentPartitionNameTxn(TABLE_NAME));
+            }
+
+            // Resume the suspended apply so the retried ADD INDEX opens a fresh
+            // seal batch on that partition, which is what runs the sweep.
+            //
+            // The retry names its artifacts with the same index txn -- the failed
+            // batch never committed, so the writer's txn did not move -- and so it
+            // overwrites the stranded files whether they were swept first or not.
+            // The file state afterwards is therefore identical under both
+            // behaviours and cannot be the assertion. The count of unlinks of
+            // that exact name can: the seal always removes the file it is about
+            // to write, so one unlink is the retry alone and two means the sweep
+            // reclaimed the stranded pair at the batch head first.
+            watchedParquet[0] = strandedMeta.substring(0, strandedMeta.length() - "._im".length()) + ".parquet";
+            watchedUnlinks[0] = 0;
+            execute("ALTER TABLE " + TABLE_NAME + " RESUME WAL");
+            drainWalQueue();
+            watchedParquet[0] = null;
+            Assert.assertEquals(
+                    "the stranded pair must be unlinked twice -- once by the sweep at the seal batch's head"
+                            + " and once by the retried seal reusing the name; one unlink means the sweep"
+                            + " passed over it [stranded=" + strandedMeta + ']',
+                    2,
+                    watchedUnlinks[0]
+            );
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                final File[] metas = new File(partitionPath(path).toString())
+                        .listFiles((_, name) -> name.startsWith("sym.pidx.") && name.endsWith("._im"));
+                Assert.assertNotNull(metas);
+                Assert.assertEquals(
+                        "the retried seal must leave exactly one pair behind",
+                        1,
+                        metas.length
+                );
+                assertCoveringIndexToken(
+                        path,
+                        TABLE_NAME,
+                        SYM_COLUMN_ID,
+                        Numbers.parseLong(metas[0].getName().substring(
+                                "sym.pidx.".length(), metas[0].getName().length() - "._im".length())),
+                        imFileSizeField(partitionPath(path).concat(metas[0].getName()).$())
+                );
+            }
+        });
+    }
+
     @Test
     public void testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber() throws Exception {
         assertMemoryLeak(() -> {

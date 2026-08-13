@@ -517,6 +517,12 @@ as the MVCC version token.
    (`PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`). If it matches the `_txn` snapshot, stop. Otherwise, read
    `PREV_PARQUET_META_FILE_SIZE` from the current footer and repeat from step 4 with the new size. Each step
    re-validates the previous footer location via its own trailer.
+
+   **Step 2 is not optional and step 3's size must be the snapshot's own.** A reader that re-reads
+   `PARQUET_META_FILE_SIZE` from offset 0 *now* has re-pinned itself to the writer's latest state, and no
+   amount of chain walking recovers the view it was entitled to. See "Token-only appends" below: the
+   walk stops at the first footer whose derived parquet size matches, and for an append that did not
+   change `data.parquet` that is the newest footer, not the snapshot's.
 6. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
 7. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
 8. For data operations, memory-map `data.parquet` using the parquet file size from `_txn`.
@@ -529,6 +535,31 @@ written at the end. Unchanged row groups keep their old offsets. The header's `P
 for atomicity. Readers pinned to an older `_txn` snapshot read the committed-at-that-time `PARQUET_META_FILE_SIZE`
 (from their own earlier mapping) and walk the `PREV_PARQUET_META_FILE_SIZE` chain from the matching trailer to find
 their footer.
+
+**Token-only appends** (same partition directory, `data.parquet` untouched): a footer appended only to publish or
+retire a feature-section entry — a covering-index token, say — restates the same `PARQUET_FOOTER_OFFSET` and
+`PARQUET_FOOTER_LENGTH`, so it derives the **same** parquet file size as the footer it replaces.
+
+The size-keyed walk above therefore **does not** separate these versions. Step 5 stops at the first footer whose
+derived size matches the `_txn` snapshot, and for a token-only append that is the newest footer. The prior footer
+remains physically in the file but is unreachable through any mapping made after the header patch: it is *shadowed*,
+not superseded-but-selectable.
+
+Consequences, all normative:
+
+- **A pinned reader's view is preserved by its mapping, not by the chain.** It must resolve from the `_pm` mapping its
+  own snapshot took, sized from the header value that snapshot saw. A fresh open — even one that walks the chain
+  correctly — returns the writer's latest entry.
+- **A writer must not rely on size-keyed resolution to keep a superseded artifact reachable.** Artifacts a superseded
+  entry names must be retained by a reader-gated purge whose window is expressed in table txns and covers every reader
+  that could hold a pre-publish mapping.
+- **A token-only append leaves the `_txn` partition record byte-identical** (same name txn, same row count, same
+  `data.parquet` size), so any consumer that decides "did this partition change?" from those fields will answer no.
+  The publish must restamp something such a consumer reconciles on, and an incremental-backup consumer in particular
+  must not treat an unchanged partition record as proof the directory is unchanged.
+- **A footer written for a `data.parquet` of a different size does not shadow.** Update mode and rewrite mode are
+  therefore safe; only appends that restate the same parquet size are not. State which of the two a new writer path
+  performs.
 
 ## Access patterns
 
