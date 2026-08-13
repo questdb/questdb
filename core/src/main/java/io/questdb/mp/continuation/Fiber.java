@@ -564,10 +564,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     boolean isReserved(long reservationEpoch) {
         final long state = executionState;
         if (state != packExecutionState(reservationEpoch, EXECUTION_RESERVED)) {
-            return false;
+            return true;
         }
         final int notification = notificationState;
-        return notification == NOTIFICATION_IDLE || notification == NOTIFICATION_PROCESSING;
+        return notification != NOTIFICATION_IDLE && notification != NOTIFICATION_PROCESSING;
     }
 
     void markRetired() {

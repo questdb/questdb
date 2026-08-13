@@ -234,7 +234,7 @@ public final class FiberPool {
     }
 
     boolean releaseReservation(Fiber fiber, long reservationEpoch) {
-        if (!fiber.isReserved(reservationEpoch)) {
+        if (fiber.isReserved(reservationEpoch)) {
             return false;
         }
         synchronized (this) {

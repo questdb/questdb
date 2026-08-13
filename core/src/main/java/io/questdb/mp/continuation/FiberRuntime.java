@@ -807,7 +807,7 @@ public final class FiberRuntime {
         if (fiber.isForeignTo(this)) {
             throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
         }
-        if (!fiber.isReserved(reservationEpoch)) {
+        if (fiber.isReserved(reservationEpoch)) {
             throw new IllegalArgumentException("fiber reservation is stale or already consumed");
         }
         Fiber directFiber = null;
