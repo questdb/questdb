@@ -1208,13 +1208,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     // private, not-yet-installed target store: the enterprise close waits, bounded,
                     // for this loop to exit before freeing engine-owned state (tableNameRegistry,
                     // sequencers), and on budget expiry it LEAKS its teardown to process exit
-                    // rather than freeing under a wedged loader. The gate is advisory rather than
-                    // an absolute no-free guarantee: the in-flight flag rises just before this
-                    // loader starts, so a close whose flag read wins that publication race
-                    // proceeds. signalClose() sets closing before freeOnExit reaches the engine,
-                    // so it is observable here. The poll stays in the loop body, not
-                    // loadMatViewIntoStore, because that method's catch(Throwable) would swallow
-                    // the abort.
+                    // rather than freeing under a wedged loader. The enterprise caller runs this
+                    // loader inside a role-switch critical-section span with two-sided admission
+                    // (the span is counted before the closing flag is checked), so a close cannot
+                    // miss a loader that was already admitted; this poll is the cooperative abort
+                    // that lets close's bounded wait finish promptly instead of expiring.
+                    // signalClose() sets closing before freeOnExit reaches the engine, so it is
+                    // observable here. The poll stays in the loop body, not loadMatViewIntoStore,
+                    // because that method's catch(Throwable) would swallow the abort.
                     throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
                 }
                 final TableToken tableToken = tableTokenBucket.get(i);
