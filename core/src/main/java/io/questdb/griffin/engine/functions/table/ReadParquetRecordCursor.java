@@ -146,6 +146,31 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     /**
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
+     * <p>
+     * <b>KNOWN DEFECT in the {@code columnMapping} branch below: the synthetic
+     * field id {@code -1} collides with writer index 0.</b> That branch computes
+     * {@code effectiveId = columnId < 0 ? parquetIndex : columnId}, so a column
+     * whose parquet field id is negative takes its parquet POSITION as its id --
+     * and position 0 is a real writer index another column in the same file may
+     * legitimately hold.
+     * <p>
+     * Reached today by the covering index's own parquet artifact
+     * ({@code <col>.pidx.<indexTxn>.parquet}). Its synthetic {@code key_id} and
+     * {@code row_id} columns carry field id {@code -1} because the {@code _im}
+     * writer REQUIRES exactly that to tell them from the covered columns
+     * ({@code docs/index-metadata.md}, "Column descriptors"), so {@code key_id}
+     * (parquet index 0) is remapped to id 0 and collides with a covered column
+     * whose writer index is 0 -- the designated timestamp, which
+     * {@code cairo.posting.index.auto.include.timestamp} covers by default. The
+     * symptom is not an error: {@code key_id} comes back as the low 32 bits of
+     * each row's timestamp. The file on disk is correct; only this projection is
+     * wrong.
+     * <p>
+     * Only the PARALLEL page-frame path takes this branch, so
+     * {@code ParquetIndexSealTest} reads pidx parquets with
+     * {@code setParallelReadParquetEnabled(false)} to route around it -- which
+     * makes that oracle depend on a user-flippable config, and is why this is
+     * scheduled to be fixed rather than left. Phase 2C Task 1 fixes it here.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
      * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex, originalWriterIndex) triples
@@ -199,6 +224,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             if (columnMapping != null) {
                 final int columnId = parquetMetadata.getColumnId(parquetIndex);
+                // The -1 collision. See this method's javadoc: substituting the
+                // parquet POSITION for a negative field id can hand out an id a
+                // real column already owns.
                 final int effectiveId = columnId < 0 ? parquetIndex : columnId;
                 columnMapping.addColumn(parquetIndex, effectiveId, effectiveId);
             }

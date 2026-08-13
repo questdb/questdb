@@ -450,6 +450,15 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    /**
+     * DEFERRED, recorded here rather than only in a ledger that does not travel
+     * with the branch: neither this job nor {@link PostingSealPurgeOperator}
+     * consults {@code engine.getCheckpointStatus().isInProgress()}, while every
+     * peer that unlinks files does ({@code O3PartitionPurgeJob},
+     * {@code ColumnPurgeOperator}, {@code VacuumColumnVersions}). See the note at
+     * the scoreboard query in {@code PostingSealPurgeOperator.purge} for what is
+     * and is not established. Its absence is not a decision that it is safe.
+     */
     private boolean processInQueue() {
         boolean useful = false;
         long now = clock.getTicks();

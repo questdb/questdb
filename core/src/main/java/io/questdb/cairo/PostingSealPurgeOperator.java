@@ -185,6 +185,27 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             }
         }
 
+        // DEFERRED, recorded here rather than in a ledger that does not travel
+        // with the branch: this operator has NO checkpoint check, and every peer
+        // that unlinks files has one. O3PartitionPurgeJob (twice),
+        // ColumnPurgeOperator and VacuumColumnVersions all test
+        // engine.getCheckpointStatus().isInProgress() before deleting, with the
+        // same stated reason -- a backup checkpoint can reference a file through
+        // snapshotted metadata while the txn scoreboard does not pin it, so the
+        // scoreboard window below is not on its own a proof that nobody needs the
+        // bytes.
+        //
+        // The scoreboard window IS the whole proof against READERS, and that
+        // argument is sound. What is unexamined is the checkpoint: a checkpoint
+        // taken while a superseded seal is queued here can have its file set
+        // unlinked under it. If the check is added it belongs beside the
+        // isRangeAvailable() call below and must return false (retry later), not
+        // true (done) -- the same shape ColumnPurgeOperator uses.
+        //
+        // Not analysed to a conclusion and deliberately not fixed here: it is a
+        // pre-existing shape for the native form too, so it is its own change
+        // with its own test. Do not treat its absence as a decision that it is
+        // safe.
         boolean safe;
         try {
             safe = txnScoreboard.isRangeAvailable(task.getFromTableTxn(), task.getToTableTxn());

@@ -12636,6 +12636,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // caller that passes true. What is left -- ADD INDEX, DROP INDEX's
         // retirement, the native/parquet switch -- is DDL, so saturation now
         // needs 65 535 index DDLs on one partition.
+        //
+        // DEFERRED, ENTERPRISE-SIDE, recorded here because this is the site that
+        // creates the state and no ledger travels with the branch. Cold storage
+        // is believed to compare the squash tracker EMBEDDED IN THE _pm HEADER
+        // (a header feature section, qdb-parquet-meta types.rs) against the live
+        // _txn counter, and to treat a mismatch as "reconvert": remove
+        // data.parquet and rebuild the partition from scratch
+        // (StoragePolicyJob). A token publish moves the _txn-side counter -- the
+        // stamp immediately below -- but CANNOT move the embedded one: the
+        // append above writes the footer and then EXACTLY EIGHT BYTES AT OFFSET
+        // 0, the PARQUET_META_FILE_SIZE word, and never rewrites the header.
+        // That much is verifiable here and is verified.
+        //
+        // If the enterprise half holds, an index DDL on a cold-storage-managed
+        // parquet partition can trigger a full reconversion whose fresh _pm
+        // names no covering token at all, while the <col>.pidx pairs stay on
+        // disk: the index silently disappears and its artifacts leak. Neither
+        // StoragePolicyJob nor CheckpointManifest exists in this checkout, so
+        // the second half is a lead for whoever can read them, not a claim this
+        // repository establishes. Do not treat its absence from the tests as
+        // evidence that it does not happen.
         if (!partitionRecordAlreadyMoved) {
             stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
         }
