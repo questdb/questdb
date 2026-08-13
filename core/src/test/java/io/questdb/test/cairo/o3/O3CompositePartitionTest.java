@@ -36,8 +36,9 @@ import org.junit.Test;
  * End-to-end tests for writing a partition as a COMPOSITE - several pieces over one set of column files,
  * with the incoming rows appended at the tail and the untouched pieces left exactly where they are.
  * <p>
- * FIXED-WIDTH columns only for now: the column-level merge is implemented for those, and var-size columns
- * throw until their aux vectors are handled.
+ * The table carries both fixed-width and var-size columns. The var-size ones are there for their AUX
+ * VECTORS, which are what a merge has to rebuild: a merged row keeps its bytes but lands at a new offset, so
+ * every entry has to be rewritten even though nothing about the value changed.
  * <p>
  * Each case asserts two independent things. The ROWS come from a table built by plain UNION ALL, which
  * never touches the composite machinery - so whatever pieces the plan decided on, the rows read back have
@@ -45,6 +46,50 @@ import org.junit.Test;
  * back from a partition that was quietly rewritten whole would prove nothing about the design.
  */
 public class O3CompositePartitionTest extends AbstractCairoTest {
+
+    /**
+     * A DOUBLE[], whose data vector holds a header as well as the values, so its entries vary in size for a
+     * reason none of the other types share.
+     */
+    private static final String ARRAY_EXPR = "(CASE WHEN x % 13 = 0 THEN NULL::DOUBLE[]" +
+            " WHEN x % 2 = 0 THEN ARRAY[x::double]" +
+            " ELSE ARRAY[x::double, -x::double, 1.5] END)";
+    /**
+     * A BINARY, whose aux vector has STRING's N+1 shape but whose data entries are counted in bytes rather
+     * than characters. The base64 text is padded to 4, 8 or 12 digits, so the values decode to 3, 6 or 9
+     * bytes and no two neighbouring rows are the same length.
+     */
+    private static final String BINARY_EXPR = "(CASE WHEN x % 11 = 0 THEN NULL" +
+            " ELSE from_base64(lpad(x::string, (4 * ((x % 3) + 1))::INT, '0')) END)";
+    /**
+     * A STRING, which stores every value in the data vector and describes it with an aux vector of N+1
+     * entries - a different shape from VARCHAR's, and the one the merge writes a trailing offset for.
+     */
+    private static final String STRING_EXPR = "(CASE WHEN x % 5 = 0 THEN NULL ELSE 's-' || x END)::STRING";
+    /**
+     * A VARCHAR of values too long to inline, so every one of them is held in the data vector and every aux
+     * entry is a pointer that a merge has to rewrite.
+     */
+    private static final String VARCHAR_LONG_EXPR = "('a-varchar-too-long-to-inline-' || x)::VARCHAR";
+    /**
+     * A VARCHAR carrying all three shapes an aux entry can take: NULL, inlined, and a pointer.
+     */
+    private static final String VARCHAR_MIXED_EXPR = "(CASE WHEN x % 7 = 0 THEN NULL" +
+            " WHEN x % 3 = 0 THEN 'v' || x" +
+            " ELSE 'a-varchar-too-long-to-inline-' || x END)::VARCHAR";
+    /**
+     * A VARCHAR whose values all fit inside the aux entry itself. Nothing is ever written to this column's
+     * DATA VECTOR, which stays empty at zero bytes - a merge with an aux vector to rebuild and no data to
+     * move.
+     */
+    private static final String VARCHAR_SHORT_EXPR = "('v' || x)::VARCHAR";
+    /**
+     * The var-size projection every one of the three batches shares. The values are functions of {@code x}
+     * alone, so they are deterministic: the oracle table runs the same text a second time and has to get the
+     * same bytes back.
+     */
+    private static final String VAR_COLUMNS = VARCHAR_SHORT_EXPR + " vs, " + VARCHAR_LONG_EXPR + " vl, " +
+            VARCHAR_MIXED_EXPR + " vm, " + STRING_EXPR + " s, " + BINARY_EXPR + " b, " + ARRAY_EXPR + " a";
 
     /**
      * The shape the design exists for: a narrow backdated batch landing inside a day. The rows either side
@@ -55,17 +100,18 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     public void testBackdatedInsertMergesOnlyWhereItLands() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-            // ~51 rows at this table's ~20 bytes a row. The default is 50MB, which is 2.6M rows - far more
-            // than these partitions hold, so no cut would ever be worth proposing and every batch would
-            // rewrite the whole day.
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            // ~43 rows at this table's ~190 bytes a row. The default is 50MB, which is over 250k rows -
+            // far more than these partitions hold, so no cut would ever be worth proposing and every batch
+            // would rewrite the whole day.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
-            // One day at 15s, so the partition holds 5760 rows of fixed-width columns only.
-            final String base = "SELECT x::INT i, -x j, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+            // One day at 15s, so the partition holds 5760 rows.
+            final String base = "SELECT x::INT i, -x j, " + VAR_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
                     " FROM long_sequence(5760)";
             // A later day, so 2020-02-03 is never the active partition and the write goes through the O3
             // path rather than an append to the open one.
-            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j," +
+            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + VAR_COLUMNS + "," +
                     " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
             execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x " + nextDay);
@@ -73,7 +119,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
 
             final TableToken xt = engine.verifyTableName("x");
 
-            final String backfill = "SELECT x::INT + 70000 i, -x - 70000L j," +
+            final String backfill = "SELECT x::INT + 70000 i, -x - 70000L j, " + VAR_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
             execute("INSERT INTO x " + backfill);
             drainWalQueue();
@@ -92,6 +138,15 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 Assert.assertTrue("rewrote too much of the partition [deadRows=" + deadRows + ']',
                         deadRows > 0 && deadRows < 1500);
             }
+
+            // The var-size columns carry values, and not the same value twice. Without this the row
+            // comparison below would pass just as happily on columns of nulls, since the oracle is built
+            // from the same expressions.
+            assertQuery("SELECT count(vs) vs, count(vl) vl, count(vm) vm, count_distinct(vl) dvl," +
+                    " count(s) s, sum(length(b)) b, sum(a[1]) a FROM x WHERE ts IN '2020-02-03'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("vs\tvl\tvm\tdvl\ts\tb\ta\n5960\t5960\t5110\t5760\t4768\t31973\t1.5331722E7\n");
 
             // The oracle: the same rows, assembled without ever touching the composite machinery.
             execute("CREATE TABLE o AS (" + base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
@@ -115,21 +170,22 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     public void testChronologicalAppendRewritesNothing() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-            // ~51 rows at this table's ~20 bytes a row. The default is 50MB, which is 2.6M rows - far more
-            // than these partitions hold, so no cut would ever be worth proposing and every batch would
-            // rewrite the whole day.
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            // ~43 rows at this table's ~190 bytes a row. The default is 50MB, which is over 250k rows -
+            // far more than these partitions hold, so no cut would ever be worth proposing and every batch
+            // would rewrite the whole day.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
 
             // 10s apart, so 5760 rows reach 15:59:50 and leave the rest of the day empty for the tail.
-            final String base = "SELECT x::INT i, -x j, timestamp_sequence('2020-02-03', 10*1000000L) ts" +
+            final String base = "SELECT x::INT i, -x j, " + VAR_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03', 10*1000000L) ts" +
                     " FROM long_sequence(5760)";
-            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j," +
+            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + VAR_COLUMNS + "," +
                     " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
             execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x " + nextDay);
             drainWalQueue();
 
-            final String tail = "SELECT x::INT + 80000 i, -x - 80000L j," +
+            final String tail = "SELECT x::INT + 80000 i, -x - 80000L j, " + VAR_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03T20:00:00', 1000000L) ts FROM long_sequence(100)";
             execute("INSERT INTO x " + tail);
             drainWalQueue();

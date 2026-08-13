@@ -38,12 +38,12 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 4 | Read path: map `[0, E)`, one frame per piece | **BUILT**, untested against a real composite partition |
 | 5 | `processCompositePartition` + the decision list | **BUILT** |
 | 6 | Transaction clustering feeding the cut list | **BUILT**, 11 tests |
-| 7 | `FrameAlgebra.merge` | **BUILT** for fixed-width columns |
+| 7 | `FrameAlgebra.merge` | **BUILT**, fixed-width and var-size |
 | 8 | Executor: KEEP / NEW_PIECE / MERGE | **BUILT** |
 | 9 | Geometry pointer back through the partition sink | **BUILT** |
 | 10 | Routing behind `cairo.o3.partition.merge.append.enabled` | **BUILT**, default OFF |
 | 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
-| 12 | Var-size column merge | NOT STARTED |
+| 12 | Var-size column merge | **BUILT**, all four var types |
 | 13 | Index maintenance for merged rows | NOT STARTED |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
@@ -51,7 +51,8 @@ With the flag off - the default - nothing above is reachable and the tree behave
 ## Commits
 
 ```
-            Make the composite write produce the right rows
+            Merge and append var-size columns
+635631dca5  Make the composite write produce the right rows
 23388e278b  Record the implementation state
 8572f15955  Keep _geometry out of TxReader and TxWriter
 e5a8f69414  Integrate the plan with its execution, and test it end to end
@@ -174,24 +175,49 @@ appendOffsetRowCount -= columnTop;
 A row below a column's top is not in that column's file, so the top is the gap between the row a caller
 names and the row the file holds - and the column is what knows it. Nothing a level up reasons about them.
 
+## Var-size columns
+
+`ContiguousFileVarFrameColumn` now implements both primitives, and one implementation covers every var type:
+the interleaving itself is `ColumnTypeDriver.o3ColumnMerge`, which is the same call `O3CopyJob.mergeCopy`
+makes, so VARCHAR, STRING, BINARY and ARRAY each get the kernel they already had.
+
+What the frame layer has to supply is the ADDRESSES, and the rule is the same one the fixed-width merge
+follows: the merge index carries absolute row ids and an aux entry carries an absolute data offset, so both
+vectors are handed the address their ROW 0 and BYTE 0 would be at, not the address of the slice being read.
+For a source with a column top that means stepping the aux base back by the top's worth of entries. For the
+DESTINATION it means handing the kernel `mappedAddr - targetDataOffset`, because the offsets it writes into
+the aux entries are the same values it addresses its own writes by.
+
+The merged image is exactly as long as the two slices put together - every row is written once and carries
+its own bytes - so the data allocation needs no scan of the merge index to size it.
+
+`append` gained the memory-source branch the fixed-width one already had, since a NEW_PIECE reads the O3
+buffers rather than a file. There are no fds to copy between there, so it maps the destination and reads the
+source from its addresses; the aux vector goes down through `shiftCopyAuxVector`, exactly as the file case
+does it.
+
+`O3CompositePartitionTest` carries one column of each: three VARCHARs covering the inlining regimes
+separately (all inlined, so the data vector stays empty at zero bytes; none inlined; and mixed with nulls),
+a STRING and a BINARY for the N+1 aux shape, and a `DOUBLE[]`. Their values are functions of `x` alone, so
+the UNION ALL oracle reproduces them exactly, and a separate aggregate pins their non-null counts and sums
+so a column that came back empty could not pass.
+
 ## Known gaps
 
-- **Var-size columns**: `ContiguousFileVarFrameColumn.merge` throws. The aux vector and data offsets need
-  `oooMergeCopyStrColumn` / `VarcharColumn` / `ArrayColumn`. Deferred deliberately - fixed columns first,
-  to catch the structural bugs on the simpler case.
 - **Indexed columns**: `ContiguousFileIndexedFrameColumn` inherits the fixed merge, but index entries for
   merged rows are not maintained.
 - **`NEW_PIECE`'s floor**: the executor records the new piece's `tsLo` as the batch's FIRST timestamp, not
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.
 - **Dedup**: the plan has no dedup term at all. `liveRows` is the plain sum of piece rows.
-- **A merge below a column top throws.** Each source offsets by its own top, but a row BELOW a top is not
-  in the file at all and has to be written as a null, which needs a kernel the fixed merge does not have.
-  `rowZeroAddr` refuses rather than reading the wrong bytes. Reachable by ADD COLUMN followed by a
-  backdated insert.
+- **A merge below a column top throws**, for var-size columns as well as fixed. Each source offsets by its
+  own top, but a row BELOW a top is not in the file at all and has to be written as a null, which needs a
+  kernel neither merge has. `rowZeroAddr` / `rowZeroAuxAddr` refuse rather than reading the wrong bytes.
+  Reachable by ADD COLUMN followed by a backdated insert.
 - **The split threshold is in ROWS derived from an average record size**, so a narrow table needs a much
-  smaller `cairo.o3.partition.split.min.size` than a wide one before any cut is proposed. The default 50MB
-  is ~2.6M rows for a 20-byte record, which is why the test sets it to 1K.
+  smaller `cairo.o3.partition.split.min.size` than a wide one before any cut is proposed. A var-size column
+  counts as 28 bytes there whatever it actually holds, which is why the test had to raise its setting from
+  1K to 8K as columns were added.
 
 ## Working notes
 
