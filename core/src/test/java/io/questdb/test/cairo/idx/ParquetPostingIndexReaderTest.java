@@ -36,6 +36,7 @@ import io.questdb.cairo.idx.PostingIndexReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -458,6 +459,72 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                     throw new AssertionError(failure.get());
                 }
             }
+        });
+    }
+
+    /**
+     * The metadata primitives must agree with the cursor that walks the same
+     * postings, and with SQL.
+     * <p>
+     * Both sentinels are asserted explicitly. Returning {@code -1} instead of
+     * {@code LONG_NULL} is not a near miss: the sole caller tests
+     * {@code != LONG_NULL} and then does {@code total += c}, so a {@code -1}
+     * silently subtracts one from a {@code count(*)}, and from
+     * {@code selectKthMatch} it is consumed as an absolute row id.
+     */
+    @Test
+    public void testTheMetadataPrimitivesAgreeWithTheCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            long counted;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+                final PostingIndexReader indexReader =
+                        (PostingIndexReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+
+                counted = indexReader.countMatchesClamped(key, 0, Long.MAX_VALUE, Long.MAX_VALUE);
+                Assert.assertNotEquals(
+                        "the metadata path must answer rather than fall back",
+                        Numbers.LONG_NULL, counted
+                );
+                Assert.assertNotEquals("-1 is consumed as a count, never as a sentinel", -1, counted);
+
+                final LongList walked = new LongList();
+                try (RowCursor c = indexReader.getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (c.hasNext()) {
+                        walked.add(c.next());
+                    }
+                }
+                Assert.assertEquals("the count must equal what the cursor walks", walked.size(), counted);
+
+                // Every k, not just the ends: an off-by-one in the group-skip
+                // arithmetic only shows up at a group boundary.
+                for (int i = 0; i < walked.size(); i++) {
+                    Assert.assertEquals(
+                            "selectKthMatch disagreed at k=" + i,
+                            walked.getQuick(i),
+                            indexReader.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, i)
+                    );
+                }
+                Assert.assertEquals(
+                        "k past the end must be LONG_NULL, never -1",
+                        Numbers.LONG_NULL,
+                        indexReader.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, walked.size())
+                );
+
+                // getEntryMaxValue is the reader-level clamp and must be the
+                // highest row id the index covers, not the key's.
+                Assert.assertTrue(
+                        "entry max must cover the key's last posting",
+                        indexReader.getEntryMaxValue() >= walked.getQuick(walked.size() - 1)
+                );
+                indexReader.populateCacheForKey(key);
+            }
+            assertQuery("select count() from x where sym = 's15' and ts in '" + INDEXED_PARTITION + "'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + counted + "\n");
         });
     }
 

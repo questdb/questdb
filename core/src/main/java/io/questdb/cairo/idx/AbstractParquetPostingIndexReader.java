@@ -143,6 +143,110 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * Rows before {@code columnTop} carry no value and are not in the index at
+     * all, so key 0 (NULL) owns them implicitly. Bounded by
+     * {@code nullMaxValue}, the UNCLAMPED caller max, because the prefix is
+     * independent of the index and of {@code getEntryMaxValue}.
+     */
+    protected long nullPrefixCount(int key, long nullMaxValue) {
+        if (key != 0 || columnTop <= 0 || nullMaxValue < 0) {
+            return 0;
+        }
+        return Math.min(columnTop, nullMaxValue + 1);
+    }
+
+    /**
+     * True when every row of {@code rowGroup} belongs to {@code key}.
+     * <p>
+     * The index is key-major, so within a key's run only the FIRST and LAST
+     * groups can be shared with a neighbour -- an interior group cannot hold
+     * another key without breaking the run. A single-group run is a boundary
+     * group on both sides and is never treated as dedicated.
+     */
+    protected boolean isGroupDedicatedTo(int rowGroup, int key, int rgLo, int rgHi) {
+        return rowGroup > rgLo && rowGroup < rgHi;
+    }
+
+    /**
+     * True when the group's whole row-id extent sits inside the window, so no
+     * row of it can be clipped.
+     */
+    protected boolean isWholeGroupInRange(int rowGroup, long minValue, long maxValue) {
+        return imReader.getRowGroupRowIdMin(rowGroup) >= minValue
+                && imReader.getRowGroupRowIdMax(rowGroup) <= maxValue;
+    }
+
+    /**
+     * A cursor used only to count and to pick, never handed to a caller. It
+     * exists so the metadata primitives decode through the same per-cursor
+     * state everything else does -- its own decoder, buffers and projection --
+     * rather than borrowing the pooled cursor, which a concurrent worker may be
+     * iterating.
+     */
+    protected class CountingCursor extends AbstractCoveringCursor {
+        @Override
+        public void close() {
+            freeResources();
+        }
+
+        @Override
+        public boolean hasNext() {
+            throw new UnsupportedOperationException("counting cursor is not iterable");
+        }
+
+        @Override
+        public long next() {
+            throw new UnsupportedOperationException("counting cursor is not iterable");
+        }
+
+        long countInGroup(int rowGroup, int key, long minValue, long maxValue) {
+            final long rows = decodeGroup(rowGroup);
+            final long keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+            final long rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+            long n = 0;
+            for (long i = 0; i < rows; i++) {
+                if (Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2)) != key) {
+                    continue;
+                }
+                final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                if (rowId >= minValue && rowId <= maxValue) {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        long selectInGroup(int rowGroup, int key, long minValue, long maxValue, long j) {
+            final long rows = decodeGroup(rowGroup);
+            final long keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+            final long rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+            long seen = 0;
+            for (long i = 0; i < rows; i++) {
+                if (Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2)) != key) {
+                    continue;
+                }
+                final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                if (rowId < minValue || rowId > maxValue) {
+                    continue;
+                }
+                if (seen++ == j) {
+                    return rowId;
+                }
+            }
+            return Numbers.LONG_NULL;
+        }
+
+        private long decodeGroup(int rowGroup) {
+            final long rows = imReader.getRowGroupNumRows(rowGroup);
+            final DirectIntList columns = coveringProjection(null);
+            rowGroupBuffers.reopen();
+            decoder().decodeRowGroup(rowGroupBuffers, columns, rowGroup, 0, (int) rows);
+            onRowGroupDecoded();
+            return rows;
+        }
+    }
+
+    /**
      * Resolves {@code key} to its inclusive index row-group run through the
      * {@code _im} directory. Pruning level 1: exact, and it reads no byte of
      * the index parquet.
@@ -429,7 +533,33 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     @Override
     public long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
-        return Numbers.LONG_NULL;
+        if (key < 0 || maxValueClamped < minValue) {
+            return Numbers.LONG_NULL;
+        }
+        long total = nullPrefixCount(key, nullMaxValue);
+        final long range = rowGroupRangeForKey(key);
+        if (range == IndexMetaFileReader.KEY_ABSENT) {
+            return total;
+        }
+        final int rgLo = Numbers.decodeLowInt(range);
+        final int rgHi = Numbers.decodeHighInt(range);
+        try (CountingCursor counter = new CountingCursor()) {
+            for (int rg = rgLo; rg <= rgHi; rg++) {
+                final long rows = imReader.getRowGroupNumRows(rg);
+                if (rows <= 0 || isRowGroupPruned(rg, minValue, maxValueClamped)) {
+                    continue;
+                }
+                if (isWholeGroupInRange(rg, minValue, maxValueClamped) && isGroupDedicatedTo(rg, key, rgLo, rgHi)) {
+                    // Every row in this group belongs to this key and falls
+                    // inside the window, so its row count IS the answer for it.
+                    // No decode: this is the whole point of the primitive.
+                    total += rows;
+                    continue;
+                }
+                total += counter.countInGroup(rg, key, minValue, maxValueClamped);
+            }
+        }
+        return total;
     }
 
     @Override
@@ -460,7 +590,25 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     @Override
     public long getEntryMaxValue() {
-        return -1;
+        // Highest row id the sealed index covers, or -1 when it covers nothing.
+        // Negative by contract, and callers branch on the sign to decide
+        // whether to clamp their walk -- returning 0 for an empty index would
+        // clamp every cursor to row 0 instead of leaving it unclamped.
+        final int groups = imReader.getIndexRowGroupCount();
+        if (groups <= 0) {
+            return -1;
+        }
+        long max = -1;
+        for (int rg = 0; rg < groups; rg++) {
+            if (imReader.getRowGroupNumRows(rg) <= 0) {
+                continue;
+            }
+            final long m = imReader.getRowGroupRowIdMax(rg);
+            if (m > max) {
+                max = m;
+            }
+        }
+        return max;
     }
 
     /**
@@ -675,6 +823,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
 
     @Override
     public void populateCacheForKey(int key) {
+        // No-op, and correctly so. The native reader warms a genLookup cache
+        // that its cursor would otherwise rebuild by walking the chain; the
+        // _im directory answers the same question with a header lookup, so
+        // there is nothing to pre-compute. The contract permits this: the
+        // method promises the cursor will not be slower afterwards, not that
+        // work happened.
     }
 
     @Override
@@ -690,8 +844,44 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
 
     @Override
     public long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k) {
-        // As for countMatchesClamped the sentinel is LONG_NULL and NOT -1: a
-        // caller that accepts -1 consumes it as an absolute row id.
+        if (key < 0 || k < 0 || maxValueClamped < minValue) {
+            return Numbers.LONG_NULL;
+        }
+        // The implicit-null prefix comes first in row order and is not in the
+        // index at all, so the k-th match may land inside it.
+        final long nulls = nullPrefixCount(key, nullMaxValue);
+        if (k < nulls) {
+            return k;
+        }
+        long remaining = k - nulls;
+        final long range = rowGroupRangeForKey(key);
+        if (range == IndexMetaFileReader.KEY_ABSENT) {
+            return Numbers.LONG_NULL;
+        }
+        final int rgLo = Numbers.decodeLowInt(range);
+        final int rgHi = Numbers.decodeHighInt(range);
+        try (CountingCursor counter = new CountingCursor()) {
+            for (int rg = rgLo; rg <= rgHi; rg++) {
+                final long rows = imReader.getRowGroupNumRows(rg);
+                if (rows <= 0 || isRowGroupPruned(rg, minValue, maxValueClamped)) {
+                    continue;
+                }
+                final long inGroup;
+                if (isWholeGroupInRange(rg, minValue, maxValueClamped) && isGroupDedicatedTo(rg, key, rgLo, rgHi)) {
+                    inGroup = rows;
+                } else {
+                    inGroup = counter.countInGroup(rg, key, minValue, maxValueClamped);
+                }
+                if (remaining < inGroup) {
+                    // The k-th match is in THIS group. One decode, wherever the
+                    // groups it skipped were countable from metadata.
+                    return counter.selectInGroup(rg, key, minValue, maxValueClamped, remaining);
+                }
+                remaining -= inGroup;
+            }
+        }
+        // k is past the end of the clamped match set. LONG_NULL, never -1:
+        // the caller consumes a -1 as an absolute row id.
         return Numbers.LONG_NULL;
     }
 
