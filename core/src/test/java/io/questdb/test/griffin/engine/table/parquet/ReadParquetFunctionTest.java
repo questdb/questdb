@@ -976,9 +976,15 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
      * and {@code price} is writer index 1, so substituting the parquet position
      * for the negative id aliased {@code key_id} onto {@code ts} and
      * {@code row_id} onto {@code price}. The symptom was not an error:
-     * {@code key_id} came back as the low 32 bits of each row's timestamp and
-     * {@code row_id} as the raw bits of a double. Only the parallel page-frame
-     * path projects by id, so only it was affected.
+     * {@code key_id} came back as the low 32 bits of each row's timestamp, and
+     * {@code row_id} as {@code price}'s values converted to LONG -- the
+     * recorded control reads {@code minRow=1 maxRow=1000} against the expected
+     * {@code 0..999} -- not as the raw bits of a double, which would have read
+     * 4607182418800017408 for {@code 1.0}. Nothing is reinterpreted:
+     * {@code resolveParquetColumn}'s fixed-to-fixed branch hands the decoder
+     * the TARGET type, so the aliased page is decoded as the type the query
+     * asked for. Only the parallel page-frame path projects by id, so only it
+     * was affected.
      */
     @Test
     public void testNegativeFieldIdsDoNotCollideWithAWriterIndex() throws Exception {
