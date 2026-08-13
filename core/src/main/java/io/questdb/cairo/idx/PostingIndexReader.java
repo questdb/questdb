@@ -39,13 +39,32 @@ public interface PostingIndexReader extends IndexReader {
 
     /**
      * Exact count of postings for {@code key} within
-     * {@code [minValue, maxValueClamped]}, or {@code -1} when the reader
-     * cannot answer from metadata alone and the caller must walk a cursor.
+     * {@code [minValue, maxValueClamped]}, or
+     * {@link io.questdb.std.Numbers#LONG_NULL} when the reader cannot answer
+     * from metadata alone and the caller must walk a cursor.
+     * <p>
+     * The "cannot answer" sentinel is {@code LONG_NULL}, NOT {@code -1}. The
+     * sole caller tests {@code c != Numbers.LONG_NULL} and then does
+     * {@code total += c}, so an implementation that returns {@code -1} does not
+     * signal a fallback: it silently subtracts one from a {@code count(*)}
+     * answer. {@code -1} is not otherwise reserved -- a count is never negative,
+     * but nothing rejects one.
      */
     long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped);
 
     /**
-     * Highest row id the reader's current entry covers.
+     * Highest row id the reader's current entry covers, or a NEGATIVE value when
+     * the reader has no current entry to cover anything (empty partition, or no
+     * index version visible at the caller's pin).
+     * <p>
+     * Callers must branch on the sign: the covering factory folds this into a
+     * cursor's inclusive upper bound as {@code min(callerMax, entryMaxValue)}
+     * only when it is {@code >= 0}, and passes the caller's own bound through
+     * otherwise. Returning a negative value where an entry does exist would
+     * therefore unclamp the walk;
+     * {@link io.questdb.cairo.idx.AbstractPostingIndexReader} spells the
+     * negative case {@code -1}, and no caller distinguishes negative values from
+     * each other.
      */
     long getEntryMaxValue();
 
@@ -56,8 +75,13 @@ public interface PostingIndexReader extends IndexReader {
 
     /**
      * Absolute row id of the {@code k}-th posting of {@code key} within
-     * {@code [minValue, maxValueClamped]}, or {@code -1} when the reader
-     * cannot resolve it from metadata alone.
+     * {@code [minValue, maxValueClamped]}, or
+     * {@link io.questdb.std.Numbers#LONG_NULL} when the reader cannot resolve it
+     * from metadata alone and the caller must walk a cursor.
+     * <p>
+     * As for {@link #countMatchesClamped}, the sentinel is {@code LONG_NULL} and
+     * NOT {@code -1}: a caller that accepts {@code -1} consumes it as an
+     * absolute row id.
      */
     long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k);
 }
