@@ -8235,7 +8235,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reached its publish": the state the sweep is for is exactly the one a
         // batch that threw leaves behind, and that batch never reaches a publish.
         // Nothing of this batch exists yet, so it cannot match its own artifacts.
-        sweepOrphanParquetIndexArtifacts(plen);
+        //
+        // Gated on the configured format, which costs nothing to read, because
+        // the sweep is a directory listing plus a read per pidx artifact it finds
+        // and this method is on the per-commit O3 seal path. Only a parquet-form
+        // seal can leave the state it reclaims, and only the parquet format runs
+        // one, so on the default configuration the listing would find nothing on
+        // every commit forever. The residual: an orphan left by a seal from a
+        // period when the property WAS parquet is not reclaimed while the
+        // property is native. It is inert -- no footer names it, which is the
+        // sweep's own criterion for removing it -- and the next batch under the
+        // parquet format takes it.
+        if (isParquetIndexFormat()) {
+            sweepOrphanParquetIndexArtifacts(plen);
+        }
         if (parquetIndexTokens.size() > 0) {
             LOG.error().$("discarding covering index tokens staged by a seal that never published [table=").$(tableToken)
                     .$(", entries=").$(parquetIndexTokens.size() / 3)

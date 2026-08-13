@@ -48,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -499,6 +500,58 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         imFileSizeField(partitionPath(path).concat(metas[0].getName()).$())
                 );
             }
+        });
+    }
+
+    /**
+     * I4: the orphan sweep is a directory listing plus a read per artifact it
+     * finds, and it sits at the head of every seal batch -- which is the
+     * per-commit O3 path. Under the default {@code native} format no
+     * parquet-form seal ever runs, so every one of those listings is guaranteed
+     * to find nothing.
+     * <p>
+     * Counted rather than timed: the cost is one {@code iterateDir} per
+     * O3-touched parquet partition per commit, and the count is what regresses.
+     */
+    @Test
+    public void testTheOrphanSweepDoesNotRunOnTheDefaultFormat() throws Exception {
+        final int[] partitionListings = {0};
+        final boolean[] counting = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                if (counting[0] && Utf8s.containsAscii(path, INDEXED_PARTITION)) {
+                    partitionListings[0]++;
+                }
+                super.iterateDir(path, func);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            createSparseKeyTable();
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            counting[0] = true;
+            try {
+                for (int i = 0; i < 8; i++) {
+                    execute("INSERT INTO " + TABLE_NAME + " VALUES ('2024-01-01T00:00:00.0000" + (10 + i)
+                            + "Z', 's0', 1.0, 1)");
+                    drainWalQueue();
+                }
+            } finally {
+                counting[0] = false;
+            }
+
+            Assert.assertEquals(
+                    "a table on the default index format must not list the partition directory on the"
+                            + " per-commit seal path",
+                    0,
+                    partitionListings[0]
+            );
         });
     }
 
