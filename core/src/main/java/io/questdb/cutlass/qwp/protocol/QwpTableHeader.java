@@ -149,13 +149,14 @@ public class QwpTableHeader {
             throw QwpParseException.headerTooShort();
         }
         QwpVarint.decode(address + offset, limit, decodeResult);
-        this.rowCount = decodeResult.value;
-        if (rowCount > maxRowCount) {
+        long decodedRowCount = decodeResult.value;
+        if (decodedRowCount < 0 || decodedRowCount > maxRowCount) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED,
-                    "row count exceeds maximum: " + rowCount + " (max " + maxRowCount + ')'
+                    "row count exceeds maximum: " + Long.toUnsignedString(decodedRowCount) + " (max " + maxRowCount + ')'
             );
         }
+        this.rowCount = decodedRowCount;
         offset += decodeResult.bytesRead;
 
         // Parse column count
@@ -164,10 +165,10 @@ public class QwpTableHeader {
         }
         QwpVarint.decode(address + offset, limit, decodeResult);
         long colCount = decodeResult.value;
-        if (colCount > QwpConstants.MAX_COLUMNS_PER_TABLE) {
+        if (colCount < 0 || colCount > QwpConstants.MAX_COLUMNS_PER_TABLE) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.COLUMN_COUNT_EXCEEDED,
-                    "column count exceeds maximum: " + colCount + " (max " + QwpConstants.MAX_COLUMNS_PER_TABLE + ")"
+                    "column count exceeds maximum: " + Long.toUnsignedString(colCount) + " (max " + QwpConstants.MAX_COLUMNS_PER_TABLE + ")"
             );
         }
         this.columnCount = (int) colCount;
