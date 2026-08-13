@@ -773,6 +773,89 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResolvePrevFooterTellsAMalformedLinkFromTheEndOfTheChain() throws Exception {
+        // W4-M3. resolvePrevFooter used to answer false for BOTH "prev == 0,
+        // the chain ends here" and "prev is out of bounds", and its one
+        // consumer -- TableWriter's orphan sweep -- reads false as "the union
+        // over the chain is complete", which is exactly what licenses it to
+        // unlink a pidx pair. A malformed link that reads as an end of chain
+        // therefore hands the sweep a union truncated at the break and lets it
+        // delete every pair only the footers below the break name. Only
+        // prev == 0 may answer false; every other rejected value must throw.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000)) {
+                final long origLen = file.dataLen;
+                final int origFooterLength = Unsafe.getInt(file.dataPtr + origLen - 4);
+                final long origFooterOffset = origLen - 4 - Integer.toUnsignedLong(origFooterLength);
+                final int rowGroupEntry = Unsafe.getInt(file.dataPtr + origFooterOffset + 40);
+                final int appendedFooterBytes = 52;
+                final long newTotalLen = origLen + appendedFooterBytes;
+
+                // origLen is the legal link -- the appended footer starts
+                // exactly where the base snapshot ends. 0 is the legal end of
+                // chain. 3 is undersized. origLen + 4 is inside the appended
+                // footer's own bytes, i.e. a predecessor that would overlap its
+                // successor, which appending cannot produce.
+                final long[] links = {origLen, 0L, 3L, origLen + 4};
+                for (int c = 0; c < links.length; c++) {
+                    final long link = links[c];
+                    final long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
+                        final long fa = newBuf + origLen;
+                        Unsafe.putLong(fa, 200L);              // parquet_footer_offset
+                        Unsafe.putInt(fa + 8, 80);             // parquet_footer_length
+                        Unsafe.putInt(fa + 12, 1);             // row_group_count
+                        Unsafe.putLong(fa + 16, 0L);           // unused_bytes
+                        Unsafe.putLong(fa + 24, link);         // prev_parquet_meta_file_size
+                        Unsafe.putLong(fa + 32, 0L);           // footer_feature_flags
+                        Unsafe.putInt(fa + 40, rowGroupEntry);
+                        Unsafe.putInt(fa + 44, 0);             // CRC placeholder
+                        Unsafe.putInt(fa + 48, 48);            // trailer: footer_length
+                        Unsafe.putLong(newBuf, newTotalLen);   // publish the appended snapshot
+                        // The link sits inside the CRC-covered region, so the
+                        // forgery is made CRC-consistent: the bounds check is
+                        // the test's subject, and an unpatched CRC would fail
+                        // the entry resolve before the walk ever ran.
+                        patchCrc(newBuf, newTotalLen);
+
+                        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                        reader.of(newBuf, newTotalLen);
+                        Assert.assertTrue(reader.resolveLastFooter());
+                        if (c == 0) {
+                            Assert.assertTrue(
+                                    "premise: the legal link must step back, or the three rejections"
+                                            + " below are not being told apart from anything",
+                                    reader.resolvePrevFooter()
+                            );
+                            Assert.assertEquals(origLen, reader.getResolvedFileSize());
+                        } else if (c == 1) {
+                            Assert.assertFalse(
+                                    "prev == 0 is the end of the chain and must stay a clean false",
+                                    reader.resolvePrevFooter()
+                            );
+                        } else {
+                            try {
+                                final boolean stepped = reader.resolvePrevFooter();
+                                Assert.fail("a malformed prev link answered "
+                                        + stepped
+                                        + " instead of throwing; false is read by the orphan sweep as"
+                                        + " \"the union over the chain is complete\" and licenses an"
+                                        + " unlink [prev=" + link + ']');
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "malformed _pm prev link");
+                            }
+                        }
+                        reader.clear();
+                    } finally {
+                        Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFooterChainWalkResolvesAcrossThreeLevels() throws Exception {
         assertMemoryLeak(() -> {
             // Three-footer MVCC chain. Each appended footer points its

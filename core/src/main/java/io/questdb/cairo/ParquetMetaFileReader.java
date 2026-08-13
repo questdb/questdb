@@ -835,16 +835,42 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * (the covering-index section among them) describe the footer this call
      * settled on and not the one before it.
      *
-     * @return false at the end of the chain
-     * @throws CairoException if the next footer's format is unsupported or corrupt
+     * @return false at the end of the chain, and ONLY at the end of the chain
+     * @throws CairoException if the link is malformed, or if the next footer's
+     *                        format is unsupported or corrupt
      */
     public boolean resolvePrevFooter() {
         assert isOpen();
         final long prevSize = Unsafe.getLong(footerAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
-        // Same bound resolveFooter's walk applies: prevSize must hold at least a
-        // header + trailer, and must move strictly backwards so the walk ends.
-        if (prevSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE || prevSize >= this.resolvedFileSize) {
+        if (prevSize == 0) {
+            // The end of the chain, and the only value that spells it: the first
+            // footer a _pm was ever written with has no predecessor.
             return false;
+        }
+        // Anything else that fails the bounds is a MALFORMED LINK, not an end of
+        // chain, and the two must not answer the same. The consumer of this
+        // enumeration -- TableWriter's orphan sweep -- reads "the walk ended" as
+        // "the union is complete" and that is what licenses it to unlink; a
+        // false end-of-chain would hand it a union truncated at the break and
+        // let it delete every pair only the footers below the break name.
+        // Unreachable today, and for a solid reason rather than a lucky one:
+        // prev_parquet_meta_file_size sits inside the footer's CRC-covered
+        // region, so a bogus value has to be CRC-consistent, i.e. deliberately
+        // written that way. But the failure direction here is deletion of
+        // referenced data, and failing closed costs nothing -- the sweep catches
+        // CairoException and sweeps not one file.
+        //
+        // The upper bound is the current footer's own offset and not its
+        // resolved size: footers are appended, so the predecessor's bytes end at
+        // or before the byte this footer starts at. That is also what makes the
+        // walk's single checksum verification sound -- see validateAndCommitFooter.
+        final long currentFooterOffset = this.footerAddr - this.addr;
+        if (prevSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE || prevSize > currentFooterOffset) {
+            throw CairoException.critical(0)
+                    .put("malformed _pm prev link [prevParquetMetaFileSize=").put(prevSize)
+                    .put(", footerOffset=").put(currentFooterOffset)
+                    .put(", resolvedFileSize=").put(this.resolvedFileSize)
+                    .put(']');
         }
         resetResolvedFooter();
         return resolveFooterAt(prevSize);
