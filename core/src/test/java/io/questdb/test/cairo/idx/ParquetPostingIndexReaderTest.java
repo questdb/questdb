@@ -281,8 +281,12 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertEquals(all.size() - 2, clipped.size());
-                Assert.assertEquals("descending: the window's high end comes first", hi, clipped.getQuick(0));
-                Assert.assertEquals(lo, clipped.getQuick(clipped.size() - 1));
+                // Relative to minValue, as above.
+                Assert.assertEquals(
+                        "descending: the window's high end comes first",
+                        hi - lo, clipped.getQuick(0)
+                );
+                Assert.assertEquals(0, clipped.getQuick(clipped.size() - 1));
             }
         });
     }
@@ -672,8 +676,11 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                         all.size() - 2,
                         clipped.size()
                 );
-                Assert.assertEquals(lo, clipped.getQuick(0));
-                Assert.assertEquals(hi, clipped.getQuick(clipped.size() - 1));
+                // Row ids come back RELATIVE to minValue -- the contract
+                // IndexReader.getCursor states and what the native readers do.
+                // So the window's own lower bound is emitted as 0.
+                Assert.assertEquals(0, clipped.getQuick(0));
+                Assert.assertEquals(hi - lo, clipped.getQuick(clipped.size() - 1));
             }
         });
     }

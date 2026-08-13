@@ -170,10 +170,19 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             return false;
         }
 
+        /**
+         * Row ids are returned RELATIVE to {@code minValue}, which is the
+         * contract {@code IndexReader.getCursor} states and what the native
+         * readers do. Returning the absolute id agrees with the native reader
+         * only when {@code minValue} is 0 -- true of a single-partition query
+         * and false of every page frame that starts mid-partition, so it is
+         * invisible to any test that does not compare the two readers over a
+         * window with a non-zero lower bound.
+         */
         @Override
         public long next() {
             hasNext = false;
-            return next;
+            return next - minValue;
         }
 
         /**
@@ -188,6 +197,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             }
             return -1;
         }
+
 
         private boolean decodeCurrentGroup() {
             while (rg >= rgLo) {
