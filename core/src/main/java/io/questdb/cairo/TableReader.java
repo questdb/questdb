@@ -71,6 +71,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // checkPostingIndexIsReadable's memo, in two words of the slot that were
+    // otherwise unused (the slot is 8 longs and six were spoken for). It records
+    // ONLY the "this partition's resolved _pm footer names no covering index at
+    // all" answer, and only for the mapping and committed parquet size it was
+    // computed from -- see the method for why those two identify the answer.
+    // -1 in the _pm word means "no memo".
+    private static final int PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE = PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -922,10 +930,53 @@ public class TableReader implements Closeable, SymbolTableSource {
      * {@code _pm} has already had its footer resolved, and one whose {@code _pm}
      * is missing or corrupt failed to open earlier with the same verdict.
      * <p>
-     * Reachable only for a POSTING-indexed column of a parquet partition, so
-     * the common path costs two comparisons. Remove this when the parquet-form
-     * reader lands; until then it is the point where the writer's form and the
-     * reader's expectation meet.
+     * Reachable only for a POSTING-indexed column of a parquet partition, so a
+     * native partition costs two comparisons. A parquet one used to cost a full
+     * {@code _pm} CRC32 plus three JNI crossings on EVERY call --
+     * {@code resolveFooter} re-verifies the checksum because {@code of()} resets
+     * {@code checksumVerified}, then the covering-section read and the
+     * {@code clear()} each cross again -- and {@code getIndexReader} is called
+     * per page frame, per column, and per KEY by the covering factory. Measured
+     * at 9.8 us per call on an 8-partition table whose {@code _pm} files were
+     * 7,000 B, i.e. the cost of the CRC over the whole {@code _pm} prefix, on a
+     * shape the DEFAULT {@code native} format serves today (native sidecars
+     * hard-linked into a parquet partition directory).
+     * <p>
+     * So the empty answer is memoised per partition, in two words of the
+     * partition's {@code openPartitionInfo} slot, keyed on the two values the
+     * answer is a function of: the size of the {@code _pm} mapping this reader
+     * holds, and the committed {@code data.parquet} size the footer is resolved
+     * for. Both are read here anyway. Why that key is the whole key:
+     * <ul>
+     *     <li>The bytes come from this reader's OWN mapping, never a fresh open.
+     *     A remap goes through {@code openParquetMetadata}, which sizes the map
+     *     from the {@code _pm} header; a token publish or an update-mode commit
+     *     appends a footer and patches that header, so the mapped size moves and
+     *     the memo misses. A reader that has NOT remapped is entitled to its old
+     *     footer, which is exactly what the memo describes.</li>
+     *     <li>The resolved footer is selected by the committed parquet size, so
+     *     that value is part of the key rather than assumed constant.</li>
+     *     <li>Slot blocks move as units ({@code insert} / {@code removeIndexBlock}
+     *     shift whole {@code PARTITIONS_SLOT_SIZE} blocks), so a memo cannot be
+     *     read against a different partition. Both words are initialised to -1
+     *     wherever a block is created, so a block never inherits one.</li>
+     * </ul>
+     * The one thing that would break it is a {@code _pm} rewritten to exactly
+     * its previous length with different covering entries for the same parquet
+     * size. No such path exists: appends grow the file, and there is no
+     * {@code _pm} compaction (see {@code ParquetMetaFileReader.resolvePrevFooter},
+     * which carries the same obligation for the orphan sweep). Whoever writes one
+     * must invalidate this memo.
+     * <p>
+     * Only the EMPTY section is memoised, which is the case this is about: the
+     * default format never seals a parquet-form index, so the section is empty
+     * and every call is a hit. A non-empty section is per-column and the column
+     * it names throws, so caching it would buy nothing.
+     * <p>
+     * Remove this when the parquet-form reader lands; until then it is the point
+     * where the writer's form and the reader's expectation meet. Phase 2C Task 2
+     * replaces this memo with the per-(partition, column) form cache the
+     * dispatch needs, resolved at partition-open time.
      */
     private void checkPostingIndexIsReadable(int partitionIndex, int columnIndex) {
         if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
@@ -953,20 +1004,30 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
                     .put(']');
         }
+        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+        final int slotOffset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        if (openPartitionInfo.getQuick(slotOffset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE) == fileSize
+                && openPartitionInfo.getQuick(slotOffset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE) == parquetFileSize) {
+            // Memo hit: this mapping, resolved for this parquet size, names no
+            // covering index for ANY column, so no column of it can be refused.
+            return;
+        }
         final int writerIndex = metadata.getWriterIndex(columnIndex);
         long indexTxn = -1;
+        int coveringCount = -1;
         try {
             parquetMetaReader.of(addr, fileSize);
-            if (!parquetMetaReader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
+            if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
                 throw CairoException.critical(0)
                         .put("could not resolve the parquet metadata footer of a partition carrying a posting index [table=")
                         .put(tableToken.getTableName())
                         .put(", column=").put(metadata.getColumnName(columnIndex))
-                        .put(", parquetFileSize=").put(txFile.getPartitionParquetFileSize(partitionIndex))
+                        .put(", parquetFileSize=").put(parquetFileSize)
                         .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
                         .put(']');
             }
-            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+            coveringCount = parquetMetaReader.getCoveringIndexCount();
+            for (int i = 0; i < coveringCount; i++) {
                 if (parquetMetaReader.getCoveringIndexColumnId(i) == writerIndex) {
                     indexTxn = parquetMetaReader.getCoveringIndexTxn(i);
                     break;
@@ -974,6 +1035,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         } finally {
             parquetMetaReader.clear();
+        }
+        if (coveringCount == 0) {
+            // Memoised only for the empty section -- the answer that is the same
+            // for every column of the partition. A non-empty section is left
+            // uncached: it is per-column, and the column it names throws, so it
+            // is not a path worth caching.
+            openPartitionInfo.setQuick(slotOffset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE, fileSize);
+            openPartitionInfo.setQuick(slotOffset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE, parquetFileSize);
         }
         if (indexTxn < 0) {
             return;
@@ -1482,6 +1551,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE, -1);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE, -1);
         }
         return openPartitionInfo;
     }
@@ -1510,6 +1581,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        // The block is inserted by shifting the ones above it up, so without
+        // these two the new partition would inherit its neighbour's memo.
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_META_SIZE, -1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PIDX_PROBE_PARQUET_SIZE, -1);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();

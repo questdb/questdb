@@ -1975,6 +1975,71 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The hazard the refusal probe's per-partition memo introduces.
+     * {@code checkPostingIndexIsReadable} caches "this partition's {@code _pm}
+     * names no covering index" against the size of the mapping it read and the
+     * committed {@code data.parquet} size, because otherwise every
+     * {@code getIndexReader} call -- per page frame, per column and per KEY --
+     * pays a full {@code _pm} CRC32 plus three JNI crossings, on the DEFAULT
+     * format.
+     * <p>
+     * A memo that outlived the mapping it describes would be a silent wrong
+     * answer, not an error: the read would be served by the native reader off a
+     * chain with no visible generation, i.e. answered "no keys, no rows" instead
+     * of refused.
+     * <p>
+     * It must therefore be the SAME reader instance on both sides of the
+     * publish, which is why this drives {@code TableReader} directly rather than
+     * running two queries. Two queries do not test the memo at all: the DDL
+     * between them evicts the pooled reader, and the second query gets a fresh
+     * {@code openPartitionInfo} with no memo in it -- that shape passes even with
+     * the memo's key removed, which is how this test was first written and how
+     * the negative control caught it.
+     */
+    @Test
+    public void testTheRefusalProbeIsNotSuppressedByAnEarlierNativeFormAnswer() throws Exception {
+        assertMemoryLeak(() -> {
+            // Default format: the seal is native and its sidecars are linked
+            // into the parquet partition directory, so the _pm names no covering
+            // index and the probe memoises exactly that.
+            createIndexedSparseKeyTable();
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                final long mappedSize = reader.getParquetMetadataSize(0);
+                Assert.assertTrue("the reader must hold a _pm mapping", mappedSize > 0);
+                final int symColumnIndex = reader.getMetadata().getColumnIndex("sym");
+                // Answers, and in answering populates the memo.
+                Assert.assertNotNull(reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD));
+
+                // Re-seal the same partition in parquet form. A token-only
+                // append: the partition directory, its name txn, its row count
+                // and its data.parquet size are all unchanged, so the _pm's own
+                // growth is the only thing that can invalidate the memo.
+                node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                drainWalQueue();
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+
+                Assert.assertTrue("the reader must have something to reload", reader.reload());
+                Assert.assertTrue(reader.openPartition(0) > 0);
+                Assert.assertNotEquals(
+                        "the fixture must move the mapped _pm size, or the memo's key is not exercised",
+                        mappedSize,
+                        reader.getParquetMetadataSize(0)
+                );
+
+                try {
+                    reader.getIndexReader(0, symColumnIndex, IndexReader.DIR_FORWARD);
+                    Assert.fail("the parquet-form posting index must be refused, memo or no memo");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "has no reader yet");
+                }
+            }
+        });
+    }
+
     @Test
     public void testPostingIndexReadIsRefusedWhileTheParquetFormatIsSelected() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
