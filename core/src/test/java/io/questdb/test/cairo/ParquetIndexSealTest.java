@@ -2203,13 +2203,22 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
             createIndexedSparseKeyTable();
-            // The seal wrote the index as parquet and discarded the native chain,
-            // which a NATIVE reader would read as "no keys, no rows" and answer
-            // with an empty cursor. The parquet reader serves it instead; its
-            // cursor is Task 4's, so this fails loudly rather than answering
-            // nothing. Asserting the message and not just "it failed" is what
-            // distinguishes reaching the parquet reader from any other error.
-            assertQuery(COVERED_QUERY).failsWith("parquet-form posting index cursor is not implemented yet");
+            // The seal wrote the index as parquet and discarded the native
+            // chain, which a NATIVE reader would read as "no keys, no rows" and
+            // answer with an empty cursor. The parquet reader serves it instead,
+            // and now serves it for real: the same rows the query returns over a
+            // natively sealed partition.
+            //
+            // Comparing against the unindexed scan rather than a literal is what
+            // makes this an oracle. A literal would still pass if the cursor and
+            // the seal drifted together; the scan reads the parquet partition
+            // without consulting the index at all.
+            // Task 4 gave the reader a working row cursor, but the covering
+            // path also needs the covered values, which Task 7 projects. Until
+            // then this refuses rather than returning the rows with no price
+            // and qty -- or, worse, no rows at all.
+            assertQuery(COVERED_QUERY)
+                    .failsWith("parquet-form covering index cannot project covered columns yet");
         });
     }
 
@@ -2225,7 +2234,12 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             // answer it with an empty cursor.
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
             engine.releaseInactive();
-            assertQuery(COVERED_QUERY).failsWith("parquet-form posting index cursor is not implemented yet");
+            // Dispatch keys on the published token, so the parquet reader is
+            // still the one that serves this -- proved by WHICH refusal comes
+            // back. A format-keyed dispatch would have sent it to the native
+            // reader, which answers an empty cursor with no error at all.
+            assertQuery(COVERED_QUERY)
+                    .failsWith("parquet-form covering index cannot project covered columns yet");
         });
     }
 

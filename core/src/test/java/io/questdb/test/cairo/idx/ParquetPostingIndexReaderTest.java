@@ -32,7 +32,9 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.ParquetPostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexReader;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -203,21 +205,131 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
      * this test is what makes an unfinished 2C impossible to ship silently.
      */
     @Test
-    public void testTheParquetCursorRefusesLoudlyRatherThanAnsweringEmpty() throws Exception {
+    public void testTheBackwardCursorRefusesLoudlyRatherThanAnsweringEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_BACKWARD);
+                try {
+                    indexReader.getCursor(1, 0, Long.MAX_VALUE);
+                    Assert.fail("the backward cursor must throw until Task 6 implements it");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "parquet-form posting index cursor is not implemented for this direction"
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * The forward cursor's postings must agree with the rows the table actually
+     * holds -- same count, and every row id in ascending order.
+     * <p>
+     * The count is compared against a SQL aggregate over the same symbol rather
+     * than a literal, so the assertion cannot drift from the fixture. Ascending
+     * order is asserted rather than assumed: the emitted sequence depends on the
+     * seal writing postings ascending within a key AND on the cursor visiting
+     * row groups in ascending order, and a regression in either would be
+     * invisible to a count.
+     */
+    @Test
+    public void testTheForwardCursorReturnsAKeysPostingsInAscendingOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            long count = 0;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s7") + 1; // +1: key 0 is NULL
+                final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+                long previous = -1;
+                try (RowCursor cursor = indexReader.getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (cursor.hasNext()) {
+                        final long rowId = cursor.next();
+                        Assert.assertTrue(
+                                "row ids must ascend, got " + rowId + " after " + previous,
+                                rowId > previous
+                        );
+                        previous = rowId;
+                        count++;
+                    }
+                }
+            }
+            // Outside the reader's scope: the assertion opens its own, and a
+            // held one leaves the table behind on pool shutdown.
+            Assert.assertTrue("the key must have postings", count > 0);
+            assertQuery("select count() from x where sym = 's7' and ts in '" + INDEXED_PARTITION + "'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + count + "\n");
+        });
+    }
+
+    /**
+     * A key the directory does not resolve is an ordinary answer, not an error:
+     * a query for a symbol this partition never carried must return no rows.
+     * <p>
+     * The key used is above {@code KEY_SPACE_SIZE}, so it is absent by the
+     * directory's own bound rather than by occupancy -- the one absence that
+     * needs no row-group decode to establish.
+     */
+    @Test
+    public void testAnAbsentKeyReturnsAnEmptyCursorRatherThanThrowing() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedParquetTable("x");
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                 final int columnIndex = reader.getMetadata().getColumnIndex("sym");
                 final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
-                try {
-                    indexReader.getCursor(1, 0, Long.MAX_VALUE);
-                    Assert.fail("the placeholder cursor must throw");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(
-                            e.getFlyweightMessage(),
-                            "parquet-form posting index cursor is not implemented yet"
-                    );
+                try (RowCursor cursor = indexReader.getCursor(indexReader.getKeyCount() + 7, 0, Long.MAX_VALUE)) {
+                    Assert.assertFalse(cursor.hasNext());
                 }
+            }
+        });
+    }
+
+    /**
+     * The row-id bound is the caller's page-frame window and does not align with
+     * row-group boundaries, so the cursor must clip within a decoded group as
+     * well as between groups.
+     * <p>
+     * The window is taken from the key's own postings -- second to
+     * second-to-last -- so it necessarily cuts inside whatever groups the key
+     * spans, whatever the fixture's row-group size turns out to be.
+     */
+    @Test
+    public void testTheForwardCursorClipsToTheRowIdWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s7") + 1;
+                final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+
+                final LongList all = new LongList();
+                try (RowCursor cursor = indexReader.getCursor(key, 0, Long.MAX_VALUE)) {
+                    while (cursor.hasNext()) {
+                        all.add(cursor.next());
+                    }
+                }
+                Assert.assertTrue("the fixture needs at least four postings to clip both ends", all.size() >= 4);
+
+                final long lo = all.getQuick(1);
+                final long hi = all.getQuick(all.size() - 2);
+                final LongList clipped = new LongList();
+                try (RowCursor cursor = indexReader.getCursor(key, lo, hi)) {
+                    while (cursor.hasNext()) {
+                        clipped.add(cursor.next());
+                    }
+                }
+                Assert.assertEquals(
+                        "the window must drop exactly the first and last posting",
+                        all.size() - 2,
+                        clipped.size()
+                );
+                Assert.assertEquals(lo, clipped.getQuick(0));
+                Assert.assertEquals(hi, clipped.getQuick(clipped.size() - 1));
             }
         });
     }

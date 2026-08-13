@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.IndexMetaFileWriter;
@@ -33,8 +34,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -66,13 +69,21 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     private static final Log LOG = LogFactory.getLog(AbstractParquetPostingIndexReader.class);
     protected final ParquetFileDecoder decoder = new ParquetFileDecoder();
     protected final IndexMetaFileReader imReader = new IndexMetaFileReader();
+    protected final DirectIntList projection = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT);
+    // keepClosed: a pooled reader is closed and rebound many times, and close()
+    // destroys the native buffers. Allocating eagerly here would leave every
+    // rebound reader with a destroyed pointer, which the decoder reports as
+    // "row group buffers pointer is null". reopen() before each decode is the
+    // pattern ParquetTimestampFinder and ReadParquetRecordCursor use.
+    protected final RowGroupBuffers rowGroupBuffers =
+            new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     protected long columnTop;
     protected long indexTxn = -1;
     protected long partitionTimestamp;
     protected long pidxAddr;
     protected long pidxSize;
     private long columnNameTxn = -1;
-    private CharSequence columnName;
+    protected CharSequence columnName;
     private FilesFacade ff;
     private boolean frozen;
     private long imFileSize;
@@ -84,6 +95,8 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     public void close() {
         open = false;
         Misc.free(decoder);
+        Misc.free(rowGroupBuffers);
+        Misc.free(projection);
         if (pidxAddr != 0) {
             ff.munmap(pidxAddr, pidxSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxAddr = 0;
@@ -92,6 +105,40 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         // Releases the _im mapping this reader owns; safe on a reader that was
         // never bound and safe to repeat.
         imReader.clear();
+    }
+
+    /**
+     * Projects exactly the two synthetic columns every index parquet carries:
+     * {@code key_id} as INT and {@code row_id} as LONG. Their positions come
+     * from the {@code _im} header rather than being assumed, because the seal
+     * is free to move them and the header is what names them.
+     * <p>
+     * Rebuilt on each call rather than cached because {@code DirectIntList} is
+     * cheap to refill and a stale projection would decode the wrong columns
+     * after a rebind.
+     */
+    protected DirectIntList decodeProjection() {
+        projection.clear();
+        projection.add(imReader.getKeyIdColumn());
+        projection.add(ColumnType.INT);
+        projection.add(imReader.getRowIdColumn());
+        projection.add(ColumnType.LONG);
+        return projection;
+    }
+
+    /**
+     * Resolves {@code key} to its inclusive index row-group run through the
+     * {@code _im} directory. Pruning level 1: exact, and it reads no byte of
+     * the index parquet.
+     * <p>
+     * The directory answers "which row groups COULD hold k", not "does k
+     * exist": the key space is dense and occupancy sparse, so a key falling
+     * inside a packed group's key range returns a range whether or not it has
+     * postings. Confirming absence costs one row-group decode, which the
+     * cursor performs anyway.
+     */
+    protected long rowGroupRangeForKey(int key) {
+        return imReader.getRowGroupRangeForKey(key);
     }
 
     /**
@@ -117,11 +164,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
-        // Temporary, and deliberately not an empty cursor: an empty one would
-        // answer every indexed query over a parquet-sealed partition with no
-        // rows and no error. Phase 2C Task 4 replaces this.
+        // Direction is the subclass's business: the forward reader overrides
+        // this, and the backward one still refuses until Task 6. Leaving the
+        // base throwing rather than defaulting to ascending keeps a backward
+        // caller from silently receiving forward order.
         throw CairoException.critical(0)
-                .put("parquet-form posting index cursor is not implemented yet [column=")
+                .put("parquet-form posting index cursor is not implemented for this direction [column=")
                 .put(columnName).put(", indexTxn=").put(indexTxn).put(']');
     }
 
