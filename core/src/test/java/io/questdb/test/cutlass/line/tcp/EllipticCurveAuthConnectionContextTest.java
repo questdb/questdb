@@ -489,6 +489,8 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         try {
             capture.start();
             runInAuthContext(() -> {
+                final HealthMetrics healthMetrics = lineTcpConfiguration.getMetrics().healthMetrics();
+                final long unhandledErrorsBefore = healthMetrics.unhandledErrorsCount();
                 recvCharset = StandardCharsets.ISO_8859_1;
                 recvBuffer = new String(
                         new byte[]{'@', 0, 13, 0, 1, (byte) 0xC0, (byte) 0xA8, '8', 1, '\n'},
@@ -503,6 +505,11 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 capture.waitForRegex("authentication failed, key id is not valid UTF-8 \\[keyId=|cannot convert invalid UTF-8 sequence to UTF-16");
                 capture.assertLogged("authentication failed, key id is not valid UTF-8 [keyId=");
                 capture.assertNotLogged("cannot convert invalid UTF-8 sequence to UTF-16");
+                // a client that speaks the wrong protocol is not a server fault. The counter this
+                // reads is monotonic in production, and the pessimistic health check fails /status
+                // with HTTP 500 for as long as it is above zero, so a single probe incrementing it
+                // here would take the instance out of service permanently
+                Assert.assertEquals(unhandledErrorsBefore, healthMetrics.unhandledErrorsCount());
             });
         } finally {
             capture.stop();
@@ -517,6 +524,8 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         try {
             capture.start();
             runInAuthContext(() -> {
+                final HealthMetrics healthMetrics = lineTcpConfiguration.getMetrics().healthMetrics();
+                final long unhandledErrorsBefore = healthMetrics.unhandledErrorsCount();
                 send(AUTH_KEY_ID1 + "\n", false);
                 Assert.assertNotNull(readChallenge(false));
                 // 5 base64 chars, so length % 4 == 1, which Chars.base64Decode rejects
@@ -529,6 +538,9 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 capture.waitForRegex("[EC] i\\.q\\.c\\.l\\.t\\.LineTcpConnectionContext \\[\\d+] authentication failed \\[error=invalid base64 encoding \\[string=abcde], errno=-1]");
                 capture.assertLoggedRE("E i\\.q\\.c\\.l\\.t\\.LineTcpConnectionContext \\[\\d+] authentication failed \\[error=invalid base64 encoding \\[string=abcde], errno=-1]");
                 capture.assertNotLogged("C i.q.c.l.t.LineTcpConnectionContext");
+                // ...and for the same reason it must not move the health counter either, which the
+                // CRITICAL assertion above does not cover on its own
+                Assert.assertEquals(unhandledErrorsBefore, healthMetrics.unhandledErrorsCount());
             });
         } finally {
             capture.stop();
