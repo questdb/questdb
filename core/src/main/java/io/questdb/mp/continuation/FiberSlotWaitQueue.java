@@ -64,7 +64,7 @@ public final class FiberSlotWaitQueue {
 
     public boolean transfer(int slot) {
         while (waiterCount != 0) {
-            FiberSlotWaitRegistration registration = null;
+            FiberSlotWaitRegistration registration;
             synchronized (this) {
                 while ((registration = head) != null) {
                     if (registration.markGranted(slot)) {
