@@ -276,6 +276,7 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isLastSealIncremental;
     private boolean isLastSealSnapshotDeferred;
     private boolean isLastSealStreaming;
+    private boolean isLastSidecarInfoHeaderWritten;
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
@@ -540,6 +541,7 @@ public class PostingIndexWriter implements IndexWriter {
                 isLastSealIncremental = false;
                 isLastSealSnapshotDeferred = false;
                 isLastRollbackStreaming = false;
+                isLastSidecarInfoHeaderWritten = false;
                 activeKeyCount = 0;
                 coverCount = 0;
                 // Drop the cover-extent cache so a pooled reopen for a different
@@ -637,8 +639,8 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    // Sync order is .pv before .pk: a torn write must never leave the chain head
-    // (keyMem) pointing at unsynced gen bytes in valueMem.
+    // Sync order is .pv and covering sidecars before .pk: a torn write must
+    // never leave the chain head pointing at unsynced generation or cover data.
     //
     // The coverCount == 0 precondition holds on the covering rebuild path
     // (TableWriter.sealPostingIndexForPartition) only because
@@ -1206,6 +1208,16 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public boolean isLastSealStreamingForTesting() {
         return isLastSealStreaming;
+    }
+
+    /**
+     * Whether the most recent .pci open wrote its header. Tests use this to
+     * distinguish the identical-header fast path from a redundant
+     * rewrite, which is not observable from the unchanged file contents.
+     */
+    @TestOnly
+    public boolean isLastSidecarInfoHeaderWrittenForTesting() {
+        return isLastSidecarInfoHeaderWritten;
     }
 
     @Override
@@ -1993,11 +2005,20 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void sync(boolean async) {
         checkNotPoisoned();
-        // .pv before .pk: a torn write must never leave the chain head (keyMem)
-        // pointing at unsynced gen bytes in valueMem.
+        // Data before metadata: .pv and every covering sidecar must be durable
+        // before .pk can make their generation and end offsets durable.
         flushAllPending();
         if (valueMem.isOpen()) {
             valueMem.sync(async);
+        }
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            MemoryMARW mem = sidecarMems.getQuick(c);
+            if (mem != null && mem.isOpen()) {
+                mem.sync(async);
+            }
+        }
+        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+            sidecarInfoMem.sync(async);
         }
         if (keyMem.isOpen()) {
             keyMem.sync(async);
@@ -4166,25 +4187,8 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int plen = path.size();
         try {
-            // Write .pci info file
-            sidecarInfoMem = Vm.getCMARWInstance();
-            sidecarInfoMem.of(
-                    ff,
-                    PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn),
-                    configuration.getDataIndexValueAppendPageSize(),
-                    0L,
-                    MemoryTag.MMAP_INDEX_WRITER
-            );
+            openSidecarInfoFile(path, name, postingColumnNameTxn);
             path.trimTo(plen);
-            // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
-            // Per-cover-column type is intentionally NOT stored — readers resolve types
-            // from the live RecordMetadata so an ALTER TYPE on a covered column never
-            // produces a stale-snapshot mismatch.
-            sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
-            sidecarInfoMem.putInt(coverCount);
-            for (int c = 0; c < coverCount; c++) {
-                sidecarInfoMem.putInt(coveredColumnIndices.getQuick(c));
-            }
 
             // Open .pc0, .pc1, ... files. Each cover c uses its own
             // coveredColumnNameTxn from _cv.d so ALTER TYPE on a covered
@@ -4220,12 +4224,11 @@ public class PostingIndexWriter implements IndexWriter {
     /**
      * Opens sidecar files for append, preserving existing data. Used by
      * writeSidecarGenData to add per-gen raw blocks after seal's stride-indexed
-     * data. Creates files if they don't exist, writes .pci header only when new.
+     * data. Creates files if they don't exist and repairs mismatched .pci metadata.
      * <p>
-     * When reopening existing files, the .pci header is preserved as-is. This is
-     * safe because the covered column configuration (INCLUDE clause) is part of
-     * the table schema and cannot change within a column version — schema changes
-     * create new file versions via sealTxn bump.
+     * The covered column configuration (INCLUDE clause) is part of the table schema
+     * and cannot change within a column version, so any mismatch is corruption and
+     * the expected header can be restored before the generation is appended.
      */
     private void openSidecarFilesForAppend(Path path, CharSequence name, long postingColumnNameTxn, long sealTxn) {
         if (coverCount <= 0) {
@@ -4233,27 +4236,8 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int plen = path.size();
         try {
-            LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
-            boolean isNew = !ff.exists(pciFile);
-            sidecarInfoMem = Vm.getCMARWInstance();
-            long pciSize = isNew ? 0L : ff.length(pciFile);
-            if (pciSize < 0) {
-                pciSize = 0L; // I/O error reading length — treat as new file
-            }
-            sidecarInfoMem.of(ff, pciFile,
-                    configuration.getDataIndexValueAppendPageSize(),
-                    pciSize,
-                    MemoryTag.MMAP_INDEX_WRITER);
+            openSidecarInfoFile(path, name, postingColumnNameTxn);
             path.trimTo(plen);
-            if (isNew) {
-                // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
-                // No per-cover-column type — see openSidecarFiles for rationale.
-                sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
-                sidecarInfoMem.putInt(coverCount);
-                for (int c = 0; c < coverCount; c++) {
-                    sidecarInfoMem.putInt(coveredColumnIndices.getQuick(c));
-                }
-            }
 
             // Each cover c's filename uses the covered column's own
             // coveredColumnNameTxn from _cv.d (per Phase B). Tombstoned
@@ -4283,6 +4267,65 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    private void openSidecarInfoFile(
+            Path path,
+            CharSequence name,
+            long postingColumnNameTxn
+    ) {
+        isLastSidecarInfoHeaderWritten = false;
+        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, postingColumnNameTxn);
+        boolean exists = ff.exists(pciFile);
+        long existingSize = exists ? ff.length(pciFile) : 0L;
+        if (exists && existingSize < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not read posting index cover info file length [file=").put(pciFile)
+                    .put(']');
+        }
+
+        // .pci is a tiny, unsuffixed metadata file shared by every seal of a
+        // posting-column version. Readers open it with a length-then-mmap
+        // sequence, so its published physical size must never shrink. Mapping
+        // it with the data-index append page (1 MiB in tests) and then closing
+        // after the small header used to shrink it to Files.PAGE_SIZE (64 KiB
+        // on Windows), racing readers that had observed the transient 1 MiB.
+        // Map only the page-rounded payload and preserve any larger existing
+        // file. Leave the append pointer at that stable size so MemoryCMARW's
+        // truncating close cannot shrink it back to the logical header length.
+        long payloadSize = 2L * Integer.BYTES + (long) coverCount * Integer.BYTES;
+        long stableFileSize = Files.ceilPageSize(Math.max(payloadSize, existingSize));
+        sidecarInfoMem = Vm.getCMARWInstance();
+        sidecarInfoMem.of(
+                ff,
+                pciFile,
+                Files.PAGE_SIZE,
+                stableFileSize,
+                MemoryTag.MMAP_INDEX_WRITER
+        );
+
+        boolean writeHeader = !exists || existingSize < payloadSize;
+        if (!writeHeader) {
+            writeHeader = sidecarInfoMem.getInt(0) != PostingIndexUtils.COVER_INFO_MAGIC
+                    || sidecarInfoMem.getInt(Integer.BYTES) != coverCount;
+            for (int c = 0; c < coverCount && !writeHeader; c++) {
+                writeHeader = sidecarInfoMem.getInt(2L * Integer.BYTES + (long) c * Integer.BYTES)
+                        != coveredColumnIndices.getQuick(c);
+            }
+        }
+        if (writeHeader) {
+            isLastSidecarInfoHeaderWritten = true;
+            sidecarInfoMem.jumpTo(0);
+            // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
+            // Per-cover-column type is intentionally NOT stored — readers resolve
+            // types from live RecordMetadata so ALTER TYPE cannot leave stale types.
+            sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
+            sidecarInfoMem.putInt(coverCount);
+            for (int c = 0; c < coverCount; c++) {
+                sidecarInfoMem.putInt(coveredColumnIndices.getQuick(c));
+            }
+        }
+        sidecarInfoMem.jumpTo(stableFileSize);
     }
 
     /**
