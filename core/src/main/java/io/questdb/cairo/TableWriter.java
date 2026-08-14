@@ -6759,7 +6759,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!isEmptyTable()
                     && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
                     && !isLastPartitionParquet()) {
-                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+                openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount(txWriter.getTransientRowCount()));
             }
 
             // Data is written out successfully, however, we can still fail to set append position, for
@@ -6768,9 +6768,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
             try {
                 // Set append position if this commit did not result in full table truncate
-                // which is possible with replace commits.
-                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionAppendBlocked()) {
-                    setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+                // which is possible with replace commits. A COMPOSITE partition takes a position too -
+                // it holds native files, and leaving them where the commit left them is what makes the
+                // close truncate a relocated piece away - but that position is E, not the live row count.
+                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
+                    setAppendPosition(getLastPartitionFileRowCount(txWriter.getTransientRowCount()), !metadata.isWalEnabled());
                 }
             } catch (Throwable e) {
                 LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
@@ -6875,6 +6877,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             deferredPostingSealPurgeTaskPool = new ObjectStackPool<>(PostingSealPurgeTask::new, 16);
         }
         return deferredPostingSealPurgeTaskPool;
+    }
+
+    /**
+     * Lifts a caller's own row count to the file row the last partition's column files END at, which is
+     * where the append memories have to be positioned: a close truncates each column from there, so
+     * anything the position leaves behind is lost.
+     * <p>
+     * For an ordinary partition the caller's count already IS that row, and this returns it unchanged - each
+     * site knows whether the WAL lag belongs in it, and this must not decide that for them. A COMPOSITE
+     * partition's files run to {@code E} instead, and a merge that relocated a piece to the tail put live
+     * rows between the two, so positioning at the caller's count would truncate them away.
+     */
+    private long getLastPartitionFileRowCount(long rowCount) {
+        final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+        if (lastPartitionIndex < 0 || !txWriter.hasGeometryChain(lastPartitionIndex)) {
+            return rowCount;
+        }
+        return Math.max(rowCount, getGeometry().getE(lastPartitionIndex));
     }
 
     private long getO3RowCount0() {
@@ -8231,7 +8251,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (!isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
+                // A COMPOSITE partition is excluded for the same reason a parquet one is: every branch below
+                // positions the append memories at the partition's LIVE row count, and a composite partition's
+                // files run to E, with live rows in between. finishO3Commit repositions it at E once txWriter
+                // carries the reference. Read the reference off the sink rather than txWriter, which does not
+                // learn it until further down this loop, so a partition that BECAME composite in this commit
+                // would otherwise be missed.
+                final boolean isComposite = geometryRef != NO_GEOMETRY_REF
+                        || (partitionIndexRaw > -1 && txWriter.hasGeometryChainByRawIndex(partitionIndexRaw));
+
+                if (!isParquet && !isComposite && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(true);
@@ -8862,8 +8891,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionParquet()) {
             return;
         }
-        openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
-        setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
+        final long rowCount = getLastPartitionFileRowCount(txWriter.getTransientRowCount() + txWriter.getLagRowCount());
+        openPartition(ts, rowCount);
+        setAppendPosition(rowCount, false);
     }
 
     private void openNewColumnFiles(CharSequence name, int columnType, byte indexType, int indexValueBlockCapacity) {

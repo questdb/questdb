@@ -45,7 +45,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
 | 12 | Var-size column merge | **BUILT**, all four var types |
 | 13 | Index maintenance for merged rows | **BUILT**, BITMAP; read path is piece-aware |
-| 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet** - see below |
+| 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet**, but still POSITIONED at `E` - see below |
 | 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
 | 17 | `ALTER TABLE ... ALTER COLUMN TYPE` over a composite partition | **BUILT** - the conversion spans `E` |
@@ -245,7 +245,7 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. **24 pass, 12 fail, and NOTHING is
+there that does not turn on a replace commit or on compaction. **26 pass, 10 fail, and NOTHING is
 `@Ignore`d**: the suite states the truth about the feature rather than hiding it, so the red list IS the
 to-do list. `O3CompositePartitionTest` adds a column-top merge case and is fully green, 4 of 4.
 
@@ -254,10 +254,10 @@ The rest of the `io.questdb.test.cairo.o3` package - 365 further tests across 11
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
 this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
-None of the 12 crashes any more. Three of them used to take the JVM down with a SIGSEGV - which also took
-every other test in the fork with it - and the reader-mapping and page-frame fixes turned all three into
-ordinary assertion failures. A whole-class run therefore reports honestly now; before, it reported nothing
-at all. Per-method runs are still the way to read the suite while this many are red:
+All 10 are ordinary assertion failures. Three of them used to take the JVM down with a SIGSEGV - which also
+took every other test in the fork with it - and two more read past a mapping. A whole-class run therefore
+reports honestly now; before, it reported nothing at all. Per-method runs are still the way to read the
+suite while this many are red:
 
 ```
 for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //'); do
@@ -265,7 +265,7 @@ for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //');
 done
 ```
 
-### 14. The ACTIVE partition is written at its LIVE row count, not at `E` - LARGELY FIXED
+### 14. The ACTIVE partition is written at its LIVE row count, not at `E` - FIXED
 
 Every in-place write into the last partition takes its file position from
 `txWriter.getTransientRowCount()`, the partition's LIVE row count. A composite partition's files run to
@@ -285,17 +285,35 @@ A composite last partition now refuses those writes exactly as a PARQUET one doe
   for as long as the flag is set.
 - **the per-partition `append` flag** in the O3 fan-out, beside `!isParquet`. `srcDataMax` is the live row
   count and would be the append's file row.
-- plus the drop-partition reopen, the end-of-O3-commit `setAppendPosition`, and the column-file reopen
-  after a metadata change.
+- plus the drop-partition reopen and the column-file reopen after a metadata change.
 
 **`openLastPartitionAndSetAppendPosition` and `txWriter.initLastPartition` are deliberately NOT blocked.**
 Mirroring parquet there loses rows: `testMergeAppendsActivePartition` regressed, because a partition that
-is never opened leaves the writer's own state stale. The truncation-on-close that motivated blocking them
-no longer reproduces anyway.
+is never opened leaves the writer's own state stale.
 
-Two scenarios are still blocked behind narrower defects: a dedup commit of one timestamp reads past the
-mapping, and a second cut taken while the writer holds the partition open does the same. Both surface as
-"a fault occurred in an unsafe memory access operation" rather than as a wrong answer.
+**Blocking an append is not the same as refusing a POSITION**, and the two sites that conflated them were
+the last of this defect. A composite partition holds native files, so the writer maps them like any other -
+and every close truncates each column from wherever the append memories were left. Refusing to position
+them does not protect the files; it leaves them wherever the last commit put them, or at zero.
+
+- `openLastPartitionAndSetAppendPosition`, and the end-of-O3-commit pair in `finishO3Commit`, now position
+  at `getLastPartitionFileRowCount(...)`, which lifts the caller's own row count to `E` for a composite
+  partition and returns it untouched otherwise. It takes the count as an ARGUMENT: the constructor path
+  includes the WAL lag and `finishO3Commit` does not, and deciding that here regressed two `O3FailureTest`
+  lag scenarios.
+- The `o3ConsumePartitionUpdateSink` arm that positions the last partition is skipped for a composite one
+  entirely - all three of its branches speak the live row count - and `finishO3Commit` repositions it a
+  moment later. That arm has to read the geometry reference off the SINK rather than off `txWriter`, which
+  does not learn it until further down the same loop, so a partition that BECAME composite in this commit
+  would be missed.
+
+The end-of-commit `setAppendPosition` had been blocked outright, which is what left `finishO3Commit`'s
+reopen just above it running with no position at all: an active partition whose memories were closed
+mid-commit was reopened and then truncated to ZERO bytes on the next writer close.
+
+Both remaining scenarios turned green on this - `testMergeAppendedPieceSurvivesActivePartitionClose` and
+`testDedupCommitOfOneTimestampAppliesAsABlock`, the suite's last two "a fault occurred in an unsafe memory
+access operation" errors. The suite now reports failures only.
 
 ### 15. A merge that reads below a column top - FIXED
 
