@@ -31,7 +31,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -246,12 +245,6 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
      * it exists - which is what lets the top-aware kernels take the top as a single number instead of the
      * caller building a nulls-and-data image of the column first.
      */
-    @Ignore("The MERGE itself is done - it no longer refuses, the apply does not suspend, and the batch's"
-            + " own rows read back correctly. What is left is a READ: a windowed count over the merged"
-            + " piece returns 3080 where the window holds 280 rows, over-counting by exactly the untouched"
-            + " upper piece's 2880. An interval scan resolves its row range against the partition's"
-            + " timestamps, and a composite partition's file order is not timestamp order, so that"
-            + " resolution has to be per piece.")
     @Test
     public void testMergeReadsBelowAColumnTop() throws Exception {
         assertMemoryLeak(() -> {

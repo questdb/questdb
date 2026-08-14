@@ -243,14 +243,23 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. 15 run and pass; 21 carry an `@Ignore`
-naming the gap that blocks them, so the ignored list IS the to-do list and the suite stays runnable.
+there that does not turn on a replace commit or on compaction. **15 pass, 21 fail, and NOTHING is
+`@Ignore`d**: the suite states the truth about the feature rather than hiding it, so the red list IS the
+to-do list. `O3CompositePartitionTest` adds a column-top merge case, 2 of its 3 passing.
 
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
 this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
-The port is what found gaps 14 and 15. Three of the ignored tests do not merely fail, they take the JVM
-down with a SIGSEGV, which is why they are marked rather than left red.
+None of the 21 crashes any more. Three of them used to take the JVM down with a SIGSEGV - which also took
+every other test in the fork with it - and the reader-mapping and page-frame fixes turned all three into
+ordinary assertion failures. A whole-class run therefore reports honestly now; before, it reported nothing
+at all. Per-method runs are still the way to read the suite while this many are red:
+
+```
+for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //'); do
+  mvn -o -pl core -Dtest="O3PartitionPreSplitTest#$m" surefire:test
+done
+```
 
 ### 14. The ACTIVE partition is written at its LIVE row count, not at `E` - LARGELY FIXED
 

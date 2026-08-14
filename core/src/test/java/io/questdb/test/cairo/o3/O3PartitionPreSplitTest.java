@@ -42,7 +42,6 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -83,10 +82,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * surfaces that first - its jump asserts on a negative offset - while a var-size driver folds it to
      * zero, so one of each is added.
      */
-    @Ignore("Reaches the column-top merge gap: 'merge reads below a column top'. Three defects on the way"
-            + "there are fixed - the top recorded at the live row count, the frame cursors' null-column skip,"
-            + "and the negative append position - so what is left is the merge itself, which cannot yet write"
-            + "NULLs for rows sitting below a top.")
     @Test
     public void testAddColumnAfterMergeAppendRelocatedAPiece() throws Exception {
         assertMemoryLeak(() -> {
@@ -323,9 +318,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * The hot stride is rewritten at the shared files' tail, which leaves all three pieces - the two cold
      * ones either side of the stride and the relocated stride itself - reading the one set of files.
      */
-    @Ignore("ALTER COLUMN TYPE over a composite partition reads a var-size column at the wrong extent:"
-            + "AssertionError in VarcharTypeDriver.getDataVectorSize, reached through"
-            + "TableReader.openPartition0.")
     @Test
     public void testChangeColumnTypeOverPreSplitPieces() throws Exception {
         assertMemoryLeak(() -> {
@@ -382,8 +374,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * file's row 0. The next conversion of the same column would then map the source file from the lower
      * of them, reading far past the rows it holds.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testChangeColumnTypeTwiceOverALateColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -604,10 +594,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * the designated-timestamp covering sidecar built from it is no longer ascending - which the covering
      * compressor's linear-predictor encoder assumes.
      */
-    @Ignore("A rewrite parks a relocated piece above the last one, so ascending physical row ids step"
-            + "BACKWARDS in time at a piece boundary and the designated-timestamp covering sidecar built from"
-            + "the posting list is no longer ascending. The linear-predictor encoder assumes it is, and the ADD"
-            + "INDEX apply suspends the table.")
     @Test
     public void testCoveringIndexOverMergeAppendedPieceHasUnsortedTimestamps() throws Exception {
         assertMemoryLeak(() -> {
@@ -665,9 +651,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * Both shapes are here: the single row, and several rows at one timestamp that dedup must collapse
      * onto the last of them.
      */
-    @Ignore("Still faults on an unsafe memory access. The frame's fixed-size addressing is now proven in"
-            + "bounds - an OOB probe that fired before the reader-reload fix no longer fires - so the remaining"
-            + "read is elsewhere in that path and is not yet isolated.")
     @Test
     public void testDedupCommitOfOneTimestampAppliesAsABlock() throws Exception {
         assertMemoryLeak(() -> {
@@ -718,8 +701,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * its own column files and every pre-existing row has to survive the move - before and after a reader
      * reopen, and after a squash folds the appended tail back.
      */
-    @Ignore("Rows come back wrong around the batch boundary; the cause is not yet isolated, so this is a live"
-            + "lead rather than a known gap.")
     @Test
     public void testDedupDowngradeDoesNotStampMergeAppend() throws Exception {
         assertMemoryLeak(() -> {
@@ -778,9 +759,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * column reads NULL on both sides, and dedup must collapse each pair onto the incoming row without
      * changing the table's row count.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows. The"
-            + "apply suspends the table.")
     @Test
     public void testDedupKeyColumnAbsentFromCompositePieceReadsAllNull() throws Exception {
         assertMemoryLeak(() -> {
@@ -860,8 +838,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * the full merge instead: the shared column files grow by the piece's row count on each commit while
      * the table's contents never change.
      */
-    @Ignore("The dedup no-op fast path does not recognise a piece that starts above file row 0, so a fully"
-            + "duplicate commit rewrites the piece instead of writing nothing.")
     @Test
     public void testDedupNoopCommitDoesNotRewriteACompositePiece() throws Exception {
         assertMemoryLeak(() -> {
@@ -934,8 +910,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * a piece the first insert's cut created. If routing or dedup were piece-blind the table would end up
      * with both copies.
      */
-    @Ignore("Rows come back wrong around the batch boundary; the cause is not yet isolated, so this is a live"
-            + "lead rather than a known gap.")
     @Test
     public void testDedupTablePreSplitsAndStillDeduplicates() throws Exception {
         assertMemoryLeak(() -> {
@@ -997,15 +971,11 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * as the only one in the index, while the column data stays perfect: an indexed scan then silently
      * returns a subset.
      */
-    @Ignore("An index built over a composite partition covers one piece rather than the whole of [columnTop,"
-            + "E), so an indexed scan returns a subset. Cause not yet isolated.")
     @Test
     public void testIndexBuildCoversEveryPieceOfADirectoryBitmap() throws Exception {
         testIndexBuildCoversEveryPieceOfADirectory("BITMAP");
     }
 
-    @Ignore("An index built over a composite partition covers one piece rather than the whole of [columnTop,"
-            + "E), so an indexed scan returns a subset. Cause not yet isolated.")
     @Test
     public void testIndexBuildCoversEveryPieceOfADirectoryPosting() throws Exception {
         testIndexBuildCoversEveryPieceOfADirectory("POSTING");
@@ -1083,10 +1053,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * dispatched before a sibling that takes its base. Both writes go in as ONE transaction: a second
      * commit re-seeds the base from committed metadata and the carry never happens.
      */
-    @Ignore("ALTER COLUMN TYPE over a composite partition reads a var-size column at the wrong extent:"
-            + "AssertionError in VarcharTypeDriver.getDataVectorSize, reached through"
-            + "TableReader.openPartition0. The geometry and the no-hole assertions this test is named for both"
-            + "pass; only the conversion at the end fails.")
     @Test
     public void testInPlaceAppendDoesNotOverReserveForItsSibling() throws Exception {
         assertMemoryLeak(() -> {
@@ -1183,9 +1149,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * A partition is ONE record here, so it holds one top by construction. What this pins is the other
      * half: that the shared top is right and both pieces read and write the column through it.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows. Kills"
-            + "the JVM.")
     @Test
     public void testLateColumnKeepsOneTopAcrossPiecesOfOneDirectory() throws Exception {
         assertMemoryLeak(() -> {
@@ -1261,8 +1224,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * end and {@code E} - so the base is not zero. Merging into the LAST piece instead would leave the top
      * at {@code E}, a zero base, and no bug to see.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testMergeAppendCreatesPostingIndexForColumnAbsentFromPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -1354,9 +1315,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * Either one lops the relocated sibling off the end of the shared files, leaving its rows reading back
      * as zeroes - a VARCHAR aux entry of 0 is an unset entry, which is where it surfaces first.
      */
-    @Ignore("Still faults on an unsafe memory access, on the SECOND cut - the one taken while the writer"
-            + "holds the partition open. Flaky between a caught fault and a SIGSEGV because the fixture builds"
-            + "its rows with an unseeded rnd_varchar.")
     @Test
     public void testMergeAppendedPieceSurvivesActivePartitionClose() throws Exception {
         assertMemoryLeak(() -> {
@@ -1434,8 +1392,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * vectors stop agreeing. Every value still reads back correctly - each aux entry carries its own
      * offset - so only a density check catches it.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testMergeAppendKeepsAnInlinedVarcharDense() throws Exception {
         assertMemoryLeak(() -> {
@@ -1503,8 +1459,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * A VARCHAR column added AFTER the day was written makes the gap unmissable: its own aux file holds
      * nothing but the mapping's zero-fill, so the entry the base addresses is pure padding.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testMergeAppendLateVarcharColumnReadsUnsetAuxEntry() throws Exception {
         assertMemoryLeak(() -> {
@@ -1624,8 +1578,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * it. The control table proves any guard the first half needs is narrow rather than a blanket disable:
      * same shape, same backdated write, no late-added column.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testMergeAppendOverAPartitionWithAColumnTop() throws Exception {
         assertMemoryLeak(() -> {
@@ -1951,15 +1903,11 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * - a relocation, or the squash consolidating the partition - {@code sym = null} keeps returning the
      * whole partition and {@code sym = '<value>'} returns nothing, while the data itself reads correctly.
      */
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testNullKeyIndexScanOnCompositeDirectoryBitmap() throws Exception {
         testNullKeyIndexScanOnCompositeDirectory("");
     }
 
-    @Ignore("A merge that has to read BELOW a column top is refused, and processCompositePartition swallows"
-            + "the refusal, so the partition is silently left uncut or comes back with the wrong rows.")
     @Test
     public void testNullKeyIndexScanOnCompositeDirectoryPosting() throws Exception {
         testNullKeyIndexScanOnCompositeDirectory("TYPE POSTING");
@@ -2309,9 +2257,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
         testWriterReopenKeepsIndexOfMergeAppendedPiece("");
     }
 
-    @Ignore("The BITMAP variant passes and this one does not, so the .pk chain is the difference: a partition"
-            + "holds ONE chain whose highest legitimate row id is E, and evicting orphan row ids at the LAST"
-            + "piece's end throws away every entry a relocated sibling owns.")
     @Test
     public void testWriterReopenKeepsIndexOfMergeAppendedPiecePosting() throws Exception {
         testWriterReopenKeepsIndexOfMergeAppendedPiece(" TYPE POSTING");
