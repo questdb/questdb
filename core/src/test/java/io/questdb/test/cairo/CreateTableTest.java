@@ -331,6 +331,27 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableAsSelectLongToVarcharCast() throws Exception {
+        execute(
+                "create table test_long_varchar as (" +
+                        "select cast(x as varchar) v from long_sequence(5)" +
+                        ")"
+        );
+
+        assertQuery("select * from test_long_varchar")
+                .noLeakCheck()
+                .expectSize()
+                .returns(
+                        "v\n" +
+                                "1\n" +
+                                "2\n" +
+                                "3\n" +
+                                "4\n" +
+                                "5\n"
+                );
+    }
+
+    @Test
     public void testCreateNaNColumn() throws Exception {
         assertException(
                 "create table a as (select NaN x)",
