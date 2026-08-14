@@ -973,7 +973,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
             assertQuery("alter")
                     .noLeakCheck()
-                    .fails(5, "'table' or 'materialized' or 'view' expected");
+                    .fails(5, "'table' or 'materialized' or 'live' or 'view' expected");
 
             assertQuery("alter view")
                     .noLeakCheck()
@@ -8956,8 +8956,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNullChecks() throws SqlException {
+        // the dangling select parses into a tokenless sub-query conjunct; it is
+        // retained in the model (and rejected later by filter compilation) instead
+        // of being silently dropped from the WHERE clause
         assertQuery(
-                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z', '2020-09-20T17:00:00.312334Z'))",
+                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z', '2020-09-20T17:00:00.312334Z') and (select-choose x from (select [x] from long_sequence(1))))",
                 """
                         SELECT\s
                         a

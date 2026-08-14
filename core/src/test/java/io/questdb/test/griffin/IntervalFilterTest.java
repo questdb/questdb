@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import org.junit.Test;
@@ -307,6 +308,47 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             a\tts
                             8.43832076262595\t1970-01-01T00:00:00.020000Z
                             """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testEqualTimestampOrWithNullBindVariable() throws Exception {
+        // End-to-end guard for the OR-anchor union folding in WhereClauseParser: a nullable timestamp
+        // bound in the FIRST disjunct of `ts = $1 or ts = $2` must drop only its own disjunct, not the
+        // whole disjunction. The plan assertion pins that the OR group is still consumed as a runtime
+        // interval union (no residual filter fallback), so the interval model alone decides the answer -
+        // an anchor that intersected a NULL bound would return zero rows here instead of $2's row.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            "  select" +
+                            "    x a," +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
+                            "  from long_sequence(3)" +
+                            ") timestamp(ts) partition by day"
+            );
+
+            final long ts2 = timestampType.getDriver().parseFloorLiteral("1970-01-01T00:00:00.020000Z");
+            final String expected = replaceTimestampSuffix1("""
+                    a	ts
+                    3	1970-01-01T00:00:00.020000Z
+                    """, timestampType.getTypeName());
+
+            final String query = "select * from x where ts = $1 or ts = $2";
+
+            // NULL on the left (the anchor disjunct)
+            bindVariableService.clear();
+            bindVariableService.setTimestampWithType(0, timestampType.getTimestampType(), Numbers.LONG_NULL);
+            bindVariableService.setTimestampWithType(1, timestampType.getTimestampType(), ts2);
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Interval forward scan on: x");
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            // NULL on the right (mirror: pins the symmetry)
+            bindVariableService.clear();
+            bindVariableService.setTimestampWithType(0, timestampType.getTimestampType(), ts2);
+            bindVariableService.setTimestampWithType(1, timestampType.getTimestampType(), Numbers.LONG_NULL);
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Interval forward scan on: x");
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
         });
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Streaming cursor for TIMESTAMP and TIMESTAMP_NANOS columns.
@@ -100,6 +101,11 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         secondTimestamp = 0;
         valueCount = 0;
         resetRowPosition();
+    }
+
+    @TestOnly
+    public int getGorillaCacheCapacity() {
+        return gorillaDecodedValues.length;
     }
 
     /**
@@ -262,6 +268,14 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                         // maximum so that corrupted Gorilla data cannot read
                         // arbitrarily far into subsequent columns' data.
                         int remainingValues = valueCount - 2;
+                        long minimumGorillaBytes = (remainingValues + 7L) >>> 3;
+                        if (remainingBytes < minimumGorillaBytes) {
+                            throw QwpParseException.create(
+                                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                                    "timestamp column data truncated: " + remainingValues
+                                            + " Gorilla values require at least " + minimumGorillaBytes + " bytes"
+                            );
+                        }
                         int maxGorillaBytes = (int) ((remainingValues * 36L + 7) / 8);
                         int gorillaDataLength = Math.min(remainingBytes, maxGorillaBytes);
 
@@ -312,6 +326,13 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      */
     public boolean supportsDirectAccess() {
         return !gorillaEnabled;
+    }
+
+    void releaseCachedResources() {
+        clear();
+        if (gorillaDecodedValues.length > INITIAL_GORILLA_CAPACITY) {
+            gorillaDecodedValues = new long[INITIAL_GORILLA_CAPACITY];
+        }
     }
 
     private int getOffset(long dataAddress, int dataLength, int offset) throws QwpParseException {

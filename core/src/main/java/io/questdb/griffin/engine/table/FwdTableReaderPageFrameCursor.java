@@ -131,6 +131,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public LongList getIntervals() {
+        return partitionFrameCursor != null ? partitionFrameCursor.getIntervals() : null;
+    }
+
+    @Override
     public long getRemainingRowsInInterval() {
         return remainingRowsInInterval;
     }
@@ -143,6 +148,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
     }
 
     @Override
@@ -460,7 +470,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return computeNativeFrame(lo, hi);
     }
 
-    static long calculatePageFrameRowLimit(
+    public static long calculatePageFrameRowLimit(
             long partitionLo,
             long partitionHi,
             long pageFrameMinRows,

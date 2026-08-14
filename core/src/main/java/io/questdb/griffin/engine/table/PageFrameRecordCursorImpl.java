@@ -72,7 +72,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         prepareRowCursorFactory();
 
-        if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
+        // Mirrors the slow-path gate in skipRows(): pushdown pruning drops whole non-matching
+        // parquet row groups, so the metadata-only accounting below would count physical rows
+        // the cursor never yields and over-report the size. The row-by-row walk counts exactly
+        // the rows hasNext() yields, matching the pruned scan.
+        if (!frameCursor.supportsSizeCalculation()
+                || filter != null
+                || rowCursorFactory.isUsingIndex()
+                || frameCursor.hasActivePushdownFilter()) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -200,6 +207,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public long size() {
+        // Same gate as calculateSize() and skipRows(): pushdown pruning drops whole
+        // non-matching parquet row groups, so frameCursor.size() reports physical rows
+        // the cursor never yields. Report unknown size instead of that over-count.
+        if (frameCursor.hasActivePushdownFilter()) {
+            return -1;
+        }
         return entityCursor ? frameCursor.size() : -1;
     }
 
@@ -210,20 +223,36 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // The clamp decodes only the leading [0, n) rows of a parquet frame, so it is
         // sound only for a scan that yields the frame's rows 1:1 in ascending order.
         // isEntity() is that guarantee; a scattered/index row cursor reports false.
+        // Pushdown pruning does not forfeit the clamp: a page frame never spans more than
+        // one row group, so pruning drops whole frames rather than rows inside a frame,
+        // and every frame the scan does yield stays 1:1.
         final boolean canClamp = filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
-        maxRowsAfterSkip = canClamp ? requestedMaxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
+        final long postSkipMaxRows = canClamp ? requestedMaxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
 
         // Use slow path when:
         // - filter is present (need to evaluate each row)
         // - using index (row order may not be sequential)
-        if (filter != null || rowCursorFactory.isUsingIndex()) {
+        // - pushdown pruning is active: the cursor drops whole non-matching parquet row groups,
+        //   so the metadata-only frame-size accounting below would count physical rows the cursor
+        //   never yields and land the skip short (re-reading already-consumed rows). The row-by-row
+        //   walk skips exactly the rows hasNext() yields, matching the pruned scan.
+        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()) {
+            // hasNext() charges every row it yields against the clamp, but the rows this loop
+            // walks are the skip itself, not reads after it. So walk unclamped and arm the
+            // clamp only once the skip lands, mirroring ReadParquetRecordCursor.isInSkipRows.
+            // Clamping the walk lets the first hasNext() find the budget already spent and
+            // report exhaustion, which skips nothing whenever postSkipMaxRows is 0 -- the
+            // value LimitRecordCursor.calculateSize() passes to size a cursor it will not read.
+            maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
+            maxRowsAfterSkip = postSkipMaxRows;
             rowsProducedSinceSkip = 0;
             return;
         }
+        maxRowsAfterSkip = postSkipMaxRows;
 
         // If we're mid-frame after hasNext() calls, exhaust current rowCursor first,
         // then fall through to the fast path for remaining frames
