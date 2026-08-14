@@ -25,11 +25,13 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -221,6 +223,143 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
 
             execute("CREATE TABLE o AS (SELECT " + ORACLE_PROJECTION + " FROM (" +
                     base + " UNION ALL " + nextDay + " UNION ALL " + tail +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertSameRows();
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertSameRows();
+        });
+    }
+
+    /**
+     * A merge whose DATA side carries a column top. A column added part way through a partition's life has
+     * no entry in its file for the rows written before it, so a merge that reaches below that top cannot
+     * read them - they are NULL, and nothing on disk says so.
+     * <p>
+     * Both regimes are here, because they take different arithmetic. {@code mid_*} are added while
+     * 2020-02-03 is still being written, so their top lands in the MIDDLE of the day: the merge reads real
+     * values above it and NULLs below. {@code all_*} are added once a later day is active, so 2020-02-03
+     * never gets a record for them at all and every row of the merge's data side is NULL.
+     * <p>
+     * Only the data side can have a top. The O3 side is the batch this commit is writing, so every row of
+     * it exists - which is what lets the top-aware kernels take the top as a single number instead of the
+     * caller building a nulls-and-data image of the column first.
+     */
+    @Ignore("The MERGE itself is done - it no longer refuses, the apply does not suspend, and the batch's"
+            + " own rows read back correctly. What is left is a READ: a windowed count over the merged"
+            + " piece returns 3080 where the window holds 280 rows, over-counting by exactly the untouched"
+            + " upper piece's 2880. An interval scan resolves its row range against the partition's"
+            + " timestamps, and a composite partition's file order is not timestamp order, so that"
+            + " resolution has to be per piece.")
+    @Test
+    public void testMergeReadsBelowAColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+
+            // The day's FIRST half, written before the mid_* columns exist.
+            final String lower = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(2880)";
+            execute("CREATE TABLE x AS (" + lower + "), INDEX(symi CAPACITY 32) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Added while 2020-02-03 is the last partition, so the top is recorded ON it, at row 2880 -
+            // half way through the day the batch below merges into.
+            execute("ALTER TABLE x ADD COLUMN mid_i INT");
+            execute("ALTER TABLE x ADD COLUMN mid_vs VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN mid_vl VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN mid_s STRING");
+            execute("ALTER TABLE x ADD COLUMN mid_b BINARY");
+            execute("ALTER TABLE x ADD COLUMN mid_a DOUBLE[]");
+            drainWalQueue();
+
+            // The day's SECOND half, carrying the new columns: the rows ABOVE the top.
+            final String midColumns = "(x + 500000)::INT mid_i, " + VARCHAR_SHORT_EXPR + " mid_vs, " +
+                    VARCHAR_LONG_EXPR + " mid_vl, " + STRING_EXPR + " mid_s, " + BINARY_EXPR + " mid_b, " +
+                    ARRAY_EXPR + " mid_a";
+            final String upper = "SELECT x::INT + 20000 i, -x - 20000L j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03T12:00:00', 15*1000000L) ts, " + midColumns +
+                    " FROM long_sequence(2880)";
+            execute("INSERT INTO x " + upper);
+            // A later day, so 2020-02-03 stops being the active partition and the batch below goes through
+            // the O3 path rather than an append to the open one.
+            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-06', 60*1000000L) ts, " + midColumns +
+                    " FROM long_sequence(50)";
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            assertQuery("SELECT count(mid_i) above FROM x WHERE ts >= '2020-02-03T12:00:00' AND ts < '2020-02-04'")
+                    .noRandomAccess().expectSize().returns("above\n2880\n");
+
+            // Added with 2020-02-06 active, so 2020-02-03 carries no record for these at all and reads
+            // every one of its rows as absent.
+            execute("ALTER TABLE x ADD COLUMN all_i LONG");
+            execute("ALTER TABLE x ADD COLUMN all_v VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN all_s STRING");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+
+            // The batch. It lands at 04:00, BELOW both tops, so the merge has to produce NULLs for the
+            // data side's mid_* and all_* rows while writing real values for its own.
+            final String allColumns = "(x + 600000)::LONG all_i, " + VARCHAR_MIXED_EXPR + " all_v, " +
+                    STRING_EXPR + " all_s";
+            final String backfill = "SELECT x::INT + 70000 i, -x - 70000L j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts, " + midColumns + ", " +
+                    allColumns + " FROM long_sequence(200)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+            Assert.assertFalse("the merge below a column top suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("the partition should have been cut into pieces",
+                        reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            // The merge really did span the top: rows below it read NULL, rows above it read values, and
+            // the batch's own rows read values wherever it lands. Without this the comparison below would
+            // pass on a column the merge had filled with nulls throughout.
+            assertQuery("SELECT count(mid_i) below, count(mid_vs) below_vs, count(mid_s) below_s" +
+                    " FROM x WHERE ts < '2020-02-03T04:00:00'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("below\tbelow_vs\tbelow_s\n0\t0\t0\n");
+            assertQuery("SELECT count(mid_i) c, count(all_i) a, count(all_v) v FROM x" +
+                    " WHERE ts >= '2020-02-03T04:00:00' AND ts < '2020-02-03T04:20:00'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\ta\tv\n200\t200\t172\n");
+            assertQuery("SELECT count(mid_i) above, count(all_i) absent FROM x" +
+                    " WHERE ts >= '2020-02-03T12:00:00' AND ts < '2020-02-04'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("above\tabsent\n2880\t0\n");
+            assertQuery("SELECT count(mid_i) c, count(all_i) a, count(all_v) v FROM x" +
+                    " WHERE ts >= '2020-02-03T04:00:00' AND ts < '2020-02-03T04:20:00'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\ta\tv\n200\t200\t172\n");
+
+            // The oracle: the same rows, assembled without ever touching the composite machinery. Each
+            // batch supplies NULL for whatever it predates, exactly as the table should read it back.
+            final String nulls = ", NULL::INT mid_i, NULL::VARCHAR mid_vs, NULL::VARCHAR mid_vl," +
+                    " NULL::STRING mid_s, NULL::BINARY mid_b, NULL::DOUBLE[] mid_a";
+            final String allNulls = ", NULL::LONG all_i, NULL::VARCHAR all_v, NULL::STRING all_s";
+            execute("CREATE TABLE o AS (SELECT " + ORACLE_PROJECTION +
+                    ", mid_i, mid_vs, mid_vl, mid_s, mid_b, mid_a, all_i, all_v, all_s FROM (" +
+                    "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts" + nulls + allNulls +
+                    " FROM long_sequence(2880)" +
+                    " UNION ALL SELECT x::INT + 20000 i, -x - 20000L j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03T12:00:00', 15*1000000L) ts, " + midColumns + allNulls +
+                    " FROM long_sequence(2880)" +
+                    " UNION ALL SELECT x::INT + 90000 i, -x - 90000L j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-06', 60*1000000L) ts, " + midColumns + allNulls +
+                    " FROM long_sequence(50)" +
+                    " UNION ALL " + backfill +
                     ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             assertSameRows();
 

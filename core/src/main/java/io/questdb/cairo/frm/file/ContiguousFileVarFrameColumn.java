@@ -345,18 +345,32 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             return;
         }
 
+        // Only the DATA side can carry a column top - the O3 side is a batch this commit is writing now, so
+        // every row of it exists. When the slice reaches below that top the top-aware kernel takes the top
+        // directly and emits this type's NULL for the rows underneath.
+        final long src1Top = sourceColumn1.getColumnTop();
+        final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
         // Both vectors are addressed from ROW 0 and BYTE 0 of their own column: the merge index carries
         // absolute row ids, and an aux entry carries an absolute data offset, so neither side is relative to
-        // the slice being read.
-        final long src1AuxAddr = rowZeroAuxAddr(sourceColumn1, source1Lo, source1Hi);
+        // the slice being read. The top-aware kernel wants source 1 UNBIASED instead - its first stored row
+        // IS logical row src1Top - and does the subtraction itself.
+        final long src1AuxAddr = readsBelowTop
+                ? sourceColumn1.getContiguousAuxAddr(source1Hi)
+                : rowZeroAuxAddr(sourceColumn1, source1Lo, source1Hi);
         final long src2AuxAddr = rowZeroAuxAddr(sourceColumn2, source2Lo, source2Hi);
         final long src1DataAddr = source1Lo < source1Hi ? sourceColumn1.getContiguousDataAddr(source1Hi) : 0;
         final long src2DataAddr = source2Lo < source2Hi ? sourceColumn2.getContiguousDataAddr(source2Hi) : 0;
 
         // Every row of both slices is written out exactly once and carries its own bytes with it, so the
         // merged image is as long as the two slices put together - the interleaving moves bytes around but
-        // creates none.
-        final long dataSize = sourceDataSize(src1AuxAddr, source1Lo, source1Hi)
+        // creates none. A row below the data side's top carries no bytes of its own; what it costs is the
+        // type's minimum entry, which is what the kernel writes for a NULL (zero for VARCHAR and ARRAY,
+        // whose nulls live entirely in the aux entry).
+        final long belowTopRows = readsBelowTop ? Math.min(source1Hi, src1Top) - source1Lo : 0;
+        final long dataSize = (readsBelowTop
+                ? sourceDataSize(src1AuxAddr, Math.max(source1Lo, src1Top) - src1Top, source1Hi - src1Top)
+                + belowTopRows * columnTypeDriver.getDataVectorMinEntrySize()
+                : sourceDataSize(src1AuxAddr, source1Lo, source1Hi))
                 + sourceDataSize(src2AuxAddr, source2Lo, source2Hi);
         final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);
         final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
@@ -374,21 +388,37 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             if (dataSize > 0) {
                 dstDataAddr = TableUtils.mapAppendColumnBuffer(ff, dataFd, targetDataOffset, dataSize, true, MEMORY_TAG);
             }
-            columnTypeDriver.o3ColumnMerge(
-                    mergeIndexAddr,
-                    mergeIndexRows,
-                    src1AuxAddr,
-                    src1DataAddr,
-                    src2AuxAddr,
-                    src2DataAddr,
-                    dstAuxAddr,
-                    // The kernel writes ABSOLUTE data offsets into the aux entries and addresses its writes
-                    // by the same value, so it is handed the address byte 0 of the data file would be at.
-                    // That lands outside the mapping, which is safe only because the offset it starts from
-                    // is where the mapping starts and only ever grows.
-                    dstDataAddr != 0 ? dstDataAddr - targetDataOffset : 0,
-                    targetDataOffset
-            );
+            // The kernel writes ABSOLUTE data offsets into the aux entries and addresses its writes by the
+            // same value, so it is handed the address byte 0 of the data file would be at. That lands
+            // outside the mapping, which is safe only because the offset it starts from is where the
+            // mapping starts and only ever grows.
+            final long dstDataBase = dstDataAddr != 0 ? dstDataAddr - targetDataOffset : 0;
+            if (readsBelowTop) {
+                columnTypeDriver.o3ColumnMergeWithTop(
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        src1Top,
+                        src1AuxAddr,
+                        src1DataAddr,
+                        src2AuxAddr,
+                        src2DataAddr,
+                        dstAuxAddr,
+                        dstDataBase,
+                        targetDataOffset
+                );
+            } else {
+                columnTypeDriver.o3ColumnMerge(
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        src1AuxAddr,
+                        src1DataAddr,
+                        src2AuxAddr,
+                        src2DataAddr,
+                        dstAuxAddr,
+                        dstDataBase,
+                        targetDataOffset
+                );
+            }
 
             if (commitMode != CommitMode.NOSYNC) {
                 TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);

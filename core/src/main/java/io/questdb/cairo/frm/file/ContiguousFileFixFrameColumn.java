@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
@@ -183,13 +184,40 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         // addressed from ITS row 0 and the index does the rest. The designated timestamp reads neither
         // source: the merge index was built out of both sides' timestamps and already holds the answer.
         final boolean isTimestamp = sourceColumn2.isTimestampIndex();
-        final long src1Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
+        // Only the DATA side can carry a column top. The O3 side is a batch the commit is writing now, so
+        // every row of it exists; the data side is a partition that may have gained this column part way
+        // through its life. When the slice reaches below that top, the top-aware kernel takes the top
+        // directly and emits NULL for the rows underneath, which is why nothing has to be materialized.
+        final long src1Top = isTimestamp ? 0 : sourceColumn1.getColumnTop();
+        final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
+        final long src1Address = isTimestamp ? 0
+                : readsBelowTop
+                // UNBIASED: the file's first stored row IS logical row src1Top, and the kernel does the
+                // subtraction itself.
+                ? sourceColumn1.getContiguousDataAddr(source1Hi)
+                : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
         final long src2Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn2, source2Lo, source2Hi);
         long dstAddress = 0;
+        long nullValueAddress = 0;
         try {
             dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
             if (isTimestamp) {
                 Vect.oooCopyIndex(mergeIndexAddr, mergeIndexRows, dstAddress);
+            } else if (readsBelowTop) {
+                // One element wide, holding this type's NULL pattern - one kernel per width covers every
+                // fixed type that way.
+                nullValueAddress = Unsafe.malloc(1L << shl, MemoryTag.NATIVE_O3);
+                TableUtils.setNull(columnType, nullValueAddress, 1);
+                mergeShuffleWithTop(
+                        src1Address,
+                        src2Address,
+                        dstAddress,
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        src1Top,
+                        nullValueAddress,
+                        shl
+                );
             } else {
                 mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
             }
@@ -197,6 +225,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
             }
         } finally {
+            if (nullValueAddress != 0) {
+                Unsafe.free(nullValueAddress, 1L << shl, MemoryTag.NATIVE_O3);
+            }
             if (dstAddress != 0) {
                 TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
             }
@@ -238,6 +269,32 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             case 3 -> Vect.mergeShuffle64Bit(src1, src2, dst, mergeIndexAddr, rows);
             case 4 -> Vect.mergeShuffle128Bit(src1, src2, dst, mergeIndexAddr, rows);
             case 5 -> Vect.mergeShuffle256Bit(src1, src2, dst, mergeIndexAddr, rows);
+            default -> throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
+        }
+    }
+
+    /**
+     * The column-top aware counterpart of {@link #mergeShuffle}. {@code src1} is UNBIASED - it points at the
+     * column file's first stored row, which is logical row {@code srcDataTop} - and any data-side row below
+     * that top is written as the pattern at {@code pNullValue}.
+     */
+    private static void mergeShuffleWithTop(
+            long src1,
+            long src2,
+            long dst,
+            long mergeIndexAddr,
+            long rows,
+            long srcDataTop,
+            long pNullValue,
+            int shl
+    ) {
+        switch (shl) {
+            case 0 -> Vect.mergeShuffle8BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 1 -> Vect.mergeShuffle16BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 2 -> Vect.mergeShuffle32BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 3 -> Vect.mergeShuffle64BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 4 -> Vect.mergeShuffle128BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 5 -> Vect.mergeShuffle256BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
             default -> throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
         }
     }

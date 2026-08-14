@@ -266,13 +266,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
         long adjustedLo = Math.max(partitionLo, partitionHi - reenterPageFrameRowLimit);
-        for (int i = 0; i < columnCount; i++) {
-            final int columnIndex = columnIndexes.getQuick(i);
-            long top = reader.getColumnTop(base, columnIndex);
-            if (top > adjustedLo && top < partitionHi) {
-                adjustedLo = top;
-            }
-        }
 
         // A COMPOSITE partition is several PIECES over one set of column files, each sitting at its own
         // place in them, so a frame is cut at piece boundaries and carries that piece's SHIFT - the term
@@ -287,6 +280,18 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final long pieceLo = geometry.getPieceCumulativeLo(reenterPartitionIndex, piece);
             if (pieceLo > adjustedLo && pieceLo < partitionHi) {
                 adjustedLo = pieceLo;
+            }
+        }
+
+        // Split along the column tops, which has to happen AFTER the piece is known: a top is a FILE row
+        // and adjustedLo/partitionHi are PARTITION rows, so the two are only comparable once the piece's
+        // shift is in hand. They coincide for a partition with no geometry, which is why this used to sit
+        // above. A frame that straddles a top would address the column below its first stored row.
+        for (int i = 0; i < columnCount; i++) {
+            final int columnIndex = columnIndexes.getQuick(i);
+            final long top = reader.getColumnTop(base, columnIndex) - pieceShift;
+            if (top > adjustedLo && top < partitionHi) {
+                adjustedLo = top;
             }
         }
 
