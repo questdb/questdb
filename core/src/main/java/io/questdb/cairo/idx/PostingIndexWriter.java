@@ -391,6 +391,15 @@ public class PostingIndexWriter implements IndexWriter {
                     // regionLimit equals the entry region base which equals
                     // KEY_FILE_RESERVED.
                     long liveSize = chain.getRegionLimit();
+                    // Trim to whichever limit is higher, ours or the one on disk. A second writer
+                    // instance can append an entry to this .pk while this one sits idle on it, and
+                    // trimming to our stale mirror would lop the tail off that entry's gen dir. The
+                    // entry's GEN_COUNT survives the cut, so the next reader counts a generation that
+                    // reads back as zeroes.
+                    long publishedSize = chain.readPublishedRegionLimit(keyMem);
+                    if (publishedSize > liveSize) {
+                        liveSize = publishedSize;
+                    }
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;
                     }

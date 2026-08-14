@@ -44,7 +44,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 10 | Routing behind `cairo.o3.partition.merge.append.enabled` | **BUILT**, default OFF |
 | 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
 | 12 | Var-size column merge | **BUILT**, all four var types |
-| 13 | Index maintenance for merged rows | **BUILT**, BITMAP; read path is piece-aware |
+| 13 | Index maintenance for merged rows | **BUILT** - build, seal and rebuild all cover `[columnTop, E)` |
 | 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet**, but still POSITIONED at `E` - see below |
 | 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
@@ -245,7 +245,7 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. **26 pass, 10 fail, and NOTHING is
+there that does not turn on a replace commit or on compaction. **31 pass, 5 fail, and NOTHING is
 `@Ignore`d**: the suite states the truth about the feature rather than hiding it, so the red list IS the
 to-do list. `O3CompositePartitionTest` adds a column-top merge case and is fully green, 4 of 4.
 
@@ -254,7 +254,7 @@ The rest of the `io.questdb.test.cairo.o3` package - 365 further tests across 11
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
 this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
-All 10 are ordinary assertion failures. Three of them used to take the JVM down with a SIGSEGV - which also
+All 5 are ordinary assertion failures. Three of them used to take the JVM down with a SIGSEGV - which also
 took every other test in the fork with it - and two more read past a mapping. A whole-class run therefore
 reports honestly now; before, it reported nothing at all. Per-method runs are still the way to read the
 suite while this many are red:
@@ -405,16 +405,40 @@ Three ported scenarios turned green: both `testChangeColumnType*` cases and
 `testInPlaceAppendDoesNotOverReserveForItsSibling`, whose oracle comparison runs after a
 `VARCHAR -> SYMBOL` conversion.
 
+### 19. Index maintenance took a piece's rows where it needed `E` - FIXED
+
+Three separate sites, all the same substitution, all ported from the parent tree's M28/M35/M39. One
+directory holds one file per column and ONE index that every piece reads, so any range applied to that
+index has to be the directory's whole shared frame `[columnTop, E)`.
+
+- **The index BUILD range.** `indexNativePartition`, `indexLastPartition` and both of
+  `RebuildColumnBase`'s (ADD INDEX and REINDEX) built over the LIVE row count, so every row a merge
+  relocated above it stayed out of the index its own piece scans. `getPartitionFileRowCount` is the
+  accessor. REINDEX runs standalone with no `TableWriter` to borrow a resolver from, so `reindex0` opens
+  its own `PartitionGeometry`. `indexLastPartition` also gained the closed-partition branch a composite
+  last partition now needs - it reads the column file directly rather than following a mapping that
+  section 14 deliberately does not create.
+- **`sealPostingIndexForPartition`'s `partitionSize`.** POSTING-only, and one number doing three jobs:
+  `rollbackConditionally` evicted every entry above the live count - precisely the relocated piece's -
+  a rebuild covered only the rows below it, and the `columnTop >= partitionSize` skip fired for any
+  column whose top was recorded at an earlier `E`. That last one is the sharp edge: `ADD COLUMN` records
+  its top at `E` and a composite partition always has `liveRows < E`, so a column added to one got NO
+  `.pk` at all. This is why the BITMAP half of each scenario passed while POSTING failed.
+- **`PostingIndexWriter.close()` trimmed the `.pk` to its own stale in-memory `regionLimit`**, cutting the
+  tail off a gen-dir slot another writer instance had published. The entry's `GEN_COUNT` survives the cut,
+  so the next reader counts a generation that reads back as zeroes and trips
+  `assert txnAtSeal >= prevTxnAtSeal` in `PostingGenLookup.snapshotMetadata`. `readPublishedRegionLimit`
+  re-reads the on-disk header under its seqlock and the trim takes the max. **This one is not a composite
+  bug at all** - it reproduces with the flag off, and it was simply missing from this tree.
+
+Most of the parent's index work needed no porting: its `(dirTs, nameTxn)` dedupe and its per-piece
+`SymbolColumnIndexer.partitionTop` shift are artifacts of the split design, and here one record IS one
+directory and the indexer has no shift.
+
 ## Known gaps
 
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
-- **An index built over a composite partition covers one piece**, not the whole of `[columnTop, E)`, so an
-  indexed scan returns a subset. Both index types. Cause not yet isolated. The null-key scan half of this
-  now passes on BITMAP and still fails on POSTING, which narrows it.
-- **The POSTING `.pk` chain ceiling is the LAST piece's end, not `E`**, so opening a writer evicts every
-  entry a relocated sibling owns. `testWriterReopenKeepsIndexOfMergeAppendedPiece` passes on BITMAP and
-  fails on POSTING, which is what isolates it to the chain.
 - **The covering sidecar assumes ascending timestamps.** A rewrite parks a relocated piece above the last
   one, so physical row order stops being timestamp order and `ADD INDEX ... INCLUDE (ts)` suspends the
   table.

@@ -1487,6 +1487,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getGeometry().getE(partitionIndex);
     }
 
+    /**
+     * The number of file rows a partition's column files span, as a whole-partition consumer must read
+     * them: {@code E} for a COMPOSITE partition and the live row count otherwise. The {@code max} is what
+     * covers the ACTIVE partition, whose transient row count neither {@code _txn}'s record nor
+     * {@code _geometry} is authoritative for.
+     * <p>
+     * This is the range an index build takes. One directory holds one file per column and ONE index that
+     * every piece reads, so a build over one piece's rows leaves every sibling piece out of the index the
+     * siblings also scan.
+     */
+    public long getPartitionFileRowCount(int partitionIndex) {
+        return Math.max(getPartitionSize(partitionIndex), getPartitionPhysicalRowCount(partitionIndex));
+    }
+
+    /**
+     * {@link #getPartitionFileRowCount(int)} for a partition named by its timestamp. A timestamp that
+     * names no attached partition - a partition this commit is still creating - answers with the row
+     * count alone, which is all such a partition has.
+     */
+    public long getPartitionFileRowCountByTimestamp(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        return partitionIndex < 0
+                ? txWriter.getPartitionRowCountByTimestamp(partitionTimestamp)
+                : getPartitionFileRowCount(partitionIndex);
+    }
+
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
             // Built afresh rather than trimmed out of `path`, which a caller may be holding mid-use.
@@ -7247,6 +7273,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
         final long lastPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastPartitionTs);
         final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
+        // The whole DIRECTORY's shared frame - see getPartitionFileRowCount.
+        final long rowHwm = getPartitionFileRowCount(lastPartitionIndex);
+
+        if (isLastPartitionClosed()) {
+            // A COMPOSITE last partition is deliberately left closed, so there is no column mapping to
+            // follow: a closed MemoryMA hands out a null FilesFacade and a -1 fd. Read the column file
+            // directly, exactly as indexNativePartition does for the historic partitions, and leave
+            // nothing armed - the next openPartition() wires the indexer up as a follower.
+            indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
+            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, lastPartitionTs, lastPartitionNameTxn);
+            configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
+            indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
+            try {
+                if (rowHwm > columnTop) {
+                    // A column added to an empty active partition creates no files (see addColumn),
+                    // hence the row count guard: there is no data file to open in that case.
+                    final long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
+                    try {
+                        indexer.index(ff, columnDataFd, columnTop, rowHwm);
+                    } finally {
+                        ff.close(columnDataFd);
+                    }
+                }
+                indexer.seal();
+            } finally {
+                indexer.releaseIndexWriter();
+            }
+            return;
+        }
 
         // set indexer up to continue functioning as normal
         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
@@ -7258,7 +7313,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Must come AFTER configureFollowerAndWriter: of() inside it runs
         // close() which resets pendingTxnAtSeal.
         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
-        indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
+        indexer.refreshSourceAndIndex(0, rowHwm);
 
         // Seal now so that covering sidecar files are written immediately.
         // Without this, the last partition's writer stays open and sidecar
@@ -7293,7 +7348,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // ALTER TABLE ALTER COLUMN ADD INDEX (older partitions): building a fresh index from scratch.
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
-        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+        // The whole DIRECTORY's shared frame, not one piece's rows - see getPartitionFileRowCount. For a
+        // partition holding a single piece E is its row count, so this is what it always was.
+        final long partitionSize = getPartitionFileRowCountByTimestamp(timestamp);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
         if (columnTop > -1 && partitionSize > columnTop) {
@@ -13014,7 +13071,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             plen = path.size();
         }
-        long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        // A SEAL REBUILDS OVER THE WHOLE DIRECTORY, NEVER OVER ONE PIECE. It rotates the single chain head
+        // onto a freshly compacted value file, and there is one such chain per directory, so a chain built
+        // from one piece's range erases every sibling's entries from the shared .pk. The range is [0, E),
+        // already the physical frame the stored row ids live in. Reading the LIVE row count here did three
+        // things at once: rollbackConditionally evicted every entry a relocated piece owns, a rebuild
+        // covered only the rows below it, and the skip below fired for any column whose top was recorded
+        // at an earlier E - which is every column added to a composite partition, leaving it no .pk at all.
+        long partitionSize = getPartitionFileRowCountByTimestamp(partitionTimestamp);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
