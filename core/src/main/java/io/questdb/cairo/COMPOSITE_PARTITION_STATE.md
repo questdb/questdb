@@ -46,7 +46,8 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 12 | Var-size column merge | **BUILT**, all four var types |
 | 13 | Index maintenance for merged rows | **BUILT**, BITMAP; read path is piece-aware |
 | 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet** - see below |
-| 15 | Merge that reads below a column top | **NOT BUILT** - see below |
+| 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
+| 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
 
@@ -243,14 +244,16 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. **15 pass, 21 fail, and NOTHING is
+there that does not turn on a replace commit or on compaction. **21 pass, 15 fail, and NOTHING is
 `@Ignore`d**: the suite states the truth about the feature rather than hiding it, so the red list IS the
-to-do list. `O3CompositePartitionTest` adds a column-top merge case, 2 of its 3 passing.
+to-do list. `O3CompositePartitionTest` adds a column-top merge case and is fully green, 3 of 3.
+
+The rest of the `io.questdb.test.cairo.o3` package - 365 further tests across 11 classes - is green.
 
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
 this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
-None of the 21 crashes any more. Three of them used to take the JVM down with a SIGSEGV - which also took
+None of the 15 crashes any more. Three of them used to take the JVM down with a SIGSEGV - which also took
 every other test in the fork with it - and the reader-mapping and page-frame fixes turned all three into
 ordinary assertion failures. A whole-class run therefore reports honestly now; before, it reported nothing
 at all. Per-method runs are still the way to read the suite while this many are red:
@@ -289,19 +292,43 @@ Mirroring parquet there loses rows: `testMergeAppendsActivePartition` regressed,
 is never opened leaves the writer's own state stale. The truncation-on-close that motivated blocking them
 no longer reproduces anyway.
 
-Three scenarios are still blocked behind narrower defects - ADD COLUMN leaving a zero-length aux file, a
-dedup commit of one timestamp reading past the mapping, and a second cut taken while the writer holds the
-partition open. Their `@Ignore` reasons say which.
+Two scenarios are still blocked behind narrower defects: a dedup commit of one timestamp reads past the
+mapping, and a second cut taken while the writer holds the partition open does the same. Both surface as
+"a fault occurred in an unsafe memory access operation" rather than as a wrong answer.
 
-### 15. A merge that reads below a column top is refused, and the refusal is swallowed
+### 15. A merge that reads below a column top - FIXED
 
-`rowZeroAddr` / `rowZeroAuxAddr` throw rather than read the wrong bytes, which is right. What is not right
-is the caller: the `catch (Throwable)` around `processCompositePartition` logs and bumps the error count, so
-the partition is silently left uncut, or the commit comes back with the wrong rows, or the apply suspends
-the table. Whatever the merge ends up doing about tops, the refusal must not be swallowed.
+The kernels already existed and simply had not been carried into this tree; `ooo.cpp` carried two comments
+saying the `WithTop` family was "removed and now executed as Merge Copy without Top". They are back:
+`merge_shuffle_top_vanilla` plus the var / varchar / array `merge_copy_*_top_vanilla` trio, 10 JNI entries,
+10 `Vect` declarations, and `ColumnTypeDriver.o3ColumnMergeWithTop` with its four implementations.
 
-Seven ported scenarios sit behind this - every one that adds a column and then backdates into the rows
-below it.
+Their contract is what makes back-filling unnecessary. The data side arrives UNBIASED - the column file's
+first stored row IS logical row `srcDataTop` - and the kernel subtracts the top itself, emitting NULL below
+it. The O3 side never has a top, so only one side ever needs the treatment. `ContiguousFileFixFrameColumn`
+and `ContiguousFileVarFrameColumn` pick the top-aware call when `source1Lo` falls below the top, and the
+var side sizes its data buffer with `getDataVectorMinEntrySize()` per null - the bytes a null costs STRING
+and BINARY, and zero for VARCHAR and ARRAY.
+
+### 16. An interval scan resolved its rows against the FILE order - FIXED
+
+`NativeTimestampFinder` binary-searches one contiguous address range and returns file rows. That holds for
+an ordinary partition, where file order IS timestamp order. It does not hold for a composite one: a
+merge-append parks a rewritten piece at the tail, above pieces that sort before it. So a
+`WHERE ts BETWEEN ...` over a merged piece returned that piece's rows AND whatever else shared its file
+range - a 200-row window came back with 3080 rows, over-counting by exactly the untouched upper piece.
+
+`CompositeTimestampFinder` is the fix, and it is the native analogue of `ParquetTimestampFinder`, which
+searches one row group at a time for the same reason. Every row index it takes and returns is a DIRECTORY
+row, which is the space the partition frame already speaks; pieces are ordered by timestamp and do not
+overlap, so that space is ascending end to end and a binary search over it is sound. The search runs per
+piece, over the one range of file rows that is both contiguous and sorted, and shifts the answer back. Most
+pieces need no read at all - the stored `tsLo` / `tsHi` bracket them, so a piece wholly at or below the
+value contributes its whole clipped range and the first piece wholly above it ends the walk.
+
+`AbstractIntervalPartitionFrameCursor.initTimestampFinder` selects it on `hasGeometryChain`, after the
+parquet test. Six ported scenarios turned green on this alone, and it is what makes
+`O3CompositePartitionTest` fully green.
 
 ## Known gaps
 
@@ -311,7 +338,8 @@ below it.
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
 - **An index built over a composite partition covers one piece**, not the whole of `[columnTop, E)`, so an
-  indexed scan returns a subset. Both index types. Cause not yet isolated.
+  indexed scan returns a subset. Both index types. Cause not yet isolated. The null-key scan half of this
+  now passes on BITMAP and still fails on POSTING, which narrows it.
 - **The POSTING `.pk` chain ceiling is the LAST piece's end, not `E`**, so opening a writer evicts every
   entry a relocated sibling owns. `testWriterReopenKeepsIndexOfMergeAppendedPiece` passes on BITMAP and
   fails on POSTING, which is what isolates it to the chain.
@@ -323,10 +351,6 @@ below it.
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
   piece's `tsLo` routes to the previous piece. This needs deciding deliberately rather than by accident.
 - **Dedup**: the plan has no dedup term at all. `liveRows` is the plain sum of piece rows.
-- **A merge below a column top throws**, for var-size columns as well as fixed. Each source offsets by its
-  own top, but a row BELOW a top is not in the file at all and has to be written as a null, which needs a
-  kernel neither merge has. `rowZeroAddr` / `rowZeroAuxAddr` refuse rather than reading the wrong bytes.
-  Reachable by ADD COLUMN followed by a backdated insert.
 - **The split threshold is in ROWS derived from an average record size**, so a narrow table needs a much
   smaller `cairo.o3.partition.split.min.size` than a wide one before any cut is proposed. A var-size column
   counts as 28 bytes there whatever it actually holds, which is why the test had to raise its setting from

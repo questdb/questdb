@@ -43,6 +43,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final RuntimeIntrinsicIntervalModel intervalModel;
     protected final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
     protected final int timestampIndex;
+    private final CompositeTimestampFinder compositeTimestampFinder = new CompositeTimestampFinder();
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
     protected LongList intervals;
@@ -73,6 +74,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         reader = Misc.free(reader);
         Misc.free(parquetTimestampFinder);
         Misc.free(parquetDecoder);
+        compositeTimestampFinder.clear();
         nativeTimestampFinder.clear();
     }
 
@@ -130,6 +132,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     @Override
     public void toTop() {
         parquetTimestampFinder.clear();
+        compositeTimestampFinder.clear();
         nativeTimestampFinder.clear();
         intervalsLo = initialIntervalsLo;
         intervalsHi = initialIntervalsHi;
@@ -209,6 +212,9 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
         if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
             return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
+        }
+        if (reader.getTxFile().hasGeometryChain(partitionIndex)) {
+            return compositeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
         }
         return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
     }
