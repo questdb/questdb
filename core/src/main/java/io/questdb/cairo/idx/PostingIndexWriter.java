@@ -2471,12 +2471,16 @@ public class PostingIndexWriter implements IndexWriter {
      * moved the head entry and the header sequence, but it copies the entry
      * verbatim -- same genCount, same gen-dir bytes, so an already-corrupt prefix
      * stays exactly as corrupt to readers -- and it is idempotent if the publish
-     * runs again.) That does not make the failure transparent in production:
-     * TableWriter wraps both indexer commit paths in
-     * {@code catch (CairoException e) { throwDistressException(e); }}, so the
-     * outcome is a failed commit and a distressed writer on an already-corrupt
-     * index, not a retry. And every offset the loop reads is at or below that
-     * slot, so keyMem already covers the range.
+     * runs again.) That does not make the failure transparent in production.
+     * Three TableWriter paths reach an indexer commit and none of them retries:
+     * syncColumns and the switch-partition seal each wrap the commit in
+     * {@code catch (CairoException e) { throwDistressException(e); }}, while
+     * publishPostingIndexesForLastPartitionFastLag does not catch at all --
+     * applyLagToLastPartition sets {@code distressed = true} and rethrows, so on
+     * a WAL table the exception reaches ApplyWal2TableJob.handleWalApplyFailure
+     * and suspends the table. Every route ends at a failed commit over an
+     * already-corrupt prefix, which only REINDEX clears. And every offset the
+     * loop reads is at or below that slot, so keyMem already covers the range.
      * <p>
      * It throws for the same reason the cover-set guard in publishToChain does:
      * deployments run both with and without {@code -ea}, so an assert is a no-op
@@ -4638,10 +4642,13 @@ public class PostingIndexWriter implements IndexWriter {
         // yet, and the one mutation that can already have run, the format-1 COW
         // migration above, copies the entry verbatim (same genCount, same gen-dir
         // bytes -- an already-corrupt prefix stays exactly as corrupt to readers).
-        // The production callers do not turn that into a retry, though:
-        // TableWriter's syncColumns and switch-partition paths both catch this
-        // CairoException and call throwDistressException, so the commit fails and
-        // the writer goes distressed on an already-corrupt index.
+        // No production caller turns that into a retry: syncColumns and the
+        // switch-partition seal call throwDistressException on this
+        // CairoException, and the WAL fast-lag path lets it escape into
+        // applyLagToLastPartition, which marks the writer distressed and
+        // rethrows -- suspending the table when it is a WAL one. Every route
+        // fails the commit over an already-corrupt prefix; see
+        // checkGenDirMonotonic.
         checkGenDirMonotonic(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
