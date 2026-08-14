@@ -52,7 +52,6 @@ import java.util.Base64;
 public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
-    public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
     public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
     // Header names (case-insensitive)
@@ -88,7 +87,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     static final String ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER = "Missing Sec-WebSocket-Key header";
     static final String ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER = "Missing Sec-WebSocket-Version header";
     static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
-    static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
     static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
     // Sec-WebSocket-Key is defined by RFC 6455 as a 16-byte base64 value --
     // exactly 24 ASCII bytes on the wire. 64 bytes leaves defensive headroom
@@ -339,13 +337,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * @return null if valid, error message otherwise
      */
     public static String validateHandshake(HttpRequestHeader header) {
-        // Reject browser-originated requests. QWP is a machine-to-machine protocol;
-        // browsers send Origin automatically, legitimate clients do not.
-        // This prevents Cross-Site WebSocket Hijacking (CSWSH).
-        if (header.getHeader(HEADER_ORIGIN) != null) {
-            return ERROR_ORIGIN_HEADER_NOT_ALLOWED;
-        }
-
         // Check Upgrade header
         Utf8Sequence upgradeHeader = header.getHeader(HEADER_UPGRADE);
         if (upgradeHeader == null) {

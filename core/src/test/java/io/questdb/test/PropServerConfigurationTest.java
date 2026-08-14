@@ -363,6 +363,7 @@ public class PropServerConfigurationTest {
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get(new Utf8String("json")));
+        TestUtils.assertEquals("application/wasm", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get(new Utf8String("wasm")));
 
         Assert.assertEquals(500_000, configuration.getCairoConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getO3MinLag());

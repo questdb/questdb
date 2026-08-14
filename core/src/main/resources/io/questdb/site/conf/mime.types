@@ -1000,6 +1000,7 @@ application/vnd.zul				zir zirz
 application/vnd.zzazz.deck+xml			zaz
 application/voicexml+xml			vxml
 # application/vq-rtcpxr
+application/wasm				wasm
 # application/watcherinfo+xml
 # application/whoispp-query
 # application/whoispp-response

@@ -161,7 +161,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testValidateHandshakeRejectsOriginHeader() throws Exception {
+    public void testValidateHandshakeIgnoresOriginHeader() throws Exception {
         assertMemoryLeak(() -> {
             try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
                 header.setHeader("Upgrade", "websocket");
@@ -171,8 +171,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Origin", "https://evil-site.com");
 
                 String error = QwpIngressHttpProcessor.validateHandshake(header);
-                Assert.assertNotNull(error);
-                Assert.assertTrue(error.contains("Origin"));
+                Assert.assertNull(error);
             }
         });
     }

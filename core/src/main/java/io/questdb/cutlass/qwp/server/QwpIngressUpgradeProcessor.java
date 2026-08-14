@@ -148,8 +148,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER);
     private static final byte[] BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
-    private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
-            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
     private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
     private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
     // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
@@ -902,8 +900,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             case QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER ->
                     BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER;
             case QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER -> BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
-            case QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED ->
-                    BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED;
             default -> null;
         };
     }
