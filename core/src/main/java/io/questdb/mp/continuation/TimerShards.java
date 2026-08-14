@@ -242,7 +242,7 @@ public final class TimerShards {
         return false;
     }
 
-    private boolean isJoinComplete() {
+    private synchronized boolean isJoinComplete() {
         if (isCurrentThreadAShard()) {
             return false;
         }
@@ -271,7 +271,7 @@ public final class TimerShards {
         return true;
     }
 
-    private boolean isJoinComplete(long deadlineNanos) {
+    private synchronized boolean isJoinComplete(long deadlineNanos) {
         if (isCurrentThreadAShard()) {
             return false;
         }
@@ -326,6 +326,7 @@ public final class TimerShards {
 
     private void runShard(DelayHeap<DelayedFireable> shard) {
         CarrierIdentity.bind();
+        boolean isInterrupted = false;
         try {
             while (isRunning) {
                 try {
@@ -344,8 +345,8 @@ public final class TimerShards {
                     }
                     e.expire();
                 } catch (InterruptedException ie) {
+                    isInterrupted = true;
                     if (!isRunning) {
-                        Thread.currentThread().interrupt();
                         return;
                     }
                 } catch (Throwable t) {
@@ -355,7 +356,13 @@ public final class TimerShards {
         } finally {
             // Release the CarrierLocal row pinned to this shard thread's id so
             // it does not survive across engine restarts in long-running JVMs.
-            CarrierIdentity.unbind();
+            try {
+                CarrierIdentity.unbind();
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 

@@ -32,6 +32,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -82,6 +83,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     protected final AtomicInteger maxRecvBufferSize = new AtomicInteger();
+    // lets a test swap in an authenticator that is not the one the `withAuth` flag selects,
+    // so that the failure modes of a pluggable authenticator can be exercised
+    protected LineAuthenticatorFactory authenticatorFactoryOverride;
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -94,6 +98,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
+    // as above, for the factory that runs immediately after the authenticator has accepted a client
+    protected SecurityContextFactory securityContextFactoryOverride;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
     protected long timestampTicks;
@@ -109,6 +115,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
+        authenticatorFactoryOverride = null;
+        securityContextFactoryOverride = null;
         maxRecvBufferSize.set(512 * 1024);
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
@@ -176,6 +184,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
             public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
+                if (authenticatorFactoryOverride != null) {
+                    return authenticatorFactoryOverride;
+                }
                 if (withAuth) {
                     URL u = getClass().getResource("authDb.txt");
                     assert u != null;
@@ -183,6 +194,14 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     return new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
                 }
                 return super.getLineAuthenticatorFactory();
+            }
+
+            @Override
+            public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                if (securityContextFactoryOverride != null) {
+                    return securityContextFactoryOverride;
+                }
+                return super.getSecurityContextFactory();
             }
         };
         return new DefaultLineTcpReceiverConfiguration(configuration) {

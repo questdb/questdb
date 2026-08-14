@@ -878,18 +878,23 @@ public class ServerMain implements Closeable {
         }
     }
 
-    private void joinThread(Thread thread, boolean ignoreInterrupt) {
+    private void joinThread(Thread thread, boolean isInterruptIgnored) {
         if (thread != null) {
             boolean isInterrupted = false;
-            while (thread.isAlive()) {
-                try {
-                    thread.join();
-                } catch (InterruptedException e) {
-                    isInterrupted = true;
+            try {
+                while (thread.isAlive()) {
+                    try {
+                        thread.join();
+                    } catch (InterruptedException e) {
+                        // Keep joining: startup threads use engine-owned resources that
+                        // callers may close or mutate as soon as this method returns.
+                        isInterrupted = true;
+                    }
                 }
-            }
-            if (isInterrupted && !ignoreInterrupt) {
-                Thread.currentThread().interrupt();
+            } finally {
+                if (isInterrupted && !isInterruptIgnored) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }

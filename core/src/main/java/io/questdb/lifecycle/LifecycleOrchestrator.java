@@ -151,148 +151,158 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     private boolean closeOnce(long deadlineNanos, boolean isBounded) {
-        // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
-        // stop loop ran first and executor.shutdown ran after -- which left a window where an
-        // in-flight switchRole on the lifecycle executor thread could touch a component that
-        // the stop loop had just freed (a native use-after-free / NPE). Draining the executor here
-        // means every in-flight task either completes before the stop loop runs, or the new
-        // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
-        // the task exits without progressing further.
-        executor.shutdown();
-        // Rendezvous with any in-flight executor work before the stop loop frees component
-        // resources. Enterprise overrides these hooks to nudge an active role-switch cascade.
-        final boolean isInFlightWorkComplete = isBounded
-                ? awaitInFlightWork(deadlineNanos)
-                : awaitInFlightWork();
-        if (!isInFlightWorkComplete) {
-            try {
-                injectedLog.error()
-                        .$("lifecycle executor did not drain within the close budget; retaining component graph").I$();
-            } catch (Throwable ignore) {
-            }
-            return false;
-        }
-        // requestStop() has already signalled cancellable startup work. Wait for the active start()
-        // call to unwind before the stop loop releases its resources. A bounded attempt retains the
-        // graph for a later retry when the caller's deadline expires. Never wait on the boot thread
-        // itself: run() performs a bounded rollback after a boot-essential failure.
-        final Thread boot = bootThread;
-        if (boot != null && boot != Thread.currentThread()) {
-            final boolean isBootComplete = isBounded
-                    ? awaitBootComplete(deadlineNanos)
-                    : awaitBootComplete();
-            if (!isBootComplete) {
+        boolean isInterrupted = Thread.interrupted();
+        try {
+            // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
+            // stop loop ran first and executor.shutdown ran after -- which left a window where an
+            // in-flight switchRole on the lifecycle executor thread could touch a component that
+            // the stop loop had just freed (a native use-after-free / NPE). Draining the executor here
+            // means every in-flight task either completes before the stop loop runs, or the new
+            // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
+            // the task exits without progressing further.
+            executor.shutdown();
+            // Rendezvous with any in-flight executor work before the stop loop frees component
+            // resources. Enterprise overrides these hooks to nudge an active role-switch cascade.
+            final boolean isInFlightWorkComplete = isBounded
+                    ? awaitInFlightWork(deadlineNanos)
+                    : awaitInFlightWork();
+            isInterrupted |= Thread.interrupted();
+            if (!isInFlightWorkComplete) {
                 try {
                     injectedLog.error()
-                            .$("boot thread did not unwind within the close budget; retaining component graph").I$();
+                            .$("lifecycle executor did not drain within the close budget; retaining component graph").I$();
                 } catch (Throwable ignore) {
                 }
                 return false;
             }
-        }
-        // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
-        // assignment). In that case there are no started components -- skip the per-component stop
-        // loop and just shut down the executor. This makes close() safe to call after a validation
-        // failure in run() and on an orchestrator that was never run() at all.
-        if (reverseTopoOrder != null) {
-            boolean isEveryComponentStopped = true;
-            final ObjHashSet<String> retainedComponentNames = new ObjHashSet<>();
-            try {
-                if (isBounded) {
-                    final LongConsumer hookWithDeadline = preStopHookWithDeadline;
-                    if (hookWithDeadline != null) {
-                        hookWithDeadline.accept(deadlineNanos);
+            // requestStop() has already signalled cancellable startup work. Wait for the active start()
+            // call to unwind before the stop loop releases its resources. A bounded attempt retains the
+            // graph for a later retry when the caller's deadline expires. Never wait on the boot thread
+            // itself: run() performs a bounded rollback after a boot-essential failure.
+            final Thread boot = bootThread;
+            if (boot != null && boot != Thread.currentThread()) {
+                final boolean isBootComplete = isBounded
+                        ? awaitBootComplete(deadlineNanos)
+                        : awaitBootComplete();
+                isInterrupted |= Thread.interrupted();
+                if (!isBootComplete) {
+                    try {
+                        injectedLog.error()
+                                .$("boot thread did not unwind within the close budget; retaining component graph").I$();
+                    } catch (Throwable ignore) {
                     }
-                } else {
-                    final Runnable hook = preStopHook;
-                    if (hook != null) {
-                        hook.run();
-                    }
-                }
-            } catch (Throwable t) {
-                isEveryComponentStopped = false;
-                final boolean hasRetainedComponents = retainPreStopFailureComponents(retainedComponentNames);
-                try {
-                    injectedLog.error().$("pre-stop hook failed ").$(t).$();
-                } catch (Throwable ignore) {
-                }
-                if (!hasRetainedComponents) {
                     return false;
                 }
             }
-            for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
-                Component c = reverseTopoOrder.getQuick(i);
-                if (retainedComponentNames.contains(c.name())) {
+            // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
+            // assignment). In that case there are no started components -- skip the per-component stop
+            // loop and just shut down the executor. This makes close() safe to call after a validation
+            // failure in run() and on an orchestrator that was never run() at all.
+            if (reverseTopoOrder != null) {
+                boolean isEveryComponentStopped = true;
+                final ObjHashSet<String> retainedComponentNames = new ObjHashSet<>();
+                try {
+                    if (isBounded) {
+                        final LongConsumer hookWithDeadline = preStopHookWithDeadline;
+                        if (hookWithDeadline != null) {
+                            hookWithDeadline.accept(deadlineNanos);
+                        }
+                    } else {
+                        final Runnable hook = preStopHook;
+                        if (hook != null) {
+                            hook.run();
+                        }
+                    }
+                } catch (Throwable t) {
                     isEveryComponentStopped = false;
-                    continue;
+                    final boolean hasRetainedComponents = retainPreStopFailureComponents(retainedComponentNames);
+                    try {
+                        injectedLog.error().$("pre-stop hook failed ").$(t).$();
+                    } catch (Throwable ignore) {
+                    }
+                    if (!hasRetainedComponents) {
+                        return false;
+                    }
                 }
-                State current = stateOf(c.name());
-                if (current == State.FAILED) {
-                    if (!startedComponentNames.contains(c.name())) {
+                for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
+                    Component c = reverseTopoOrder.getQuick(i);
+                    if (retainedComponentNames.contains(c.name())) {
+                        isEveryComponentStopped = false;
                         continue;
                     }
-                    try {
-                        if (isBounded) {
-                            c.stop(deadlineNanos);
-                        } else {
-                            c.stop();
+                    State current = stateOf(c.name());
+                    if (current == State.FAILED) {
+                        if (!startedComponentNames.contains(c.name())) {
+                            continue;
                         }
-                        startedComponentNames.remove(c.name());
-                    } catch (Throwable t) {
-                        isEveryComponentStopped = false;
-                        retainHardDependencies(c, retainedComponentNames);
                         try {
-                            injectedLog.error()
-                                    .$("failed component cleanup failed [component=").$(c.name())
-                                    .$(", error=").$(t).I$();
-                        } catch (Throwable ignore) {
+                            if (isBounded) {
+                                c.stop(deadlineNanos);
+                            } else {
+                                c.stop();
+                            }
+                            startedComponentNames.remove(c.name());
+                        } catch (Throwable t) {
+                            isEveryComponentStopped = false;
+                            retainHardDependencies(c, retainedComponentNames);
+                            try {
+                                injectedLog.error()
+                                        .$("failed component cleanup failed [component=").$(c.name())
+                                        .$(", error=").$(t).I$();
+                            } catch (Throwable ignore) {
+                            }
+                        }
+                        continue;
+                    }
+                    // STARTING is included so a SIGTERM that arrives while a long-running start
+                    // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
+                    // minutes) still routes through the component's stop() method. The component's
+                    // stop() is the only path that invokes signalRestoreCancel + awaitRestoreCancel,
+                    // and without this the 30s SIGTERM window hangs until SIGKILL. The transition table
+                    // permits STARTING -> STOPPING for this case.
+                    //
+                    // SWITCHING is included for the same reason: a SIGTERM that arrives while an
+                    // enterprise role-switch cascade has a component mid-switch leaves that component in
+                    // SWITCHING. Skipping it here would let the reverse-topo stop loop free the
+                    // component's dependents (and ultimately the engine) without ever calling the
+                    // mid-switch component's stop() -- so a woken cascade step could touch a half-freed
+                    // component. Stopping a SWITCHING component routes it through stop() like any other
+                    // started component; the transition table permits SWITCHING -> STOPPING.
+                    if (current == State.READY || current == State.DEGRADED || current == State.STARTING
+                            || current == State.SWITCHING || current == State.STOPPING) {
+                        if (current != State.STOPPING) {
+                            publishInternal(c.name(), State.STOPPING, null);
+                        }
+                        try {
+                            if (isBounded) {
+                                c.stop(deadlineNanos);
+                            } else {
+                                c.stop();
+                            }
+                            publishInternal(c.name(), State.STOPPED, null);
+                        } catch (Throwable t) {
+                            isEveryComponentStopped = false;
+                            retainHardDependencies(c, retainedComponentNames);
+                            try {
+                                injectedLog.error()
+                                        .$("component stop failed [component=").$(c.name())
+                                        .$(", error=").$(t).I$();
+                            } catch (Throwable ignore) {
+                            }
                         }
                     }
-                    continue;
                 }
-                // STARTING is included so a SIGTERM that arrives while a long-running start
-                // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
-                // minutes) still routes through the component's stop() method. The component's
-                // stop() is the only path that invokes signalRestoreCancel + awaitRestoreCancel,
-                // and without this the 30s SIGTERM window hangs until SIGKILL. The transition table
-                // permits STARTING -> STOPPING for this case.
-                //
-                // SWITCHING is included for the same reason: a SIGTERM that arrives while an
-                // enterprise role-switch cascade has a component mid-switch leaves that component in
-                // SWITCHING. Skipping it here would let the reverse-topo stop loop free the
-                // component's dependents (and ultimately the engine) without ever calling the
-                // mid-switch component's stop() -- so a woken cascade step could touch a half-freed
-                // component. Stopping a SWITCHING component routes it through stop() like any other
-                // started component; the transition table permits SWITCHING -> STOPPING.
-                if (current == State.READY || current == State.DEGRADED || current == State.STARTING
-                        || current == State.SWITCHING || current == State.STOPPING) {
-                    if (current != State.STOPPING) {
-                        publishInternal(c.name(), State.STOPPING, null);
-                    }
-                    try {
-                        if (isBounded) {
-                            c.stop(deadlineNanos);
-                        } else {
-                            c.stop();
-                        }
-                        publishInternal(c.name(), State.STOPPED, null);
-                    } catch (Throwable t) {
-                        isEveryComponentStopped = false;
-                        retainHardDependencies(c, retainedComponentNames);
-                        try {
-                            injectedLog.error()
-                                    .$("component stop failed [component=").$(c.name())
-                                    .$(", error=").$(t).I$();
-                        } catch (Throwable ignore) {
-                        }
-                    }
+                if (!isEveryComponentStopped) {
+                    return false;
                 }
             }
-            if (!isEveryComponentStopped) {
-                return false;
+            return true;
+
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
             }
         }
-        return true;
     }
 
     /**
@@ -705,7 +715,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
     private void close0(long deadlineNanos, boolean isBounded) {
         final Thread currentThread = Thread.currentThread();
         boolean isCloseComplete = false;
-        boolean isInterrupted = false;
+        boolean isInterrupted = Thread.interrupted();
         boolean hasStopOwnership = false;
         try {
             synchronized (closeLock) {
