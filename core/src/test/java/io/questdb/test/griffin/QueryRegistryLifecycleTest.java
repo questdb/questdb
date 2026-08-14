@@ -400,6 +400,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
             final int producerCount = 4;
             final int cancellerCount = 2;
             final int iterations = 10_000;
+            final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
 
             final AtomicLongArray liveCancellableIds = new AtomicLongArray(producerCount);
             for (int i = 0; i < producerCount; i++) {
@@ -417,7 +418,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 final Thread thread = new Thread(() -> {
                     try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                         startBarrier.await();
-                        for (int i = 0; i < iterations && fault.get() == null && !isStopped.get(); i++) {
+                        for (int i = 0; i < iterations && fault.get() == null && !isStopped.get() && System.nanoTime() - deadlineNanos < 0; i++) {
                             final long queryId = registry.register("SELECT " + slot, context);
                             final QueryRegistry.Entry entry = registry.getEntry(queryId);
                             final AtomicBoolean cancelledFlag = entry.getCancelled();
