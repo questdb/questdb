@@ -83,11 +83,10 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * surfaces that first - its jump asserts on a negative offset - while a var-size driver folds it to
      * zero, so one of each is added.
      */
-    @Ignore("ADD COLUMN on a table whose last partition is COMPOSITE leaves the new var-size column's aux"
-            + "file at zero length, so the reader fails with 'Invalid column size ... s.i, size=0'. Unchanged"
-            + "by the append-blocked exclusion, so it is a separate gap: a composite partition still needs its"
-            + "new column files created and sized over [columnTop, E), which the parquet arm has no equivalent"
-            + "of.")
+    @Ignore("Reaches the column-top merge gap: 'merge reads below a column top'. Three defects on the way"
+            + "there are fixed - the top recorded at the live row count, the frame cursors' null-column skip,"
+            + "and the negative append position - so what is left is the merge itself, which cannot yet write"
+            + "NULLs for rows sitting below a top.")
     @Test
     public void testAddColumnAfterMergeAppendRelocatedAPiece() throws Exception {
         assertMemoryLeak(() -> {
@@ -666,9 +665,9 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * Both shapes are here: the single row, and several rows at one timestamp that dedup must collapse
      * onto the last of them.
      */
-    @Ignore("A dedup commit of a single timestamp into a COMPOSITE active partition reads a row past the"
-            + "mapping - SIGSEGV in Record.getTimestamp. Kills the JVM. Still reached with the append-blocked"
-            + "exclusion in place, so it is neither the LAG nor the in-place append.")
+    @Ignore("Still faults on an unsafe memory access. The frame's fixed-size addressing is now proven in"
+            + "bounds - an OOB probe that fired before the reader-reload fix no longer fires - so the remaining"
+            + "read is elsewhere in that path and is not yet isolated.")
     @Test
     public void testDedupCommitOfOneTimestampAppliesAsABlock() throws Exception {
         assertMemoryLeak(() -> {
@@ -1355,9 +1354,9 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
      * Either one lops the relocated sibling off the end of the shared files, leaving its rows reading back
      * as zeroes - a VARCHAR aux entry of 0 is an unset entry, which is where it surfaces first.
      */
-    @Ignore("The first cut and the writer reopen now survive - the truncation this test is named for is"
-            + "fixed. What is left is narrower: the SECOND cut, taken into the cold tail piece while the writer"
-            + "holds the partition open, comes back with the wrong rows.")
+    @Ignore("Still faults on an unsafe memory access, on the SECOND cut - the one taken while the writer"
+            + "holds the partition open. Flaky between a caught fault and a SIGSEGV because the fixture builds"
+            + "its rows with an unseeded rnd_varchar.")
     @Test
     public void testMergeAppendedPieceSurvivesActivePartitionClose() throws Exception {
         assertMemoryLeak(() -> {

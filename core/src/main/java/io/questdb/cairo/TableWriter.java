@@ -8886,16 +8886,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             openColumnFiles(name, columnNameTxn, columnIndex, plen);
+            // The top is a FILE row, and it has to sit above every row the partition's files hold - its
+            // physical extent E - not merely above its LIVE rows. The two differ ONLY for a COMPOSITE
+            // partition, where a merge relocated a piece to the tail: a top at the live count leaves that
+            // piece ABOVE it, so every reader treats the column as PRESENT for the piece's rows and reads
+            // them out of a file that was created empty. Everything else keeps the transient row count it
+            // always had - the two numbers are not interchangeable mid-commit.
+            final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+            final long columnTop = lastPartitionIndex > -1 && txWriter.hasGeometryChain(lastPartitionIndex)
+                    ? getGeometry().getE(lastPartitionIndex)
+                    : txWriter.getTransientRowCount();
             if (txWriter.getTransientRowCount() > 0) {
                 // write top offset to the column version file
-                columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, txWriter.getTransientRowCount());
+                columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, columnTop);
             }
 
             if (indexed) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount(), partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
+                indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, txWriter.getLastPartitionTimestamp());
             }
 
@@ -13206,7 +13216,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA auxMem = getSecondaryColumn(columnIndex);
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) { // Not deleted
-                final long pos = size - getColumnTop(columnIndex);
+                // A column top can sit ABOVE the row being positioned at. On a COMPOSITE partition ADD
+                // COLUMN records the top at the physical extent E, which is past every row the LAST piece
+                // holds, so that piece's position comes out negative. Negative means the column reaches
+                // none of these rows, which is the file's own start - a fixed-size column asserts in
+                // jumpTo otherwise, and a var-size driver quietly folds it to zero anyway.
+                final long pos = Math.max(0, size - getColumnTop(columnIndex));
                 if (ColumnType.isVarSize(columnType)) {
                     ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                     dataSizeBytes = driver.setAppendPosition(

@@ -303,8 +303,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final int columnIndex = columnIndexes.getQuick(i);
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR colMem = reader.getColumn(readerColIndex);
-            // when the entire column is NULL we make it skip the whole of the partition frame
-            final long top = colMem instanceof NullMemoryCMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
+            // When the entire column is NULL we make it skip the whole of the partition frame, by handing
+            // the arithmetic below a top that cancels the frame's own high row exactly. That cancellation
+            // happens in FILE rows, so the shift has to be in it: a piece a merge relocated to the tail has
+            // a positive shift, and a top of the bare partition row would leave partitionHiAdjusted at the
+            // shift rather than at 0 - sending a NULL column down the READ branch, to take a page address
+            // off memory that has none.
+            final long top = colMem instanceof NullMemoryCMR
+                    ? adjustedHi + pieceShift
+                    : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = partitionLo + pieceShift - top;
             final long partitionHiAdjusted = adjustedHi + pieceShift - top;
             final int sh = columnSizeShifts.getQuick(i);

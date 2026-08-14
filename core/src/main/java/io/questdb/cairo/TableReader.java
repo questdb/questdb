@@ -1657,7 +1657,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                // Size the mapping by the file extent and RECORD the live row count -
+                                // the same split openPartition0 makes. Re-mapping to the live count
+                                // shrinks a composite partition below the pieces that sit above it.
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(partitionIndex, txPartitionSize))) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
@@ -1721,7 +1724,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                // Size the mapping by the file extent and RECORD the live row count -
+                                // the same split openPartition0 makes. Re-mapping to the live count
+                                // shrinks a composite partition below the pieces that sit above it.
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(txPartitionIndex, txPartitionSize))) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
@@ -1928,6 +1934,20 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @param partitionIndex index of partition
      * @param rowCount       number of rows in partition
      */
+    /**
+     * How many file rows a mapping of {@code partitionIndex} must cover. A COMPOSITE partition's pieces sit
+     * anywhere in {@code [0, E)} - one can start above file row 0, and dead space can sit above the live
+     * rows - so its mapping is sized by {@code E} and never by a row count, exactly as openPartition0 sizes
+     * the first open. Every other partition keeps the count the caller computed: the callers derive theirs
+     * from several different places and the two are not interchangeable.
+     */
+    private long mappedRowCount(int partitionIndex, long liveRowCount) {
+        if (partitionIndex < 0 || !txFile.hasGeometryChain(partitionIndex)) {
+            return liveRowCount;
+        }
+        return getGeometry().getE(partitionIndex);
+    }
+
     private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
