@@ -44,7 +44,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 10 | Routing behind `cairo.o3.partition.merge.append.enabled` | **BUILT**, default OFF |
 | 11 | End-to-end test | **GREEN** - 2 cases, rows and geometry both asserted |
 | 12 | Var-size column merge | **BUILT**, all four var types |
-| 13 | Index maintenance for merged rows | **BUILT** - build, seal and rebuild all cover `[columnTop, E)` |
+| 13 | Index maintenance for merged rows | **BUILT** - build, seal, rebuild and covering sidecar all handle a composite directory |
 | 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet**, but still POSITIONED at `E` - see below |
 | 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
@@ -245,7 +245,7 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. **31 pass, 5 fail, and NOTHING is
+there that does not turn on a replace commit or on compaction. **32 pass, 4 fail, and NOTHING is
 `@Ignore`d**: the suite states the truth about the feature rather than hiding it, so the red list IS the
 to-do list. `O3CompositePartitionTest` adds a column-top merge case and is fully green, 4 of 4.
 
@@ -254,10 +254,10 @@ The rest of the `io.questdb.test.cairo.o3` package - 365 further tests across 11
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
 this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
-All 5 are ordinary assertion failures. Three of them used to take the JVM down with a SIGSEGV - which also
-took every other test in the fork with it - and two more read past a mapping. A whole-class run therefore
-reports honestly now; before, it reported nothing at all. Per-method runs are still the way to read the
-suite while this many are red:
+All 4 are ordinary assertion failures, and every one of them is DEDUP - no index, addressing or
+whole-partition-read scenario is red any more. Three of the original reds used to take the JVM down with a
+SIGSEGV, which also took every other test in the fork with it, and two more read past a mapping. A
+whole-class run therefore reports honestly now; before, it reported nothing at all.
 
 ```
 for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //'); do
@@ -435,13 +435,27 @@ Most of the parent's index work needed no porting: its `(dirTs, nameTxn)` dedupe
 `SymbolColumnIndexer.partitionTop` shift are artifacts of the split design, and here one record IS one
 directory and the indexer has no shift.
 
+### 20. The covering sidecar asserted ascending timestamps - FIXED
+
+`CoveringCompressor.compressLongsLinearPred` asserted `lastValue >= firstValue` under the comment "Caller
+guarantees sorted ascending", and `PostingIndexWriter.compressSidecarBlock` routes the designated timestamp
+there unconditionally. One `.pk` serves a whole directory, so a key's posting list mixes pieces - and a
+merge-append parks a relocated piece at the TAIL of the shared files, which makes the sequence step
+BACKWARDS at the piece boundary. The assert fired inside `sealFull -> reencodeAllGenerations`, poisoned the
+posting writer and SUSPENDED the table on an `ADD INDEX ... POSTING INCLUDE (ts)` apply.
+
+The precondition was never real: the assert only ever compared the two ENDPOINTS, and linear prediction is
+lossless for any input - decode is `first + i*stride + residual` and nothing binary-searches a sidecar. It
+is now a fall-back to plain `compressLongs`, which encodes such a run at least as tightly because a
+backwards stride carries no signal.
+
+**Any "a partition's rows are physically in timestamp order" assumption is false for a composite
+directory.** This assert and section 16's interval scan are the two that had been written down.
+
 ## Known gaps
 
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
-- **The covering sidecar assumes ascending timestamps.** A rewrite parks a relocated piece above the last
-  one, so physical row order stops being timestamp order and `ADD INDEX ... INCLUDE (ts)` suspends the
-  table.
 - **Two dedup scenarios fail unattributed** around the batch boundary. Leads, not diagnoses.
 - **`NEW_PIECE`'s floor**: the executor records the new piece's `tsLo` as the batch's FIRST timestamp, not
   the lower bound of the gap it fills. So a later row landing between the previous piece's `tsHi` and this
