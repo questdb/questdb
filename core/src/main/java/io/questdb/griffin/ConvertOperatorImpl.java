@@ -222,7 +222,14 @@ public class ConvertOperatorImpl implements Closeable {
                 if (asyncProcessingErrorCount.get() == 0) {
                     try {
                         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-                        final long maxRow = tableWriter.getPartitionSize(partitionIndex);
+                        // The conversion rewrites a FILE, so it spans the rows the file spans - E, not the
+                        // live row count. A composite partition scatters its live rows over [0, E) and the
+                        // gaps hold superseded images, so a walk that stops at the live count leaves live
+                        // rows above it unconverted.
+                        final long maxRow = Math.max(
+                                tableWriter.getPartitionSize(partitionIndex),
+                                tableWriter.getPartitionPhysicalRowCount(partitionIndex)
+                        );
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
                         if (columnTop > -1) {

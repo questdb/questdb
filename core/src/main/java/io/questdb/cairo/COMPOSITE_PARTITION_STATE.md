@@ -48,6 +48,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 14 | In-order append into a COMPOSITE last partition | **BLOCKED like parquet** - see below |
 | 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
+| 17 | `ALTER TABLE ... ALTER COLUMN TYPE` over a composite partition | **BUILT** - the conversion spans `E` |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
 
@@ -244,16 +245,16 @@ so a column that came back empty could not pass.
 ## The ported pre-split suite
 
 `O3PartitionPreSplitTest` carries 36 scenarios ported from the earlier split implementation - everything
-there that does not turn on a replace commit or on compaction. **21 pass, 15 fail, and NOTHING is
+there that does not turn on a replace commit or on compaction. **24 pass, 12 fail, and NOTHING is
 `@Ignore`d**: the suite states the truth about the feature rather than hiding it, so the red list IS the
-to-do list. `O3CompositePartitionTest` adds a column-top merge case and is fully green, 3 of 3.
+to-do list. `O3CompositePartitionTest` adds a column-top merge case and is fully green, 4 of 4.
 
 The rest of the `io.questdb.test.cairo.o3` package - 365 further tests across 11 classes - is green.
 
 Only parquet conversion, replace commits and compaction are out of scope. BITMAP and POSTING are both in:
 this tree is based on `f8cf9e468e`, whose own subject is a POSTING fix.
 
-None of the 15 crashes any more. Three of them used to take the JVM down with a SIGSEGV - which also took
+None of the 12 crashes any more. Three of them used to take the JVM down with a SIGSEGV - which also took
 every other test in the fork with it - and the reader-mapping and page-frame fixes turned all three into
 ordinary assertion failures. A whole-class run therefore reports honestly now; before, it reported nothing
 at all. Per-method runs are still the way to read the suite while this many are red:
@@ -337,11 +338,34 @@ first version did, and since `getPieceShift` calls it and BOTH frame cursors cal
 frame, the read path was quadratic in the piece count. The slot is derived and never stored - the
 `_geometry` record is still the four longs it always was.
 
+### 17. A column conversion walked the LIVE row count, not `E` - FIXED
+
+`ConvertOperatorImpl.convertColumn0` took its per-partition extent from
+`TableWriter.getPartitionSize(partitionIndex)`. That is the live row count, and for an ordinary partition
+it is also the number of rows the column files hold, so the two readings never had to be told apart.
+
+A composite partition breaks the coincidence. Its live rows are scattered over `[0, E)` and a merge-append
+parks a rewritten piece above every other, so the last live row sits at `E - 1` while the live count is far
+below it. Converting `[columnTop, liveRows)` therefore rewrote the dead space it happened to cross and left
+every live row above `liveRows` unconverted - in one scenario the destination file ended 1226 rows short of
+the source, and the rows past the end read back as symbol key 0, which decodes to whatever value the table
+interned first. No exception anywhere: the conversion reported success and the table came back with wrong
+values, which is the worst shape this class of defect takes.
+
+The extent is now `max(getPartitionSize, getPartitionPhysicalRowCount)`. `getPartitionPhysicalRowCount`
+answers `E` for a composite partition and the record's own size otherwise, and the `max` covers the active
+partition, whose transient row count `_geometry` is not authoritative for. `changeColumnType` commits
+before it converts, so for an ordinary partition the two terms agree and the extent is unchanged.
+
+The same reading governs the branch below it: a column absent from the partition records its new top as
+that extent, so its first future row lands at file row 0 of a file that does not exist yet.
+
+Three ported scenarios turned green: both `testChangeColumnType*` cases and
+`testInPlaceAppendDoesNotOverReserveForItsSibling`, whose oracle comparison runs after a
+`VARCHAR -> SYMBOL` conversion.
+
 ## Known gaps
 
-- **ALTER COLUMN TYPE over a composite partition** reads a var-size column at the wrong extent:
-  `AssertionError` in `VarcharTypeDriver.getDataVectorSize`, reached through `TableReader.openPartition0`.
-  Two ported scenarios.
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
 - **An index built over a composite partition covers one piece**, not the whole of `[columnTop, E)`, so an
