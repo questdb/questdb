@@ -178,7 +178,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_DECIMAL64: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             fillNulls(scratch, rows);
                         } else {
                             perColumnRowLoop(record, lo, hi, ci);
@@ -191,7 +191,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_DOUBLE: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             fillNulls(scratch, rows);
                         } else {
                             perColumnRowLoop(record, lo, hi, ci);
@@ -204,7 +204,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_INT: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             fillNulls(scratch, rows);
                         } else {
                             perColumnRowLoop(record, lo, hi, ci);
@@ -218,7 +218,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             fillNulls(scratch, rows);
                         } else {
                             perColumnRowLoop(record, lo, hi, ci);
@@ -231,7 +231,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_FLOAT: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             fillNulls(scratch, rows);
                         } else {
                             perColumnRowLoop(record, lo, hi, ci);
@@ -245,7 +245,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_CHAR: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
                             // INSERT NULL stores 0 and the wire row keeps the null
                             // bitmap bit clear, so a column-top frame ships literal
@@ -263,7 +263,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_BYTE: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                             // SHORT / CHAR case above for the column-top rationale.
                             scratch.appendColumnFixedZero(rows, 1);
@@ -278,7 +278,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_BOOLEAN: {
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
                             // column-top fill is n bit-packed false values; the
                             // null bitmap stays clear.
@@ -295,7 +295,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     SymbolTable st = sts[ci];
                     long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        if (isNative) {
+                        if (isNative || record.isParquetColumnTop(ci)) {
                             fillNulls(scratch, rows);
                         } else {
                             perColumnRowLoop(record, lo, hi, ci);
@@ -846,7 +846,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 // The wire reader still cannot represent the literal address 0.0.0.0
                 // as non-null - that's a QuestDB-level limitation inherited by the
                 // wire format.
-                scratch.appendIPv4OrNull(record.getInt(ci));
+                scratch.appendIPv4OrNull(record.getIPv4(ci));
                 break;
             case QwpConstants.TYPE_LONG:
                 scratch.appendLongOrNull(record.getLong(ci));

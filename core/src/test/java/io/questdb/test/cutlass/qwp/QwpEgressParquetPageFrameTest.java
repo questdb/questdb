@@ -25,9 +25,21 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
+import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -113,7 +125,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
 
                 byte[] nativePayload = snapshotPayload("SELECT * FROM allp");
                 server.execute("ALTER TABLE allp CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "allp", 2, "1970-01-01\n1970-01-02\n");
                 byte[] parquetPayload = snapshotPayload("SELECT * FROM allp");
 
                 Assert.assertArrayEquals(nativePayload, parquetPayload);
@@ -126,10 +138,10 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startFragmented(SMALL_FRAMES_AND_ROW_GROUPS)) {
                 server.execute("CREATE TABLE tops(id LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                server.execute("INSERT INTO tops VALUES (1, '2024-01-01T00:00:00Z'), (2, '2024-01-01T00:00:01Z')");
+                server.execute("INSERT INTO tops SELECT x, dateadd('s', x::INT, '2024-01-01') FROM long_sequence(130)");
                 server.awaitTable("tops");
                 server.execute("ALTER TABLE tops CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "tops", 2, "2024-01-01\n");
                 server.execute("ALTER TABLE tops ADD COLUMN l LONG");
                 server.execute("ALTER TABLE tops ADD COLUMN i INT");
                 server.execute("ALTER TABLE tops ADD COLUMN d DOUBLE");
@@ -150,7 +162,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++, rows[0]++) {
-                                if (rows[0] < 2) {
+                                if (rows[0] < 130) {
                                     Assert.assertTrue(batch.isNull(0, r));
                                     Assert.assertTrue(batch.isNull(1, r));
                                     Assert.assertTrue(batch.isNull(2, r));
@@ -176,7 +188,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
 
                         @Override
                         public void onEnd(long totalRows) {
-                            Assert.assertEquals(3, totalRows);
+                            Assert.assertEquals(131, totalRows);
                         }
 
                         @Override
@@ -185,7 +197,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                         }
                     });
                 }
-                Assert.assertEquals(3, rows[0]);
+                Assert.assertEquals(131, rows[0]);
             }
         });
     }
@@ -198,7 +210,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                 server.execute("INSERT INTO fallback_t SELECT x, x::TIMESTAMP FROM long_sequence(500)");
                 server.awaitTable("fallback_t");
                 server.execute("ALTER TABLE fallback_t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "fallback_t", 2, "1970-01-01\n");
 
                 final long[] count = {-1};
                 final long[] filteredCount = {0};
@@ -246,35 +258,187 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testCoveringIndexIncludedFixedWidthValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain server = startFragmented(SMALL_FRAMES_AND_ROW_GROUPS)) {
+                server.execute("""
+                        CREATE TABLE qwp_cov(
+                            ts TIMESTAMP,
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (l, d),
+                            l LONG,
+                            d DOUBLE
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                server.execute("""
+                        INSERT INTO qwp_cov
+                        SELECT
+                            dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                            CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END,
+                            x,
+                            x * 1.5
+                        FROM long_sequence(300)
+                        """);
+                server.awaitTxn("qwp_cov", 1);
+
+                final String sql = "SELECT l, d FROM qwp_cov WHERE sym = 'A'";
+                final StringBuilder plan = new StringBuilder();
+                final int[] rows = {0};
+                try (QwpQueryClient client = newClient()) {
+                    client.execute("EXPLAIN " + sql, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                plan.append(batch.getString(0, r));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                    Assert.assertTrue(
+                            "plan must use covering index: " + plan,
+                            plan.indexOf("CoveringIndex on: sym") >= 0
+                    );
+
+                    client.execute(sql, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++, rows[0]++) {
+                                long expected = rows[0] * 2L + 1;
+                                Assert.assertFalse("LONG row " + rows[0], batch.isNull(0, r));
+                                Assert.assertFalse("DOUBLE row " + rows[0], batch.isNull(1, r));
+                                Assert.assertEquals(expected, batch.getLongValue(0, r));
+                                Assert.assertEquals(expected * 1.5, batch.getDoubleValue(1, r), 0.0);
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(150, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals(150, rows[0]);
+            }
+        });
+    }
+
+    @Test
     public void testLazyAlterColumnTypeDoesNotBecomeNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startFragmented(SMALL_FRAMES_AND_ROW_GROUPS)) {
-                server.execute("CREATE TABLE casts(a LONG, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                server.execute("INSERT INTO casts VALUES (10, '100', 1::TIMESTAMP), (20, '200', 2::TIMESTAMP), (NULL, NULL, 3::TIMESTAMP)");
+                server.execute("""
+                        CREATE TABLE casts(
+                            a LONG,
+                            l VARCHAR,
+                            d VARCHAR,
+                            i VARCHAR,
+                            ip VARCHAR,
+                            f VARCHAR,
+                            sh VARCHAR,
+                            byt VARCHAR,
+                            bo VARCHAR,
+                            tsc VARCHAR,
+                            dec VARCHAR,
+                            ts TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                server.execute("""
+                        INSERT INTO casts VALUES
+                            (10, '100', '1.5', '11', '192.168.1.1', '2.5', '12', '13', 'true', '1970-01-01T00:00:00.000010Z', '12.34', 1::TIMESTAMP),
+                            (20, '200', '-3.5', '-21', '10.0.0.1', '-4.5', '-22', '-23', 'false', '1970-01-01T00:00:00.000020Z', '-56.78', 2::TIMESTAMP),
+                            (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 3::TIMESTAMP)
+                        """);
                 server.awaitTable("casts");
                 server.execute("ALTER TABLE casts CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "casts", 2, "1970-01-01\n");
                 server.execute("ALTER TABLE casts ALTER COLUMN a TYPE VARCHAR");
                 TestUtils.drainWalQueue(server.getEngine());
-                server.execute("ALTER TABLE casts ALTER COLUMN b TYPE LONG");
+                server.execute("ALTER TABLE casts ALTER COLUMN l TYPE LONG");
                 TestUtils.drainWalQueue(server.getEngine());
-                server.awaitTxn("casts", 4);
+                server.execute("ALTER TABLE casts ALTER COLUMN d TYPE DOUBLE");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN i TYPE INT");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN ip TYPE IPv4");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN f TYPE FLOAT");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN sh TYPE SHORT");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN byt TYPE BYTE");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN bo TYPE BOOLEAN");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN tsc TYPE TIMESTAMP");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.execute("ALTER TABLE casts ALTER COLUMN dec TYPE DECIMAL(18,2)");
+                TestUtils.drainWalQueue(server.getEngine());
+                server.awaitTxn("casts", 13);
 
                 final int[] rows = {0};
                 try (QwpQueryClient client = newClient()) {
-                    client.execute("SELECT a, b FROM casts", new QwpColumnBatchHandler() {
+                    client.execute("SELECT a, l, d, i, ip, f, sh, byt, bo, tsc, dec FROM casts", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             for (int r = 0; r < batch.getRowCount(); r++, rows[0]++) {
                                 if (rows[0] == 0) {
-                                    Assert.assertEquals("10", batch.getString(0, r));
-                                    Assert.assertEquals(100, batch.getLongValue(1, r));
+                                    Assert.assertFalse("VARCHAR", batch.isNull(0, r));
+                                    Assert.assertFalse("LONG", batch.isNull(1, r));
+                                    Assert.assertFalse("DOUBLE", batch.isNull(2, r));
+                                    Assert.assertFalse("INT", batch.isNull(3, r));
+                                    Assert.assertFalse("IPv4", batch.isNull(4, r));
+                                    Assert.assertFalse("FLOAT", batch.isNull(5, r));
+                                    Assert.assertFalse("SHORT", batch.isNull(6, r));
+                                    Assert.assertFalse("BYTE", batch.isNull(7, r));
+                                    Assert.assertFalse("BOOLEAN", batch.isNull(8, r));
+                                    Assert.assertFalse("TIMESTAMP", batch.isNull(9, r));
+                                    Assert.assertFalse("DECIMAL64", batch.isNull(10, r));
+                                    Assert.assertEquals("VARCHAR", "10", batch.getString(0, r));
+                                    Assert.assertEquals("LONG", 100, batch.getLongValue(1, r));
+                                    Assert.assertEquals("DOUBLE", 1.5, batch.getDoubleValue(2, r), 0.0);
+                                    Assert.assertEquals("INT", 11, batch.getIntValue(3, r));
+                                    Assert.assertEquals("FLOAT", 2.5f, batch.getFloatValue(5, r), 0.0f);
+                                    Assert.assertEquals("SHORT", 12, batch.getShortValue(6, r));
+                                    Assert.assertEquals("BYTE", 13, batch.getByteValue(7, r));
+                                    Assert.assertTrue("BOOLEAN", batch.getBoolValue(8, r));
+                                    Assert.assertEquals("TIMESTAMP", 10, batch.getLongValue(9, r));
+                                    Assert.assertEquals("DECIMAL64", 1_234, batch.getLongValue(10, r));
+                                    Assert.assertEquals("IPv4", 0xC0A80101L, batch.getIntValue(4, r) & 0xFFFF_FFFFL);
                                 } else if (rows[0] == 1) {
                                     Assert.assertEquals("20", batch.getString(0, r));
                                     Assert.assertEquals(200, batch.getLongValue(1, r));
+                                    Assert.assertEquals(-3.5, batch.getDoubleValue(2, r), 0.0);
+                                    Assert.assertEquals(-21, batch.getIntValue(3, r));
+                                    Assert.assertEquals(0x0A000001L, batch.getIntValue(4, r) & 0xFFFF_FFFFL);
+                                    Assert.assertEquals(-4.5f, batch.getFloatValue(5, r), 0.0f);
+                                    Assert.assertEquals(-22, batch.getShortValue(6, r));
+                                    Assert.assertEquals(-23, batch.getByteValue(7, r));
+                                    Assert.assertFalse(batch.getBoolValue(8, r));
+                                    Assert.assertEquals(20, batch.getLongValue(9, r));
+                                    Assert.assertEquals(-5_678, batch.getLongValue(10, r));
                                 } else {
-                                    Assert.assertTrue(batch.isNull(0, r));
-                                    Assert.assertTrue(batch.isNull(1, r));
+                                    for (int c = 0; c < 11; c++) {
+                                        if (c == 6 || c == 7 || c == 8) {
+                                            Assert.assertFalse("column " + c, batch.isNull(c, r));
+                                        } else {
+                                            Assert.assertTrue("column " + c, batch.isNull(c, r));
+                                        }
+                                    }
+                                    Assert.assertEquals(0, batch.getShortValue(6, r));
+                                    Assert.assertEquals(0, batch.getByteValue(7, r));
+                                    Assert.assertFalse(batch.getBoolValue(8, r));
                                 }
                             }
                         }
@@ -309,7 +473,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                         """);
                 server.awaitTable("mixed");
                 server.execute("ALTER TABLE mixed CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "mixed", 2, "1970-01-01\n");
 
                 final int[] counts = new int[41];
                 final int[] nulls = {0};
@@ -349,6 +513,45 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testParquetColumnTopUsesBulkFill() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> columns = new ObjList<>();
+            QwpEgressColumnDef longColumn = new QwpEgressColumnDef();
+            longColumn.of("l", ColumnType.LONG);
+            columns.add(longColumn);
+            QwpEgressColumnDef shortColumn = new QwpEgressColumnDef();
+            shortColumn.of("sh", ColumnType.SHORT);
+            columns.add(shortColumn);
+            QwpEgressColumnDef booleanColumn = new QwpEgressColumnDef();
+            booleanColumn.of("bo", ColumnType.BOOLEAN);
+            columns.add(booleanColumn);
+
+            try (
+                    QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict();
+                    QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                    TestColumnTopRecord record = new TestColumnTopRecord()
+            ) {
+                batch.beginBatch(columns, null, dict);
+                record.ofColumnTop();
+                batch.appendPageFrame(new TestParquetPageFrame(), record, 0, 64);
+                Assert.assertEquals(64, batch.getRowCount());
+                Assert.assertEquals("LONG column top must not call the record accessor", 0, record.getLongCalls);
+                Assert.assertEquals("SHORT column top must not call the record accessor", 0, record.getShortCalls);
+                Assert.assertEquals("BOOLEAN column top must not call the record accessor", 0, record.getBoolCalls);
+
+                batch.reset();
+                batch.beginBatch(columns, null, dict);
+                record.ofLazyCast();
+                batch.appendPageFrame(new TestParquetPageFrame(), record, 0, 64);
+                Assert.assertEquals(64, batch.getRowCount());
+                Assert.assertEquals("LONG lazy cast must keep the record fallback", 64, record.getLongCalls);
+                Assert.assertEquals("SHORT lazy cast must keep the record fallback", 64, record.getShortCalls);
+                Assert.assertEquals("BOOLEAN lazy cast must keep the record fallback", 64, record.getBoolCalls);
+            }
+        });
+    }
+
+    @Test
     public void testMultipleRowGroupsAndFragmentedResume() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startFragmented(SMALL_FRAMES_AND_ROW_GROUPS)) {
@@ -356,7 +559,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                 server.execute("INSERT INTO resume_t SELECT x, x::TIMESTAMP FROM long_sequence(1_000)");
                 server.awaitTable("resume_t");
                 server.execute("ALTER TABLE resume_t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "resume_t", 2, "1970-01-01\n");
 
                 final long[] next = {1};
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -398,7 +601,7 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                         """);
                 server.awaitTable("high_sym");
                 server.execute("ALTER TABLE high_sym CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-                TestUtils.drainWalQueue(server.getEngine());
+                awaitTxnAndAssertParquetPartitions(server, "high_sym", 2, "1970-01-01\n");
 
                 final int[] nulls = {0};
                 final int[] rows = {0};
@@ -430,6 +633,146 @@ public class QwpEgressParquetPageFrameTest extends AbstractQwpBootstrapTest {
                 Assert.assertEquals(19, nulls[0]);
             }
         });
+    }
+
+    private static class TestColumnTopRecord extends PageFrameMemoryRecord {
+        private int getBoolCalls;
+        private int getLongCalls;
+        private int getShortCalls;
+        private final DirectLongList testAuxPageAddresses = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);
+        private final DirectLongList testPageAddresses = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);
+
+        @Override
+        public void close() {
+            testAuxPageAddresses.close();
+            testPageAddresses.close();
+            super.close();
+        }
+
+        @Override
+        public boolean getBool(int columnIndex) {
+            getBoolCalls++;
+            return true;
+        }
+
+        @Override
+        public long getLong(int columnIndex) {
+            getLongCalls++;
+            return 42;
+        }
+
+        @Override
+        public short getShort(int columnIndex) {
+            getShortCalls++;
+            return 42;
+        }
+
+        private void of(boolean isLazyCast) {
+            testAuxPageAddresses.clear();
+            testPageAddresses.clear();
+            sourceColumnTypes = new IntList();
+            for (int i = 0; i < 3; i++) {
+                testAuxPageAddresses.add(0);
+                testPageAddresses.add(0);
+                sourceColumnTypes.add(isLazyCast ? -ColumnType.VARCHAR : -1);
+            }
+            auxPageAddresses = testAuxPageAddresses;
+            pageAddresses = testPageAddresses;
+            columnOffset = 0;
+            frameFormat = PartitionFormat.PARQUET;
+            getBoolCalls = 0;
+            getLongCalls = 0;
+            getShortCalls = 0;
+            hasTypeCasts = isLazyCast;
+        }
+
+        private void ofColumnTop() {
+            of(false);
+        }
+
+        private void ofLazyCast() {
+            of(true);
+        }
+    }
+
+    private static class TestParquetPageFrame implements PageFrame {
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getAuxPageSize(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 3;
+        }
+
+        @Override
+        public byte getFormat() {
+            return PartitionFormat.PARQUET;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return 0;
+        }
+
+        @Override
+        public int getParquetRowGroupHi() {
+            return 64;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return 0;
+        }
+
+        @Override
+        public long getPartitionHi() {
+            return 64;
+        }
+
+        @Override
+        public int getPartitionIndex() {
+            return 0;
+        }
+
+        @Override
+        public long getPartitionLo() {
+            return 0;
+        }
+    }
+
+    private static void awaitTxnAndAssertParquetPartitions(
+            TestServerMain server,
+            String tableName,
+            long txn,
+            String expectedPartitionNames
+    ) {
+        server.awaitTxn(tableName, txn);
+        server.assertSql(
+                "SELECT name FROM table_partitions('" + tableName + "') WHERE isParquet ORDER BY name",
+                "name\n" + expectedPartitionNames
+        );
     }
 
     private static QwpQueryClient newClient() throws Exception {
