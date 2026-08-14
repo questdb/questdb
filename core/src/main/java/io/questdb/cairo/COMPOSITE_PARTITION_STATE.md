@@ -330,6 +330,13 @@ value contributes its whole clipped range and the first piece wholly above it en
 parquet test. Six ported scenarios turned green on this alone, and it is what makes
 `O3CompositePartitionTest` fully green.
 
+**Nothing per-piece may be linear.** A directory holds thousands of pieces once a fine cut floor has been
+in use for a while, so `findPiece` and `findPieceByRow` are binary searches and `getPieceCumulativeLo` is a
+constant-time read of a derived slot in the in-memory piece stride. Summing that slot on demand is what the
+first version did, and since `getPieceShift` calls it and BOTH frame cursors call `getPieceShift` per
+frame, the read path was quadratic in the piece count. The slot is derived and never stored - the
+`_geometry` record is still the four longs it always was.
+
 ## Known gaps
 
 - **ALTER COLUMN TYPE over a composite partition** reads a var-size column at the wrong extent:

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -232,6 +233,83 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A directory of many pieces, read through the INTERVAL cursor. Resolving a {@code WHERE ts BETWEEN}
+     * to a row range is a search over the timestamp column, and a composite directory breaks the two things
+     * an ordinary partition lets that search assume: that the rows are one contiguous run of file rows, and
+     * that file order is timestamp order.
+     * <p>
+     * A partition can hold thousands of pieces once a fine cut floor has been in use for a while, so the
+     * per-piece lookups are asserted here as well as the rows. They are binary searches, and a binary search
+     * that agrees with a linear one on a handful of pieces can still disagree on the boundary cases - hence
+     * a window at every piece edge, and one either side of it.
+     */
+    @Test
+    public void testIntervalScanAcrossManyPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+
+            final String base = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)";
+            // A later day, so 2020-02-03 is never the active partition and every batch below goes through
+            // the O3 path rather than an append to the open one.
+            final String nextDay = "SELECT x::INT + 90000 i, -x - 90000L j, " + WIDE_COLUMNS + "," +
+                    " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + "), INDEX(symi CAPACITY 32) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            // Eleven backdated batches, two hours apart, each landing between rows the batch before it left
+            // alone. The day accumulates pieces instead of being rewritten whole.
+            for (int hour = 1; hour < 23; hour += 2) {
+                execute("INSERT INTO x SELECT x::INT + " + (100_000 * hour) + " i," +
+                        " -x - " + (100_000L * hour) + " j, " + WIDE_COLUMNS + "," +
+                        " timestamp_sequence('2020-02-03T" + String.format("%02d", hour) + ":07:03', 5*1000000L) ts" +
+                        " FROM long_sequence(40)");
+                drainWalQueue();
+            }
+
+            final TableToken xt = engine.verifyTableName("x");
+            final LongList boundaries = new LongList();
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                final int pieceCount = geometry.getPieceCount(0);
+                Assert.assertTrue("expected a many-piece directory, got " + pieceCount, pieceCount >= 8);
+
+                // The lookups are binary searches, so assert them against the definitions they stand for:
+                // cumulativeLo is the running sum of the row counts before a piece, the shift is the gap
+                // between that and where the piece actually sits in the files, and a piece owns its own
+                // first row, its own last row and its own tsLo.
+                long cumulative = 0;
+                for (int p = 0; p < pieceCount; p++) {
+                    final long rows = geometry.getPieceRowCount(0, p);
+                    Assert.assertEquals("cumulativeLo of piece " + p, cumulative, geometry.getPieceCumulativeLo(0, p));
+                    Assert.assertEquals("shift of piece " + p,
+                            geometry.getPieceRowOffset(0, p) - cumulative, geometry.getPieceShift(0, p));
+                    Assert.assertEquals("piece owning its first row", p, geometry.findPieceByRow(0, cumulative));
+                    Assert.assertEquals("piece owning its last row", p, geometry.findPieceByRow(0, cumulative + rows - 1));
+                    Assert.assertEquals("piece owning its tsLo", p, geometry.findPiece(0, geometry.getPieceTimestampLo(0, p)));
+                    boundaries.add(geometry.getPieceTimestampLo(0, p));
+                    cumulative += rows;
+                }
+                Assert.assertEquals("pieces must sum to the live rows", cumulative, geometry.getLiveRows(0));
+            }
+
+            // The oracle reaches the same rows by a FULL scan, which is a different cursor from the interval
+            // one under test. It is written in one ordered pass, so it stays a plain partition.
+            execute("CREATE TABLE o AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // A window straddling every piece boundary, where an off-by-one in the row range would show.
+            for (int i = 0, n = boundaries.size(); i < n; i++) {
+                final long boundary = boundaries.getQuick(i);
+                assertSameWindow(boundary - 60 * 1000000L, boundary + 60 * 1000000L);
+                assertSameWindow(boundary, boundary + 1);
+                assertSameWindow(boundary - 1, boundary);
+            }
+        });
+    }
+
+    /**
      * A merge whose DATA side carries a column top. A column added part way through a partition's life has
      * no entry in its file for the rows written before it, so a merge that reaches below that top cannot
      * read them - they are NULL, and nothing on disk says so.
@@ -378,6 +456,21 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 sqlExecutionContext,
                 "SELECT * FROM o WHERE symi = 'i-1' ORDER BY ts, i",
                 "SELECT * FROM x WHERE symi = 'i-1' ORDER BY ts, i",
+                LOG
+        );
+    }
+
+    /**
+     * The same half-open window over both tables. The oracle is a plain partition, so its interval scan
+     * takes the single-search path, and the table under test takes the per-piece one.
+     */
+    private static void assertSameWindow(long lo, long hi) throws Exception {
+        final String where = " WHERE ts >= " + lo + "::TIMESTAMP AND ts < " + hi + "::TIMESTAMP ORDER BY ts, i";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "SELECT * FROM o" + where,
+                "SELECT * FROM x" + where,
                 LOG
         );
     }

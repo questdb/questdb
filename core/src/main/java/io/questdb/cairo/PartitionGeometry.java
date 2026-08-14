@@ -74,15 +74,20 @@ public class PartitionGeometry implements Closeable, Mutable {
     public static final int NO_PARTITION = -1;
     private static final long FLAG_DIRTY = 1L;
     /**
-     * Stride of {@link #pieces}: the on-disk piece entry verbatim.
+     * Stride of {@link #pieces}: the four longs of the on-disk piece entry, then the piece's cumulative
+     * row - the running sum of the row counts before it. The cumulative row is derived, never stored, and
+     * exists so that every per-piece lookup is a binary search or a constant-time read. Summing it on
+     * demand made {@link #getPieceCumulativeLo} linear in the ordinal, which made the frame cursors
+     * quadratic in the piece count.
      */
-    private static final int LONGS_PER_PIECE = 4;
+    private static final int LONGS_PER_PIECE = 5;
     /**
      * Stride of {@link #resolved}, kept sorted by {@link #RES_PARTITION_TS} so the cache is keyed on values
      * that never change for a directory - unlike a partition index, which shifts whenever a partition is
      * inserted or removed.
      */
     private static final int LONGS_PER_RESOLVED = 10;
+    private static final int PIECE_CUMULATIVE_LO = 4;
     private static final int PIECE_ROW_COUNT = 3;
     private static final int PIECE_ROW_OFFSET = 2;
     private static final int PIECE_TS_HI = 1;
@@ -150,32 +155,49 @@ public class PartitionGeometry implements Closeable, Mutable {
      * which is a head-insert into this directory rather than a miss - the record already owns the range.
      */
     public int findPiece(int partitionIndex, long ts) {
-        final int count = getPieceCount(partitionIndex);
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return 0;
+        }
         int lo = 0;
-        for (int i = 1; i < count; i++) {
-            if (getPieceTimestampLo(partitionIndex, i) <= ts) {
-                lo = i;
+        int hi = (int) resolved.getQuick(res + RES_PIECE_COUNT) - 1;
+        int found = 0;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (pieceLong(res, mid, PIECE_TS_LO) <= ts) {
+                found = mid;
+                lo = mid + 1;
             } else {
-                break;
+                hi = mid - 1;
             }
         }
-        return lo;
+        return found;
     }
 
     /**
-     * The ordinal of the piece holding directory-cumulative row {@code row}.
+     * The ordinal of the piece holding directory-cumulative row {@code row}. Rows at or above the
+     * directory's live count belong to the last piece, which is what the callers that address the append
+     * point expect.
      */
     public int findPieceByRow(int partitionIndex, long row) {
-        final int count = getPieceCount(partitionIndex);
-        long cum = 0;
-        for (int i = 0; i < count; i++) {
-            final long n = getPieceRowCount(partitionIndex, i);
-            if (row < cum + n) {
-                return i;
-            }
-            cum += n;
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return 0;
         }
-        return count - 1;
+        final int count = (int) resolved.getQuick(res + RES_PIECE_COUNT);
+        int lo = 0;
+        int hi = count - 1;
+        int found = count - 1;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (pieceLong(res, mid, PIECE_CUMULATIVE_LO) + pieceLong(res, mid, PIECE_ROW_COUNT) > row) {
+                found = mid;
+                hi = mid - 1;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        return found;
     }
 
     /**
@@ -225,12 +247,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         if (res < 0) {
             return 0;
         }
-        final int lo = (int) resolved.getQuick(res + RES_PIECE_LO);
-        long cum = 0;
-        for (int i = 0; i < ordinal; i++) {
-            cum += pieces.getQuick(lo + i * LONGS_PER_PIECE + PIECE_ROW_COUNT);
-        }
-        return cum;
+        return pieceLong(res, ordinal, PIECE_CUMULATIVE_LO);
     }
 
     public long getPieceRowCount(int partitionIndex, int ordinal) {
@@ -349,7 +366,12 @@ public class PartitionGeometry implements Closeable, Mutable {
         assert pendingRec != NO_PARTITION : "addPiece outside beginUpdate/commitUpdate";
         assert pending.size() == 0 || tsLo > pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO)
                 : "pieces must ascend by tsLo";
+        final long cumulativeLo = pending.size() == 0
+                ? 0
+                : pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_CUMULATIVE_LO)
+                + pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_ROW_COUNT);
         pending.add(tsLo, tsHi, rowOffset, rowCount);
+        pending.add(cumulativeLo);
     }
 
     /**
@@ -558,12 +580,15 @@ public class PartitionGeometry implements Closeable, Mutable {
         final int count = geometryFile.getPieceCount();
         final int lo = pieces.size();
         pieces.setPos(lo + count * LONGS_PER_PIECE);
+        long cumulativeLo = 0;
         for (int p = 0; p < count; p++) {
             final int at = lo + p * LONGS_PER_PIECE;
             pieces.setQuick(at + PIECE_TS_LO, geometryFile.getPieceTimestampLo(p));
             pieces.setQuick(at + PIECE_TS_HI, geometryFile.getPieceTimestampHi(p));
             pieces.setQuick(at + PIECE_ROW_OFFSET, geometryFile.getPieceRowOffset(p));
             pieces.setQuick(at + PIECE_ROW_COUNT, geometryFile.getPieceRowCount(p));
+            pieces.setQuick(at + PIECE_CUMULATIVE_LO, cumulativeLo);
+            cumulativeLo += geometryFile.getPieceRowCount(p);
         }
         if (slot < 0) {
             slot = insertResolved(partitionTimestamp, nameTxn);

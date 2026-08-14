@@ -36,8 +36,12 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
  * Every row index this class takes and returns is a DIRECTORY row, the {@code [0, liveRows)} space the
  * partition frame speaks. Pieces are ordered by timestamp and do not overlap, so that space is ascending
  * end to end and a binary search over it is sound. The FILE rows underneath are not: a merge-append parks
- * a rewritten piece at the tail, above pieces that sort before it. So the search runs per piece, over the
- * one range of file rows that is both contiguous and sorted, and shifts the answer back.
+ * a rewritten piece at the tail, above pieces that sort before it. So the search runs inside one piece,
+ * over the one range of file rows that is both contiguous and sorted, and shifts the answer back.
+ * <p>
+ * Two binary searches, never a walk. The first picks the piece out of the geometry's timestamp bounds and
+ * touches no column data; the second runs inside that piece. A directory can hold thousands of pieces once
+ * a fine cut floor has been applied for a while, so neither step may be linear in the piece count.
  * <p>
  * This is the native analogue of {@link ParquetTimestampFinder}, which searches a row group at a time for
  * the same reason.
@@ -48,7 +52,6 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
     private long maxTimestampApprox;
     private long minTimestampApprox;
     private int partitionIndex = -1;
-    private int pieceCount;
     private TableReader reader;
     private long rowCount;
     private int timestampColumnOffset;
@@ -58,40 +61,16 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
         column = null;
         geometry = null;
         partitionIndex = -1;
-        pieceCount = 0;
         rowCount = 0;
     }
 
     @Override
     public long findTimestamp(long value, long rowLo, long rowHi) {
-        long result = rowLo - 1;
-        long cumulativeLo = 0;
-        for (int i = 0; i < pieceCount; i++) {
-            final long pieceRows = geometry.getPieceRowCount(partitionIndex, i);
-            final long lo = Math.max(rowLo, cumulativeLo);
-            final long hi = Math.min(rowHi, cumulativeLo + pieceRows - 1);
-            final long shift = geometry.getPieceRowOffset(partitionIndex, i) - cumulativeLo;
-            cumulativeLo += pieceRows;
-            if (lo > hi) {
-                continue;
-            }
-            // The piece bounds answer most pieces without reading a row. They bracket the piece's own
-            // timestamps, so a piece wholly at or below the value contributes its whole clipped range, and
-            // the first piece wholly above it ends the walk - every later piece is higher still.
-            if (geometry.getPieceTimestampLo(partitionIndex, i) > value) {
-                break;
-            }
-            if (geometry.getPieceTimestampHi(partitionIndex, i) <= value) {
-                result = hi;
-                continue;
-            }
-            long idx = Vect.binarySearch64Bit(column.getPageAddress(0), value, lo + shift, hi + shift, BIN_SEARCH_SCAN_DOWN);
-            if (idx < 0) {
-                idx = -idx - 2;
-            }
-            return Math.max(result, idx - shift);
-        }
-        return result;
+        // Timestamps do not decrease across the directory, so the qualifying rows are a prefix and the
+        // window only has to clamp it. Resolving against the whole directory rather than the window costs
+        // nothing here - both are one binary search - and keeps the piece arithmetic out of the clamp.
+        final long row = findRow(value);
+        return row < rowLo ? rowLo - 1 : Math.min(row, rowHi);
     }
 
     @Override
@@ -119,7 +98,6 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
         this.reader = reader;
         this.geometry = reader.getGeometry();
         this.partitionIndex = partitionIndex;
-        this.pieceCount = geometry.getPieceCount(partitionIndex);
         this.rowCount = rowCount;
         this.minTimestampApprox = reader.getPartitionMinTimestampFromMetadata(partitionIndex);
         this.maxTimestampApprox = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
@@ -135,5 +113,37 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
     public long timestampAt(long rowIndex) {
         final int piece = geometry.findPieceByRow(partitionIndex, rowIndex);
         return column.getLong((rowIndex + geometry.getPieceShift(partitionIndex, piece)) * 8);
+    }
+
+    /**
+     * The last directory row of the whole partition whose timestamp is at or below {@code value}, or
+     * {@code -1} when the partition starts above it.
+     */
+    private long findRow(long value) {
+        if (geometry.getPieceTimestampLo(partitionIndex, 0) > value) {
+            return -1;
+        }
+        // The last piece starting at or below the value. Pieces ascend by tsLo, so this is a binary search,
+        // and its own bounds answer it outright unless the value falls strictly inside it.
+        final int piece = geometry.findPiece(partitionIndex, value);
+        final long cumulativeLo = geometry.getPieceCumulativeLo(partitionIndex, piece);
+        final long pieceRows = geometry.getPieceRowCount(partitionIndex, piece);
+        if (geometry.getPieceTimestampHi(partitionIndex, piece) <= value) {
+            return cumulativeLo + pieceRows - 1;
+        }
+        final long shift = geometry.getPieceShift(partitionIndex, piece);
+        long idx = Vect.binarySearch64Bit(
+                column.getPageAddress(0),
+                value,
+                cumulativeLo + shift,
+                cumulativeLo + pieceRows - 1 + shift,
+                BIN_SEARCH_SCAN_DOWN
+        );
+        if (idx < 0) {
+            idx = -idx - 2;
+        }
+        // A miss at the piece's own floor lands on cumulativeLo - 1, which is the last row of the piece
+        // below it - the right answer, and the reason this needs no fallback of its own.
+        return idx - shift;
     }
 }
