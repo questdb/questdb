@@ -8888,7 +8888,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openLastPartitionAndSetAppendPosition(long ts) {
-        if (isLastPartitionParquet()) {
+        // A COMPOSITE partition is left closed for the same reason a parquet one is: nothing appends to it
+        // in place. Its own writes go through processCompositePartition, which opens its own frames, and a
+        // merge-append table takes no LAG, which is the only other thing the mapping is for.
+        if (isLastPartitionAppendBlocked()) {
             return;
         }
         final long rowCount = getLastPartitionFileRowCount(txWriter.getTransientRowCount() + txWriter.getLagRowCount());
@@ -9894,7 +9897,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
-            } else if (!isLastPartitionParquet()) {
+            } else if (!isLastPartitionAppendBlocked()) {
+                // A closed last partition is only a problem because the LAG is parked inside its column
+                // files. The partitions that refuse an in-place append take no LAG - a parquet one holds no
+                // native files, and a merge-append table refuses the LAG table-wide - so for those a closed
+                // last partition is the intended state, not a broken one.
                 throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
                         .put(path).put(']');
             }

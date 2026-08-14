@@ -287,9 +287,32 @@ A composite last partition now refuses those writes exactly as a PARQUET one doe
   count and would be the append's file row.
 - plus the drop-partition reopen and the column-file reopen after a metadata change.
 
-**`openLastPartitionAndSetAppendPosition` and `txWriter.initLastPartition` are deliberately NOT blocked.**
-Mirroring parquet there loses rows: `testMergeAppendsActivePartition` regressed, because a partition that
-is never opened leaves the writer's own state stale.
+**`openLastPartitionAndSetAppendPosition` is blocked too, and the guard that stopped it from being is
+relaxed.** A composite partition's own writes go through `processCompositePartition`, which calls
+`frameFactory.openRW` and opens its own frames, so the writer's mapped `columns` do nothing for it. What
+made the block impossible before is one named check at the top of every WAL commit:
+
+```java
+if (isLastPartitionClosed()) {
+    if (isEmptyTable()) { ... }
+    else if (!isLastPartitionParquet()) { throw "cannot resolve WAL table last partition"; }
+}
+```
+
+Its own comment says why it is there: "WAL processing needs last partition to store LAG data". Block the
+open without touching it and every commit throws, `ApplyWal2TableJob` suspends the table, and the
+transaction never lands - which reads as lost rows, not as an error, in
+`testAddColumnAfterMergeAppendRelocatedAPiece`. The exemption is now `!isLastPartitionAppendBlocked()`,
+parquet OR composite, and it is sound for the same reason the block is: `noLag` is already TABLE-WIDE the
+moment the flag is on, so a merge-append table has no LAG to park there.
+
+`txWriter.initLastPartition` stays unblocked.
+
+**The block does NOT replace the positioning below - it covers a different case.** On its own it takes the
+suite to 10 failures plus 5 ERRORS, worse than either change alone, because it only governs a FRESH writer
+open. A partition that turns composite while the writer already holds it mapped stays mapped at the old
+position, and `testMergeAppendsActivePartition` and `testPreSplitsLastLogicalPartition` fail in exactly
+that variant.
 
 **Blocking an append is not the same as refusing a POSITION**, and the two sites that conflated them were
 the last of this defect. A composite partition holds native files, so the writer maps them like any other -
