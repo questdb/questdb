@@ -2452,6 +2452,71 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Pre-condition for every chain publish: the gen-dir TXN_AT_SEAL sequence the
+     * publish is about to expose must be non-decreasing across all
+     * {@code newGenCount} slots. publishToChain writes exactly ONE slot per call
+     * and then publishes a GEN_COUNT covering all of them, so it relies on slots
+     * {@code [0, overrideGenIndex)} already being fully published and monotonic.
+     * The clamp in publishToChain cannot repair those: it only constrains the
+     * single slot this call wrote, while the prefix comes off disk and a
+     * pre-9.4.x build can have left a regression there.
+     * <p>
+     * publishToChain calls this AFTER writing its own slot but BEFORE
+     * appendNewEntry / extendHead, for two reasons. The just-written slot sits at
+     * or past the head's published GEN_COUNT, so no reader can reach it and
+     * failing here means none of the publishing publishToChain would do has
+     * happened: the extend aborts with nothing partially published to unwind.
+     * (The format-1 COW migration earlier in publishToChain can already have
+     * moved the head entry and the header sequence, but it copies the entry
+     * verbatim -- same genCount, same gen-dir bytes, so an already-corrupt prefix
+     * stays exactly as corrupt to readers -- and it is idempotent if the publish
+     * runs again.) That does not make the failure transparent in production:
+     * TableWriter wraps both indexer commit paths in
+     * {@code catch (CairoException e) { throwDistressException(e); }}, so the
+     * outcome is a failed commit and a distressed writer on an already-corrupt
+     * index, not a retry. And every offset the loop reads is at or below that
+     * slot, so keyMem already covers the range.
+     * <p>
+     * It throws for the same reason the cover-set guard in publishToChain does:
+     * deployments run both with and without {@code -ea}, so an assert is a no-op
+     * on some of them and an unhandleable Error on the commit path of the rest.
+     * The cover-footer clobber an equivalent post-publish check would additionally
+     * catch cannot happen: in format 1 the footer precedes the gen-dir, and the
+     * only way it can overflow into slot 0 is the cover-set change publishToChain
+     * already rejects before mutating anything; in format 0 the footer trails the
+     * gen-dir, so it can never reach a slot in {@code [0, newGenCount)}.
+     */
+    private void checkGenDirMonotonic(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
+        long prev = Long.MIN_VALUE;
+        for (int i = 0; i < newGenCount; i++) {
+            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
+            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (txnAtSeal < prev) {
+                LOG.critical()
+                        .$("posting index refused to publish a non-monotonic gen-dir [index=").$safe(indexName)
+                        .$(", entryOffset=").$(entryBase)
+                        .$(", genCount=").$(newGenCount)
+                        .$(", badGen=").$(i)
+                        .$(", txnAtSeal=").$(txnAtSeal)
+                        .$(", prevTxnAtSeal=").$(prev)
+                        .$(", writtenGen=").$(overrideGenIndex)
+                        .$(", sealTxn=").$(sealTxn)
+                        .$(']').$();
+                throw CairoException.critical(0)
+                        .put("posting index is corrupt")
+                        .put(" [reason=writer refused to publish a non-monotonic gen-dir, index=").put(indexName)
+                        .put(", entryOffset=").put(entryBase)
+                        .put(", genCount=").put(newGenCount)
+                        .put(", badGen=").put(i)
+                        .put(", txnAtSeal=").put(txnAtSeal)
+                        .put(", prevTxnAtSeal=").put(prev)
+                        .put(']');
+            }
+            prev = txnAtSeal;
+        }
+    }
+
     private void checkNotPoisoned() {
         if (isPoisoned) {
             throw CairoException.critical(0)
@@ -4563,6 +4628,22 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.storeFence();
         keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
 
+        // Validate the whole gen-dir the publish below is about to expose, while
+        // the chain still shows the OLD head. The clamp above only constrains the
+        // ONE slot this call wrote; slots [0, overrideGenIndex) come off disk and
+        // a pre-fix build can have left a regressing prefix there. Running this
+        // BEFORE appendNewEntry/extendHead leaves nothing partially published to
+        // unwind: the slot just written sits at or past the head's published
+        // GEN_COUNT, so none of the publishing this method would do has happened
+        // yet, and the one mutation that can already have run, the format-1 COW
+        // migration above, copies the entry verbatim (same genCount, same gen-dir
+        // bytes -- an already-corrupt prefix stays exactly as corrupt to readers).
+        // The production callers do not turn that into a retry, though:
+        // TableWriter's syncColumns and switch-partition paths both catch this
+        // CairoException and call throwDistressException, so the commit fails and
+        // the writer goes distressed on an already-corrupt index.
+        checkGenDirMonotonic(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
+
         // Snapshot the current append offset of each open sidecar. Tombstoned
         // and not-yet-opened slots publish 0; readers treat them as "no file
         // / nothing to map", consistent with how isCoveredAvailable handles
@@ -4622,42 +4703,6 @@ public class PostingIndexWriter implements IndexWriter {
             );
         } else {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
-        }
-        assertGenDirPublished(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
-    }
-
-    /**
-     * Post-condition for every chain publish: the entry's gen-dir TXN_AT_SEAL
-     * sequence must be non-decreasing across all {@code newGenCount} slots we
-     * just made visible. publishToChain writes exactly ONE slot per call and
-     * then publishes a GEN_COUNT covering all of them, so it relies on slots
-     * {@code [0, overrideGenIndex)} already being fully published. This check
-     * makes any writer that breaks that assumption fail loudly, with its own
-     * stack, instead of surfacing later as an unrelated reader tripping over
-     * the same entry.
-     */
-    private void assertGenDirPublished(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
-        long prev = Long.MIN_VALUE;
-        for (int i = 0; i < newGenCount; i++) {
-            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
-            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-            if (txnAtSeal < prev) {
-                LOG.critical()
-                        .$("posting index published a non-monotonic gen-dir [index=").$safe(indexName)
-                        .$(", entryOffset=").$(entryBase)
-                        .$(", genCount=").$(newGenCount)
-                        .$(", badGen=").$(i)
-                        .$(", txnAtSeal=").$(txnAtSeal)
-                        .$(", prevTxnAtSeal=").$(prev)
-                        .$(", writtenGen=").$(overrideGenIndex)
-                        .$(", sealTxn=").$(sealTxn)
-                        .$(']').$();
-                assert false : "posting index published a non-monotonic gen-dir [index=" + indexName
-                        + ", entryOffset=" + entryBase + ", genCount=" + newGenCount + ", badGen=" + i
-                        + ", txnAtSeal=" + txnAtSeal + ", prevTxnAtSeal=" + prev + ']';
-                return;
-            }
-            prev = txnAtSeal;
         }
     }
 

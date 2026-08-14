@@ -54,7 +54,10 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * <p>
  * Writer half: {@code PostingIndexWriter.publishToChain} clamps a regressing slot
  * txnAtSeal up to its predecessor's, so a later gen can never become visible
- * earlier than an earlier one.
+ * earlier than an earlier one. The clamp only reaches the ONE slot each publish
+ * writes, so {@code checkGenDirMonotonic} re-checks the whole gen-dir the publish
+ * is about to expose and fails the publish -- BEFORE appendNewEntry/extendHead --
+ * when a prefix off disk already regresses.
  * <p>
  * Reader half: {@code PostingGenLookup.snapshotMetadata} stops at the first drop in
  * the sequence and reports the truncated count, and
@@ -108,6 +111,81 @@ public class PostingIndexGenDirContractTest extends AbstractCairoTest {
                         COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
                     assertOnlyRow("gen 0 must stay visible under the clamped gen", reader, 0, 0);
                     assertOnlyRow("the clamped gen must stay visible", reader, 1, 1);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPublishToChainRejectsRegressingGenDirWithoutMutatingChain() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_gen_dir_publish_guard";
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* isInit */ true);
+                    for (int gen = 0; gen < 3; gen++) {
+                        writer.setNextTxnAtSeal(gen + 1);
+                        writer.add(gen, gen);
+                        writer.setMaxValue(gen);
+                        writer.commit();
+                    }
+
+                    final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    Assert.assertEquals("three commits must leave a three-gen head entry", 3, readHeadGenCount(ff, keyFile));
+
+                    // A gen-dir prefix a pre-fix build left behind: gen 1 regresses
+                    // below gen 0. publishToChain's clamp only constrains the ONE
+                    // slot this commit writes, so it cannot repair an interior slot
+                    // that came off disk.
+                    stampGenDirTxnAtSeal(ff, keyFile, 1, 0L);
+
+                    writer.setNextTxnAtSeal(4L);
+                    writer.add(3, 3);
+                    writer.setMaxValue(3);
+
+                    // Snapshot AFTER setMaxValue: that republishes the header on
+                    // its own (updateHeadMaxValue), so it must not be mistaken for
+                    // the publish this test is pinning.
+                    final long headEntryOffsetBefore = readHeadEntryOffset(ff, keyFile);
+                    final int genCountBefore = readHeadGenCount(ff, keyFile);
+                    final long sequenceBefore = readChainSequence(ff, keyFile);
+                    try {
+                        writer.commit();
+                        Assert.fail("the writer must refuse to publish over a regressing gen-dir prefix");
+                    } catch (CairoException e) {
+                        // A diagnostic CairoException, NOT an AssertionError: production
+                        // runs with -ea, and an Error escaping the commit path bypasses
+                        // TableWriter's catch (CairoException) -> throwDistressException
+                        // handling entirely.
+                        // The reason names the WRITER and carries the index name, so this
+                        // cannot pass on a reader-side detection of the same corruption.
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "posting index is corrupt [reason=writer refused to publish a non-monotonic gen-dir"
+                                        + ", index=" + name
+                        );
+                    }
+
+                    // The failed publish must leave the chain exactly as a concurrent
+                    // reader saw it before the commit: same head entry, same GEN_COUNT,
+                    // same header sequence.
+                    Assert.assertEquals(
+                            "the failed publish must not extend the head entry",
+                            genCountBefore,
+                            readHeadGenCount(ff, keyFile)
+                    );
+                    Assert.assertEquals(
+                            "the failed publish must not move the head entry",
+                            headEntryOffsetBefore,
+                            readHeadEntryOffset(ff, keyFile)
+                    );
+                    Assert.assertEquals(
+                            "the failed publish must not republish the chain header",
+                            sequenceBefore,
+                            readChainSequence(ff, keyFile)
+                    );
                 }
             }
         });
@@ -228,6 +306,17 @@ public class PostingIndexGenDirContractTest extends AbstractCairoTest {
         final long fileSize = ff.length(keyFile);
         Assert.assertTrue("the .pk must exist, path=" + keyFile, fileSize > 0);
         return new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(), fileSize, MemoryTag.MMAP_DEFAULT, /* opts */ 0);
+    }
+
+    private static long readChainSequence(FilesFacade ff, LPSZ keyFile) {
+        final MemoryCMARWImpl mem = openKeyFile(ff, keyFile);
+        try {
+            final PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+            Assert.assertTrue("chain header must be readable", PostingIndexChainHeader.readUnderSeqlock(mem, header));
+            return header.sequence;
+        } finally {
+            mem.close(false);
+        }
     }
 
     private static long readGenDirTxnAtSeal(FilesFacade ff, LPSZ keyFile, int genIndex) {
