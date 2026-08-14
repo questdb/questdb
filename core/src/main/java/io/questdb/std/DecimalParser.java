@@ -37,6 +37,9 @@ package io.questdb.std;
  * <li>Leading zeros: "00123.45" → 123.45</li>
  * <li>Leading/trailing whitespace</li>
  * </ul>
+ * <p>
+ * This class is stateless: all methods are static and hold no mutable state, so it is safe
+ * to use concurrently from multiple threads.
  *
  * @see Decimal
  * @see Decimal64
