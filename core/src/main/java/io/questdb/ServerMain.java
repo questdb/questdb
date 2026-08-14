@@ -215,8 +215,8 @@ public class ServerMain implements Closeable {
 
     /**
      * Blocks until teardown completes and frees the object graph even when a component stop fails.
-     * A wedged carrier can therefore make this call wait indefinitely; the SIGTERM hook uses the
-     * bounded, retryable {@link #closeByForTesting(long)} path instead.
+     * A wedged carrier can therefore make this call wait indefinitely; embedded callers that need
+     * a bounded shutdown use the retryable {@link #closeBy(long)} path, as the SIGTERM hook does.
      */
     @Override
     public void close() {
@@ -235,9 +235,17 @@ public class ServerMain implements Closeable {
         }
     }
 
-    @TestOnly
-    public void closeByForTesting(long deadlineNanos) {
+    /**
+     * Bounded, retryable shutdown for embedded callers. Attempts teardown until the absolute
+     * {@link System#nanoTime()} deadline; when a component or worker pool cannot stop in time,
+     * the live object graph is retained so a later call can retry safely.
+     *
+     * @param deadlineNanos absolute deadline by which teardown should complete
+     * @return true when teardown completed and all owned resources were released
+     */
+    public boolean closeBy(long deadlineNanos) {
         closeAttempt(deadlineNanos);
+        return isCloseComplete.get();
     }
 
     public long getActiveConnectionCount(String processorName) {

@@ -1114,7 +1114,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * pool worker never races the LV's own refresh worker.
      */
     public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
-        applyWal(tableToken, engine, operationExecutor, runStatus);
+        // Mirrors doRun(): WAL apply must never fiber-suspend, or an applied UPDATE that
+        // waits on WAL progress would park the apply it depends on.
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        try {
+            applyWal(tableToken, engine, operationExecutor, runStatus);
+        } finally {
+            SuspensionScope.restore(previousMode);
+        }
     }
 
     /**

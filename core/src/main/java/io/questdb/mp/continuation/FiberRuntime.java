@@ -419,6 +419,10 @@ public final class FiberRuntime {
             FiberTask task,
             long taskIncarnation
     ) {
+        // Direct mount nests no continuation and, per CARRIER_MONITOR.md, requires a clean
+        // worker-loop boundary. The held-monitor half of that contract has no cheap runtime
+        // check; this pins the half that does.
+        assert !Fiber.isMounted() : "direct launch requires an unmounted carrier";
         return launchReserved(
                 fiber,
                 reservationEpoch,

@@ -204,7 +204,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 Assert.assertTrue(closeEntered.await(TimeUnit.SECONDS.toNanos(10)));
 
                 final long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
-                serverMain.closeByForTesting(deadlineNanos);
+                Assert.assertFalse(serverMain.closeBy(deadlineNanos));
                 Assert.assertTrue(System.nanoTime() - deadlineNanos < TimeUnit.SECONDS.toNanos(5));
                 Assert.assertFalse(serverMain.isCloseComplete());
             } finally {

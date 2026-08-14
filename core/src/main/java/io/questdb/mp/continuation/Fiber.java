@@ -129,6 +129,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
                     && state != EXECUTION_PARKING
                     && state != EXECUTION_RESUME_PENDING
                     && state != EXECUTION_RUNNABLE) {
+                // fireWait() is the only wake path for a WAITING fiber. abort() callers run on
+                // the owning fiber's carrier while it is still mounted; a matching-token WAITING
+                // state here means that contract broke and the fiber would strand parked.
+                assert state != EXECUTION_WAITING : "abortWait on a WAITING fiber";
                 return;
             }
             final int targetState = state == EXECUTION_RUNNABLE ? EXECUTION_RUNNABLE : EXECUTION_MOUNTED;
@@ -303,6 +307,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return executionState >>> EXECUTION_STATE_BITS;
     }
 
+    private static boolean hasNoRoleSwitchReadLock() {
+        final Fiber fiber = current();
+        return fiber == null || !fiber.roleSwitchReadLocks.hasAny();
+    }
+
     private static IllegalStateException invalidNotificationState(int state) {
         return new IllegalStateException("invalid fiber notification state [state=" + state + ']');
     }
@@ -320,6 +329,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     private static boolean suspend() {
+        // A role-switch read holder runs in BLOCKING mode and releases the fence before any
+        // wait; a park with the hold live would migrate the fiber off the tracked reentrancy
+        // state and stall a queued role-switch writer silently.
+        assert hasNoRoleSwitchReadLock() : "fiber suspending while holding a role-switch read lock";
         final boolean isSuspended = Continuation.yield(SCOPE);
         if (!isSuspended) {
             final Fiber fiber = current();
