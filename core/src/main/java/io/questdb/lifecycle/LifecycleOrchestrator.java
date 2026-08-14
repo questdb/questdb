@@ -91,14 +91,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // and writers never race the hashmap's rehash boundary.
     private final ConcurrentHashMap<String, Long> lastTransitionMicros = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ProgressEvent> latestProgress = new ConcurrentHashMap<>();
-    // Runs after the executor drain but before the bounded boot-thread join below. The boot
-    // thread may be parked inside a long-running start() (a PITR restore) whose only shutdown
-    // observer is its own cancel flag; the reverse-topo stop loop that reaches the component's
-    // stop() -> cancel signalling runs only AFTER the join, so without this hook the join burns
-    // its full budget first. The enterprise overlay installs a restore-cancel signaller here.
-    // The hook MUST NOT BLOCK: it runs unbounded on the close thread AHEAD of the bounded join,
-    // so the boundedness of close() rests on the hook being a pure atomic flag write / signal.
-    // Resource teardown belongs in stop().
+    // Runs in close() after the executor drain and BEFORE the bounded boot-thread join, so a
+    // SIGTERM landing during a long-running boot start() (a PITR restore) spends the join budget
+    // unwinding the work instead of waiting it out: without this hook the join burns its full
+    // budget first, because the reverse-topo stop loop that reaches the component's
+    // stop() -> cancel signalling runs only AFTER the join. The enterprise overlay installs a
+    // restore-cancel signaller here. The hook MUST NOT BLOCK: it runs unbounded on the close
+    // thread AHEAD of the bounded join, so the boundedness of close() rests on the hook being a
+    // pure atomic flag write / signal. Resource teardown belongs in stop().
     @Nullable
     private volatile Runnable preJoinCancelHook;
     // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
@@ -147,110 +147,127 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     @Override
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
-        // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
-        // stop loop ran first and executor.shutdown ran after -- which left a window where an
-        // in-flight switchRole on the lifecycle executor thread could touch a component that
-        // the stop loop had just freed (a native use-after-free / NPE). Draining the executor here
-        // means every in-flight task either completes before the stop loop runs, or the new
-        // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
-        // the task exits without progressing further.
-        executor.shutdown();
-        // Rendezvous with any in-flight executor work (an enterprise role-switch cascade) before
-        // the stop loop frees component resources. The base implementation just awaits the executor
-        // for the default budget; the enterprise overlay overrides awaitInFlightWork to extend the
-        // await to the ACTIVE switch budget and to nudge the cascade (interrupt its drain sleep) so
-        // it observes shutdown promptly and exits at its next isClosing() boundary check. The bound
-        // is the switch budget, never an unbounded join -- a wedged cascade that exceeds even the
-        // budget falls through to the stop loop logged, not blocked forever.
-        if (!awaitInFlightWork()) {
-            injectedLog.error()
-                    .$("lifecycle executor did not drain within the close budget; proceeding to the "
-                            + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
-                            + "next closed boundary check)").I$();
-        }
-        // Signal cooperative cancellation to any in-flight boot work BEFORE the bounded join
-        // below, so the join is spent unwinding the work rather than waiting it out.
-        final Runnable cancelHook = preJoinCancelHook;
-        if (cancelHook != null) {
-            try {
-                cancelHook.run();
-            } catch (Throwable t) {
-                injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+        // Capture the entry interrupt and accumulate interrupts consumed by the bounded
+        // executor and boot waits, so neither rendezvous loses its safety budget. Restore
+        // the consumed status after the stop attempts. The base executor wait and boot join
+        // each have an independent 30-second budget; component stops can add their own.
+        boolean isInterrupted = Thread.interrupted();
+        try {
+            if (!closed.compareAndSet(false, true)) {
+                return;
             }
-        }
-        // Rendezvous with an in-flight BOOT walk before the stop loop frees engine resources. The
-        // boot thread runs each component's start() serially (a PITR restore can hold it for the
-        // whole boot); a SIGTERM hook firing mid-boot must not let freeOnExit free the engine while
-        // an engine.load()/native restore is still running on the boot thread. closed is already
-        // true above, so the boot walk's between-components check exits and the in-flight start()
-        // observes shutdown (the restore polls its cancel flag, which the pre-join cancel hook
-        // above has already signalled; the SWITCHING/STARTING stop predicate additionally routes
-        // a mid-restore component through stop() after the join). The join is bounded:
-        // a wedged start() that ignores shutdown only delays close() by the budget, after which the
-        // stop loop proceeds and the engine's own isClosing() guards keep a late-woken start() from
-        // building native state on the closing engine -- ownership, not the race, is the backstop.
-        // Never self-join: run() calls close() on its own thread on a boot-essential failure.
-        final Thread boot = bootThread;
-        if (boot != null && boot != Thread.currentThread() && boot.isAlive()) {
-            try {
-                boot.join(BOOT_JOIN_BUDGET_MS);
+            // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
+            // stop loop ran first and executor.shutdown ran after -- which left a window where an
+            // in-flight switchRole on the lifecycle executor thread could touch a component that
+            // the stop loop had just freed (a native use-after-free / NPE). Draining the executor here
+            // means every in-flight task either completes before the stop loop runs, or the new
+            // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
+            // the task exits without progressing further.
+            executor.shutdown();
+            // Rendezvous with any in-flight executor work (an enterprise role-switch cascade) before
+            // the stop loop frees component resources. The base implementation just awaits the executor
+            // for the default budget; the enterprise overlay overrides awaitInFlightWork to extend the
+            // await to the ACTIVE switch budget and to nudge the cascade (interrupt its drain sleep) so
+            // it observes shutdown promptly and exits at its next isClosing() boundary check. The bound
+            // is the switch budget, never an unbounded join -- a wedged cascade that exceeds even the
+            // budget falls through to the stop loop logged, not blocked forever.
+            final boolean hasDrained = awaitInFlightWork();
+            // Overrides may restore the flag when their wait is interrupted. Consume it here so the
+            // boot join can still wait, then restore the accumulated state after all resources stop.
+            isInterrupted |= Thread.interrupted();
+            if (!hasDrained) {
+                injectedLog.error()
+                        .$("lifecycle executor did not drain within the close budget; proceeding to the "
+                                + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
+                                + "next closed boundary check)").I$();
+            }
+            // Signal cooperative cancellation to any in-flight boot work BEFORE the bounded join
+            // below, so the join is spent unwinding the work rather than waiting it out.
+            final Runnable cancelHook = preJoinCancelHook;
+            if (cancelHook != null) {
+                try {
+                    cancelHook.run();
+                } catch (Throwable t) {
+                    injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+                }
+            }
+            // Rendezvous with an in-flight BOOT walk before the stop loop frees engine resources. The
+            // boot thread runs each component's start() serially (a PITR restore can hold it for the
+            // whole boot); a SIGTERM hook firing mid-boot must not let freeOnExit free the engine while
+            // an engine.load()/native restore is still running on the boot thread. closed is already
+            // true above, so the boot walk's between-components check exits and the in-flight start()
+            // observes shutdown (the restore polls its cancel flag, the SWITCHING/STARTING stop predicate
+            // routes a mid-restore component through stop()->signalRestoreCancel). The join is bounded:
+            // a wedged start() that ignores shutdown only delays close() by the budget, after which the
+            // stop loop proceeds and the engine's own isClosing() guards keep a late-woken start() from
+            // building native state on the closing engine -- ownership, not the race, is the backstop.
+            // Never self-join: run() calls close() on its own thread on a boot-essential failure.
+            final Thread boot = bootThread;
+            if (boot != null && boot != Thread.currentThread() && boot.isAlive()) {
+                final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(BOOT_JOIN_BUDGET_MS);
+                while (boot.isAlive()) {
+                    final long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) {
+                        break;
+                    }
+                    try {
+                        TimeUnit.NANOSECONDS.timedJoin(boot, remaining);
+                    } catch (InterruptedException e) {
+                        isInterrupted = true;
+                    }
+                }
                 if (boot.isAlive()) {
                     injectedLog.error()
                             .$("boot thread did not unwind within the close budget; proceeding to the "
                                     + "reverse-topo stop loop (a late-woken start() is refused by the "
                                     + "engine's closing guards, not freed under)").I$();
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                injectedLog.error()
-                        .$("interrupted while joining the boot thread on close; proceeding to the "
-                                + "reverse-topo stop loop").I$();
             }
-        }
-        // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
-        // assignment). In that case there are no started components -- skip the per-component stop
-        // loop and just shut down the executor. This makes close() safe to call after a validation
-        // failure in run() and on an orchestrator that was never run() at all.
-        if (reverseTopoOrder != null) {
-            final Runnable hook = preStopHook;
-            if (hook != null) {
-                try {
-                    hook.run();
-                } catch (Throwable t) {
-                    injectedLog.error().$("pre-stop hook failed ").$(t).$();
-                }
-            }
-            for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
-                Component c = reverseTopoOrder.getQuick(i);
-                State current = stateOf(c.name());
-                // STARTING is included so a SIGTERM that arrives while a long-running start
-                // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
-                // minutes) still routes through the component's stop() method. The component's
-                // stop() re-signals restore-cancel (the pre-join hook above is the primary
-                // signaller and has already fired once), and without this the 30s SIGTERM
-                // window hangs until SIGKILL. The transition table permits
-                // STARTING -> STOPPING for this case.
-                //
-                // SWITCHING is included for the same reason: a SIGTERM that arrives while an
-                // enterprise role-switch cascade has a component mid-switch leaves that component in
-                // SWITCHING. Skipping it here would let the reverse-topo stop loop free the
-                // component's dependents (and ultimately the engine) without ever calling the
-                // mid-switch component's stop() -- so a woken cascade step could touch a half-freed
-                // component. Stopping a SWITCHING component routes it through stop() like any other
-                // started component; the transition table permits SWITCHING -> STOPPING.
-                if (current == State.READY || current == State.DEGRADED || current == State.STARTING
-                        || current == State.SWITCHING) {
-                    publishInternal(c.name(), State.STOPPING, null);
+            // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
+            // assignment). In that case there are no started components -- skip the per-component stop
+            // loop and just shut down the executor. This makes close() safe to call after a validation
+            // failure in run() and on an orchestrator that was never run() at all.
+            if (reverseTopoOrder != null) {
+                final Runnable hook = preStopHook;
+                if (hook != null) {
                     try {
-                        c.stop();
-                        publishInternal(c.name(), State.STOPPED, null);
+                        hook.run();
                     } catch (Throwable t) {
-                        publishInternal(c.name(), State.FAILED, "stop failed: " + t.getMessage());
+                        injectedLog.error().$("pre-stop hook failed ").$(t).$();
                     }
                 }
+                for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
+                    Component c = reverseTopoOrder.getQuick(i);
+                    State current = stateOf(c.name());
+                    // STARTING is included so a SIGTERM that arrives while a long-running start
+                    // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
+                    // minutes) still routes through the component's stop() method. The component's
+                    // stop() is the only path that invokes signalRestoreCancel + awaitRestoreCancel,
+                    // and without this the 30s SIGTERM window hangs until SIGKILL. The transition table
+                    // permits STARTING -> STOPPING for this case.
+                    //
+                    // SWITCHING is included for the same reason: a SIGTERM that arrives while an
+                    // enterprise role-switch cascade has a component mid-switch leaves that component in
+                    // SWITCHING. Skipping it here would let the reverse-topo stop loop free the
+                    // component's dependents (and ultimately the engine) without ever calling the
+                    // mid-switch component's stop() -- so a woken cascade step could touch a half-freed
+                    // component. Stopping a SWITCHING component routes it through stop() like any other
+                    // started component; the transition table permits SWITCHING -> STOPPING.
+                    if (current == State.READY || current == State.DEGRADED || current == State.STARTING
+                            || current == State.SWITCHING) {
+                        publishInternal(c.name(), State.STOPPING, null);
+                        try {
+                            c.stop();
+                            publishInternal(c.name(), State.STOPPED, null);
+                        } catch (Throwable t) {
+                            publishInternal(c.name(), State.FAILED, "stop failed: " + t.getMessage());
+                        }
+                    }
+                }
+            }
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -398,11 +415,29 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * timed out, in which case {@link #close()} logs and proceeds to the stop loop.
      */
     protected boolean awaitInFlightWork() {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        boolean isInterrupted = false;
         try {
-            return executor.awaitTermination(30, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
+            while (!executor.isTerminated()) {
+                final long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                try {
+                    if (executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+                        return true;
+                    }
+                } catch (InterruptedException e) {
+                    // Preserve the close budget, but do not let an interrupt move teardown
+                    // ahead of work that may still access component-owned resources.
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -532,10 +567,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
             case INIT -> to == State.STARTING;
             // STARTING -> STOPPING is permitted so close() can request cancellation of an
             // in-flight long-running start (e.g. PITR restore inside BackupRestoreEnvelope.start()).
-            // BackupRestoreEnvelope.stop() invokes restore-cancel signalling (a second signal
-            // after the pre-join cancel hook has already signalled once) to unwind a running
-            // restore inside the 30s SIGTERM window; without this transition close() would
-            // silently skip the stop() call and the JVM hangs until SIGKILL.
+            // BackupRestoreEnvelope.stop() invokes signalRestoreCancel + awaitRestoreCancel(25_000L)
+            // to unwind a running restore inside the 30s SIGTERM window; without this transition
+            // close() would silently skip the stop() call and the JVM hangs until SIGKILL.
             case STARTING -> to == State.DEGRADED || to == State.READY || to == State.STOPPING;
             case DEGRADED -> to == State.READY || to == State.SWITCHING || to == State.STOPPING;
             case READY -> to == State.DEGRADED || to == State.SWITCHING || to == State.STOPPING;
