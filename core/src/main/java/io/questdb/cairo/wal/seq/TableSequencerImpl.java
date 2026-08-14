@@ -487,7 +487,7 @@ public class TableSequencerImpl implements TableSequencer {
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
         }
-        walDirectoryPolicy.initDirectory(path);
+        walDirectoryPolicy.initDirectory(path, tableToken);
         path.trimTo(rootLen);
         metadata.create(tableStruct, tableToken, path, rootLen, tableId);
         tableTransactionLog.create(path, timestamp);
@@ -552,6 +552,11 @@ public class TableSequencerImpl implements TableSequencer {
     private void notifyTxnCommitted(long txn) {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
+        }
+        // Live views consume WAL segments directly, so notify the refresh job as soon as
+        // the sequencer has the commit visible, independently of the apply job's progress.
+        if (txn != Long.MAX_VALUE) {
+            engine.notifyLiveViewBaseTableCommit(tableToken, txn);
         }
     }
 

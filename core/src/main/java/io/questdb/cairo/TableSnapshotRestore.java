@@ -28,6 +28,9 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -63,6 +66,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -88,7 +93,13 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ObjList<Future<?>> futures = new ObjList<>();
     private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    @TestOnly
+    @Nullable
+    private volatile Runnable beforeFutureGetHook;
     private ColumnVersionReader columnVersionReader;
+    @TestOnly
+    @Nullable
+    private volatile Runnable futureGetInterruptedHook;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
     private Path partitionCleanPath;
     private DateFormat partitionDirFmt;
@@ -147,7 +158,8 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     /**
      * Copies all metadata files for a table from source to destination.
-     * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional)
+     * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional),
+     * live view definition (optional), live view state (optional)
      *
      * @param srcPath            source path (will be modified)
      * @param dstPath            destination path (will be modified)
@@ -164,6 +176,15 @@ public class TableSnapshotRestore implements QuietCloseable {
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, MatViewState.MAT_VIEW_STATE_FILE_NAME, true);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME, true);
+            // Live views are WAL-backed tables that restore through this path (like mat views), with two
+            // sidecars: _lv (definition) and _lv.s (durable refresh state). Both must be restored - the
+            // engine refuses to load a live view whose _lv is present but _lv.s is missing. They are
+            // optional here only because non-live-view tables lack them.
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewState.LIVE_VIEW_STATE_FILE_NAME, true);
+            if (ff.exists(srcPath.trimTo(srcPathLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$())) {
+                clearLiveViewCheckpointDir(dstPath.trimTo(dstPathLen));
+            }
         } finally {
             srcPath.trimTo(srcPathLen);
             dstPath.trimTo(dstPathLen);
@@ -205,18 +226,29 @@ public class TableSnapshotRestore implements QuietCloseable {
             LOG.info().$("awaiting ").$(futures.size()).$(" parallel tasks to complete").I$();
         }
 
+        boolean isInterrupted = Thread.interrupted();
+        boolean isWaitInterrupted = false;
         boolean failed = false;
         String firstErrorMessage = null;
-        boolean interrupted = false;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
-                futures.getQuick(i).get();
+                final Future<?> future = futures.getQuick(i);
+                final Runnable hook = beforeFutureGetHook;
+                if (hook != null) {
+                    hook.run();
+                }
+                future.get();
             } catch (InterruptedException e) {
                 // Keep draining: abandoning a running task risks a use-after-free
                 // on the shared readers. get() cleared the interrupt status, so
                 // retry (the abort flag bounds the wait) and restore it after.
                 abortParallelTasks.set(true);
-                interrupted = true;
+                isInterrupted = true;
+                isWaitInterrupted = true;
+                final Runnable hook = futureGetInterruptedHook;
+                if (hook != null) {
+                    hook.run();
+                }
                 //noinspection AssignmentToForLoopParameter
                 i--;
             } catch (Throwable e) {
@@ -239,9 +271,9 @@ public class TableSnapshotRestore implements QuietCloseable {
         // (enterprise restore continues after quarantining a failed table).
         abortParallelTasks.set(false);
 
-        if (interrupted) {
+        if (isInterrupted) {
             Thread.currentThread().interrupt();
-            if (!failed) {
+            if (isWaitInterrupted && !failed) {
                 LOG.error().$("parallel task await interrupted").I$();
                 throw CairoException.critical(0).put("parallel task interrupted");
             }
@@ -328,6 +360,31 @@ public class TableSnapshotRestore implements QuietCloseable {
                 recoveredWalFiles.incrementAndGet();
                 LOG.info()
                         .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
+                        .$(", dst=").$(dstPath)
+                        .I$();
+            }
+
+            // Restore the sequencer-dir _lv marker for a live view. Distinct from the table-dir _lv
+            // that copyMetadataFiles restores: this is the copy that classifies a live view from
+            // on-disk state alone (enterprise replication stats it to answer a table's status while
+            // its token is unresolved, and the primary's sequencer-meta upload ships it as the view's
+            // replication-visible definition). Without it a restored live view reads back as a plain
+            // WAL table. Optional: only live views carry one, and a view whose definition the source
+            // could not capture is restored exactly as broken as it was checkpointed. Nested under
+            // the seq _meta arm because a live view is always WAL-backed, so a table with no
+            // sequencer metadata cannot have this marker either.
+            srcPath.trimTo(srcSeqLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            dstPath.trimTo(dstSeqLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            if (ff.exists(srcPath.$())) {
+                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("Recovery failed. Could not copy live view sequencer definition file [src=")
+                            .put(srcPath).put(", dst=").put(dstPath).put(']');
+                }
+                recoveredWalFiles.incrementAndGet();
+                LOG.info()
+                        .$("recovered ").$(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)
+                        .$(" sequencer file [src=").$(srcPath)
                         .$(", dst=").$(dstPath)
                         .I$();
             }
@@ -473,7 +530,12 @@ public class TableSnapshotRestore implements QuietCloseable {
         int srcPathLen = srcPath.size();
         int dstPathLen = dstPath.size();
 
-        // Check if this is a view (views have _view file but no _cv file)
+        // Detect a plain (non-materialized) view from the definition file present in the
+        // checkpoint. A plain view has no storage, so restore copies its definition only.
+        // A live view is a materialized WAL-backed table (like a mat view): it advances its own
+        // _txn / _cv / _lv.s and partition data while ingestion runs, so it must go through the
+        // standard path below to roll all of that back to the checkpoint and rebuild its symbol
+        // and partition files. copyMetadataFiles already restores the _lv / _lv.s sidecars.
         boolean isView = ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
         srcPath.trimTo(srcPathLen);
 
@@ -532,6 +594,12 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .put("Recovery failed. Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
         }
         LOG.info().$("restored table registry [src=").$(srcPath).$(", dst=").$(dstPath).I$();
+    }
+
+    @TestOnly
+    public void setFutureGetHooks(@Nullable Runnable beforeGetHook, @Nullable Runnable interruptedHook) {
+        this.beforeFutureGetHook = beforeGetHook;
+        this.futureGetInterruptedHook = interruptedHook;
     }
 
     /**
@@ -1372,6 +1440,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
+                !CairoKeywords.isLiveViewCheckpoints(pUtf8NameZ) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {
@@ -1405,6 +1474,39 @@ public class TableSnapshotRestore implements QuietCloseable {
             } finally {
                 partitionCleanPath.trimTo(pathTableLen);
             }
+        }
+    }
+
+    /**
+     * Clears derived live-view checkpoint state during restore. OSS snapshots
+     * deliberately exclude {@code _checkpoints}: copying a versioned timeline
+     * would require pinning one generation and traversing its complete reachable
+     * graph, while directory enumeration can race publication and purge.
+     *
+     * <p>Recovery runs in place over a database that may have advanced after the
+     * snapshot was taken. Keeping that destination timeline would expose roots
+     * and watermarks newer than the restored live-view table and {@code _lv.s}.
+     * Deletion is therefore mandatory: a failure aborts restore instead of
+     * allowing startup to observe stale derived state. The primary refresh path
+     * rebuilds a new local timeline from the restored authoritative data.</p>
+     */
+    private void clearLiveViewCheckpointDir(Path dstPath) {
+        final int dstPathLen = dstPath.size();
+        try {
+            dstPath.concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash$();
+            if (ff.exists(dstPath.$()) && !ff.rmdir(dstPath)) {
+                throw CairoException.critical(ff.errno())
+                        .put("Recovery failed. Could not clear live view checkpoint timeline [dir=")
+                        .put(dstPath).put(']');
+            }
+            dstPath.trimTo(dstPathLen).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash$();
+            if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("Recovery failed. Could not recreate live view checkpoint directory [dir=")
+                        .put(dstPath).put(']');
+            }
+        } finally {
+            dstPath.trimTo(dstPathLen);
         }
     }
 

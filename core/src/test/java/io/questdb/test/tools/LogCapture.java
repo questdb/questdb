@@ -1,5 +1,6 @@
 package io.questdb.test.tools;
 
+import io.questdb.log.Log;
 import io.questdb.log.LogConsoleWriter;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecordUtf8Sink;
@@ -11,10 +12,14 @@ import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class LogCapture {
+    private static final long DRAIN_TIMEOUT_MS = 2_000;
+    private static final Log LOG = LogFactory.getLog(LogCapture.class);
+    private static final AtomicLong SENTINEL_SEQ = new AtomicLong();
     private final LogConsoleWriter consoleWriter;
     private final StringSink sink = new SynchronizedSink();
     private final LogConsoleWriter.LogInterceptor interceptor = this::onLog;
@@ -67,9 +72,26 @@ public class LogCapture {
         return sink.toString();
     }
 
+    /**
+     * Blocks until the console writer has handed every record enqueued so far to
+     * the interceptor. ADVISORY is the top level, so it is in every writer's mask,
+     * and all levels one writer subscribes to share a single ring queue.
+     */
+    public void drain() {
+        final String sentinel = "log-capture-drain-" + SENTINEL_SEQ.incrementAndGet();
+        LOG.advisory().$(sentinel).$();
+        // a full ring silently drops the sentinel, and a backed-up writer is what
+        // fills it -- give up rather than fail on the symptom
+        final long deadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS;
+        while (sink.indexOf(sentinel) == -1 && System.currentTimeMillis() < deadline) {
+            Os.sleep(1);
+        }
+    }
+
     public void start() {
-        sink.clear();
         consoleWriter.setInterceptor(interceptor);
+        drain();
+        sink.clear();
     }
 
     public void stop() {

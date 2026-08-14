@@ -53,6 +53,16 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
+    public void testFullTimelineReplaceEmptiesPopulatedTable() throws Exception {
+        assertFullTimelineReplaceLeavesTableEmpty(true);
+    }
+
+    @Test
+    public void testFullTimelineReplaceOnAlreadyEmptyTable() throws Exception {
+        assertFullTimelineReplaceLeavesTableEmpty(false);
+    }
+
+    @Test
     public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
@@ -2081,6 +2091,44 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                 MicrosTimestampDriver.floor("2026-01-10T00:05:54.691962Z"),
                 MicrosTimestampDriver.floor("2026-01-10T00:06:00.177392Z"),
         };
+    }
+
+    // A live view declared START FROM BEGINNING persists viewLowerBoundTimestamp = Numbers.LONG_NULL,
+    // which is Long.MIN_VALUE, so its pure-delete full rebuild commits a REPLACE_RANGE over
+    // [Long.MIN_VALUE, +inf) carrying no rows. That leaves the table empty, and an empty table
+    // reports minTimestamp = Long.MAX_VALUE and maxTimestamp = Long.MIN_VALUE. processWalCommit's
+    // post-replace bounds checks phrase "the table holds nothing in the replaced range" as
+    // "ts < lo || ts >= hi", which no value can satisfy once the range spans the whole timeline -- so
+    // the max check tripped, ApplyWal2TableJob suspended the table, and the view stayed empty for
+    // good. Every other truncating case escapes it only because its low bound is a real timestamp
+    // (see testReplaceTruncatesAllData), which is why this needs its own coverage.
+    private void assertFullTimelineReplaceLeavesTableEmpty(boolean seedRows) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id long, ts timestamp, v long) timestamp(ts) partition by DAY WAL");
+            TableToken rg = engine.verifyTableName("rg");
+
+            if (seedRows) {
+                execute("insert into rg select x, timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000), x * 10 from long_sequence(5)");
+                drainWalQueue();
+                assertQuery("select count(*) from rg")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n5\n");
+            }
+
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                ww.commitWithParams(Long.MIN_VALUE, Long.MAX_VALUE, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertQuery("select count(*) from rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+        });
     }
 
     private void insertRowWithReplaceRange(

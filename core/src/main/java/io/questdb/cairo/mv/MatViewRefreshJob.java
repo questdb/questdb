@@ -90,7 +90,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final CairoEngine engine;
     private final StringSink errorMsgSink = new StringSink();
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
-    private final MatViewGraph graph;
+    private final DependentViewGraph graph;
     private final LongList intervals = new LongList();
     private final int maxRefreshRetryAttempts;
     private final MicrosecondClock microsecondClock;
@@ -113,7 +113,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.engine = engine;
             this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
-            this.graph = engine.getMatViewGraph();
+            this.graph = engine.getDependentViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration);
@@ -1800,7 +1800,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean refreshDependentViewsIncremental(
             TableToken baseTableToken,
-            MatViewGraph graph,
+            DependentViewGraph graph,
             MatViewStateStore stateStore,
             long refreshTriggerTimestamp
     ) {

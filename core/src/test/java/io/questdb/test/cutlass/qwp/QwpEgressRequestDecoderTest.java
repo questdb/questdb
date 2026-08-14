@@ -796,6 +796,59 @@ public class QwpEgressRequestDecoderTest {
         });
     }
 
+    @Test
+    public void testRejectsMalformedSqlUtf8() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            byte[] malformedSql = {'S', 'E', 'L', 'E', 'C', 'T', ' ', '1', (byte) 0xC3};
+            int len = writeQueryRequest(buf, 1L, malformedSql, 0L, 0);
+            try {
+                decoder.decodeQueryRequest(buf, len, bindVars);
+                Assert.fail("malformed SQL UTF-8 accepted as [" + decoder.sql + "]");
+            } catch (QwpParseException expected) {
+                Assert.assertTrue(expected.getFlyweightMessage().toString().contains("SQL"));
+            }
+
+            len = writeBindScaffold(buf, 0);
+            decoder.decodeQueryRequest(buf, len, bindVars);
+            Assert.assertEquals("SELECT 1", decoder.sql.toString());
+        });
+    }
+
+    @Test
+    public void testRejectsMalformedSymbolUtf8() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 1);
+            long p = buf + len;
+            p = writeNonNullBind(p, QwpConstants.TYPE_SYMBOL);
+            Unsafe.putInt(p, 0);
+            p += 4;
+            Unsafe.putInt(p, 4);
+            p += 4;
+            Unsafe.putByte(p++, (byte) 'a');
+            Unsafe.putByte(p++, (byte) 'b');
+            Unsafe.putByte(p++, (byte) 'c');
+            Unsafe.putByte(p++, (byte) 0xC3);
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("malformed SYMBOL UTF-8 accepted as [" + bindVars.getFunction(0).getStrA(null) + "]");
+            } catch (QwpParseException expected) {
+                Assert.assertTrue(expected.getFlyweightMessage().toString().contains("SYMBOL"));
+            }
+
+            len = writeBindScaffold(buf, 1);
+            p = buf + len;
+            p = writeNonNullBind(p, QwpConstants.TYPE_SYMBOL);
+            Unsafe.putInt(p, 0);
+            p += 4;
+            Unsafe.putInt(p, 2);
+            p += 4;
+            Unsafe.putByte(p++, (byte) 'o');
+            Unsafe.putByte(p++, (byte) 'k');
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals("ok", bindVars.getFunction(0).getStrA(null).toString());
+        });
+    }
+
     /**
      * Regression: initial_credit must be rejected if negative. A varint with the sign
      * bit set would otherwise propagate to flow-control accounting.
