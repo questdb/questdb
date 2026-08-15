@@ -558,6 +558,18 @@ public class PostingIndexWriter implements IndexWriter {
                     if (isSized) {
                         Misc.free(keyMem);
                     } else if (keyMem.isOpen()) {
+                        // Reached either because the sizing threw, or because the
+                        // published region no longer fits this mapping. Misc.free(keyMem)
+                        // would truncate the .pk to keyMem's CURRENT append offset, which
+                        // is this instance's stale cached high-water -- the exact trim the
+                        // sizing above exists to prevent. There is no trusted high-water to
+                        // trim to here (an unreadable header gives none, and a region past
+                        // this mapping is not ours to cut), so release the mapping WITHOUT
+                        // truncating and leave the file intact for the next open. of()
+                        // reads the length from the header rather than from ff.length(), so
+                        // a .pk carrying an untrimmed tail reopens fine; a .pk cut below its
+                        // published region does not. of()'s own error path already makes
+                        // this same choice.
                         keyMem.close(false);
                     }
                 }
@@ -4683,6 +4695,26 @@ public class PostingIndexWriter implements IndexWriter {
         // the matching slot payload too.
         Unsafe.storeFence();
         keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
+
+        // DELIBERATELY no writer-side post-condition over slots
+        // [0, overrideGenIndex) here. The clamp above constrains the ONE slot this
+        // call wrote; the prefix comes off disk and a pre-fix build can have left a
+        // regressing slot there -- exactly the at-rest damage the close() fix in
+        // this change stops producing. Rejecting the publish on that prefix would
+        // convert damage an upgraded deployment already carries into an ingestion
+        // stop: no production caller retries, syncColumns and the switch-partition
+        // seal call throwDistressException, and the WAL fast-lag path escapes into
+        // applyLagToLastPartition, which marks the writer distressed and rethrows --
+        // suspending a WAL table. It would buy readers nothing, because extending
+        // the head does not make the prefix any worse: the damaged slot is left
+        // byte-for-byte alone (PostingIndexCriticalIssuesTest
+        // #testPublishExtendsHeadOverPreExistingNonMonotonicGenDir pins the
+        // resulting {1, 0, 3} gen-dir), and every reader already refuses the whole
+        // entry through the TXN_AT_SEAL monotonicity check in
+        // AbstractPostingIndexReader, which names REINDEX as the recovery route.
+        // At-rest corruption is therefore the READER's to report, at query time,
+        // rather than the writer's to turn into an outage -- and the scan this
+        // would add is O(genCount) on every commit, on the hot publish path.
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
         // and not-yet-opened slots publish 0; readers treat them as "no file

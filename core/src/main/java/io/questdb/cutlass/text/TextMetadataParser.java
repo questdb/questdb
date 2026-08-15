@@ -145,7 +145,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         break;
                     case P_TYPE:
                         type = ColumnType.typeOf(tag);
-                        if (type == -1) {
+                        if (type == -1 || isUnstorableDecimal(type)) {
                             throw JsonException.$(position, "Invalid type");
                         }
                         break;
@@ -186,6 +186,16 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         if (type == -1) {
             throw JsonException.$(position, "Missing 'type' property");
         }
+    }
+
+    // The bare DECIMAL tag is a surrogate for function overload resolution and has no storage size.
+    // The type name table also holds scale > precision pairs, which the DDL parser rejects.
+    private static boolean isUnstorableDecimal(int type) {
+        final short tag = ColumnType.tagOf(type);
+        if (tag == ColumnType.DECIMAL) {
+            return true;
+        }
+        return ColumnType.isDecimalType(tag) && ColumnType.getDecimalScale(type) > ColumnType.getDecimalPrecision(type);
     }
 
     private static void strcpyw(final CharSequence value, final int len, final long address) {

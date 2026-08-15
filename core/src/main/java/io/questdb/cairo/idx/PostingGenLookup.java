@@ -337,7 +337,9 @@ public class PostingGenLookup implements Closeable {
      * Note this deliberately does NOT assert: this method runs inside the
      * window the caller is allowed to read torn (it re-validates the chain
      * header seqlock afterwards and retries), so a non-monotonic read here is
-     * a legal transient.
+     * a legal transient. The caller compares the returned count against the
+     * {@code genCount} it passed in and acts on the shortfall once the seqlock
+     * has proven the snapshot self-consistent.
      *
      * @param entryOffset byte offset of the chain entry in {@code keyMem};
      *                    the gen-dir starts at

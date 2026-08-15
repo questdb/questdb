@@ -2056,6 +2056,31 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         }
                     }
                 }
+
+                // ...and the gen-dir TXN_AT_SEAL sequence must still be non-decreasing, which
+                // is what readers rely on to tell a published generation from a torn one.
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                        PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                        rawFf.getPageSize(),
+                        rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                        MemoryTag.MMAP_DEFAULT, 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    long prevTxnAtSeal = Long.MIN_VALUE;
+                    for (int g = 0; g < head.genCount; g++) {
+                        long slot = PostingIndexChainEntry.resolveGenDirOffset(
+                                head.offset, g, head.coveringFormat, head.coverCount);
+                        long txnAtSeal = pk.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+                        Assert.assertTrue(
+                                "gen-dir TXN_AT_SEAL must not regress [gen=" + g + ", txnAtSeal=" + txnAtSeal
+                                        + ", prev=" + prevTxnAtSeal + ']',
+                                txnAtSeal >= prevTxnAtSeal
+                        );
+                        prevTxnAtSeal = txnAtSeal;
+                    }
+                }
             }
         });
     }
