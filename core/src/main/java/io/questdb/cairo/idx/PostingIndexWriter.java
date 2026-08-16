@@ -529,20 +529,16 @@ public class PostingIndexWriter implements IndexWriter {
                     // free the sibling indexers in unguarded loops, and O3CopyJob's
                     // finally { Misc.free(indexWriter); } would replace an in-flight
                     // O3 exception with this one.
-                    // The logging itself sits inside a swallow: AsyncLogRecord
-                    // .$(Throwable) allocates while formatting `e` and guards none
-                    // of it, so an OutOfMemoryError can escape mid-chain exactly in
-                    // the ENOSPC / OOM scenario this catch exists for. The
-                    // unconditional rec.I$() hands the acquired log ring slot back
-                    // on that path; NullLogRecord.I$() is a no-op, so a disabled or
-                    // ring-full record costs nothing. For what an unreleased record
-                    // costs and how a later chain on the same carrier reclaims it,
-                    // see AsyncLogRecord and AbstractLogRecord.prepareLogRecord.
-                    // CONSTRAINT, unenforced: do not add an $(Object) or $(Sinkable)
-                    // segment to THIS chain -- they are the only two segments that
-                    // release the record themselves and rethrow (AsyncLogRecord
-                    // :131-162), which would make the trailing rec.I$() a double
-                    // release onto a slot this chain may no longer own.
+                    // The logging sits inside its own swallow: AsyncLogRecord
+                    // .$(Throwable) releases the log ring slot and RETHROWS when
+                    // formatting `e` fails, which an OutOfMemoryError can do in
+                    // exactly the ENOSPC / OOM case this catch exists for -- and
+                    // that throw would otherwise escape close(). $(Object),
+                    // $(Sinkable) and $(Throwable) all self-release; $safe and
+                    // $(CharSequence) do not, so the trailing rec.I$() is what
+                    // returns the slot if one of THOSE throws. I$() no-ops unless
+                    // isLogRecordInProgress, which $() clears on release, so it
+                    // cannot double-release after a self-releasing segment.
                     try {
                         LogRecord rec = LOG.error();
                         try {
