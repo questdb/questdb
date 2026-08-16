@@ -1360,52 +1360,41 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // it, so an entry offset reused with an EQUAL GEN_COUNT is a
                 // residual this re-read cannot see. Otherwise an unchanged
                 // GEN_COUNT means the gen-dir we walked is a single
-                // self-consistent entry version, so a drop in
-                // the TXN_AT_SEAL sequence is not a torn read but corruption
-                // at rest: a GEN_COUNT covering a gen-dir slot that
-                // was never validly written (historically, a .pk truncated below
-                // its published regionLimit -- see PostingIndexWriter.close()).
+                // self-consistent entry version, so a shortfall reported by
+                // snapshotMetadata is corruption at rest, not a torn read.
                 //
-                // Fail the read rather than serving the monotonic prefix. The
-                // unpublished slot reads as TXN_AT_SEAL=0 / SIZE=0 /
-                // KEY_COUNT=0, so silently truncating to the prefix returns a
-                // partial index scan -- wrong rows, no signal.
+                // Fail the read rather than serving the prefix. The damaged slot
+                // reads as SIZE=0 / KEY_COUNT=0, so silently truncating to the
+                // prefix returns a partial index scan -- wrong rows, no signal.
                 //
-                // This catches a drop below a NON-ZERO predecessor only, so it
-                // is not a complete guard against the damage. 0 is also a tag
-                // publishToChain writes for a VALIDLY published slot -- its
-                // pendingTxnAtSeal<0 fallback, taken when the publishing caller
-                // has not armed setNextTxnAtSeal since the writer's last of().
-                // Every entry point into a path-based PostingIndexWriter.of()
-                // under core/src/main -- the reset that leaves the field unset --
-                // now arms before the first call on that writer that can publish
-                // (enumerated in the fallback's own comment in publishToChain).
-                // The gap stays open regardless: a current-state
-                // caller arms the committed _txn, which is itself 0 until the
-                // table's first commit, and .pk files written before the callers
-                // were armed still carry 0-tagged slots. That makes a 0-tagged
-                // slot indistinguishable from an unpublished one: a zeroed slot 0
-                // (prevTxnAtSeal starts at Long.MIN_VALUE) and a zeroed slot
-                // behind a 0-tagged predecessor (0 < 0 is false) both pass, and
-                // the read below then serves that generation as empty -- the
-                // outcome this check exists to prevent. Closing the gap means
-                // stopping the writer from emitting 0 for published slots, which
-                // changes what 0 means for reader visibility; until then
-                // PostingIndexCriticalIssuesTest
-                // #testReaderServesZeroedGenAfterZeroTaggedGenAsEmpty pins it.
+                // snapshotMetadata classifies the shortfall (see
+                // PostingGenLookup#snapshotMetadata): a TXN_AT_SEAL regression, an
+                // exact all-zero declared slot, or structurally impossible
+                // metadata. The latter two are what catch the damage the tag
+                // sequence alone cannot see -- a slot legitimately tagged 0 by
+                // publishToChain's pendingTxnAtSeal<0 fallback keeps reading as
+                // published, so what a zero TAG means is unchanged.
                 //
                 // Nothing repairs this in place: trimInFlightTailGens only cuts a
-                // TAIL whose TXN_AT_SEAL is ABOVE the current table txn, so the
-                // 0-tagged slot left by the historical truncation stops the walk
-                // and the entry survives recovery unchanged. REINDEX is the only
-                // route back -- it deletes the .pk and every sealed .pv/.pc for
-                // the column and rebuilds them from the base column data.
+                // TAIL whose TXN_AT_SEAL is ABOVE the current table txn, so a slot
+                // damaged by the historical truncation stops the walk and the
+                // entry survives recovery unchanged. REINDEX is the only route
+                // back -- it deletes the .pk and every sealed .pv/.pc for the
+                // column and rebuilds them from the base column data.
                 if (snapshotGenCount < entryScratch.genCount) {
+                    int corruptionKind = genLookup.getSnapshotCorruptionKind();
+                    CharSequence reason = switch (corruptionKind) {
+                        case PostingGenLookup.SNAPSHOT_CORRUPTION_ALL_ZERO_SLOT ->
+                                "declared gen-dir slot is all zero";
+                        case PostingGenLookup.SNAPSHOT_CORRUPTION_INVALID_SLOT ->
+                                "declared gen-dir slot is structurally invalid";
+                        default -> "gen-dir TXN_AT_SEAL not monotonic";
+                    };
                     CairoException ex = CairoException.critical(0)
                             .put(INDEX_CORRUPT)
                             .put(", rebuild it with REINDEX TABLE <table> COLUMN ").put(indexColumnName)
                             .put(" LOCK EXCLUSIVE")
-                            .put(" [reason=gen-dir TXN_AT_SEAL not monotonic, column=").put(indexColumnName)
+                            .put(" [reason=").put(reason).put(", column=").put(indexColumnName)
                             .put(", entryOffset=").put(entryScratch.offset)
                             .put(", genCount=").put(entryScratch.genCount)
                             .put(", publishedGenCount=").put(snapshotGenCount)

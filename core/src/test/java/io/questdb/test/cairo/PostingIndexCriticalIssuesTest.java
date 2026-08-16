@@ -3530,6 +3530,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+
     @Test
     public void testDirectPersistReadyDeferredPostingSealPurgeRetainsFutureEntryWhenQueueIsFull() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
@@ -4200,6 +4201,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
                         rawFf, keyFile, rawFf.getPageSize(), fileSize,
                         MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                    Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, header));
+                    Assert.assertEquals(PostingIndexUtils.V2_FORMAT_VERSION, header.formatVersion);
                     PostingIndexChainWriter chain = new PostingIndexChainWriter();
                     chain.openExisting(mem);
                     Assert.assertTrue("chain must have head", chain.hasHead());
@@ -5189,10 +5193,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * which only {@code flushAllPending} supplies, as {@code genCount - 1}. So the test
      * drives two flush cycles at the SAME sealTxn and arms the second one with a
      * txnAtSeal BELOW the first's. Without the clamp the writer leaves a gen-dir whose
-     * TXN_AT_SEAL sequence regresses, which every reader open then rejects outright
-     * (see testReaderRejectsNonMonotonicGenDirTxnAtSeal) -- the column becomes
-     * unreadable until REINDEX. The non-regressing control proves the clamp is
-     * conditional: it must record the caller's value verbatim.
+     * TXN_AT_SEAL sequence regresses, violating fresh V4's semantic promise and
+     * making every reader reject the column until REINDEX. The non-regressing
+     * control proves the clamp is conditional: it must record the caller's value
+     * verbatim.
      */
     @Test
     public void testPublishClampsRegressingGenDirTxnAtSeal() throws Exception {
@@ -5311,21 +5315,105 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * A gen-dir whose TXN_AT_SEAL sequence regresses is corruption at rest: the
-     * regressing slot was never validly published, so the gens after it describe
-     * .pv regions that may never have been written. The reader must fail the open
-     * instead of serving the monotonic prefix as if it were the whole index, and
-     * the failure must name REINDEX -- recovery does not repair such an entry
-     * (trimInFlightTailGens only cuts a tail tagged ABOVE the current table txn).
-     * The monotonic control proves the throw is conditional, not unconditional.
+     * MAX_VALUE is the cumulative row-id high-water across an entry's gen-dir, so
+     * it must never decrease from one slot to the next.
+     * {@code PostingGenLookup.snapshotMetadata} enforces that on the READ side and
+     * fails the whole read with INDEX_CORRUPT, so a regressing slot persisted here
+     * would leave an index only REINDEX can recover. {@code publishToChain} rejects
+     * it at the source instead, leaving the chain untouched.
+     * <p>
+     * Not reachable on a normal path -- {@code flushAllPending} only ever RAISES
+     * maxValue and the rollback path collapses the entry to one gen -- so the
+     * fixture drives {@link PostingIndexWriter} directly and lowers the writer's
+     * high-water with {@code setMaxValue} before extending the head. That is the
+     * shape a future caller could otherwise introduce silently.
      */
     @Test
-    public void testReaderRejectsNonMonotonicGenDirTxnAtSeal() throws Exception {
+    public void testPublishRejectsRegressingGenDirMaxValue() throws Exception {
         assertMemoryLeak(() -> {
-            final String name = "reader_gen_dir_txn_at_seal_regression";
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
-                final FilesFacade rawFf = configuration.getFilesFacade();
+                final String name = "publish_gen_max_value_regressing";
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 10);
+                    writer.add(0, 11);
+                    writer.setMaxValue(11);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(3L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    // Below gen 0's high-water of 11. flushAllPending only raises
+                    // maxValue (lastVal 3 is not > 3), so this reaches the slot.
+                    writer.setMaxValue(3);
+                    try {
+                        writer.commit();
+                        Assert.fail("a regressing gen-dir MAX_VALUE must fail the publish");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "posting index gen-dir MAX_VALUE regressed"
+                        );
+                    }
+                }
+
+                // Negative control: a non-decreasing high-water must publish cleanly.
+                final String ok = "publish_gen_max_value_advancing";
+                publishTwoGensAtSameSealTxn(path, plen, ok, 1L, 2L);
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), ok,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                }
+            }
+        });
+    }
+
+
+    /**
+     * A stale {@code close()} can truncate a declared gen-dir slot at an aligned
+     * boundary, leaving its prefix intact and its suffix zero. Legacy cumulative
+     * transaction semantics must not turn that structural damage into a readable
+     * empty gen.
+     * <p>
+     * This is the case the tag sequence alone cannot catch. {@code publishToChain}
+     * tags a slot 0 whenever the publishing caller left {@code pendingTxnAtSeal}
+     * unset, so under V2/V3 a zeroed slot behind a 0-tagged predecessor is not a
+     * detectable regression ({@code 0 < 0} is false), and neither is a zeroed slot
+     * 0 (the walk starts {@code prevTxnAtSeal} at {@code Long.MIN_VALUE}). The
+     * fixture below arms nothing before gen 0's publish, so gen 0 lands tagged 0,
+     * then arms gen 1 with {@code setNextTxnAtSeal(2L)} so gen 1 lands tagged 2.
+     * {@code PostingGenLookup.snapshotMetadata} rejects it anyway, on the
+     * version-independent structural checks -- all-zero declared slot, and
+     * structurally impossible metadata -- rather than on tag monotonicity, which
+     * is why V2/V3 keep their cumulative-max reading of historical 0 tags.
+     * <p>
+     * {@link #testReaderRejectsNonMonotonicGenDirTxnAtSeal} plants the SAME zeroing
+     * behind a non-zero predecessor, where the tag sequence alone is enough.
+     * <p>
+     * The fixture plants the damaged shape directly rather than driving it, so what
+     * this pins is the detector's behaviour on a shape the writer can emit, not a
+     * reproduction of a specific incident. It drives {@link PostingIndexWriter}
+     * directly and deliberately arms nothing, so no amount of caller-side arming
+     * changes what it exercises. Each armed production route has its own pinning
+     * test: {@link #testSquashAppendRollbackPublishesUpcomingTxnAtSeal},
+     * {@link #testOpenPartitionRollbackPublishesCommittedTxnAtSeal},
+     * {@link #testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal},
+     * {@link #testAlterRenameColumnRebindCarriesArmedTxnAtSeal} and
+     * {@link #testSquashRestoreIndexersCarriesArmedTxnAtSeal}.
+     */
+    @Test
+    public void testReaderRejectsPartiallyZeroedLegacyGenDirSlot() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_partial_zero_gen_dir";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
                     writer.setNextTxnAtSeal(1L);
@@ -5334,11 +5422,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     writer.setMaxValue(1);
                     writer.commit();
 
-                    // currentTableTxn=2 keeps both slots on disk: recovery trims a
-                    // tail only when its TXN_AT_SEAL exceeds the current table txn.
-                    writer.setCurrentTableTxn(2L);
+                    writer.setCurrentTableTxn(3L);
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
-
                     writer.setNextTxnAtSeal(2L);
                     writer.add(1, 2);
                     writer.add(1, 3);
@@ -5346,127 +5431,73 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                // Negative control: the gen-dir the writer left behind is monotonic,
-                // so the reader opens and sees both gens.
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name,
-                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
-                     DirectBitSet foundKeys = new DirectBitSet(8)) {
-                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
-                    Assert.assertTrue(foundKeys.get(0));
-                    Assert.assertTrue(foundKeys.get(1));
-                }
-
-                // Plant the corruption: drive slot[1].TXN_AT_SEAL below slot[0]'s.
-                // 0 is what a slot whose publish never completed reads as.
-                final long slot0TxnAtSeal;
-                final long pkLen = rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
-                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
-                        PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
-                        rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                final LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE
+                );
+                final long pkLen = ff.length(keyFile);
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(
+                        ff, keyFile, ff.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0
+                )) {
                     PostingIndexChainWriter chain = new PostingIndexChainWriter();
                     chain.openExisting(pk);
                     PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
                     chain.loadHeadEntry(pk, head);
-                    Assert.assertEquals("the planted entry must carry two gens", 2, head.genCount);
-                    long slot0 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0, head.coveringFormat, head.coverCount);
-                    long slot1 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1, head.coveringFormat, head.coverCount);
-                    slot0TxnAtSeal = pk.getLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-                    // Not incidental setup: a NON-ZERO predecessor is the detector's
-                    // precondition. Behind a 0-tagged slot[0] the same zeroing reads
-                    // back as 0 < 0 and passes undetected -- see
-                    // testReaderServesZeroedGenAfterZeroTaggedGenAsEmpty.
-                    Assert.assertTrue("slot[0] must carry a real txn for the detector to have a drop to see",
-                            slot0TxnAtSeal > 0);
-                    pk.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 0L);
-                }
+                    Assert.assertEquals(2, head.genCount);
+                    long slot1 = PostingIndexChainEntry.resolveGenDirOffset(
+                            head.offset, 1, head.coveringFormat, head.coverCount
+                    );
+                    byte[] intactSlot = new byte[PostingIndexUtils.GEN_DIR_ENTRY_SIZE];
+                    for (int i = 0; i < intactSlot.length; i++) {
+                        intactSlot[i] = pk.getByte(slot1 + i);
+                    }
 
-                try {
-                    new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name,
-                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0
-                    ).close();
-                    Assert.fail("a regressing gen-dir TXN_AT_SEAL must fail the read, not serve the prefix");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "posting index is corrupt");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "gen-dir TXN_AT_SEAL not monotonic");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "REINDEX TABLE <table> COLUMN " + name + " LOCK EXCLUSIVE");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "genCount=2");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "publishedGenCount=1");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "sealTxn=");
-                }
+                    long[] versions = {
+                            PostingIndexUtils.V2_FORMAT_VERSION,
+                            PostingIndexUtils.V3_FORMAT_VERSION
+                    };
+                    int[] cutOffsets = {12, 16, 20, 24, 28};
+                    for (long version : versions) {
+                        for (int cutOffset : cutOffsets) {
+                            for (int i = 0; i < intactSlot.length; i++) {
+                                pk.putByte(slot1 + i, intactSlot[i]);
+                            }
+                            for (int i = cutOffset; i < intactSlot.length; i++) {
+                                pk.putByte(slot1 + i, (byte) 0);
+                            }
+                            PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                            Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(pk, header));
+                            pk.putLong(
+                                    header.pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION,
+                                    version
+                            );
 
-                // Restore monotonicity: the same reader open now succeeds, which
-                // proves the throw keys off the planted regression alone.
-                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
-                        PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
-                        rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
-                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                    chain.openExisting(pk);
-                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                    chain.loadHeadEntry(pk, head);
-                    long slot1 = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1, head.coveringFormat, head.coverCount);
-                    pk.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slot0TxnAtSeal);
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name,
-                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
-                     DirectBitSet foundKeys = new DirectBitSet(8)) {
-                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
-                    Assert.assertTrue(foundKeys.get(0));
-                    Assert.assertTrue(foundKeys.get(1));
+                            try {
+                                new PostingIndexFwdReader(
+                                        configuration, path.trimTo(plen), name,
+                                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0
+                                ).close();
+                                Assert.fail("partially zeroed V" + version + " slot at +" + cutOffset
+                                        + " must be rejected");
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(
+                                        e.getFlyweightMessage(),
+                                        "declared gen-dir slot is structurally invalid"
+                                );
+                            }
+                        }
+                    }
                 }
             }
         });
     }
 
     /**
-     * Pins a KNOWN GAP, not desired behaviour. {@code PostingGenLookup.snapshotMetadata}
-     * catches a gen-dir slot that drops below a NON-ZERO predecessor. It cannot catch a
-     * zeroed slot that follows a slot legitimately tagged {@code TXN_AT_SEAL = 0}:
-     * {@code 0 < 0} is false, so the detector reports the whole gen-dir as published,
-     * the reader opens without a signal and serves the zeroed generation as empty --
-     * fewer rows than the base column holds, no error. {@code publishToChain} tags a
-     * slot 0 whenever the publishing caller left {@code pendingTxnAtSeal} unset. The
-     * fixture below arms nothing before gen 0's publish, so gen 0 lands tagged 0, and
-     * then arms gen 1 with {@code setNextTxnAtSeal(2L)} so gen 1 lands tagged 2.
-     * Five production callers used to leave it unset and all now arm before the
-     * call that can publish. That roll-call, the search behind it and the sites
-     * that remain open live once, at the {@code pendingTxnAtSeal < 0} fallback in
-     * {@code PostingIndexWriter.publishToChain}; each fixed route has its own
-     * pinning test:
-     * {@link #testSquashAppendRollbackPublishesUpcomingTxnAtSeal},
-     * {@link #testOpenPartitionRollbackPublishesCommittedTxnAtSeal},
-     * {@link #testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal},
-     * {@link #testAlterRenameColumnRebindCarriesArmedTxnAtSeal} and
-     * {@link #testSquashRestoreIndexersCarriesArmedTxnAtSeal}.
-     * Arming those callers narrows the fallback's reach without changing what any
-     * tag MEANS, so it does not close the detector gap this test pins: a
-     * current-state caller arms the committed {@code _txn}, which is itself 0 until
-     * the table's first commit, and every 0-tagged slot already on disk keeps its
-     * meaning. The fixture plants the damaged shape
-     * directly rather than driving it, so what this pins is the detector's behaviour
-     * on a shape the writer can emit, not a reproduction of a specific incident. A
-     * zeroed slot 0 is equally invisible, since the walk starts
-     * {@code prevTxnAtSeal} at {@code Long.MIN_VALUE}.
-     * <p>
-     * {@link #testReaderRejectsNonMonotonicGenDirTxnAtSeal} plants the SAME zeroing
-     * behind a non-zero predecessor and the reader rejects it. The only difference
-     * here is gen 0's tag, which is what makes the drop undetectable.
-     * <p>
-     * Closing this gap means stopping the writer from tagging validly published slots
-     * with 0, so that 0 unambiguously means "unpublished". That changes what 0 MEANS
-     * today -- "visible to every pinned reader", and undroppable by the writer-open
-     * recovery walk -- so it is a deliberate visibility-semantics decision, not a
-     * one-liner: every slot already on disk carrying a legitimate 0 would be
-     * reinterpreted as unpublished on upgrade. When someone takes it, the gen 0
-     * precondition below fails loudly and this test is obsolete. Note that the
-     * fixture below drives {@link PostingIndexWriter} directly and deliberately arms
-     * nothing, so no amount of caller-side arming can make that precondition fail.
+     * Exact all-zero declared slots identify the known old-close damage without
+     * reinterpreting a legitimate zero transaction tag. Cover a trailing slot
+     * after a zero-tagged predecessor and slot 0 itself.
      */
     @Test
-    public void testReaderServesZeroedGenAfterZeroTaggedGenAsEmpty() throws Exception {
+    public void testReaderRejectsZeroedGenAfterZeroTaggedGen() throws Exception {
         assertMemoryLeak(() -> {
             final String name = "reader_zero_tagged_gen_dir_blind_spot";
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -5527,16 +5558,39 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     }
                 }
 
-                // The gap, executed: the detector walks 0 then 0, finds no drop, and the
-                // reader opens clean. Gen 1's key is simply gone from the result.
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name,
-                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
-                     DirectBitSet foundKeys = new DirectBitSet(8)) {
-                    Assert.assertEquals("the zeroed gen is served as empty rather than rejected",
-                            1, reader.collectDistinctKeys(foundKeys));
-                    Assert.assertTrue("gen 0 stays readable", foundKeys.get(0));
-                    Assert.assertFalse("gen 1's key vanishes with no error -- the known gap", foundKeys.get(1));
+                try {
+                    new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0
+                    ).close();
+                    Assert.fail("an all-zero declared gen-dir slot must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "declared gen-dir slot is all zero");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "REINDEX TABLE <table> COLUMN " + name);
+                }
+
+                // Slot 0 has no predecessor, so cover it independently.
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf, keyFile,
+                        rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    long slot0 = PostingIndexChainEntry.resolveGenDirOffset(
+                            head.offset, 0, head.coveringFormat, head.coverCount
+                    );
+                    for (int i = 0; i < PostingIndexUtils.GEN_DIR_ENTRY_SIZE; i++) {
+                        pk.putByte(slot0 + i, (byte) 0);
+                    }
+                }
+                try {
+                    new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0
+                    ).close();
+                    Assert.fail("an all-zero declared slot 0 must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "publishedGenCount=0");
                 }
             }
         });

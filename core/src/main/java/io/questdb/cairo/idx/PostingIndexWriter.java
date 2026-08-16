@@ -4679,6 +4679,36 @@ public class PostingIndexWriter implements IndexWriter {
                         .$(']').$();
                 slotTxnAtSeal = prevSlotTxnAtSeal;
             }
+            // MAX_VALUE is the cumulative row-id high-water across the entry's
+            // gen-dir, so it must never decrease from one slot to the next.
+            // PostingGenLookup.snapshotMetadata enforces this on the READ side and
+            // fails the whole read with INDEX_CORRUPT when it is violated, so
+            // persisting a regressing slot here would leave an index that only
+            // REINDEX can recover. Catch it at the source instead.
+            //
+            // This throws rather than asserts because production runs with
+            // assertions off on some deployments, and the failure mode this
+            // prevents is silent at write time and terminal at read time. Failing
+            // the publish leaves the chain untouched -- the previous head stays
+            // readable and the caller can retry -- which is strictly better than
+            // committing a gen-dir the reader is guaranteed to reject.
+            //
+            // Unreachable on every path that completes normally: flushAllPending
+            // only ever raises the writer's maxValue (`if (lastVal > maxValue)`),
+            // and the rollback path routes through reencodeAllGenerations, which
+            // collapses the entry to a single gen. It is a backstop for a future
+            // caller that lowers maxValue via setMaxValue and then extends the head
+            // without re-encoding.
+            long prevSlotMaxValue = keyMem.getLong(prevSlotOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
+            if (maxValue < prevSlotMaxValue) {
+                throw CairoException.critical(0)
+                        .put("posting index gen-dir MAX_VALUE regressed [index=").put(indexName)
+                        .put(", gen=").put(overrideGenIndex)
+                        .put(", maxValue=").put(maxValue)
+                        .put(", prevMaxValue=").put(prevSlotMaxValue)
+                        .put(", sealTxn=").put(sealTxn)
+                        .put(']');
+            }
         }
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
