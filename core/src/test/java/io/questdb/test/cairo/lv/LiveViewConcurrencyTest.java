@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -426,6 +427,102 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // their from-scratch recomputes.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runMultiViewConcurrent(rnd, 4, 800));
+    }
+
+    @Test
+    public void testConcurrentRefreshCannotInvalidateFromStaleBaseHead() throws Exception {
+        // The fallback worker used to read the base head first and the volatile view watermark
+        // second, without the per-view refresh latch. Freeze it between those reads, publish a new
+        // base commit, and let a notification worker consume that commit. The fallback then has an
+        // old base head and a new view watermark, but that mixed-time pair must not durably
+        // invalidate the healthy view.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, x, count(*) OVER (
+                        PARTITION BY 0
+                        ORDER BY ts
+                        ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                    ) AS rn
+                    FROM base
+                    """);
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob seedJob = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(seedJob, "lv");
+            }
+            Assert.assertFalse("the seeded view must start healthy", instance.isInvalid());
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final LiveViewStateStore stateStore = engine.getLiveViewStateStore();
+            final LiveViewRefreshTask staleTask = new LiveViewRefreshTask();
+            while (stateStore.tryDequeueRefreshTask(staleTask)) {
+                stateStore.notifyBaseRefreshed(staleTask, staleTask.seqTxn);
+            }
+
+            final CountDownLatch baseHeadRead = new CountDownLatch(1);
+            final CountDownLatch releaseFallback = new CountDownLatch(1);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            try (
+                    LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(0, 2, engine, 1);
+                    LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, 2, engine, 1)
+            ) {
+                fallbackJob.setSimulateBaseCommitAfterAheadGuardBaseTxnReadForTest(() -> {
+                    baseHeadRead.countDown();
+                    try {
+                        if (!releaseFallback.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting to release fallback scan");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError("fallback scan interrupted", e);
+                    }
+                });
+                final Thread fallbackThread = new Thread(() -> {
+                    try {
+                        fallbackJob.processNotificationsForTest();
+                    } catch (Throwable t) {
+                        errors.add(t);
+                        baseHeadRead.countDown();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-stale-base-head-scan");
+                fallbackThread.start();
+                try {
+                    Assert.assertTrue(
+                            "fallback scan did not stop after reading the base head",
+                            baseHeadRead.await(30, TimeUnit.SECONDS)
+                    );
+                    if (!errors.isEmpty()) {
+                        throw new RuntimeException("fallback scan thread failed", errors.peek());
+                    }
+                    execute("INSERT INTO base VALUES ('2026-06-01T00:00:00.000000Z', 1)");
+                    Assert.assertTrue("the notification worker must consume the new commit",
+                            notificationJob.processNotificationsForTest());
+                    Assert.assertTrue(
+                            "the notification worker must advance the view before the fallback resumes",
+                            instance.getLastProcessedSeqTxn() > processedBefore
+                    );
+                } finally {
+                    releaseFallback.countDown();
+                    fallbackThread.join(30_000);
+                }
+                Assert.assertFalse("fallback scan thread did not finish", fallbackThread.isAlive());
+            }
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("fallback scan thread failed", errors.peek());
+            }
+
+            Assert.assertFalse(
+                    "a fresh base commit processed concurrently with the fallback scan must not invalidate the live view",
+                    instance.isInvalid()
+            );
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
