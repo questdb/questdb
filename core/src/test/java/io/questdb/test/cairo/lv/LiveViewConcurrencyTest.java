@@ -462,12 +462,26 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 stateStore.notifyBaseRefreshed(staleTask, staleTask.seqTxn);
             }
 
+            // The idle fallback scan is sharded by table id (LiveViewRegistry.getShardedViews), so the
+            // fallback worker reaches the ahead guard only for the views it owns. It owns this one today
+            // - setUpCairo resets the table id generator per test, making base=1 and lv=2 - but pin the
+            // assumption here. Without this, a fixture edit that shifts lv's id (one more CREATE TABLE
+            // ahead of it) would surface as the 30s baseHeadRead timeout below, which names the latch
+            // rather than the shard it actually lost.
+            final int fallbackWorkerId = 0;
+            final int workerCount = 2;
+            Assert.assertEquals(
+                    "the fallback worker must own the lv shard, or its scan never reaches the ahead guard",
+                    fallbackWorkerId,
+                    Math.floorMod(instance.getLiveViewToken().getTableId(), workerCount)
+            );
+
             final CountDownLatch baseHeadRead = new CountDownLatch(1);
             final CountDownLatch releaseFallback = new CountDownLatch(1);
             final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
             try (
-                    LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(0, 2, engine, 1);
-                    LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, 2, engine, 1)
+                    LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(fallbackWorkerId, workerCount, engine, 1);
+                    LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, workerCount, engine, 1)
             ) {
                 fallbackJob.setSimulateBaseCommitAfterAheadGuardBaseTxnReadForTest(() -> {
                     baseHeadRead.countDown();
