@@ -194,6 +194,32 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalScaleAlignedComparisonNotSkipped() throws Exception {
+        // Comparing two decimals of different scale used to raise a bare
+        // NumericException whenever aligning the smaller-scale operand left the
+        // type's range, and the oracle swallowed it as an accepted skip.
+        // Decimal64/128/256.compareTo now derives the ordering from the sign, so
+        // the query completes. The oracle no longer accepts a bare
+        // NumericException either, so a regression is reported as a failure
+        // rather than skipped. Drive the query through QueryRunner.run() to
+        // exercise the real classification path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cmp (a DECIMAL(76, 0), b DECIMAL(76, 1))");
+            // 76 nines is the DECIMAL(76, 0) maximum; scaling it up by 10 to
+            // meet b's scale is past what Decimal256 can hold.
+            final String nines = "9".repeat(76);
+            execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
+
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, true, new ObjList<>(), null);
+            QueryRunner.Result result = runner.run(
+                    new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
+            Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
+            Assert.assertFalse("comparison must not fail: "
+                    + (result.getFailure() != null ? result.getFailure().getMessage() : ""), result.isFailed());
+        });
+    }
+
+    @Test
     public void testImplicitTimestampLimitTolerated() throws Exception {
         // Bug from fault-injection fuzzing: SELECT max(ts) FROM t WHERE test_fault()
         // swallowed the injected fault under parallel execution and was reported as a

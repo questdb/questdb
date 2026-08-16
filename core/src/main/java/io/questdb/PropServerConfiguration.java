@@ -319,6 +319,31 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final long liveViewCheckpointCompactionInterval;
+    private final long liveViewCheckpointMaxDurationMicros;
+    private final long liveViewCheckpointPurgeInterval;
+    private final long liveViewCheckpointRepairReplayMaxRows;
+    private final long liveViewCheckpointRepairScanMaxKeys;
+    private final long liveViewCheckpointRepairScanMaxRows;
+    private final long liveViewCheckpointRows;
+    private final boolean liveViewEnabled;
+    private final int liveViewFlushRetryMax;
+    private final long liveViewFlushRetryMaxDurationMicros;
+    private final long liveViewInMemoryBufferGrowthBytes;
+    private final long liveViewInMemoryBufferInitialBytes;
+    private final long liveViewInMemoryMaxMicros;
+    private final int liveViewPartitionCompactThreshold;
+    private final long liveViewRefreshMemoryLimitBytes;
+    private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
+    private final long liveViewRefreshSleepTimeout;
+    private final int liveViewRefreshTurnMaxCommits;
+    private final long liveViewRefreshTurnMaxDurationMicros;
+    private final int[] liveViewRefreshWorkerAffinity;
+    private final int liveViewRefreshWorkerCount;
+    private final boolean liveViewRefreshWorkerHaltOnError;
+    private final long liveViewRefreshWorkerNapThreshold;
+    private final long liveViewRefreshWorkerSleepThreshold;
+    private final long liveViewRefreshWorkerYieldThreshold;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -1514,6 +1539,43 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
+            // live-view config
+            this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
+            this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
+            this.liveViewCheckpointPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 1L);
+            this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
+            this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
+            this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
+            this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
+            this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
+            this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 60L * Micros.SECOND_MICROS);
+            // The growth budget accepts zero (and negative): LiveViewRefreshJob.isCompactionWorthwhile
+            // treats growthBudget <= 0 as a supported "compact on every publish" sentinel, so it must
+            // NOT be rejected here.
+            this.liveViewInMemoryBufferGrowthBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 16L * 1024L * 1024L);
+            // The initial size must be strictly positive. A non-positive value reaches
+            // MemoryCARWImpl.setPageSize as Numbers.msb(ceilPow2(size)) -- msb(0) is -1 and negatives
+            // yield 63 -- producing a bogus page-size shift that corrupts the first refresh instead of
+            // failing the start. The minValue overload rejects zero and negatives at parse time.
+            this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L, 1);
+            this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
+            this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
+            this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
+            // Live views own their pool rather than borrowing the mat-view one: the count is the
+            // signal CairoEngine.buildViewGraphs and WalPurgeJob read to decide whether a refresh
+            // job will ever run, and a knob named for mat views cannot answer that question. Same
+            // wal-apply-derived default as mat views - the workload shape that justified sharing
+            // one pool justifies sizing them alike.
+            this.liveViewRefreshWorkerCount = getInt(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.liveViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_AFFINITY, liveViewRefreshWorkerCount);
+            this.liveViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
+            this.liveViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.liveViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.liveViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
+            this.liveViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.LIVE_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
@@ -1676,6 +1738,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
+            this.liveViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -2380,6 +2443,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+        return liveViewRefreshPoolConfiguration;
     }
 
     @Override
@@ -4158,6 +4226,91 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getLiveViewCheckpointCompactionInterval() {
+            return liveViewCheckpointCompactionInterval;
+        }
+
+        @Override
+        public long getLiveViewCheckpointMaxDurationMicros() {
+            return liveViewCheckpointMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewCheckpointPurgeInterval() {
+            return liveViewCheckpointPurgeInterval;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairReplayMaxRows() {
+            return liveViewCheckpointRepairReplayMaxRows;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairScanMaxKeys() {
+            return liveViewCheckpointRepairScanMaxKeys;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairScanMaxRows() {
+            return liveViewCheckpointRepairScanMaxRows;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRows() {
+            return liveViewCheckpointRows;
+        }
+
+        @Override
+        public int getLiveViewFlushRetryMax() {
+            return liveViewFlushRetryMax;
+        }
+
+        @Override
+        public long getLiveViewFlushRetryMaxDurationMicros() {
+            return liveViewFlushRetryMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferGrowthBytes() {
+            return liveViewInMemoryBufferGrowthBytes;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferInitialBytes() {
+            return liveViewInMemoryBufferInitialBytes;
+        }
+
+        @Override
+        public long getLiveViewInMemoryMaxMicros() {
+            return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewPartitionCompactThreshold() {
+            return liveViewPartitionCompactThreshold;
+        }
+
+        @Override
+        public long getLiveViewRefreshMemoryLimitBytes() {
+            return liveViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
+        public int getLiveViewRefreshTurnMaxCommits() {
+            return liveViewRefreshTurnMaxCommits;
+        }
+
+        @Override
+        public long getLiveViewRefreshTurnMaxDurationMicros() {
+            return liveViewRefreshTurnMaxDurationMicros;
+        }
+
+        @Override
+        public int getLiveViewRefreshWorkerCount() {
+            return liveViewRefreshWorkerCount;
+        }
+
+        @Override
         public boolean getLogLevelVerbose() {
             return logLevelVerbose;
         }
@@ -5280,6 +5433,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewEnabled() {
+            return liveViewEnabled;
         }
 
         @Override
@@ -6616,6 +6774,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
+        }
+    }
+
+    private class PropLiveViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return liveViewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "live-view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return liveViewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return liveViewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return liveViewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return liveViewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return liveViewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return liveViewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return liveViewRefreshWorkerCount > 0;
         }
     }
 

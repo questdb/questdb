@@ -152,10 +152,12 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         UNSUPPORTED_VERSION,
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
+        INVALID_UTF8,
         SCHEMA_MISMATCH,
         COLUMN_COUNT_EXCEEDED,
         ROW_COUNT_EXCEEDED,
         INVALID_OFFSET_ARRAY,
-        INVALID_DICTIONARY_INDEX
+        INVALID_DICTIONARY_INDEX,
+        DELTA_DICT_GAP
     }
 }
