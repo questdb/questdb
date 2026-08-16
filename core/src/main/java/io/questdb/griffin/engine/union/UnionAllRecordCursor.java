@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+class UnionAllRecordCursor extends AbstractUnionSymbolSourceCursor implements NoRandomAccessRecordCursor {
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
     private NextMethod nextMethod;
@@ -106,13 +106,16 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
         cursorA.skipRows(rowCount, maxRowsAfterSkip);
         if (rowCount.get() > 0) {
             cursorB.skipRows(rowCount, maxRowsAfterSkip);
+            isUsingCursorA = false;
             record.setAb(false);
             nextMethod = nextB;
+            updateSymbolSource();
         }
     }
 
     @Override
     public void toTop() {
+        isUsingCursorA = true;
         record.setAb(true);
         nextMethod = nextA;
         cursorA.toTop();
@@ -128,8 +131,10 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     private boolean switchToSlaveCursor() {
+        isUsingCursorA = false;
         record.setAb(false);
         nextMethod = nextB;
+        updateSymbolSource();
         return nextMethod.next();
     }
 

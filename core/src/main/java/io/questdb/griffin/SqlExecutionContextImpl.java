@@ -91,6 +91,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean cloneSymbolTables;
     private boolean containsSecret;
     private int intervalFunctionType;
+    private long intervalPlanGeneration;
+    private long intervalPlanGenerationCounter;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -270,6 +272,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getIntervalPlanGeneration() {
+        return intervalPlanGeneration;
+    }
+
+    @Override
     public int getJitMode() {
         return jitMode;
     }
@@ -425,6 +432,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long nextIntervalPlanGeneration() {
+        if (intervalPlanGenerationCounter == Long.MAX_VALUE) {
+            intervalPlanGenerationCounter = 0;
+        }
+        return intervalPlanGeneration = -(++intervalPlanGenerationCounter);
+    }
+
+    @Override
     public RuntimeIntrinsicIntervalModel peekIntervalModel() {
         return intervalModelObjStack.peek();
     }
@@ -465,6 +480,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
+        this.intervalPlanGeneration = 0;
         this.validationOnly = false;
         this.validationSecurityContext = null;
         // Defensive: production callers arm live-view compile mode inside a try/finally
@@ -516,6 +532,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setIntervalFunctionType(int intervalType) {
         this.intervalFunctionType = intervalType;
+    }
+
+    @Override
+    public void setIntervalPlanGeneration(long generation) {
+        this.intervalPlanGeneration = generation;
     }
 
     @Override

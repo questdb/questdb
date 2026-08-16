@@ -58,7 +58,6 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
-import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
@@ -73,7 +72,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1066,29 +1064,34 @@ public final class TableUtils {
     }
 
     /**
-     * Walks the replacingIndex chain starting from {@code writerIndex} and returns the
-     * root (oldest) writer index. Caps iterations at {@code columnCount}: a longer chain
-     * implies a cycle (e.g. A->B->A) from a corrupt metadata file and triggers a
-     * validation exception rather than spinning forever.
+     * Returns the root of the replacing chain that starts at {@code writerIndex}. Every hop moves
+     * to a lower column, so the walk always ends.
      */
-    public static int getReplacingChainHead(MemoryR metaMem, int writerIndex, int columnCount) {
+    public static int getReplacingChainHead(MemoryR metaMem, int writerIndex) {
         int origWriterIndex = writerIndex;
         int ri = getReplacingColumnIndex(metaMem, writerIndex);
-        int hops = 0;
         while (ri >= 0) {
-            if (++hops > columnCount) {
-                throw validationException(metaMem)
-                        .put("replacingIndex cycle detected starting at writer index ")
-                        .put(writerIndex);
-            }
             origWriterIndex = ri;
             ri = getReplacingColumnIndex(metaMem, ri);
         }
         return origWriterIndex;
     }
 
+    /**
+     * Returns the column that {@code columnIndex} replaces, or -1 for none. Stored 1-based, 0 means
+     * none.
+     * <p>
+     * Old versions left these bytes unwritten, so an old {@code _meta} can hold junk here. A real
+     * replacing column is always added after the column it replaces, and that column is left marked
+     * deleted. Anything else is junk and reads as -1. This also keeps the chain walks in bounds and
+     * loop free.
+     */
     public static int getReplacingColumnIndex(MemoryR metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8) - 1;
+        int replacingIndex = metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8) - 1;
+        if (replacingIndex < 0 || replacingIndex >= columnIndex || getColumnType(metaMem, replacingIndex) > -1) {
+            return -1;
+        }
+        return replacingIndex;
     }
 
     public static int getSymbolCapacity(MemoryR metaMem, int columnIndex) {
@@ -1913,7 +1916,6 @@ public final class TableUtils {
                         continue; // skip deleted columns
                     }
 
-                    final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
                     final String columnName = metadata.getColumnName(columnIndex);
                     final TableColumnMetadata tableColumnMetadata = metadata.getColumnMetadata(columnIndex);
 
@@ -2186,7 +2188,7 @@ public final class TableUtils {
         long readerFd = -1;
         long writerFd = -1;
         long parquetMetaFd = -1;
-        int readerFdOs = -1;
+        int readerFdOs;
         int writerFdOs = -1;
         int parquetMetaFdOs = -1;
         conversionContext.clear();
@@ -2239,7 +2241,7 @@ public final class TableUtils {
             final int adoptedReaderFdOs = readerFdOs;
             final int adoptedWriterFdOs = writerFdOs;
             final int adoptedParquetMetaFdOs = parquetMetaFdOs;
-            readerFdOs = writerFdOs = parquetMetaFdOs = -1;
+            writerFdOs = parquetMetaFdOs = -1;
             partitionUpdater.of(
                     path.$(),
                     adoptedReaderFdOs,
@@ -2323,9 +2325,6 @@ public final class TableUtils {
             ff.close(readerFd);
             ff.close(writerFd);
             ff.close(parquetMetaFd);
-            if (readerFdOs != -1) {
-                Files.closeDetached(readerFdOs);
-            }
             if (writerFdOs != -1) {
                 Files.closeDetached(writerFdOs);
             }
@@ -3099,7 +3098,7 @@ public final class TableUtils {
             int replacingColumnIndex = TableUtils.getReplacingColumnIndex(metaMem, i);
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
-            if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
+            if (replacingColumnIndex > -1) {
                 // Find the slot where the replaced column currently lives.
                 // For a chain A→B→C, when C replaces B, B may already have been
                 // moved into A's slot by a prior replacement, and slot B holds a
@@ -3109,14 +3108,10 @@ public final class TableUtils {
                 // need to follow. Continue until the slot is live (non-negative
                 // writer index); that slot holds the column we want to overwrite.
                 // This is O(chain length) instead of O(N) scan per replacement.
+                // replacingColumnIndex is below i and every hop goes lower, so the walk ends.
                 int targetSlot = replacingColumnIndex;
                 int marker = targetList.getQuick(3 * targetSlot);
-                int hops = 0;
                 while (marker < 0) {
-                    if (++hops > columnCount) {
-                        throw validationException(metaMem)
-                                .put("replacingIndex cycle detected in dead-marker chain at column ").put(i).put(", slot ").put(targetSlot);
-                    }
                     targetSlot = -marker - 1;
                     marker = targetList.getQuick(3 * targetSlot);
                 }

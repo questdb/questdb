@@ -1909,6 +1909,47 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDirectUtf8UsesPointerDecoder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) 0xC3);
+                Unsafe.putByte(ptr + 1, (byte) 0xA9);
+
+                final AtomicInteger indexedReadCount = new AtomicInteger();
+                final DirectUtf8String value = new DirectUtf8String() {
+                    @Override
+                    public byte byteAt(int index) {
+                        indexedReadCount.incrementAndGet();
+                        return Unsafe.getByte(ptr() + index);
+                    }
+                };
+                value.of(ptr, ptr + 2);
+
+                try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                    final TableWriter.Row row = writer.newRow(1);
+                    row.putStrUtf8(0, value);
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertEquals(0, indexedReadCount.get());
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x")
+                    .expectSize()
+                    .returns("""
+                            s
+                            é
+                            """);
+        });
+    }
+
+    @Test
     public void testDropIndex() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -2366,6 +2407,80 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertFalse(eventCursor.hasNext());
             }
+        });
+    }
+
+    @Test
+    public void testMalformedDirectUtf8IsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) '1');
+                Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+                try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                    TableWriter.Row row = writer.newRow(1);
+                    try {
+                        row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                        Assert.fail("expected the malformed value to be rejected");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                    }
+                    row.cancel();
+
+                    // the segment stays usable, and the rejected value left no trace
+                    row = writer.newRow(2);
+                    row.putStr(0, "ok");
+                    row.append();
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            ok
+                            """);
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8IsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = writer.newRow(1);
+                try {
+                    row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                row.cancel();
+
+                row = writer.newRow(2);
+                row.putStr(0, "ok");
+                row.append();
+                writer.commit();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s FROM x ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            ok
+                            """);
         });
     }
 
