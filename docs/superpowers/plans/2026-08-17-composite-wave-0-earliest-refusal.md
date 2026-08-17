@@ -389,195 +389,33 @@ Negative control: 1 of 2 tests fails with the compile-time check removed."
 
 ---
 
-### Task 3: Indexed columns — refuse at CREATE, not at query time
+### Task 3: WITHDRAWN — indexed columns are not a trap
 
-`CREATE TABLE … exch SYMBOL INDEX … PARTITION BY DAY, exch` is accepted today. At query time an indexed predicate on a non-dimension column is refused (`SqlCodeGenerator:11596`), as is `ORDER BY` on an indexed symbol (`:11964`). So the index is accepted, then partly unusable — a trap.
+**Status: built, measured, withdrawn 2026-08-17.** Kept here rather than deleted, because the
+reasoning error is more useful than the outcome.
 
-**This is a deliberate temporary tightening.** Sub-project 9B/9C removes it and makes the index factories cell-aware. It is recorded as churn in the spec, accepted because "accepted then refused" is the exact failure mode invariant 6 exists to prevent.
+The task was implemented as written and passed its own tests (4/4, with 2 of 8 failing without the
+gate). Running the wider suite then produced **35 errors across 6 suites** —
+`CompositeCellPruningTest`, `CompositeReadShapesTest`, `CompositeUnsupportedOpsTest`,
+`CompositeReadEndToEndTest`, `CompositeEndToEndTest`, `CompositeFastAppendTest`. Reverting restored
+429/429, so the gate was the sole cause.
 
-**Files:**
-- Modify: `core/src/test/java/io/questdb/test/griffin/CompositeEarliestRefusalTest.java` (extend)
-- Modify: `core/src/main/java/io/questdb/griffin/engine/ops/CreateTableOperationBuilderImpl.java` (in `resolvePartitionSpec`, after the existing DEDUP guard)
-- Modify: `docs/superpowers/specs/2026-08-11-composite-scope-closure-index.md` (audit keys)
+**Why the premise was false.** `CompositeCellPruningTest` is an ~860-line suite built specifically
+around indexed composite tables: an indexed DIMENSION column delivers cell pruning, which is the
+core value of subpartitioning. The factory audit of the same day had already found
+`WHERE exch = 'E1'` matching the plain twin through `DeferredSingleSymbolFilterPageFrame` +
+`Index forward scan`. The evidence that indexes work was in hand before this task was written.
 
-**Interfaces:**
-- Consumes: `CompositeEarliestRefusalTest` from Task 2.
-- Produces: the CREATE-time refusal `composite partitioning does not yet support an indexed column [column=<name>]`, thrown as `SqlException` at the first dimension expression's position. Sub-project 9 deletes it.
+**And the invariant was never violated.** The indexed-WHERE refusal fires at the `SELECT` that used
+the unsupported shape — that IS the statement that caused it. Wave-0 item 2 conflated two different
+statements: a `CREATE` that legitimately succeeded, and a later `SELECT` that was legitimately
+refused. Each already refuses at its own earliest point.
 
-- [ ] **Step 1: Write the failing tests**
+**Lesson for the remaining sub-projects:** "accepted here, refused there" is only a trap when it is
+the SAME statement's consequence surfacing later. Two statements with independent outcomes is
+ordinary partial support. Check which one you have before adding a gate.
 
-Append to `CompositeEarliestRefusalTest`:
-
-```java
-    /**
-     * An indexed column on a composite table used to be accepted at CREATE, then partly refused at
-     * query time (indexed WHERE on a non-dimension column; ORDER BY on an indexed symbol). Wave 0
-     * moves that refusal to CREATE. Sub-project 9B/9C removes it and makes the factories cell-aware.
-     */
-    @Test
-    public void testIndexedColumnRefusedAtCreateOnCompositeTable() throws Exception {
-        assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(
-                    "CREATE TABLE ci (ts TIMESTAMP, exch SYMBOL INDEX, px DOUBLE)"
-                            + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL",
-                    -1, "composite partitioning does not yet support an indexed column");
-            assertExceptionNoLeakCheck(
-                    "CREATE TABLE cj (ts TIMESTAMP, exch SYMBOL, sym SYMBOL INDEX, px DOUBLE)"
-                            + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL",
-                    -1, "composite partitioning does not yet support an indexed column");
-        });
-    }
-
-    /**
-     * Neither a plain table with an index, nor a composite table without one, may be affected.
-     */
-    @Test
-    public void testIndexedColumnStillAllowedOnPlainTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL INDEX, px DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
-            execute("INSERT INTO p VALUES ('2023-01-02T01:00:00.000000Z','E0',1.0)");
-            execute("INSERT INTO c VALUES ('2023-01-02T01:00:00.000000Z','E0',1.0)");
-            drainWalQueue();
-            assertQuery("SELECT count() FROM p WHERE exch = 'E0'").noLeakCheck().noRandomAccess()
-                    .expectSize().returns("count\n1\n");
-            assertQuery("SELECT count() FROM c WHERE exch = 'E0'").noLeakCheck().noRandomAccess()
-                    .expectSize().returns("count\n1\n");
-        });
-    }
-```
-
-- [ ] **Step 2: Run to verify the new tests fail**
-
-```bash
-mvn -o -pl core test -Dtest='CompositeEarliestRefusalTest' -DfailIfNoTests=false 2>&1 | grep -E "Tests run:|expected"
-```
-
-Expected: `testIndexedColumnRefusedAtCreateOnCompositeTable` FAILS — both CREATEs currently succeed.
-
-- [ ] **Step 3: Add the CREATE-time refusal**
-
-In `core/src/main/java/io/questdb/griffin/engine/ops/CreateTableOperationBuilderImpl.java`, inside `resolvePartitionSpec()`, immediately after the existing DEDUP guard block and before the spec is built:
-
-```java
-        // Wave 0 -- a refusal must fire at the statement that caused it. An indexed column was
-        // accepted here and then partly refused at QUERY time (SqlCodeGenerator's indexed-WHERE and
-        // ORDER-BY-on-indexed-symbol gates), so the index looked available and was not. Refuse at
-        // CREATE instead, where the user can act on it.
-        //
-        // DELIBERATELY TEMPORARY: sub-project 9B/9C removes this and makes the indexed factories
-        // cell-aware. Recorded as accepted churn in the read-surface spec, because "accepted then
-        // refused" is the failure mode invariant 6 exists to prevent.
-        if (dimCount > 0) {
-            final ObjList<CharSequence> indexedColumnNames = columnModels.keys();
-            for (int i = 0, n = indexedColumnNames.size(); i < n; i++) {
-                final CharSequence columnName = indexedColumnNames.getQuick(i);
-                final CreateTableColumnModel model = columnModels.get(columnName);
-                if (model != null && model.isIndexed()) {
-                    throw SqlException.$(partitionDimensionExprs.getQuick(0).position,
-                                    "composite partitioning does not yet support an indexed column [column=")
-                            .put(columnName).put(']');
-                }
-            }
-        }
-```
-
-`ObjList` and `CreateTableColumnModel` are already imported in this file; `columnModels` is the
-existing field declared at line 89.
-
-- [ ] **Step 4: Run the tests to verify they pass**
-
-```bash
-mvn -o -pl core test -Dtest='CompositeEarliestRefusalTest' -DfailIfNoTests=false 2>&1 | grep -E "Tests run:|BUILD"
-```
-
-Expected: `Tests run: 4, Failures: 0, Errors: 0`.
-
-- [ ] **Step 5: Verify the tests fail with the fix reverted**
-
-```bash
-cp core/src/main/java/io/questdb/griffin/engine/ops/CreateTableOperationBuilderImpl.java /tmp/CTOB.keep
-# delete the block added in Step 3, then:
-mvn -o -pl core test -Dtest='CompositeEarliestRefusalTest' -DfailIfNoTests=false 2>&1 | grep -E "Tests run:"
-cp /tmp/CTOB.keep core/src/main/java/io/questdb/griffin/engine/ops/CreateTableOperationBuilderImpl.java
-```
-
-Expected while reverted: `Tests run: 4, Failures: 1`.
-
-- [ ] **Step 6: Update the tests this change invalidates**
-
-`CompositeFactoryCoverageTest` creates composite tables with indexed columns (`createTwins(true)`)
-and asserts the query-time refusals. Those CREATEs now fail, so the file must state the new reality:
-
-- Delete `testUnsupportedIndexedPredicatesAreRefused` and `testIndexedDimensionEqualityMatchesTwin`.
-- Add, in their place:
-
-```java
-    /**
-     * Indexed columns are refused at CREATE on a composite table (wave 0), so no indexed factory is
-     * reachable. Sub-project 9B/9C lifts that and restores index coverage here, cell-aware.
-     */
-    @Test
-    public void testIndexedColumnsAreRefusedAtCreate() throws Exception {
-        assertMemoryLeak(() -> assertRefused(
-                "create table ci (ts timestamp, exch symbol index, px double)"
-                        + " timestamp(ts) partition by day, exch layout plain wal",
-                "does not yet support an indexed column"));
-    }
-```
-
-Run both suites:
-
-```bash
-mvn -o -pl core test -Dtest='CompositeFactoryCoverageTest,CompositeEarliestRefusalTest' -DfailIfNoTests=false 2>&1 | grep -E "Tests run:|BUILD"
-```
-
-Expected: `BUILD SUCCESS`.
-
-- [ ] **Step 7: Regenerate the audit keys and record the churn**
-
-Run the Step 6 command from Task 2 and paste the result into the Appendix's first fenced block —
-this task DOES add a new string (`composite partitioning does not yet support an indexed column`),
-so the block changes. Then add a row to the closure index's "deferred by decision" table:
-
-```
-| Wave-0 indexed-column CREATE refusal (temporary) | 9 §1 | added by wave 0 to convert a query-time trap into a create-time refusal; DELETED by sub-project 9B/9C, which makes the indexed factories cell-aware |
-```
-
-- [ ] **Step 8: Run the composite and SQL suites**
-
-```bash
-mvn -o -pl core test -Dtest='Composite*' -DfailIfNoTests=false 2>&1 | grep -E "Tests run:.*(Failures: [1-9]|Errors: [1-9])|BUILD"
-mvn -o -pl core test -Dtest='io.questdb.test.griffin.**' -DfailIfNoTests=false 2>&1 | grep -E "Tests run:.*(Failures: [1-9]|Errors: [1-9])|BUILD"
-```
-
-Expected: `BUILD SUCCESS` for the first; the second may show only the known port-9000 errors.
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add core/src/main/java/io/questdb/griffin/engine/ops/CreateTableOperationBuilderImpl.java \
-        core/src/test/java/io/questdb/test/griffin/CompositeEarliestRefusalTest.java \
-        core/src/test/java/io/questdb/test/cairo/CompositeFactoryCoverageTest.java \
-        docs/superpowers/specs/2026-08-11-composite-scope-closure-index.md
-git commit -m "fix(griffin): refuse an indexed column at CREATE on a composite table
-
-An index was accepted at CREATE and then partly refused at QUERY time (indexed WHERE
-on a non-dimension column, ORDER BY on an indexed symbol), so the index looked
-available and was not. Wave 0 moves the refusal to the statement that creates it.
-
-DELIBERATELY TEMPORARY: sub-project 9B/9C deletes this gate and makes the indexed
-factories cell-aware. Recorded as accepted churn in the closure index.
-
-CompositeFactoryCoverageTest's indexed cases are replaced by the create-time refusal,
-since no indexed factory is reachable on a composite table until 9B lands.
-
-Negative control: 1 of 4 tests fails with the CREATE-time check removed."
-```
-
----
+Sub-project 9B/9C still makes the remaining index shapes cell-aware; nothing about that changes.
 
 ## Self-Review
 
@@ -600,5 +438,9 @@ outcomes are both specified concretely rather than left as "handle the result".
 
 **Known risk, stated rather than discovered:** Task 3 forbids a shape that existing tests outside
 `CompositeFactoryCoverageTest` may also use. Step 8 runs the whole `Composite*` and griffin suites
-precisely to surface those; any other test creating a composite table with an index must be updated
-the same way.
+precisely to surface those.
+
+**Outcome: that risk fired, and it was fatal to the task rather than a cost to absorb.** 35 errors
+across 6 suites revealed that indexed composite tables are a supported, tested capability, not a
+trap — so Task 3 was withdrawn rather than paid for. The risk note was right to exist and wrong in
+its assumption that the fallout would merely be tests to update.

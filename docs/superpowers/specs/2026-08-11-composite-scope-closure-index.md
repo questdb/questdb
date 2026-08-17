@@ -31,6 +31,13 @@ Wave 0 (earliest-refusal + O3-purge proof)
 **Wave 0** fixes refusals that fire later than the statement that caused them, plus the one silent
 skip that violates invariant 2. It lifts no capability; it makes the current behaviour honest.
 
+Wave 0 originally had a third item — refusing indexed columns at CREATE on a composite table — which
+was **built, measured and WITHDRAWN** on 2026-08-17. An indexed DIMENSION column already works and
+delivers cell pruning (the core value of subpartitioning, covered by the ~860-line
+`CompositeCellPruningTest`), and the index shapes that ARE refused are refused at the `SELECT` that
+used them, which already satisfies invariant 6. The gate cost 35 tests across 6 suites to fix a trap
+that did not exist. See the wave-0 plan's Task 3 for the full record.
+
 **9A precedes 1 and 2 deliberately.** Composite reads already ship, and that cursor design has
 produced three defects (two silently wrong answers, one returning no rows). Fixing what is broken
 outranks adding capability.
