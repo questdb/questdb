@@ -31,6 +31,8 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.PeerDisconnectedException;
@@ -76,16 +78,23 @@ public final class PGConnectionFiberTask extends FiberTask {
     private final PGConnectionContext context;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
+    private final TimerShards timerShards;
     private int disconnectReason = NO_DISCONNECT;
     private boolean isRearmed;
     private int nextOperation = IOOperation.READ;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long stagedEvent;
 
-    PGConnectionFiberTask(PGConnectionContext context, IODispatcher<PGConnectionContext> dispatcher, Metrics metrics) {
+    PGConnectionFiberTask(
+            PGConnectionContext context,
+            IODispatcher<PGConnectionContext> dispatcher,
+            Metrics metrics,
+            TimerShards timerShards
+    ) {
         this.context = context;
         this.dispatcher = dispatcher;
         this.metrics = metrics;
+        this.timerShards = timerShards;
     }
 
     public LaunchResult launch(FiberRuntime runtime, int operation) {
@@ -297,6 +306,7 @@ public final class PGConnectionFiberTask extends FiberTask {
 
     @Override
     protected boolean runStep() {
+        SuspensionScope.enterTimerShards(timerShards);
         final int eventAction = takeEvent();
         final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
         disconnectReason = NO_DISCONNECT;

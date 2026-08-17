@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.Services;
@@ -32,6 +34,7 @@ import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConnectionFiberTask;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -41,6 +44,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
 import io.questdb.cutlass.http.WaitProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorState;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -52,10 +56,13 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.Net;
+import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocketFactory;
@@ -545,6 +552,16 @@ public class HttpFiberTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testDirectHttpServerQueryInstallsEngineTimerShards() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertHttpQueryInstallsEngineTimerShards(false));
+    }
+
+    @Test
+    public void testHttpTaskInstallsEngineTimerShards() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertHttpQueryInstallsEngineTimerShards(true));
     }
 
     @Test
@@ -1165,6 +1182,81 @@ public class HttpFiberTest extends AbstractTest {
                             "SELECT 42 x"
                     );
                 }
+            } finally {
+                workerPool.halt();
+            }
+        }
+    }
+
+    private void assertHttpQueryInstallsEngineTimerShards(boolean isServicesConstruction) throws Exception {
+        final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+        final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                .withBaseDir(root)
+                .withFiberEnabled(true)
+                .withPort(0)
+                .withWorkerCount(1)
+                .build(cairoConfiguration);
+        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(root) {
+            @Override
+            public HttpFullFatServerConfiguration getHttpServerConfiguration() {
+                return httpConfiguration;
+            }
+        };
+        final AtomicReference<TimerShards> observedTimerShards = new AtomicReference<>();
+        final CountDownLatch observed = new CountDownLatch(1);
+        try (
+                CairoEngine engine = new CairoEngine(cairoConfiguration);
+                WorkerPool workerPool = new TestWorkerPool(fiberHostConfiguration(1));
+                HttpServer httpServer = isServicesConstruction
+                        ? Services.INSTANCE.createHttpServer(serverConfiguration, engine, workerPool, 1)
+                        : new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+        ) {
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    final ObjHashSet<String> urls = new ObjHashSet<>();
+                    urls.add("/timer-query");
+                    return urls;
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new JsonQueryProcessor(
+                            httpConfiguration.getJsonQueryProcessorConfiguration(),
+                            engine,
+                            1
+                    ) {
+                        @Override
+                        public void execute0(JsonQueryProcessorState state)
+                                throws PeerDisconnectedException, PeerIsSlowToReadException {
+                            try {
+                                super.execute0(state);
+                            } finally {
+                                observedTimerShards.set(
+                                        SuspensionScope.getTimerShards(SuspensionScope.scope())
+                                );
+                                observed.countDown();
+                            }
+                        }
+                    };
+                }
+            });
+            workerPool.start();
+            try {
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "/timer-query",
+                            "{\"query\":\"SELECT 42 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}",
+                            "SELECT 42 x",
+                            "localhost",
+                            httpServer.getPort(),
+                            null,
+                            null,
+                            null
+                    );
+                }
+                Assert.assertTrue(observed.await(10, TimeUnit.SECONDS));
+                Assert.assertSame(engine.getTimerShards(), observedTimerShards.get());
             } finally {
                 workerPool.halt();
             }

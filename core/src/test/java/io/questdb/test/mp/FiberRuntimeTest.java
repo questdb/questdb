@@ -67,21 +67,22 @@ public class FiberRuntimeTest {
                     taskGeneration
             );
             final FiberRuntime runtime = new FiberRuntime(1);
-            try {
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertFalse(task.isDone());
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                try {
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertFalse(task.isDone());
 
-                final long nextGeneration = cancellationSignal.reopen();
-                Assert.assertNotEquals(taskGeneration, nextGeneration);
-                Assert.assertEquals(1, runtime.drain(1));
+                    final long nextGeneration = cancellationSignal.reopen();
+                    Assert.assertNotEquals(taskGeneration, nextGeneration);
+                    Assert.assertEquals(1, runtime.drain(1));
 
-                Assert.assertTrue(task.isDone());
-                Assert.assertEquals(taskGeneration, task.resumedGeneration);
-                Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, task.secondWaitReason);
-            } finally {
-                cancellationSignal.cancel();
-                close(runtime);
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertEquals(taskGeneration, task.resumedGeneration);
+                    Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, task.secondWaitReason);
+                } finally {
+                    cancellationSignal.cancel();
+                }
             }
         });
     }
@@ -93,7 +94,7 @@ public class FiberRuntimeTest {
             final long taskGeneration = cancellationSignal.getGeneration();
             final CancellationGenerationParkTask task = new CancellationGenerationParkTask(cancellationSignal);
             final FiberRuntime runtime = new FiberRuntime(1);
-            try {
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertFalse(task.isDone());
@@ -104,8 +105,6 @@ public class FiberRuntimeTest {
 
                 Assert.assertTrue(task.isDone());
                 Assert.assertEquals(taskGeneration, task.resumedGeneration);
-            } finally {
-                close(runtime);
             }
         });
     }
@@ -119,7 +118,7 @@ public class FiberRuntimeTest {
             final AtomicBoolean replacementFlag = new AtomicBoolean();
             final ScratchWaitTask waitTask = new ScratchWaitTask(waitQueue, expectedFlag);
             final ScratchMutationTask mutationTask = new ScratchMutationTask(replacementFlag);
-            try {
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(waitTask));
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertFalse(waitTask.isDone());
@@ -132,8 +131,6 @@ public class FiberRuntimeTest {
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertTrue(waitTask.isDone());
                 Assert.assertSame(expectedFlag, waitTask.resumedFlag);
-            } finally {
-                close(runtime);
             }
         });
     }
@@ -194,6 +191,24 @@ public class FiberRuntimeTest {
     }
 
     @Test
+    public void testCleanupFailureIsSuppressedByRuntimeGuard() {
+        final AssertionError bodyFailure = new AssertionError("body failure");
+        final IllegalStateException cleanupFailure = new IllegalStateException("cleanup failure");
+
+        try {
+            try (RuntimeGuard ignored = new RuntimeGuard(() -> {
+                throw cleanupFailure;
+            })) {
+                throw bodyFailure;
+            }
+        } catch (AssertionError th) {
+            Assert.assertSame(bodyFailure, th);
+            Assert.assertEquals(1, th.getSuppressed().length);
+            Assert.assertSame(cleanupFailure, th.getSuppressed()[0]);
+        }
+    }
+
+    @Test
     public void testConcurrentLaunchAndDrainReusesOutcomeSafely() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int cycleCount = 50_000;
@@ -250,45 +265,46 @@ public class FiberRuntimeTest {
             final CountDownLatch release = new CountDownLatch(1);
             final CountDownLatch start = new CountDownLatch(1);
             final ObjList<Thread> threads = new ObjList<>(threadCount);
-            try {
-                for (int i = 0; i < threadCount; i++) {
-                    final Thread thread = new Thread(() -> {
-                        Fiber fiber = null;
-                        long reservationEpoch = 0;
-                        try {
-                            start.await();
-                            fiber = runtime.tryReserveFiber();
-                            if (fiber != null) {
-                                reservationEpoch = fiber.getReservationEpoch();
-                                reservationCount.incrementAndGet();
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                try {
+                    for (int i = 0; i < threadCount; i++) {
+                        final Thread thread = new Thread(() -> {
+                            Fiber fiber = null;
+                            long reservationEpoch = 0;
+                            try {
+                                start.await();
+                                fiber = runtime.tryReserveFiber();
+                                if (fiber != null) {
+                                    reservationEpoch = fiber.getReservationEpoch();
+                                    reservationCount.incrementAndGet();
+                                }
+                                attempted.countDown();
+                                release.await();
+                            } catch (Throwable th) {
+                                error.compareAndSet(null, th);
+                            } finally {
+                                if (fiber != null) {
+                                    runtime.releaseReservedFiber(fiber, reservationEpoch);
+                                }
                             }
-                            attempted.countDown();
-                            release.await();
-                        } catch (Throwable th) {
-                            error.compareAndSet(null, th);
-                        } finally {
-                            if (fiber != null) {
-                                runtime.releaseReservedFiber(fiber, reservationEpoch);
-                            }
-                        }
-                    });
-                    threads.add(thread);
-                    thread.start();
+                        });
+                        threads.add(thread);
+                        thread.start();
+                    }
+                    start.countDown();
+                    Assert.assertTrue(attempted.await(5, TimeUnit.SECONDS));
+                    Assert.assertNull(error.get());
+                    Assert.assertEquals(maxLive, reservationCount.get());
+                    Assert.assertEquals(maxLive, runtime.getCreatedFiberCount());
+                    Assert.assertEquals(maxLive, runtime.getLiveFiberCount());
+                    Assert.assertEquals(maxLive, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(threadCount - maxLive, runtime.getSaturationCount());
+                } finally {
+                    release.countDown();
+                    for (int i = 0, n = threads.size(); i < n; i++) {
+                        threads.getQuick(i).join();
+                    }
                 }
-                start.countDown();
-                Assert.assertTrue(attempted.await(5, TimeUnit.SECONDS));
-                Assert.assertNull(error.get());
-                Assert.assertEquals(maxLive, reservationCount.get());
-                Assert.assertEquals(maxLive, runtime.getCreatedFiberCount());
-                Assert.assertEquals(maxLive, runtime.getLiveFiberCount());
-                Assert.assertEquals(maxLive, runtime.getOutstandingTaskCount());
-                Assert.assertEquals(threadCount - maxLive, runtime.getSaturationCount());
-            } finally {
-                release.countDown();
-                for (int i = 0, n = threads.size(); i < n; i++) {
-                    threads.getQuick(i).join();
-                }
-                close(runtime);
             }
         });
     }
@@ -297,7 +313,7 @@ public class FiberRuntimeTest {
     public void testConfigurationListenerReceivesCurrentValuesOnRegistration() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1, 1, 1);
-            try {
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
                 runtime.updateConfiguration(4, 2, 7);
 
                 final AtomicInteger maxLiveFiberCount = new AtomicInteger(-1);
@@ -309,8 +325,6 @@ public class FiberRuntimeTest {
 
                 Assert.assertEquals(4, maxLiveFiberCount.get());
                 Assert.assertEquals(2, maxRetainedFiberCount.get());
-            } finally {
-                close(runtime);
             }
         });
     }
@@ -319,7 +333,7 @@ public class FiberRuntimeTest {
     public void testConfigurationListenerCanBeUnregistered() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1, 1, 1);
-            try {
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
                 final AtomicInteger callCount = new AtomicInteger();
                 final FiberRuntimeConfigurationListener listener =
                         (maxLive, maxRetained) -> callCount.incrementAndGet();
@@ -334,8 +348,6 @@ public class FiberRuntimeTest {
                 runtime.updateConfiguration(2, 1, 1);
 
                 Assert.assertEquals(1, callCount.get());
-            } finally {
-                close(runtime);
             }
         });
     }
@@ -363,7 +375,7 @@ public class FiberRuntimeTest {
             final OneShotTask firstTask = new OneShotTask();
             final OneShotTask secondTask = new OneShotTask();
             final OneShotTask thirdTask = new OneShotTask();
-            try {
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(firstTask));
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(secondTask));
 
@@ -394,8 +406,6 @@ public class FiberRuntimeTest {
                 Assert.assertEquals(1, runtime.getRetainedFiberCount());
                 Assert.assertEquals(2, runtime.drain(2));
                 Assert.assertEquals(3, runtime.getRetiredFiberCount());
-            } finally {
-                close(runtime);
             }
         });
     }
@@ -433,32 +443,30 @@ public class FiberRuntimeTest {
             final Lock lock = new ReentrantLock();
             final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
 
-            Assert.assertNotNull(fiber);
-            lock.lock();
-            SuspensionScope.enterRoleSwitchReadLock(scope, lock);
-            try {
-                Assert.assertEquals(
-                        LaunchResult.LAUNCHED,
-                        runtime.launchReservedDirect(
-                                fiber,
-                                fiber.getReservationEpoch(),
-                                task,
-                                task.getIncarnation()
-                        )
-                );
-                Assert.assertFalse(task.isDone());
-                Assert.assertEquals(1, runtime.getQueuedCount());
-                Assert.assertEquals(0, runtime.drain(1));
-            } finally {
-                SuspensionScope.leaveRoleSwitchReadLock(scope, lock);
-                lock.unlock();
-            }
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                Assert.assertNotNull(fiber);
+                lock.lock();
+                SuspensionScope.enterRoleSwitchReadLock(scope, lock);
+                try {
+                    Assert.assertEquals(
+                            LaunchResult.LAUNCHED,
+                            runtime.launchReservedDirect(
+                                    fiber,
+                                    fiber.getReservationEpoch(),
+                                    task,
+                                    task.getIncarnation()
+                            )
+                    );
+                    Assert.assertFalse(task.isDone());
+                    Assert.assertEquals(1, runtime.getQueuedCount());
+                    Assert.assertEquals(0, runtime.drain(1));
+                } finally {
+                    SuspensionScope.leaveRoleSwitchReadLock(scope, lock);
+                    lock.unlock();
+                }
 
-            try {
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertTrue(task.isDone());
-            } finally {
-                close(runtime);
             }
         });
     }
@@ -684,8 +692,8 @@ public class FiberRuntimeTest {
             Assert.assertNull(error.get());
             Assert.assertEquals(1, runtime.drain(8));
             Assert.assertTrue(task.isDone());
-            close(runtime);
             Assert.assertEquals(0, queuedWhileProcessing);
+            close(runtime);
         });
     }
 
@@ -745,29 +753,30 @@ public class FiberRuntimeTest {
             final FiberRuntime runtime = new FiberRuntime(1, 2);
             final OneShotTask seed = new OneShotTask();
             final StealOnParkTask task = new StealOnParkTask(runtime);
-            try {
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(seed));
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertTrue(seed.isDone());
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                try {
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(seed));
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(seed.isDone());
 
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertNotNull(task.reservedFiber);
-                Assert.assertFalse(task.isDone());
-                Assert.assertEquals(1, task.runCount);
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertNotNull(task.reservedFiber);
+                    Assert.assertFalse(task.isDone());
+                    Assert.assertEquals(1, task.runCount);
 
-                runtime.releaseReservedFiber(task.reservedFiber, task.reservedFiberEpoch);
-                task.reservedFiber = null;
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertTrue(task.isDone());
-                Assert.assertEquals(2, task.runCount);
-                Assert.assertEquals(2, runtime.getCreatedFiberCount());
-            } finally {
-                if (task.reservedFiber != null) {
                     runtime.releaseReservedFiber(task.reservedFiber, task.reservedFiberEpoch);
                     task.reservedFiber = null;
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertEquals(2, task.runCount);
+                    Assert.assertEquals(2, runtime.getCreatedFiberCount());
+                } finally {
+                    if (task.reservedFiber != null) {
+                        runtime.releaseReservedFiber(task.reservedFiber, task.reservedFiberEpoch);
+                        task.reservedFiber = null;
+                    }
                 }
-                close(runtime);
             }
         });
     }
@@ -845,6 +854,87 @@ public class FiberRuntimeTest {
     }
 
     @Test
+    public void testQuiesceListenerCanBeUnregisteredWhileOpen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final TestQuiesceListener listener = new TestQuiesceListener();
+            listener.isComplete = true;
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                runtime.registerQuiesceListener(listener);
+
+                Assert.assertEquals(1, runtime.getQuiesceListenerCountForTesting());
+                Assert.assertTrue(runtime.unregisterQuiesceListener(listener));
+                Assert.assertFalse(runtime.unregisterQuiesceListener(listener));
+                Assert.assertEquals(0, runtime.getQuiesceListenerCountForTesting());
+
+                runtime.beginQuiesce();
+
+                Assert.assertEquals(0, listener.beginCount);
+            }
+        });
+    }
+
+    @Test
+    public void testQuiesceListenerCannotBeUnregisteredAfterQuiesceStarts() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch beginEntered = new CountDownLatch(1);
+            final AtomicInteger beginCount = new AtomicInteger();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final CountDownLatch releaseBegin = new CountDownLatch(1);
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final FiberRuntimeQuiesceListener listener = new FiberRuntimeQuiesceListener() {
+                @Override
+                public void beginQuiesce() {
+                    beginCount.incrementAndGet();
+                    beginEntered.countDown();
+                    try {
+                        if (!releaseBegin.await(5, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting to release quiesce listener");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                }
+
+                @Override
+                public boolean isQuiesced() {
+                    return true;
+                }
+
+                @Override
+                public void progressQuiesce() {
+                }
+            };
+            runtime.registerQuiesceListener(listener);
+            final Thread quiesceThread = new Thread(() -> {
+                try {
+                    runtime.beginQuiesce();
+                } catch (Throwable th) {
+                    error.compareAndSet(null, th);
+                }
+            });
+            quiesceThread.start();
+            try {
+                Assert.assertTrue(beginEntered.await(5, TimeUnit.SECONDS));
+                Assert.assertEquals(FiberRuntimeState.QUIESCING, runtime.state());
+                Assert.assertFalse(runtime.unregisterQuiesceListener(listener));
+                Assert.assertEquals(1, runtime.getQuiesceListenerCountForTesting());
+            } finally {
+                releaseBegin.countDown();
+                quiesceThread.join(5_000);
+            }
+
+            Assert.assertFalse(quiesceThread.isAlive());
+            Assert.assertNull(error.get());
+            Assert.assertEquals(1, beginCount.get());
+            Assert.assertTrue(runtime.awaitClosed(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+            Assert.assertEquals(0, runtime.getQuiesceListenerCountForTesting());
+            runtime.closeAfterDrained();
+        });
+    }
+
+    @Test
     public void testQuiesceListenerRespectsAwaitDeadline() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -903,38 +993,38 @@ public class FiberRuntimeTest {
                     error.compareAndSet(null, th);
                 }
             });
-            try {
-                releaseThread.start();
-                Assert.assertTrue(reservationReleased.await(5, TimeUnit.SECONDS));
-                quiesceThread.start();
-                TestUtils.assertEventually(() -> Assert.assertEquals(
-                        Thread.State.BLOCKED,
-                        quiesceThread.getState()
-                ));
-                Assert.assertEquals(1, quiesceComplete.getCount());
-                continueRelease.countDown();
-                releaseThread.join(5_000);
-                quiesceThread.join(5_000);
-                runtime.setAfterReservationReleaseForTesting(null);
-
-                Assert.assertFalse(releaseThread.isAlive());
-                Assert.assertFalse(quiesceThread.isAlive());
-                Assert.assertNull(error.get());
-                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertEquals(1, runtime.getRetiredFiberCount());
-                Assert.assertTrue(runtime.awaitClosed(System.nanoTime() + 5_000_000_000L));
-                runtime.closeAfterDrained();
-            } finally {
-                continueRelease.countDown();
-                releaseThread.join(5_000);
-                if (quiesceThread.getState() != Thread.State.NEW) {
+            try (RuntimeGuard runtimeGuard = new RuntimeGuard(runtime)) {
+                try {
+                    releaseThread.start();
+                    Assert.assertTrue(reservationReleased.await(5, TimeUnit.SECONDS));
+                    quiesceThread.start();
+                    TestUtils.assertEventually(() -> Assert.assertEquals(
+                            Thread.State.BLOCKED,
+                            quiesceThread.getState()
+                    ));
+                    Assert.assertEquals(1, quiesceComplete.getCount());
+                    continueRelease.countDown();
+                    releaseThread.join(5_000);
                     quiesceThread.join(5_000);
-                }
-                runtime.setAfterReservationReleaseForTesting(null);
-                runtime.releaseReservedFiber(fiber, reservationEpoch);
-                if (runtime.state() != FiberRuntimeState.CLOSED) {
-                    close(runtime);
+                    runtime.setAfterReservationReleaseForTesting(null);
+
+                    Assert.assertFalse(releaseThread.isAlive());
+                    Assert.assertFalse(quiesceThread.isAlive());
+                    Assert.assertNull(error.get());
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertEquals(1, runtime.getRetiredFiberCount());
+                    Assert.assertTrue(runtime.awaitClosed(System.nanoTime() + 5_000_000_000L));
+                    runtime.closeAfterDrained();
+                    runtimeGuard.disarm();
+                } finally {
+                    continueRelease.countDown();
+                    releaseThread.join(5_000);
+                    if (quiesceThread.getState() != Thread.State.NEW) {
+                        quiesceThread.join(5_000);
+                    }
+                    runtime.setAfterReservationReleaseForTesting(null);
+                    runtime.releaseReservedFiber(fiber, reservationEpoch);
                 }
             }
         });
@@ -971,20 +1061,21 @@ public class FiberRuntimeTest {
             final Fiber reservedFiber = runtime.tryReserveFiber();
             Assert.assertNotNull(reservedFiber);
             final CapacitySignalTask task = new CapacitySignalTask(runtime);
-            try {
-                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertFalse(task.isDone());
-                Assert.assertEquals(1, runtime.getParkedFiberCount());
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                try {
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertFalse(task.isDone());
+                    Assert.assertEquals(1, runtime.getParkedFiberCount());
 
-                Assert.assertNull(runtime.tryReserveFiber());
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertTrue(task.isDone());
-                Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, task.reason);
-                Assert.assertEquals(0, runtime.getParkedFiberCount());
-            } finally {
-                runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
-                close(runtime);
+                    Assert.assertNull(runtime.tryReserveFiber());
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertTrue(task.isDone());
+                    Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, task.reason);
+                    Assert.assertEquals(0, runtime.getParkedFiberCount());
+                } finally {
+                    runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
+                }
             }
         });
     }
@@ -1799,6 +1890,31 @@ public class FiberRuntimeTest {
                 coordinator.consume(token);
                 throw th;
             }
+        }
+    }
+
+    private static final class RuntimeGuard implements AutoCloseable {
+        private final Runnable closeAction;
+        private boolean isArmed = true;
+
+        private RuntimeGuard(FiberRuntime runtime) {
+            this(() -> FiberRuntimeTest.close(runtime));
+        }
+
+        private RuntimeGuard(Runnable closeAction) {
+            this.closeAction = closeAction;
+        }
+
+        @Override
+        public void close() {
+            if (isArmed) {
+                isArmed = false;
+                closeAction.run();
+            }
+        }
+
+        private void disarm() {
+            isArmed = false;
         }
     }
 

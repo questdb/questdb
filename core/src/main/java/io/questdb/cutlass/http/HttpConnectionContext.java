@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -336,6 +337,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public NetworkSqlExecutionCircuitBreaker getOrCreateCircuitBreaker(CairoEngine engine) {
+        if (SuspensionScope.isFiberMode()) {
+            SuspensionScope.enterTimerShards(engine.getTimerShards());
+        }
         if (httpCircuitBreaker == null) {
             httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     engine,

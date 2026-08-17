@@ -54,6 +54,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class FiberWorkerPoolTest {
@@ -62,8 +63,10 @@ public class FiberWorkerPoolTest {
     public void testCloseUsesTerminalHalt() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicBoolean isBoundedHaltCalled = new AtomicBoolean();
+            final AtomicBoolean isJobClosed = new AtomicBoolean();
+            final AtomicBoolean isResourceClosed = new AtomicBoolean();
             try (
-                    TestWorkerPool pool = new TestWorkerPool(1, WorkerPoolMode.LEGACY) {
+                    WorkerPool pool = new WorkerPool(legacyConfiguration("terminal-close-test", 1)) {
                         @Override
                         public boolean haltWithin(long timeoutNanos) {
                             isBoundedHaltCalled.set(true);
@@ -71,8 +74,22 @@ public class FiberWorkerPoolTest {
                         }
                     }
             ) {
+                pool.assign(new Job() {
+                    @Override
+                    public void closeInstance() {
+                        isJobClosed.set(true);
+                    }
+
+                    @Override
+                    public boolean run(WorkerContext workerContext) {
+                        return false;
+                    }
+                });
+                pool.freeResourceOnExit(() -> isResourceClosed.set(true));
                 pool.close();
                 Assert.assertFalse(isBoundedHaltCalled.get());
+                Assert.assertTrue(isJobClosed.get());
+                Assert.assertTrue(isResourceClosed.get());
             }
         });
     }
@@ -638,6 +655,24 @@ public class FiberWorkerPoolTest {
                 Assert.assertEquals(mode, pool.getWorkerPoolMode());
             }
         }
+    }
+
+    @Test
+    public void testTestWorkerPoolCloseUsesStrictDefaultTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicLong timeoutNanos = new AtomicLong(-1);
+            try (
+                    TestWorkerPool ignored = new TestWorkerPool(1, WorkerPoolMode.LEGACY) {
+                        @Override
+                        public void haltAndAssertCleanForTest(long timeout) {
+                            timeoutNanos.set(timeout);
+                            super.haltAndAssertCleanForTest(timeout);
+                        }
+                    }
+            ) {
+            }
+            Assert.assertEquals(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS, timeoutNanos.get());
+        });
     }
 
     private static WorkerPoolConfiguration fiberHostConfiguration(String poolName, int workerCount, boolean isDaemon) {

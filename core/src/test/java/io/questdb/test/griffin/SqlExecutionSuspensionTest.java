@@ -26,10 +26,17 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlExecutionSuspension;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 public class SqlExecutionSuspensionTest {
 
@@ -41,6 +48,32 @@ public class SqlExecutionSuspensionTest {
         } finally {
             SuspensionScope.restore(previousMode);
         }
+    }
+
+    @Test
+    public void testFiberModeWithMountedFiberReturnsCurrentFiber() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CurrentFiberTask task = new CurrentFiberTask();
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertTrue(task.isDone());
+                Assert.assertNull(task.error);
+                Assert.assertNotNull(task.mountedFiber);
+                Assert.assertSame(task.mountedFiber, task.sqlFiber);
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+            } finally {
+                runtime.beginQuiesce();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+                    runtime.drain(1);
+                }
+                Assert.assertTrue(runtime.awaitClosed(deadline));
+                runtime.closeAfterDrained();
+            }
+        });
     }
 
     @Test
@@ -76,6 +109,24 @@ public class SqlExecutionSuspensionTest {
             Assert.assertNull(SqlExecutionSuspension.currentFiber());
         } finally {
             SuspensionScope.restore(previousMode);
+        }
+    }
+
+    private static class CurrentFiberTask extends FiberTask {
+        private Throwable error;
+        private Fiber mountedFiber;
+        private Fiber sqlFiber;
+
+        @Override
+        protected void onError(Throwable th) {
+            error = th;
+        }
+
+        @Override
+        protected boolean runStep() {
+            mountedFiber = Fiber.current();
+            sqlFiber = SqlExecutionSuspension.currentFiber();
+            return true;
         }
     }
 }

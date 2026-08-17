@@ -95,11 +95,39 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 engine.getConfiguration().getQueryContinuationWakeIntervalMillis()
         );
         this.timerShards = engine.getTimerShards();
+        boolean isConfigurationListenerRegistered = false;
+        boolean isQuiesceListenerRegistered = false;
         try {
-            runtime.registerQuiesceListener(this);
             runtime.registerConfigurationListener(this);
+            isConfigurationListenerRegistered = true;
+            runtime.registerQuiesceListener(this);
+            isQuiesceListenerRegistered = true;
         } catch (Throwable th) {
-            taskPool.close();
+            if (isQuiesceListenerRegistered) {
+                try {
+                    runtime.unregisterQuiesceListener(this);
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != th) {
+                        th.addSuppressed(cleanupFailure);
+                    }
+                }
+            }
+            if (isConfigurationListenerRegistered) {
+                try {
+                    runtime.unregisterConfigurationListener(this);
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != th) {
+                        th.addSuppressed(cleanupFailure);
+                    }
+                }
+            }
+            try {
+                taskPool.close();
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
             throw th;
         }
     }
@@ -198,6 +226,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         if (messageBus.getPageFrameReduceDispatcher() == this) {
             messageBus.setPageFrameReduceDispatcher(null);
         }
+        runtime.unregisterConfigurationListener(this);
+        runtime.unregisterQuiesceListener(this);
         try {
             progressWaitQueue.shutdown();
         } finally {
@@ -432,7 +462,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         if (isClosed || (!isQuiescingAllowed && quiesceState.get() != QUIESCE_OPEN)) {
             return FiberWaitCoordinator.REASON_SHUTDOWN;
         }
-        if (!Fiber.isMounted()) {
+        if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
             return FiberWaitCoordinator.REASON_NONE;
         }
         final Fiber fiber = Fiber.current();
@@ -480,7 +510,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         if (isClosed || (!isQuiescingAllowed && quiesceState.get() != QUIESCE_OPEN)) {
             return FiberWaitCoordinator.REASON_SHUTDOWN;
         }
-        if (!Fiber.isMounted()) {
+        if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
             return FiberWaitCoordinator.REASON_NONE;
         }
         final Fiber fiber = Fiber.current();

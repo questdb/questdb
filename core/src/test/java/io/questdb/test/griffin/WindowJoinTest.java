@@ -36,8 +36,6 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
-import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -3718,7 +3716,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonParallelWindowJoinFilterDisablesAsyncJoin() throws Exception {
+    public void testNonParallelWindowJoinFilterStaysAsync() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
             final String query = """
@@ -3735,17 +3733,17 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 || containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class)
                 );
             }
+            // A supportsParallelism() == false filter is also thread-unsafe, so per-worker
+            // clones keep the async join valid; the planner must not downgrade to serial.
             try (
                     RecordCursorFactory factory = select(
                             query.formatted("length((t.sym::STRING)::SYMBOL) > 0")
                     )
             ) {
                 Assert.assertTrue(
-                        containsFactory(factory, WindowJoinFastRecordCursorFactory.class)
-                                || containsFactory(factory, WindowJoinRecordCursorFactory.class)
+                        containsFactory(factory, AsyncWindowJoinFastRecordCursorFactory.class)
+                                || containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class)
                 );
-                Assert.assertFalse(containsFactory(factory, AsyncWindowJoinFastRecordCursorFactory.class));
-                Assert.assertFalse(containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class));
             }
         });
     }

@@ -101,83 +101,11 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
      * @throws io.questdb.cairo.CairoException when the circuit breaker has tripped
      */
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
-        workerId = normalizeSlotStart(workerId);
-        int slot = tryAcquireSlot(workerId);
-        if (slot > -1) {
-            countDownTestAcquireLatch();
-            return slot;
-        }
-        final SuspensionScope.Mode mode = SuspensionScope.getMode();
-        if (mode == SuspensionScope.Mode.FIBER) {
-            final int fiberSlot = awaitSlot(workerId, sqlCircuitBreaker);
-            if (fiberSlot > -1) {
-                try {
-                    sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-                } catch (Throwable th) {
-                    releaseSlot(fiberSlot);
-                    throw th;
-                }
-                countDownTestAcquireLatch();
-                return fiberSlot;
-            }
-            if (fiberSlot == SLOT_WAIT_ABORTED) {
-                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
-            }
-            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
-        }
-        if (mode == SuspensionScope.Mode.FORBIDDEN) {
-            throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
-        }
-        while (true) {
-            sqlCircuitBreaker.statefulThrowExceptionIfTripped();
-            Os.pause();
-            slot = tryAcquireSlot(workerId);
-            if (slot > -1) {
-                countDownTestAcquireLatch();
-                return slot;
-            }
-        }
+        return acquireSlot(workerId, sqlCircuitBreaker, sqlCircuitBreaker);
     }
 
     public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
-        carrierId = normalizeSlotStart(carrierId);
-        int slot = tryAcquireSlot(carrierId);
-        if (slot > -1) {
-            countDownTestAcquireLatch();
-            return slot;
-        }
-        final SuspensionScope.Mode mode = SuspensionScope.getMode();
-        if (mode == SuspensionScope.Mode.FIBER) {
-            final int fiberSlot = awaitSlot(
-                    carrierId,
-                    circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker
-                            ? sqlCircuitBreaker
-                            : null
-            );
-            if (fiberSlot > -1 && !circuitBreaker.checkIfTripped()) {
-                countDownTestAcquireLatch();
-                return fiberSlot;
-            }
-            if (fiberSlot > -1) {
-                releaseSlot(fiberSlot);
-            }
-            if (fiberSlot == SLOT_WAIT_ABORTED) {
-                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
-            }
-            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
-        } else if (mode == SuspensionScope.Mode.FORBIDDEN) {
-            throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
-        }
-        while (!circuitBreaker.checkIfTripped()) {
-            Os.pause();
-            slot = tryAcquireSlot(carrierId);
-            if (slot > -1) {
-                countDownTestAcquireLatch();
-                return slot;
-            }
-        }
-        throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+        return acquireSlot(carrierId, circuitBreaker, null);
     }
 
     /**
@@ -247,6 +175,57 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     @TestOnly
     public void setTestBeforeSlotRelease(@Nullable Runnable beforeSlotRelease) {
         testBeforeSlotRelease = beforeSlotRelease;
+    }
+
+    private int acquireSlot(
+            int slotStart,
+            ExecutionCircuitBreaker circuitBreaker,
+            @Nullable SqlExecutionCircuitBreaker statefulCircuitBreaker
+    ) {
+        slotStart = normalizeSlotStart(slotStart);
+        int slot = tryAcquireSlot(slotStart);
+        if (slot > -1) {
+            countDownTestAcquireLatch();
+            return slot;
+        }
+        final SuspensionScope.Mode mode = SuspensionScope.getMode();
+        if (mode == SuspensionScope.Mode.FIBER) {
+            final int fiberSlot = awaitSlot(
+                    slotStart,
+                    circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker
+                            ? sqlCircuitBreaker
+                            : null
+            );
+            if (fiberSlot > -1) {
+                try {
+                    checkCircuitBreaker(circuitBreaker, statefulCircuitBreaker);
+                } catch (Throwable th) {
+                    releaseSlot(fiberSlot);
+                    throw th;
+                }
+                countDownTestAcquireLatch();
+                return fiberSlot;
+            }
+            if (fiberSlot == SLOT_WAIT_ABORTED) {
+                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
+            }
+            if (statefulCircuitBreaker != null) {
+                statefulCircuitBreaker.statefulThrowExceptionIfTripped();
+            }
+            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+        }
+        if (mode == SuspensionScope.Mode.FORBIDDEN) {
+            throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
+        }
+        while (true) {
+            checkCircuitBreaker(circuitBreaker, statefulCircuitBreaker);
+            Os.pause();
+            slot = tryAcquireSlot(slotStart);
+            if (slot > -1) {
+                countDownTestAcquireLatch();
+                return slot;
+            }
+        }
     }
 
     private int awaitSlot(int slotStart, @Nullable ExecutionCircuitBreaker circuitBreaker) {
@@ -326,6 +305,17 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             } finally {
                 coordinator.teardownWait(token);
             }
+        }
+    }
+
+    private void checkCircuitBreaker(
+            ExecutionCircuitBreaker circuitBreaker,
+            @Nullable SqlExecutionCircuitBreaker statefulCircuitBreaker
+    ) {
+        if (statefulCircuitBreaker != null) {
+            statefulCircuitBreaker.statefulThrowExceptionIfTripped();
+        } else if (circuitBreaker.checkIfTripped()) {
+            throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }
     }
 

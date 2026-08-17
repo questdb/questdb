@@ -259,6 +259,7 @@ public class FiberLifecycleFuzzTest {
         final AtomicBoolean isStopRequested = new AtomicBoolean();
         final AtomicLong opCount = new AtomicLong();
         final CountDownLatch firstTaskStep = new CountDownLatch(1);
+        final ProgressWakeProbe progressWakeProbe = new ProgressWakeProbe();
 
         final ObjList<FuzzTask> tasks = new ObjList<>(taskCount);
         for (int i = 0; i < taskCount; i++) {
@@ -267,7 +268,9 @@ public class FiberLifecycleFuzzTest {
                     waitQueue,
                     new FiberCancellationSignal(),
                     firstError,
-                    firstTaskStep
+                    firstTaskStep,
+                    progressWakeProbe,
+                    !isQuiesceUnderLoad && i == 0
             ));
         }
 
@@ -335,6 +338,14 @@ public class FiberLifecycleFuzzTest {
             Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new QuiesceProbeTask()));
             Assert.assertEquals(1, runtime.drain(1));
             Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(tasks.getQuick(0)));
+            if (!isQuiesceUnderLoad) {
+                Assert.assertEquals(1, runtime.drain(1));
+                awaitLatch(progressWakeProbe.firstWaitArmed, firstError, "fuzz event wait failed to arm");
+                waitQueue.fire();
+                Assert.assertEquals(1, runtime.drain(1));
+                awaitLatch(progressWakeProbe.firstProgressResume, firstError, "fuzz progress wake failed to resume");
+                Assert.assertTrue(progressWakeProbe.progressWakeCount.get() > 0);
+            }
             for (int i = 0, n = threads.size(); i < n; i++) {
                 threads.getQuick(i).start();
             }
@@ -456,7 +467,9 @@ public class FiberLifecycleFuzzTest {
         final AtomicInteger unmountedStepViolationCount = new AtomicInteger();
         private final AtomicReference<Throwable> firstError;
         private final CountDownLatch firstTaskStep;
+        private final boolean isDeterministicFirstWait;
         private final AtomicBoolean isRunning = new AtomicBoolean();
+        private final ProgressWakeProbe progressWakeProbe;
         private final Rnd rnd;
         private final FiberEventWaitQueue waitQueue;
 
@@ -465,31 +478,47 @@ public class FiberLifecycleFuzzTest {
                 FiberEventWaitQueue waitQueue,
                 FiberCancellationSignal cancellationSignal,
                 AtomicReference<Throwable> firstError,
-                CountDownLatch firstTaskStep
+                CountDownLatch firstTaskStep,
+                ProgressWakeProbe progressWakeProbe,
+                boolean isDeterministicFirstWait
         ) {
             this.cancellationSignal = cancellationSignal;
             this.firstError = firstError;
             this.firstTaskStep = firstTaskStep;
+            this.isDeterministicFirstWait = isDeterministicFirstWait;
+            this.progressWakeProbe = progressWakeProbe;
             this.rnd = rnd;
             this.waitQueue = waitQueue;
         }
 
-        private boolean suspendOnEvent() {
+        private boolean suspendOnEvent(boolean isDeterministicWait) {
             final Fiber fiber = Fiber.current();
             if (fiber == null || !Fiber.isMounted()) {
                 unmountedStepViolationCount.incrementAndGet();
+                if (isDeterministicWait) {
+                    throw new AssertionError("deterministic event wait ran without a mounted fiber");
+                }
                 return true;
             }
-            final boolean isCancellationRequested = rnd.nextBoolean();
+            final boolean isCancellationRequested = !isDeterministicWait && rnd.nextBoolean();
             final long generation = cancellationSignal.getGeneration();
             final long token = fiber.tryBeginWaitBuild(isCancellationRequested ? 2 : 1);
             if (token == Fiber.TOKEN_REFUSED) {
+                if (isDeterministicWait) {
+                    throw new AssertionError("deterministic event wait was refused");
+                }
                 return true;
             }
             final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
             try {
                 if (!coordinator.armEvent(token, waitQueue)) {
+                    if (isDeterministicWait) {
+                        throw new AssertionError("deterministic event wait failed to arm");
+                    }
                     return true;
+                }
+                if (isDeterministicWait) {
+                    progressWakeProbe.firstWaitArmed.countDown();
                 }
                 boolean isCancellationArmed = false;
                 if (isCancellationRequested) {
@@ -502,7 +531,15 @@ public class FiberLifecycleFuzzTest {
                 }
                 final int reason = fiber.suspendWait(token);
                 if (reason == FiberWaitCoordinator.REASON_PROGRESS) {
+                    progressWakeProbe.progressWakeCount.incrementAndGet();
+                    if (isDeterministicWait) {
+                        progressWakeProbe.firstProgressResume.countDown();
+                        return false;
+                    }
                     return rnd.nextBoolean();
+                }
+                if (isDeterministicWait) {
+                    throw new AssertionError("unexpected deterministic wake reason [reason=" + reason + ']');
                 }
                 if (reason == FiberWaitCoordinator.REASON_SHUTDOWN
                         || (reason == FiberWaitCoordinator.REASON_CANCEL && isCancellationArmed)) {
@@ -526,8 +563,12 @@ public class FiberLifecycleFuzzTest {
                 exclusionViolationCount.incrementAndGet();
             }
             try {
-                stepCount.incrementAndGet();
+                final long currentStepCount = stepCount.incrementAndGet();
+                final boolean isDeterministicWait = isDeterministicFirstWait && currentStepCount == 1;
                 firstTaskStep.countDown();
+                if (isDeterministicWait) {
+                    return suspendOnEvent(true);
+                }
                 final int dice = rnd.nextInt(10);
                 if (dice < 3) {
                     return true;
@@ -535,11 +576,17 @@ public class FiberLifecycleFuzzTest {
                 if (dice < 6) {
                     return false;
                 }
-                return suspendOnEvent();
+                return suspendOnEvent(false);
             } finally {
                 isRunning.set(false);
             }
         }
+    }
+
+    private static class ProgressWakeProbe {
+        private final CountDownLatch firstProgressResume = new CountDownLatch(1);
+        private final CountDownLatch firstWaitArmed = new CountDownLatch(1);
+        private final AtomicLong progressWakeCount = new AtomicLong();
     }
 
     private static class QuiesceProbeTask extends FiberTask {

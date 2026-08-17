@@ -144,9 +144,6 @@ public final class SuspensionScope {
         return scope.supplementalCancellationSignalGeneration;
     }
 
-    public static @Nullable TimerShards getTimerShards() {
-        return SCOPE.get().timerShards;
-    }
 
     public static @Nullable TimerShards getTimerShards(CarrierScope scope) {
         return scope.timerShards;

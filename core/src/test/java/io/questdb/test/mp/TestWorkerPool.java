@@ -109,6 +109,11 @@ public class TestWorkerPool extends WorkerPool {
         return pageFrameReduceJobs;
     }
 
+    @Override
+    public void halt() {
+        haltAndAssertCleanForTest(DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
     private static final class ModeOverrideWorkerPoolConfiguration implements WorkerPoolConfiguration {
         private final WorkerPoolConfiguration configuration;
         private final WorkerPoolMode workerPoolMode;

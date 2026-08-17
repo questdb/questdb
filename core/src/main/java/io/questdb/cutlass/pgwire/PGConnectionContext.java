@@ -388,7 +388,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
      */
     public PGConnectionFiberTask getFiberTask(IODispatcher<PGConnectionContext> dispatcher, Metrics metrics) {
         if (fiberTask == null) {
-            fiberTask = new PGConnectionFiberTask(this, dispatcher, metrics);
+            fiberTask = new PGConnectionFiberTask(this, dispatcher, metrics, engine.getTimerShards());
         }
         return fiberTask;
     }

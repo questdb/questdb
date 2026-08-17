@@ -77,7 +77,6 @@ public final class TimerShards {
         this(shardCount, threadNamePrefix, log, null);
     }
 
-    @TestOnly
     public TimerShards(
             int shardCount,
             @NotNull String threadNamePrefix,

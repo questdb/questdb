@@ -53,6 +53,19 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWalUpdateWithSeqTxnRejectsLiveWalProgress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE update_tab (v LONG)");
+            final String sql = "UPDATE update_tab SET v = v + 1 WHERE wait_wal_table('update_tab', 1L)";
+            assertException(
+                    sql,
+                    sql.indexOf("wait_wal_table"),
+                    "UPDATE cannot require live WAL progress"
+            );
+        });
+    }
+
+    @Test
     public void testWaitFunctionDoesNotDisableParallelFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE notwal (v LONG)");

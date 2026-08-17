@@ -206,6 +206,12 @@ public class WorkerPool implements Closeable {
         threadLocalCleaners.getQuick(worker).add(cleaner);
     }
 
+    /**
+     * Closes the pool by waiting without a deadline for all workers and hosted fibers to stop,
+     * then releases the pool-owned object graph. This terminal operation never releases resources
+     * while a live worker or fiber may still access them. Use {@link #haltWithin(long)} or
+     * {@link #haltBy(long)} when the caller needs a retryable bounded wait.
+     */
     @Override
     public void close() {
         halt();
@@ -264,6 +270,11 @@ public class WorkerPool implements Closeable {
         return mode;
     }
 
+    /**
+     * Halts the pool, waiting without a deadline for all workers and hosted fibers to stop before
+     * releasing the pool-owned object graph. Use {@link #haltWithin(long)} for a relative wait
+     * budget or {@link #haltBy(long)} for an absolute {@link System#nanoTime()} deadline.
+     */
     public void halt() {
         isHaltComplete(false, 0, false);
     }
@@ -274,9 +285,11 @@ public class WorkerPool implements Closeable {
     }
 
     /**
-     * Halts the pool using an absolute {@link System#nanoTime()} deadline for every wait.
+     * Halts the pool using an absolute {@link System#nanoTime()} deadline for shutdown waits.
+     * When a wait reaches the deadline, shutdown has begun but the pool retains resources that a
+     * live worker or fiber may still access. The caller may retry with another deadline.
      *
-     * @param deadlineNanos absolute deadline by which the pool should halt
+     * @param deadlineNanos absolute deadline for shutdown waits
      * @return true when the pool released all owned resources, false when it retained its live
      * object graph after the deadline
      */
@@ -285,20 +298,14 @@ public class WorkerPool implements Closeable {
     }
 
     /**
-     * Halts the pool, bounding how long it blocks waiting for worker threads.
-     * <p>
-     * The unbounded variant of this wait could block the caller forever: if a worker is wedged
-     * (GC-starvation, a stuck native job) it never reaches halted.countDown(), so a plain
-     * halted.await() in the close path made server shutdown unkillable under SIGTERM. This variant
-     * waits at most timeoutNanos for runtime drain, start, and halt.
-     * <p>
-     * Every pool retains its object graph when carrier shutdown misses the deadline.
-     * <p>
+     * Halts the pool with a relative nanosecond budget for shutdown waits. When a wait exhausts
+     * the budget, shutdown has begun but the pool retains resources that a live worker or fiber
+     * may still access. The caller may retry with another budget. The budget covers lock, runtime,
+     * start, and worker-halt waits; it does not bound logging or cleanup after everything stops.
      *
-     * @param timeoutNanos upper bound on the combined wait for started and halted, a RELATIVE
-     *                     duration in nanoseconds measured from the call
-     * @return true when the pool released all owned resources, false when the pool retained its
-     * live object graph after the deadline
+     * @param timeoutNanos relative shutdown-wait budget in nanoseconds
+     * @return true when the pool released all owned resources, false when it retained its live
+     * object graph after the deadline
      */
     public boolean haltWithin(long timeoutNanos) {
         return isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), false);
@@ -363,7 +370,7 @@ public class WorkerPool implements Closeable {
     }
 
     public void start() {
-        start(null);
+        start(LOG);
     }
 
     public void start(@Nullable Log log) {

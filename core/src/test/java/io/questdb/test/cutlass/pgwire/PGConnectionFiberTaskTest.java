@@ -25,8 +25,12 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGConnectionContext;
 import io.questdb.cutlass.pgwire.PGConnectionFiberTask;
@@ -35,12 +39,16 @@ import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.TypesAndSelect;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.Job;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
@@ -273,6 +281,49 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTimerWakesContendedSlotWaiter() throws Exception {
+        assertMemoryLeak(() -> {
+            final PerWorkerLocks locks = new PerWorkerLocks(new CairoConfigurationWrapper(configuration) {
+                @Override
+                public long getQueryContinuationWakeIntervalMillis() {
+                    return 60_000;
+                }
+            }, 1);
+            final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            final FiberRuntime runtime = new FiberRuntime(2, 2);
+            final TimerShards timerShards = engine.getTimerShards();
+            final int timerCountBefore = timerShards.size();
+            try (final SlotWaitingTestContext context = newSlotWaitingTestContext(locks, circuitBreaker)) {
+                final TestDispatcher dispatcher = new TestDispatcher();
+                final PGConnectionFiberTask task = context.getFiberTask(dispatcher, Metrics.DISABLED);
+
+                Assert.assertEquals(LaunchResult.LAUNCHED, task.launch(runtime, IOOperation.READ));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertSame(timerShards, context.observedTimerShards);
+                Assert.assertNotNull(context.waitingFiber);
+                Assert.assertEquals(1, runtime.getParkedFiberCount());
+                Assert.assertEquals(timerCountBefore + 1, timerShards.size());
+
+                circuitBreaker.cancel();
+                final FiberWaitCoordinator coordinator = context.waitingFiber.getWaitCoordinator();
+                Assert.assertTrue(coordinator.fire(coordinator.currentToken(), FiberWaitCoordinator.REASON_TIMER));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertNotNull(context.breakerErrorMessage);
+                Assert.assertTrue(context.breakerErrorMessage.contains("cancelled"));
+                Assert.assertEquals(timerCountBefore, timerShards.size());
+                Assert.assertEquals(1, locks.getAcquiredSlotCount());
+            } finally {
+                locks.releaseSlot(heldSlot);
+                close(runtime);
+            }
+            Assert.assertEquals(0, locks.getAcquiredSlotCount());
+        });
+    }
+
     private static void close(FiberRuntime runtime) {
         runtime.beginQuiesce();
         final long deadline = System.nanoTime() + 5_000_000_000L;
@@ -319,6 +370,84 @@ public class PGConnectionFiberTaskTest extends AbstractCairoTest {
             Misc.free(sqlExecutionContext, th);
             Misc.free(circuitBreaker, th);
             throw th;
+        }
+    }
+
+    private static SlotWaitingTestContext newSlotWaitingTestContext(
+            PerWorkerLocks locks,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        final PGConfiguration configuration = new Port0PGConfiguration(-1);
+        final NetworkSqlExecutionCircuitBreaker networkCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                engine,
+                configuration.getCircuitBreakerConfiguration()
+        );
+        final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+        final NoOpAssociativeCache<TypesAndSelect> typesAndSelectCache = new NoOpAssociativeCache<>();
+        try {
+            return new SlotWaitingTestContext(
+                    engine,
+                    configuration,
+                    sqlExecutionContext,
+                    networkCircuitBreaker,
+                    typesAndSelectCache,
+                    locks,
+                    circuitBreaker
+            );
+        } catch (Throwable th) {
+            Misc.free(typesAndSelectCache, th);
+            Misc.free(sqlExecutionContext, th);
+            Misc.free(networkCircuitBreaker, th);
+            throw th;
+        }
+    }
+
+    private static class SlotWaitingTestContext extends PGConnectionContext {
+        private String breakerErrorMessage;
+        private final SqlExecutionCircuitBreaker circuitBreaker;
+        private final PerWorkerLocks locks;
+        private NetworkSqlExecutionCircuitBreaker networkCircuitBreaker;
+        private TimerShards observedTimerShards;
+        private SqlExecutionContextImpl sqlExecutionContext;
+        private NoOpAssociativeCache<TypesAndSelect> typesAndSelectCache;
+        private Fiber waitingFiber;
+
+        private SlotWaitingTestContext(
+                CairoEngine engine,
+                PGConfiguration configuration,
+                SqlExecutionContextImpl sqlExecutionContext,
+                NetworkSqlExecutionCircuitBreaker networkCircuitBreaker,
+                NoOpAssociativeCache<TypesAndSelect> typesAndSelectCache,
+                PerWorkerLocks locks,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
+            super(engine, configuration, sqlExecutionContext, networkCircuitBreaker, typesAndSelectCache);
+            this.circuitBreaker = circuitBreaker;
+            this.locks = locks;
+            this.networkCircuitBreaker = networkCircuitBreaker;
+            this.sqlExecutionContext = sqlExecutionContext;
+            this.typesAndSelectCache = typesAndSelectCache;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            typesAndSelectCache = Misc.free(typesAndSelectCache);
+            sqlExecutionContext = Misc.free(sqlExecutionContext);
+            networkCircuitBreaker = Misc.free(networkCircuitBreaker);
+        }
+
+        @Override
+        public void handleClientOperation(int operation) throws PeerIsSlowToWriteException {
+            observedTimerShards = SuspensionScope.getTimerShards(SuspensionScope.scope());
+            waitingFiber = Fiber.current();
+            try {
+                final int slot = locks.acquireSlot(0, circuitBreaker);
+                locks.releaseSlot(slot);
+            } catch (CairoException e) {
+                breakerErrorMessage = e.getFlyweightMessage().toString();
+            }
+            throw PeerIsSlowToWriteException.INSTANCE;
         }
     }
 

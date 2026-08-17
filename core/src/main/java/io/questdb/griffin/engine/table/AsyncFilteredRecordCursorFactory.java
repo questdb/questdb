@@ -61,6 +61,8 @@ import java.io.Closeable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+    @TestOnly
+    private static volatile Runnable constructorFailureHookForTesting;
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
     private RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
@@ -91,6 +93,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             boolean enablePreTouch
     ) {
         super(base.getMetadata());
+        final Runnable constructorFailureHook = constructorFailureHookForTesting;
+        if (constructorFailureHook != null) {
+            constructorFailureHook.run();
+        }
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.filter = filter;
@@ -292,6 +298,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             RecordFreer negativeLimitCursor
     ) {
         halfClose(frameSequence, cursor, negativeLimitCursor);
+    }
+
+    @TestOnly
+    public static void setConstructorFailureHookForTesting(@Nullable Runnable hook) {
+        constructorFailureHookForTesting = hook;
     }
 
     private static void filter(

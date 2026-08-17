@@ -34,92 +34,12 @@ import static org.junit.Assert.*;
 
 public class CharSequenceObjSortedHashMapTest {
 
-    public CharSequenceObjSortedHashMap<String> sortedMapUnderTest() {
-        CharSequenceObjSortedHashMap<String> map = new CharSequenceObjSortedHashMap<>(16);
-
-        map.put("zebra", "zebraValue");
-        map.put("Yardstick", "YardstickValue");
-        map.put("theodora", "theodoraValue");
-        map.put("sierra", "sierraValue");
-        map.put("Osbourne", "OsbourneValue");
-        map.put("nothingness", "nothingnessValue");
-        map.put("Knightsbridge", "KnightsbridgeValue");
-        map.put("hunter", "hunterValue");
-        map.put("Finance", "FinanceValue");
-        map.put("alpinist", "alpinistValue");
-        map.put("whiskey", "whiskeyValue");
-        map.put("Xylophone", "XylophoneValue");
-        map.put("velocity", "velocityValue");
-        map.put("Umbrella", "UmbrellaValue");
-        map.put("quicksilver", "quicksilverValue");
-        map.put("Prestige", "PrestigeValue");
-        map.put("legionnaire", "legionnaireValue");
-
-        return map;
-    }
-
-    @Test
-    public void testClearWorks() {
-        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
-        sortedMapUnderTest.clear();
-
-        assertEquals(0, sortedMapUnderTest.size());
-        assertNull(sortedMapUnderTest.get("a"));
-    }
-
     @Test
     public void testContains() {
         CharSequenceObjSortedHashMap<CharSequence> map = new CharSequenceObjSortedHashMap<>();
         map.put("EGG", "CHICKEN");
         assertTrue(map.contains("EGG"));
         Assert.assertFalse(map.contains("CHICKEN"));
-    }
-
-    @Test
-    public void testEmptyMapsMethodsWorkAsExpected() {
-        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = new CharSequenceObjSortedHashMap<>();
-
-        assertEquals(0, sortedMapUnderTest.size());
-        assertNull(sortedMapUnderTest.get("a"));
-        assertFalse(sortedMapUnderTest.contains("a"));
-    }
-
-    @Test
-    public void testGetAtThrowsExceptionWhenOutOfBounds() {
-        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = new CharSequenceObjSortedHashMap<>();
-
-        var e = assertThrows(ArrayIndexOutOfBoundsException.class, () -> sortedMapUnderTest.getAt(1));
-        assertEquals("Array index out of range: 1", e.getMessage());
-    }
-
-    @Test
-    public void testPutAtWithNegativeIndexDoesNotInsert() {
-        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
-
-        int hunterIndex = sortedMapUnderTest.keyIndex("hunter");
-        boolean putResult = sortedMapUnderTest.put("hunter", "hunterValue2");
-
-        assertFalse(putResult);
-        assertTrue(hunterIndex < 0);
-        assertEquals("hunterValue2", sortedMapUnderTest.get("hunter"));
-    }
-
-    @Test
-    public void testRemovalEntriesAndOrderAndSize() {
-        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
-
-        sortedMapUnderTest.remove("Osbourne");
-        sortedMapUnderTest.remove("hunter");
-        sortedMapUnderTest.remove("Finance");
-        sortedMapUnderTest.remove("Knightsbridge");
-        sortedMapUnderTest.remove("theodora");
-        sortedMapUnderTest.remove("Z");
-
-        CharSequenceObjSortedHashMap<String> mapToUpdate = new CharSequenceObjSortedHashMap<>(16);
-        mapToUpdate.putAll(sortedMapUnderTest);
-
-        verifyAllElementsPresentAndOrdered(sortedMapUnderTest.keys(), sortedMapUnderTest);
-        verifyAllElementsPresentAndOrdered(mapToUpdate.keys(), mapToUpdate);
     }
 
     @Test
@@ -160,20 +80,52 @@ public class CharSequenceObjSortedHashMapTest {
         }
     }
 
-    @Test
-    public void testValueAtOnlyWorksWithNegativeIndices() {
-        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
+    private void assertKeys(CharSequenceObjSortedHashMap<Object> map, ReadOnlyObjList<CharSequence> keys) {
+        for (int j = 0, n = keys.size(); j < n; j++) {
+            Assert.assertNotNull(map.get(keys.get(j)));
+        }
+    }
 
-        assertNull(sortedMapUnderTest.valueAt(0));
+    public CharSequenceObjSortedHashMap<String> sortedMapUnderTest() {
+        CharSequenceObjSortedHashMap<String> map = new CharSequenceObjSortedHashMap<>(16);
+
+        map.put("zebra", "zebraValue");
+        map.put("Yardstick", "YardstickValue");
+        map.put("theodora", "theodoraValue");
+        map.put("sierra", "sierraValue");
+        map.put("Osbourne", "OsbourneValue");
+        map.put("nothingness", "nothingnessValue");
+        map.put("Knightsbridge", "KnightsbridgeValue");
+        map.put("hunter", "hunterValue");
+        map.put("Finance", "FinanceValue");
+        map.put("alpinist", "alpinistValue");
+        map.put("whiskey", "whiskeyValue");
+        map.put("Xylophone", "XylophoneValue");
+        map.put("velocity", "velocityValue");
+        map.put("Umbrella", "UmbrellaValue");
+        map.put("quicksilver", "quicksilverValue");
+        map.put("Prestige", "PrestigeValue");
+        map.put("legionnaire", "legionnaireValue");
+
+        return map;
     }
 
     @Test
-    public void testValueQuickReturnsValueByIndex() {
+    public void testRemovalEntriesAndOrderAndSize() {
         CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
-        assertEquals("XylophoneValue", sortedMapUnderTest.valueQuick(5));
 
-        var e = assertThrows(ArrayIndexOutOfBoundsException.class, () -> sortedMapUnderTest.valueQuick(500));
-        assertEquals("Array index out of range: 500", e.getMessage());
+        sortedMapUnderTest.remove("Osbourne");
+        sortedMapUnderTest.remove("hunter");
+        sortedMapUnderTest.remove("Finance");
+        sortedMapUnderTest.remove("Knightsbridge");
+        sortedMapUnderTest.remove("theodora");
+        sortedMapUnderTest.remove("Z");
+
+        CharSequenceObjSortedHashMap<String> mapToUpdate = new CharSequenceObjSortedHashMap<>(16);
+        mapToUpdate.putAll(sortedMapUnderTest);
+
+        verifyAllElementsPresentAndOrdered(sortedMapUnderTest.keys(), sortedMapUnderTest);
+        verifyAllElementsPresentAndOrdered(mapToUpdate.keys(), mapToUpdate);
     }
 
     private static void verifyAllElementsPresentAndOrdered(ReadOnlyObjList<CharSequence> listUnderTest, CharSequenceObjSortedHashMap<String> sortedMapUnderTest) {
@@ -217,9 +169,57 @@ public class CharSequenceObjSortedHashMapTest {
         assertEquals(12, sortedMapUnderTest.size());
     }
 
-    private void assertKeys(CharSequenceObjSortedHashMap<Object> map, ReadOnlyObjList<CharSequence> keys) {
-        for (int j = 0, n = keys.size(); j < n; j++) {
-            Assert.assertNotNull(map.get(keys.get(j)));
-        }
+    @Test
+    public void testPutAtWithNegativeIndexDoesNotInsert() {
+        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
+
+        int hunterIndex = sortedMapUnderTest.keyIndex("hunter");
+        boolean putResult = sortedMapUnderTest.put("hunter", "hunterValue2");
+
+        assertFalse(putResult);
+        assertTrue(hunterIndex < 0);
+        assertEquals("hunterValue2", sortedMapUnderTest.get("hunter"));
+    }
+
+    @Test
+    public void testValueQuickReturnsValueByIndex() {
+        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
+        assertEquals("XylophoneValue", sortedMapUnderTest.valueQuick(5));
+
+        var e = assertThrows(ArrayIndexOutOfBoundsException.class, () -> sortedMapUnderTest.valueQuick(500));
+        assertEquals("Array index out of range: 500", e.getMessage());
+    }
+
+    @Test
+    public void testClearWorks() {
+        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
+        sortedMapUnderTest.clear();
+
+        assertEquals(0, sortedMapUnderTest.size());
+        assertNull(sortedMapUnderTest.get("a"));
+    }
+
+    @Test
+    public void testValueAtOnlyWorksWithNegativeIndices() {
+        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = sortedMapUnderTest();
+
+        assertNull(sortedMapUnderTest.valueAt(0));
+    }
+
+    @Test
+    public void testEmptyMapsMethodsWorkAsExpected() {
+        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = new CharSequenceObjSortedHashMap<>();
+
+        assertEquals(0, sortedMapUnderTest.size());
+        assertNull(sortedMapUnderTest.get("a"));
+        assertFalse(sortedMapUnderTest.contains("a"));
+    }
+
+    @Test
+    public void testGetAtThrowsExceptionWhenOutOfBounds() {
+        CharSequenceObjSortedHashMap<String> sortedMapUnderTest = new CharSequenceObjSortedHashMap<>();
+
+        var e = assertThrows(ArrayIndexOutOfBoundsException.class, () -> sortedMapUnderTest.getAt(1));
+        assertEquals("Array index out of range: 1", e.getMessage());
     }
 }

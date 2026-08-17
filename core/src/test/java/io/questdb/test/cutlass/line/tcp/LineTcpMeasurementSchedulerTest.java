@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler;
@@ -32,11 +34,10 @@ import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.IODispatcher;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Pool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -93,55 +94,60 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
     @Test
     public void testSharedPoolsUseTwoIlpJobs() throws Exception {
         assertMemoryLeak(() -> {
-            final CapturingWorkerPool networkPool = new CapturingWorkerPool(8);
-            final CapturingWorkerPool writePool = new CapturingWorkerPool(8);
-            LineTcpMeasurementScheduler scheduler = null;
-            try {
-                scheduler = new LineTcpMeasurementScheduler(
-                        new DefaultLineTcpReceiverConfiguration(configuration),
-                        engine,
-                        networkPool,
-                        null,
-                        writePool
-                );
-                Assert.assertEquals(2, networkPool.getAssignedJobCount());
-                Assert.assertEquals(2, writePool.getAssignedJobCount());
-            } finally {
-                networkPool.halt();
-                writePool.halt();
-                Misc.free(scheduler);
-            }
+            assertSharedPoolsUseExpectedIlpJobs(8, 2);
+            assertSharedPoolsUseExpectedIlpJobs(1, 1);
         });
     }
 
-    private static final class CapturingWorkerPool extends WorkerPool {
-        private final ObjList<Job> assignedJobs = new ObjList<>();
+    private void assertSharedPoolsUseExpectedIlpJobs(int workerCount, int expectedJobCount) {
+        CapturingWorkerPool networkPool = null;
+        CapturingWorkerPool writePool = null;
+        LineTcpMeasurementScheduler scheduler = null;
+        Throwable failure = null;
+        try {
+            networkPool = new CapturingWorkerPool("ilp-network-test", workerCount, WorkerPoolMode.FIBER_HOST);
+            writePool = new CapturingWorkerPool("ilp-write-test", workerCount, WorkerPoolMode.FIBER_HOST);
+            Assert.assertEquals("ilp-network-test", networkPool.getPoolName());
+            Assert.assertEquals(WorkerPoolMode.FIBER_HOST, networkPool.getWorkerPoolMode());
+            Assert.assertTrue(networkPool.isFiberHost());
+            Assert.assertEquals("ilp-write-test", writePool.getPoolName());
+            Assert.assertEquals(WorkerPoolMode.FIBER_HOST, writePool.getWorkerPoolMode());
+            Assert.assertTrue(writePool.isFiberHost());
 
-        private CapturingWorkerPool(int workerCount) {
-            super(new TestWorkerPoolConfiguration(workerCount));
+            scheduler = new LineTcpMeasurementScheduler(
+                    new DefaultLineTcpReceiverConfiguration(configuration),
+                    engine,
+                    networkPool,
+                    null,
+                    writePool
+            );
+            Assert.assertEquals(expectedJobCount, networkPool.getAssignedJobCount());
+            Assert.assertEquals(expectedJobCount, writePool.getAssignedJobCount());
+        } catch (Throwable th) {
+            failure = th;
+        } finally {
+            failure = Misc.freeBestEffort(failure, networkPool);
+            failure = Misc.freeBestEffort(failure, writePool);
+            failure = Misc.freeBestEffort(failure, scheduler);
+        }
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private static final class CapturingWorkerPool extends TestWorkerPool {
+        private int assignedJobCount;
+
+        private CapturingWorkerPool(String poolName, int workerCount, WorkerPoolMode mode) {
+            super(poolName, workerCount, Metrics.DISABLED, mode);
         }
 
         @Override
         public void assign(int worker, Job job) {
             super.assign(worker, job);
-            assignedJobs.extendAndSet(worker, job);
+            assignedJobCount++;
         }
 
         private int getAssignedJobCount() {
-            return assignedJobs.size();
-        }
-    }
-
-    private static final class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
-        private final int workerCount;
-
-        private TestWorkerPoolConfiguration(int workerCount) {
-            this.workerCount = workerCount;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return workerCount;
+            return assignedJobCount;
         }
     }
 

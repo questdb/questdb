@@ -2261,6 +2261,15 @@ public class CairoEngine implements Closeable, WriterSource {
         return roleSwitchReadLock;
     }
 
+    /**
+     * Returns an estimate of the number of physical role-switch read-lock holds. Outside a pending
+     * write-to-read downgrade, this estimates the number of distinct logical executions holding the
+     * read fence: reentrant acquisitions by one execution share one physical hold and count once. A
+     * read acquisition by the write-lock owner remains a pending downgrade and counts zero until the
+     * final write unlock converts the physical write hold to a read hold.
+     * <p>
+     * This value is for diagnostics only and must not be used for synchronization control.
+     */
     public int getRoleSwitchReadLockCount() {
         return roleSwitchLock.getReadLockCount();
     }

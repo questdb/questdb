@@ -321,6 +321,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
                             .returns("count\n999\n");
                     assertQuery("SELECT count(*) FROM x WHERE length((lv)::SYMBOL) < 4")
                             .withEngine(engine)
@@ -328,6 +329,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
                             .returns("count\n999\n");
                 },
                 configuration,

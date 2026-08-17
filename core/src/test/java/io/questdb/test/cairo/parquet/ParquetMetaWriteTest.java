@@ -39,6 +39,133 @@ import org.junit.Test;
 public class ParquetMetaWriteTest extends AbstractCairoTest {
 
     @Test
+    public void testParquetMetaFileCreatedOnConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, y LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, y, ts) VALUES
+                            (1, 100, '2020-01-01T00:00:00.000Z'),
+                            (2, 200, '2020-01-01T01:00:00.000Z'),
+                            (3, 300, '2020-01-01T02:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, y, ts) VALUES (99, 999, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            assertHasParquetPartition();
+            assertParquetMetadata(3);
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\ty\tts
+                            1\t100\t2020-01-01T00:00:00.000000Z
+                            2\t200\t2020-01-01T01:00:00.000000Z
+                            3\t300\t2020-01-01T02:00:00.000000Z
+                            99\t999\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testParquetMetaWithMultipleRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z'),
+                            (9, '2020-01-01T08:00:00.000Z'),
+                            (10, '2020-01-01T09:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            assertHasParquetPartition();
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
+        });
+    }
+
+    @Test
+    public void testParquetMetaSurvivesRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            assertHasParquetPartition();
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
     public void testParquetMetaCreatedOnO3Rewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -80,94 +207,6 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                             3\t2020-01-01T02:00:00.000000Z
                             99\t2020-01-02T00:00:00.000000Z
                             """);
-        });
-    }
-
-    @Test
-    public void testParquetMetaFileCreatedOnConvertToParquet() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (x INT, y LONG, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(x, y, ts) VALUES
-                            (1, 100, '2020-01-01T00:00:00.000Z'),
-                            (2, 200, '2020-01-01T01:00:00.000Z'),
-                            (3, 300, '2020-01-01T02:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(x, y, ts) VALUES (99, 999, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            assertHasParquetPartition();
-            assertParquetMetadata(3);
-            assertQuery("SELECT * FROM x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            x\ty\tts
-                            1\t100\t2020-01-01T00:00:00.000000Z
-                            2\t200\t2020-01-01T01:00:00.000000Z
-                            3\t300\t2020-01-01T02:00:00.000000Z
-                            99\t999\t2020-01-02T00:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testParquetMetaIncrementalMultipleO3Merges() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (x INT, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(x, ts) VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T01:00:00.000Z'),
-                            (3, '2020-01-01T02:00:00.000Z'),
-                            (4, '2020-01-01T03:00:00.000Z'),
-                            (5, '2020-01-01T04:00:00.000Z'),
-                            (6, '2020-01-01T05:00:00.000Z'),
-                            (7, '2020-01-01T06:00:00.000Z'),
-                            (8, '2020-01-01T07:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(x, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // Three successive O3 merges.
-            for (int merge = 0; merge < 3; merge++) {
-                String ts = "2020-01-01T0" + merge + ":30:00.000Z";
-                execute("INSERT INTO x(x, ts) VALUES (" + (100 + merge) + ", '" + ts + "')");
-                drainWalQueue();
-                assertNotSuspended();
-            }
-
-            assertHasParquetPartition();
-            assertParquetMetadata(2);
-            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n11\n");
         });
     }
 
@@ -238,7 +277,10 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetMetaSurvivesRoundTrip() throws Exception {
+    public void testParquetMetaIncrementalMultipleO3Merges() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -251,7 +293,12 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                             INSERT INTO x(x, ts) VALUES
                             (1, '2020-01-01T00:00:00.000Z'),
                             (2, '2020-01-01T01:00:00.000Z'),
-                            (3, '2020-01-01T02:00:00.000Z')
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
                             """
             );
             execute("INSERT INTO x(x, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
@@ -259,29 +306,22 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n3\n");
 
-            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
-            drainWalQueue();
-            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n3\n");
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
+            // Three successive O3 merges.
+            for (int merge = 0; merge < 3; merge++) {
+                String ts = "2020-01-01T0" + merge + ":30:00.000Z";
+                execute("INSERT INTO x(x, ts) VALUES (" + (100 + merge) + ", '" + ts + "')");
+                drainWalQueue();
+                assertNotSuspended();
+            }
 
             assertHasParquetPartition();
+            assertParquetMetadata(2);
             assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n3\n");
+                    .returns("count\n11\n");
         });
     }
 
@@ -330,46 +370,6 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                             false\t2\t200\t3.5\t4.5\t2020-01-02T00:00:00.000Z\t2020-01-01T01:00:00.000000Z\tfoo\tbar
                             true\t99\t999\t9.9\t9.9\t2020-01-03T00:00:00.000Z\t2020-01-02T00:00:00.000000Z\tz\tz
                             """);
-        });
-    }
-
-    @Test
-    public void testParquetMetaWithMultipleRowGroups() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (x INT, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(x, ts) VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T01:00:00.000Z'),
-                            (3, '2020-01-01T02:00:00.000Z'),
-                            (4, '2020-01-01T03:00:00.000Z'),
-                            (5, '2020-01-01T04:00:00.000Z'),
-                            (6, '2020-01-01T05:00:00.000Z'),
-                            (7, '2020-01-01T06:00:00.000Z'),
-                            (8, '2020-01-01T07:00:00.000Z'),
-                            (9, '2020-01-01T08:00:00.000Z'),
-                            (10, '2020-01-01T09:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(x, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            assertHasParquetPartition();
-            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n10\n");
         });
     }
 

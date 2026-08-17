@@ -294,6 +294,12 @@ public abstract class WorkerPoolManager implements Target {
         }
         if (isLineTcpIOHaltComplete && lineTcpWriterPool != lineTcpIOPool) {
             isHaltComplete &= closePool(lineTcpWriterPool, "closing Line TCP writer pool [name=", deadlineNanos, isBounded);
+        } else if (!isLineTcpIOHaltComplete && lineTcpWriterPool != null && lineTcpWriterPool != lineTcpIOPool) {
+            try {
+                LOG.error().$("retaining Line TCP writer pool because Line TCP I/O pool did not halt [name=")
+                        .$(lineTcpWriterPool.getPoolName()).I$();
+            } catch (Throwable ignore) {
+            }
         }
         if (sharedPoolWrite != lineTcpIOPool
                 && sharedPoolWrite != lineTcpWriterPool

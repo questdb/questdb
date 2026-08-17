@@ -53,6 +53,7 @@ public final class FiberRuntime {
     private final AtomicInteger finalizerCount = new AtomicInteger();
     private final LongAdder inlineSuspendViolationCount = new LongAdder();
     private final AtomicBoolean isInlineSuspendViolationLogged = new AtomicBoolean();
+    private final AtomicBoolean isQuiesceListenerPassActive = new AtomicBoolean();
     private final ObjList<LongAdder> launchCounts = new ObjList<>(LaunchResult.COUNT);
     private final LongAdder mountCount = new LongAdder();
     private final LongAdder mountedCount = new LongAdder();
@@ -236,6 +237,7 @@ public final class FiberRuntime {
                     break;
                 }
             }
+            isQuiesceListenerPassActive.set(true);
             state = FiberRuntimeState.QUIESCING;
             configurationListeners.clear();
         }
@@ -243,6 +245,7 @@ public final class FiberRuntime {
             beginQuiesceListeners();
             capacityWaitQueue.shutdown();
         } finally {
+            isQuiesceListenerPassActive.set(false);
             tryClose();
         }
     }
@@ -348,6 +351,11 @@ public final class FiberRuntime {
     @TestOnly
     public synchronized int getConfigurationListenerCountForTesting() {
         return configurationListeners.size();
+    }
+
+    @TestOnly
+    public synchronized int getQuiesceListenerCountForTesting() {
+        return quiesceListeners.size();
     }
 
     @TestOnly
@@ -474,6 +482,22 @@ public final class FiberRuntime {
         quiesceListeners.add(listener);
     }
 
+    public synchronized boolean unregisterQuiesceListener(FiberRuntimeQuiesceListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("fiber runtime quiesce listener must not be null");
+        }
+        if (state != FiberRuntimeState.OPEN) {
+            return false;
+        }
+        for (int i = 0, n = quiesceListeners.size(); i < n; i++) {
+            if (quiesceListeners.getQuick(i) == listener) {
+                quiesceListeners.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void releaseReservedFiber(Fiber fiber, long reservationEpoch) {
         if (fiber.isForeignTo(this)) {
             throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
@@ -584,17 +608,28 @@ public final class FiberRuntime {
         if (state != FiberRuntimeState.QUIESCING
                 || isPoolQuiesced
                 || (admission.get() & ADMISSION_PERMIT_MASK) != 0
-                || !isListenerQuiesceComplete()) {
+                || !isQuiesceListenerPassActive.compareAndSet(false, true)) {
             return;
         }
-        synchronized (this) {
-            if (state == FiberRuntimeState.QUIESCING
-                    && !isPoolQuiesced
-                    && (admission.get() & ADMISSION_PERMIT_MASK) == 0
-                    && isListenerQuiesced()) {
-                fiberPool.beginQuiesce();
-                isPoolQuiesced = true;
+        try {
+            if (state != FiberRuntimeState.QUIESCING
+                    || isPoolQuiesced
+                    || (admission.get() & ADMISSION_PERMIT_MASK) != 0
+                    || !isListenerQuiesceComplete()) {
+                return;
             }
+            synchronized (this) {
+                if (state == FiberRuntimeState.QUIESCING
+                        && !isPoolQuiesced
+                        && (admission.get() & ADMISSION_PERMIT_MASK) == 0
+                        && isListenerQuiesced()) {
+                    fiberPool.beginQuiesce();
+                    quiesceListeners.clear();
+                    isPoolQuiesced = true;
+                }
+            }
+        } finally {
+            isQuiesceListenerPassActive.set(false);
         }
     }
 

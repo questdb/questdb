@@ -4562,9 +4562,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
             final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
-            if (enableParallelFilter
-                    && factory.supportsPageFrameCursor()
-                    && filter.supportsParallelism()) {
+            if (enableParallelFilter && factory.supportsPageFrameCursor()) {
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
@@ -6252,14 +6250,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
-                                final boolean functionsSupportParallelism =
-                                        (joinFilter == null || joinFilter.supportsParallelism())
-                                                && GroupByUtils.isParallelismSupported(groupByFunctions)
-                                                && (windowLoFunc == null || windowLoFunc.supportsParallelism())
-                                                && (windowHiFunc == null || windowHiFunc.supportsParallelism());
                                 if (parallelWindowJoinEnabled
                                         && masterSupportsPageFrames
-                                        && functionsSupportParallelism
+                                        && GroupByUtils.isParallelismSupported(groupByFunctions)
                                         && slaveToFree.supportsTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
@@ -6640,9 +6633,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // branch that builds EmptyTableRecordCursorFactory over the freed
                             // master's JoinRecordMetadata - no incrementRefCount is needed here.
                             master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
-                        } else if (executionContext.isParallelFilterEnabled()
-                                && master.supportsPageFrameCursor()
-                                && filter.supportsParallelism()) {
+                        } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
@@ -6731,9 +6722,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     } else {
                         // make it a post-join filter (same as for post join where clause above)
-                        if (executionContext.isParallelFilterEnabled()
-                                && master.supportsPageFrameCursor()
-                                && filter.supportsParallelism()) {
+                        if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
@@ -12597,9 +12586,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // functions), the filter, and the limit function we may create here.
         Function limitLoFunction = null;
         try {
-            if (executionContext.isParallelFilterEnabled()
-                    && coveringFactory.supportsPageFrameCursor()
-                    && filter.supportsParallelism()) {
+            if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 // A pushed-down LIMIT lets the async filter stop early (positive limit)
                 // or scan the tail backward (negative limit). Both are correct only

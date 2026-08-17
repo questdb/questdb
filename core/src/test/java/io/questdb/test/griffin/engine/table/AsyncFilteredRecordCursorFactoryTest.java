@@ -444,12 +444,30 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFunctionWithNonParallelArgumentDisablesAsyncFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
-            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE atan2(x, length((s)::symbol)) > -10")) {
-                assertSerialFilter(factory);
+    public void testFilterWithNonThreadSafeArgumentUsesAsyncFilter() throws Exception {
+        withPool((_, compiler, sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (s STRING, x DOUBLE)", sqlExecutionContext);
+            execute(
+                    compiler,
+                    "INSERT INTO tab VALUES ('alpha', 1.0), ('beta', -2.0), ('gamma', 3.5)",
+                    sqlExecutionContext
+            );
+
+            final String sql = "SELECT * FROM tab WHERE atan2(x, length((s)::symbol)) > -10";
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                assertAsyncFilter(factory);
             }
+
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(sqlExecutionContext)
+                    .returns("""
+                            s\tx
+                            alpha\t1.0
+                            beta\t-2.0
+                            gamma\t3.5
+                            """);
         });
     }
 
@@ -642,55 +660,119 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonParallelFilterFunctionDisablesAsyncFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (s STRING, x DOUBLE)");
-            try (RecordCursorFactory factory = select("SELECT * FROM tab WHERE length((s)::symbol) > 0")) {
-                assertSerialFilter(factory);
+    public void testNonThreadSafeFilterFunctionUsesAsyncFilter() throws Exception {
+        withPool((_, compiler, sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (s STRING, x DOUBLE)", sqlExecutionContext);
+            execute(
+                    compiler,
+                    "INSERT INTO tab VALUES ('alpha', 1.0), ('', 2.0), (NULL, 3.0), ('beta', 4.0)",
+                    sqlExecutionContext
+            );
+
+            final String sql = "SELECT * FROM tab WHERE length((s)::symbol) > 0";
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                assertAsyncFilter(factory);
             }
+
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(sqlExecutionContext)
+                    .returns("""
+                            s\tx
+                            alpha\t1.0
+                            beta\t4.0
+                            """);
         });
     }
 
     @Test
-    public void testNonParallelPostJoinFilterDisablesAsyncFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (s STRING, x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (s STRING, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            try (RecordCursorFactory factory = select(
+    public void testNonThreadSafePostJoinFilterUsesAsyncFilter() throws Exception {
+        withPool((_, compiler, sqlExecutionContext) -> {
+            execute(
+                    compiler,
+                    "CREATE TABLE t1 (s STRING, x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    sqlExecutionContext
+            );
+            execute(
+                    compiler,
+                    "CREATE TABLE t2 (s STRING, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    sqlExecutionContext
+            );
+            execute(
+                    compiler,
                     """
-                            SELECT t1.s, t1.ts, sum(t2.y)
-                            FROM t1
-                            WINDOW JOIN t2 ON (0 = 1)
-                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
-                            WHERE length(rnd_str('a', 'b')) > 0
-                            """
-            )) {
-                Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                            INSERT INTO t1 VALUES
+                                ('alpha', 1.0, '2024-01-01T00:00:00.000000Z'),
+                                ('beta', 2.0, '2024-01-01T00:01:00.000000Z')
+                            """,
+                    sqlExecutionContext
+            );
+            execute(
+                    compiler,
+                    "INSERT INTO t2 VALUES ('other', 10.0, '2024-01-01T00:00:30.000000Z')",
+                    sqlExecutionContext
+            );
+
+            final String ordinaryFilterSql = """
+                    SELECT t1.s, t1.ts, sum(t2.y)
+                    FROM t1
+                    WINDOW JOIN t2 ON (0 = 1)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    WHERE length(rnd_str('a', 'b')) > 0
+                    """;
+            final String runtimeConstantFilterSql = """
+                    SELECT t1.s, t1.ts, sum(t2.y)
+                    FROM t1
+                    WINDOW JOIN t2 ON (0 = 1)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    WHERE now() = now()
+                    """;
+            final String nonThreadSafeFilterSql = """
+                    SELECT t1.s, t1.ts, sum(t2.y)
+                    FROM t1
+                    WINDOW JOIN t2 ON (0 = 1)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    WHERE length((rnd_str('a', 'b'))::symbol) > 0
+                    """;
+            final String expected = """
+                    s\tts\tsum
+                    alpha\t2024-01-01T00:00:00.000000Z\tnull
+                    beta\t2024-01-01T00:01:00.000000Z\tnull
+                    """;
+
+            try (RecordCursorFactory factory = compiler.compile(ordinaryFilterSql, sqlExecutionContext).getRecordCursorFactory()) {
+                assertAsyncFilter(factory);
             }
-            try (RecordCursorFactory factory = select(
-                    """
-                            SELECT t1.s, t1.ts, sum(t2.y)
-                            FROM t1
-                            WINDOW JOIN t2 ON (0 = 1)
-                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
-                            WHERE now() = now()
-                            """
-            )) {
+            assertQuery(ordinaryFilterSql)
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(sqlExecutionContext)
+                    .timestamp("ts")
+                    .returns(expected);
+
+            try (RecordCursorFactory factory = compiler.compile(runtimeConstantFilterSql, sqlExecutionContext).getRecordCursorFactory()) {
                 Assert.assertTrue(containsFactory(factory, RuntimeConstGateRecordCursorFactory.class));
-                Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
-            }
-            try (RecordCursorFactory factory = select(
-                    """
-                            SELECT t1.s, t1.ts, sum(t2.y)
-                            FROM t1
-                            WINDOW JOIN t2 ON (0 = 1)
-                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
-                            WHERE length((rnd_str('a', 'b'))::symbol) > 0
-                            """
-            )) {
                 Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
                 Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
             }
+            assertQuery(runtimeConstantFilterSql)
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(sqlExecutionContext)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+
+            try (RecordCursorFactory factory = compiler.compile(nonThreadSafeFilterSql, sqlExecutionContext).getRecordCursorFactory()) {
+                assertAsyncFilter(factory);
+            }
+            assertQuery(nonThreadSafeFilterSql)
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(sqlExecutionContext)
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -782,6 +864,43 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }, wrapper
             );
         }
+    }
+
+    @Test
+    public void testPostJoinFactoryConstructorFailureClosesWorkerFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            TestThrowingFilterFunctionFactory.reset(-1);
+            final RuntimeException sentinel = new RuntimeException("async filter constructor");
+            try {
+                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(() -> {
+                    throw sentinel;
+                });
+                try (
+                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
+                        RecordCursorFactory ignored = engine.select(
+                                """
+                                        SELECT t1.x, t1.ts, sum(t2.y)
+                                        FROM t1
+                                        WINDOW JOIN t2 ON (0 = 1)
+                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                                        WHERE test_throwing_filter()
+                                        """,
+                                context
+                        )
+                ) {
+                    Assert.fail("expected async filter constructor failure");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(sentinel, e);
+                }
+                Assert.assertEquals(5, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                Assert.assertEquals(5, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+            } finally {
+                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(null);
+                TestThrowingFilterFunctionFactory.reset(-1);
+            }
+        });
     }
 
     @Test
@@ -896,9 +1015,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         );
     }
 
-    private static void assertSerialFilter(RecordCursorFactory factory) {
-        Assert.assertTrue(containsFactory(factory, FilteredRecordCursorFactory.class));
-        Assert.assertFalse(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+    private static void assertAsyncFilter(RecordCursorFactory factory) {
+        Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
         Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
     }
 
@@ -1454,7 +1572,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+        public @NotNull SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
             return sqlExecutionContext.getSimpleCircuitBreaker();
         }
 

@@ -158,7 +158,6 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -177,7 +176,8 @@ public final class TestUtils {
     public static final String WORKER_POOL_MODE_PROPERTY = "questdb.test.worker.pool.mode";
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final @Nullable WorkerPoolMode WORKER_POOL_MODE_OVERRIDE = readWorkerPoolModeOverride();
-    private static final AtomicInteger WORKER_POOL_MODE_SEQUENCE = createWorkerPoolModeSequence();
+    private static final InheritableThreadLocal<AtomicReference<WorkerPoolMode>> WORKER_POOL_TEST_MODE =
+            new InheritableThreadLocal<>();
     private static final Object threadAllocationLock = new Object();
     private static final Object threadCpuTimeLock = new Object();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
@@ -1359,6 +1359,14 @@ public final class TestUtils {
         return cartesianProduct(values, 0);
     }
 
+    public static void clearWorkerPoolTestIdentity() {
+        final AtomicReference<WorkerPoolMode> modeReference = WORKER_POOL_TEST_MODE.get();
+        if (modeReference != null) {
+            modeReference.set(null);
+        }
+        WORKER_POOL_TEST_MODE.remove();
+    }
+
     public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         // clients may run out of ephemeral ports, that are still lingering
@@ -1904,18 +1912,24 @@ public final class TestUtils {
     }
 
     /**
-     * Returns the mode for the next unpinned {@link io.questdb.test.mp.TestWorkerPool}. Modes alternate
-     * from a randomized starting point, so a full JVM run exercises both without random streaks.
+     * Returns the deterministic mode for the current listener-bound test identity.
      * {@value #WORKER_POOL_MODE_PROPERTY} pins every pool when reproducing a failure.
+     * Calls outside an active test identity use {@link WorkerPoolMode#LEGACY}.
      */
     public static WorkerPoolMode getWorkerPoolMode() {
         final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
         if (override != null) {
             return override;
         }
-        return (WORKER_POOL_MODE_SEQUENCE.getAndIncrement() & 1) == 0
-                ? WorkerPoolMode.FIBER_HOST
-                : WorkerPoolMode.LEGACY;
+        final AtomicReference<WorkerPoolMode> modeReference = WORKER_POOL_TEST_MODE.get();
+        if (modeReference != null) {
+            final WorkerPoolMode mode = modeReference.get();
+            if (mode != null) {
+                return mode;
+            }
+            WORKER_POOL_TEST_MODE.remove();
+        }
+        return WorkerPoolMode.LEGACY;
     }
 
     public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
@@ -2362,6 +2376,11 @@ public final class TestUtils {
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
+    }
+
+    public static void setWorkerPoolTestIdentity(String identity) {
+        clearWorkerPoolTestIdentity();
+        WORKER_POOL_TEST_MODE.set(new AtomicReference<>(workerPoolModeForTestIdentity(identity)));
     }
 
     /**
@@ -2914,16 +2933,6 @@ public final class TestUtils {
         return res;
     }
 
-    private static AtomicInteger createWorkerPoolModeSequence() {
-        final WorkerPoolMode mode = WORKER_POOL_MODE_OVERRIDE != null
-                ? WORKER_POOL_MODE_OVERRIDE
-                : ThreadLocalRandom.current().nextBoolean()
-                  ? WorkerPoolMode.FIBER_HOST
-                  : WorkerPoolMode.LEGACY;
-        LOG.info().$("test worker pool mode sequence starts with [mode=").$(mode.name()).I$();
-        return new AtomicInteger(mode == WorkerPoolMode.FIBER_HOST ? 0 : 1);
-    }
-
     // Independent oracle for the SHOW PARTITIONS / table_partitions() seqTxn column: reads
     // each live partition's seqTxn straight from _txn (native) or the _pm footer (parquet),
     // never via the factory under test. Keyed by the rendered partition name. Absent names
@@ -3165,6 +3174,12 @@ public final class TestUtils {
         properties.setProperty("user", username);
         properties.setProperty("password", password);
         return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
+    }
+
+    static WorkerPoolMode workerPoolModeForTestIdentity(String identity) {
+        return (identity.hashCode() & 1) == 0
+                ? WorkerPoolMode.FIBER_HOST
+                : WorkerPoolMode.LEGACY;
     }
 
     public interface CheckedIntFunction {

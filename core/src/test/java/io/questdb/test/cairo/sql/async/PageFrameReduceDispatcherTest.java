@@ -238,6 +238,120 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBlockingScopeDoesNotParkGlobalProgressWait() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            final long observedProgress = dispatcher.getProgressVersion();
+            final AtomicInteger waitReason = new AtomicInteger(Integer.MIN_VALUE);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final FiberTask task = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+                    try {
+                        waitReason.set(dispatcher.awaitProgress(observedProgress, null));
+                    } finally {
+                        SuspensionScope.restore(previousMode);
+                    }
+                    return true;
+                }
+            };
+            try {
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, waitReason.get());
+                Assert.assertTrue(task.isDone());
+            } finally {
+                dispatcher.beginQuiesce();
+                close(runtime);
+                Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
+    public void testBlockingScopeDoesNotParkSequenceProgressWait() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            final long observedSequenceProgress = frameSequence.getProgressVersion();
+            final long observedGlobalProgress = dispatcher.getProgressVersion();
+            final AtomicInteger waitReason = new AtomicInteger(Integer.MIN_VALUE);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final FiberTask task = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+                    try {
+                        waitReason.set(dispatcher.awaitProgress(
+                                frameSequence,
+                                observedSequenceProgress,
+                                observedGlobalProgress,
+                                null
+                        ));
+                    } finally {
+                        SuspensionScope.restore(previousMode);
+                    }
+                    return true;
+                }
+            };
+            try {
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, waitReason.get());
+                Assert.assertTrue(task.isDone());
+            } finally {
+                dispatcher.beginQuiesce();
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+            }
+        });
+    }
+
+    @Test
     public void testBrokenConnectionCancellationPreservesReason() throws Exception {
         assertMemoryLeak(() -> {
             final PageFrameSequence<StatefulAtom> orderedFrameSequence = new PageFrameSequence<>(
@@ -373,6 +487,31 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(unorderedFrameSequence);
                 Misc.free(orderedQueue);
                 Misc.free(unorderedQueue);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseUnregistersRuntimeListeners() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                Assert.assertEquals(1, runtime.getConfigurationListenerCountForTesting());
+                Assert.assertEquals(1, runtime.getQuiesceListenerCountForTesting());
+
+                dispatcher.close();
+
+                Assert.assertEquals(0, runtime.getConfigurationListenerCountForTesting());
+                Assert.assertEquals(0, runtime.getQuiesceListenerCountForTesting());
+                dispatcher.close();
+            } finally {
+                dispatcher.close();
+                close(runtime);
             }
         });
     }
