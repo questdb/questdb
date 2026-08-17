@@ -5002,7 +5002,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             long ptr = encoder.getBuffer().getBufferPtr();
             Unsafe.putByte(ptr + QwpConstants.HEADER_OFFSET_FLAGS, flags);
             state.addData(ptr, ptr + size);
-        }    }
+        }
+    }
 
     private static void addNativeData(QwpIngressProcessorState state, byte[] data) {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
