@@ -9098,12 +9098,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Cooperative apply-lag handoff: this cycle's O3 replay needs the
                 // base applied to a seqTxn ApplyWal2TableJob has not reached yet.
                 // ensureBaseApplied threw before any destructive replay work, so
-                // the view is untouched - no watermark advance, no failure
-                // accounting, no invalidation. Leave invalidationReason null and
+                // the view's DURABLE output is untouched - no watermark advance, no
+                // failure accounting, no invalidation. Leave invalidationReason null and
                 // return through the finally; the next fallback scan retries this
                 // view (head > processedTo still holds) once the apply catches up.
                 // Not counting this toward the flush-retry budget is deliberate:
                 // apply lag is transient and self-heals, unlike a refresh fault.
+                //
+                // The compiled factory's accumulators are NOT untouched. The drain that
+                // raised this had already fed every commit below the offending one through
+                // the window cursor, and its O3 detect rolled back only the WAL draft and
+                // latestSeenTs - the accumulators keep every row they counted. So carry the
+                // debt onto the instance: windowStateDirty is a per-turn field that
+                // refreshInstance re-seeds from the instance at every entry, so without this
+                // the next turn starts from a clean slate and drains those same commits
+                // again over accumulators that already counted them. The re-fed rows then
+                // carry cumulative values continuing from the abandoned cycle - a running
+                // count(*) emits N+1.. for what is the view's FIRST row - and the lead
+                // publish makes them reader-visible without any commit at all. The
+                // instance.isWindowStateDirty() gate rebuilds from the applied base before
+                // that drain instead. Gated on the flag rather than raised unconditionally:
+                // a cycle that deferred before feeding a single row owes no rebuild.
+                // See LiveViewConcurrencyTest.testApplyLagDeferralRebuildsAdvancedWindowState.
+                if (windowStateDirty) {
+                    markWindowStateDirty(instance);
+                }
                 // Arm a short back-off so the next scans skip this view instead of
                 // re-draining the whole window every tick until apply lands. Record the
                 // target seqTxn first so the pre-latch guard, which reads it once it sees

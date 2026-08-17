@@ -217,6 +217,119 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testApplyLagDeferralRebuildsAdvancedWindowState() throws Exception {
+        // Regression for questdb#7514: a reader saw the view's FIRST row carrying a running
+        // count well above 1 (rn=193 on a 12-row lead, rn=201 on a 22-row generation).
+        //
+        // The drain walks base commits in sequencer order, feeding each through the compiled
+        // window cursor. On an out-of-order commit it rolls the cycle back - the WAL draft and
+        // latestSeenTs - and hands off to o3Replay, which clears the accumulators before it
+        // recomputes. But o3Replay first gates on the base being applied, and when
+        // ApplyWal2TableJob has not caught up ensureBaseApplied throws LiveViewApplyLagException
+        // to defer the cycle. That deferral used to be treated as a clean no-op. It is not: the
+        // commits BELOW the offending one had already advanced the accumulators, and the
+        // rollback does not undo them. windowStateDirty is a per-turn field that refreshInstance
+        // re-seeds from the instance at every entry, so the debt evaporated and the next turn
+        // drained the same commits again over accumulators that already counted them.
+        //
+        // This test drives that interleaving with no threads at all: it withholds the base apply
+        // so ensureBaseApplied is guaranteed to throw. The assertion is the debt itself -
+        // isWindowStateDirty() after the deferral - because that is what the next turn reads.
+        // Asserting only the final contents would not hold the fix: once the apply lands, the
+        // re-drain hits the same O3 commit again, this time replays for real, and clearWindowState
+        // converges the view. That is exactly why the soak only ever caught this mid-flight.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("CREATE TABLE base (ts TIMESTAMP, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS
+                    SELECT ts, i, count(*) OVER (
+                        PARTITION BY 0
+                        ORDER BY ts
+                        ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                    ) AS rn
+                    FROM base
+                    """);
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                Assert.assertFalse("the seeded view must start healthy", instance.isInvalid());
+                Assert.assertFalse("a quiesced seed owes no window-state rebuild", instance.isWindowStateDirty());
+
+                // Commit 1: three in-order rows. The drain feeds these through the window cursor,
+                // which is what leaves the accumulators at 3.
+                execute("""
+                        INSERT INTO base VALUES
+                            ('2027-01-01T00:00:01.000000Z', 1),
+                            ('2027-01-01T00:00:02.000000Z', 2),
+                            ('2027-01-01T00:00:03.000000Z', 3)
+                        """);
+                // Commit 2: a row below commit 1's maximum, so the drain classifies it as
+                // cross-commit O3 and diverts to o3Replay.
+                execute("INSERT INTO base VALUES ('2027-01-01T00:00:00.500000Z', 4)");
+
+                // Both commits are in the sequencer, but only commit 1 queued a refresh task:
+                // LiveViewStateStoreImpl gates the notification per base table and commit 2 found
+                // the gate closed. A turn driven from that task would stop AT commit 1, so the two
+                // commits would land in different turns and the O3 detect would fire having fed
+                // nothing - not the shape this regression is about. Consume the task without
+                // refreshing; notifyBaseRefreshed observes the newer commit and re-enqueues at
+                // commit 2's seqTxn, so the next turn walks BOTH: it feeds commit 1 through the
+                // window cursor and only THEN discovers commit 2 is out of order.
+                final LiveViewStateStore stateStore = engine.getLiveViewStateStore();
+                final LiveViewRefreshTask pendingTask = new LiveViewRefreshTask();
+                Assert.assertTrue(
+                        "the base commits must have queued a refresh task",
+                        stateStore.tryDequeueRefreshTask(pendingTask)
+                );
+                stateStore.notifyBaseRefreshed(pendingTask, pendingTask.seqTxn);
+
+                // Deliberately NO drainWalQueue() here. The raw-WAL drain reads both commits, but
+                // the base TABLE is unapplied, so o3Replay's ensureBaseApplied gate cannot be
+                // satisfied and the cycle defers. This is the whole point of the fixture: it makes
+                // the apply lag a certainty rather than a race the test would have to win.
+                drainJob(job);
+
+                Assert.assertNotEquals(
+                        "the cycle must have deferred on base apply lag, or this test is not exercising the gate",
+                        Numbers.LONG_NULL,
+                        instance.getApplyLagDeferTargetSeqTxn()
+                );
+                Assert.assertTrue(
+                        "a deferred cycle that fed rows through the window cursor must leave the "
+                                + "accumulator debt on the instance for the next turn to rebuild",
+                        instance.isWindowStateDirty()
+                );
+
+                // Let the apply land and the view converge, then assert the view agrees with a
+                // from-scratch evaluation of its own SELECT - rn gapless from 1.
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    """
+                            (SELECT ts, i, count(*) OVER (
+                                PARTITION BY 0
+                                ORDER BY ts
+                                ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                            ) AS rn FROM base) ORDER BY 1""",
+                    "(lv) ORDER BY 1",
+                    LOG,
+                    true
+            );
+            assertNoRefreshFaults("lv");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testCheckpointFreezeDuringLatchHeldRewriteDoesNotDeadlock() throws Exception {
         // Deterministic regression for the CHECKPOINT <-> refresh-worker deadlock.
         // advanceLiveViewConsumedSeqTxn (and the in-band applyLiveViewData reconcile
