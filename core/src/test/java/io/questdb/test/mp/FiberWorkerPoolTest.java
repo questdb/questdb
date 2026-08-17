@@ -43,6 +43,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -443,6 +444,80 @@ public class FiberWorkerPoolTest {
     }
 
     @Test
+    public void testHaltDrainsFiberRuntimeAfterWorkersExit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String poolName = "fiber-dead-worker-halt-test";
+            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return poolName;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return WorkerPoolMode.FIBER_HOST;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return true;
+                }
+
+                @Override
+                public boolean isDaemonPool() {
+                    return true;
+                }
+            });
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final AtomicInteger tick = new AtomicInteger();
+            pool.assign(workerContext -> {
+                if (tick.incrementAndGet() == 1) {
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new OneShotTask()));
+                    return false;
+                }
+                if (runtime.getCreatedFiberCount() > 0) {
+                    throw new RuntimeException("deterministic worker failure");
+                }
+                return false;
+            });
+            pool.start();
+            try {
+                final long workerExitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (isWorkerThreadAlive(poolName) && System.nanoTime() < workerExitDeadline) {
+                    Os.pause();
+                }
+                Assert.assertFalse(isWorkerThreadAlive(poolName));
+                Assert.assertTrue(runtime.getCreatedFiberCount() > runtime.getRetiredFiberCount());
+
+                final CountDownLatch haltReturned = new CountDownLatch(1);
+                final AtomicReference<Throwable> haltFailure = new AtomicReference<>();
+                final Thread halter = new Thread(() -> {
+                    try {
+                        pool.halt();
+                    } catch (Throwable th) {
+                        haltFailure.set(th);
+                    } finally {
+                        haltReturned.countDown();
+                    }
+                }, poolName + "-halter");
+                halter.setDaemon(true);
+                halter.start();
+                Assert.assertTrue(haltReturned.await(10, TimeUnit.SECONDS));
+                Assert.assertNull(haltFailure.get());
+                Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
+                Assert.assertEquals(runtime.getCreatedFiberCount(), runtime.getRetiredFiberCount());
+            } finally {
+                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
+            }
+        });
+    }
+
+    @Test
     public void testLegacyPoolRotatesJobOrder() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int recordLimit = 32;
@@ -746,6 +821,15 @@ public class FiberWorkerPoolTest {
                 return isDaemon;
             }
         };
+    }
+
+    private static boolean isWorkerThreadAlive(String poolName) {
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.isAlive() && thread.getName().startsWith(poolName + '_')) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static WorkerPoolConfiguration legacyConfiguration(String poolName, int workerCount) {

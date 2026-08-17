@@ -597,7 +597,10 @@ public class WorkerPool implements Closeable {
                         }
                     }
                 } else if (!isBounded) {
-                    runtime.awaitClosed();
+                    // the halting thread drains so closure does not depend on a live worker
+                    while (!runtime.awaitClosed(System.nanoTime() + 1_000_000L)) {
+                        runtime.drain(runtime.getMountBudget());
+                    }
                 }
             }
             boolean isWorkerHaltComplete = true;

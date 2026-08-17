@@ -45,7 +45,7 @@ public class QwpEgressFiberTest extends AbstractReusedServerQwpEgressTest {
     public void testQueryOverWebSocketOnFiber() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
-                    PropertyKey.HTTP_FIBER_ENABLED.getEnvVarName(), "true"
+                    PropertyKey.HTTP_WORKER_FIBER_ENABLED.getEnvVarName(), "true"
             )) {
                 serverMain.execute("CREATE TABLE fiber_t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO fiber_t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");

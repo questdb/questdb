@@ -2268,14 +2268,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
-                this.pgFiberEnabled = getBoolean(properties, env, PropertyKey.PG_FIBER_ENABLED, true);
+                this.pgFiberEnabled = getBoolean(properties, env, PropertyKey.PG_WORKER_FIBER_ENABLED, true);
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
                 final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : networkPoolWorkerCount;
                 this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
             final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : networkPoolWorkerCount;
-            this.httpFiberEnabled = getBoolean(properties, env, PropertyKey.HTTP_FIBER_ENABLED, true);
+            this.httpFiberEnabled = getBoolean(properties, env, PropertyKey.HTTP_WORKER_FIBER_ENABLED, true);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));

@@ -377,6 +377,7 @@ public final class FiberWaitCoordinator {
         if (result != SourceRegistrationResult.ACCEPTED) {
             return result;
         }
+        final boolean isCancelPending;
         synchronized (this) {
             final boolean isAccepted = this.token == token
                     && state == STATE_BUILDING
@@ -385,9 +386,11 @@ public final class FiberWaitCoordinator {
                 acceptedSourceCount++;
                 return SourceRegistrationResult.ACCEPTED;
             }
-            if (registration.isForToken(token)) {
-                registration.cancel();
-            }
+            isCancelPending = registration.isForToken(token);
+        }
+        // cancel outside the monitor: a granted slot cancel re-enters a peer coordinator
+        if (isCancelPending) {
+            registration.cancel();
         }
         return SourceRegistrationResult.NOT_ACCEPTED;
     }

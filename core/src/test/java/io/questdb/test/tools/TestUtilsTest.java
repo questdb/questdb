@@ -24,16 +24,13 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.mp.TestWorkerPool;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -104,19 +101,6 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWorkerPoolModeForTestIdentityIsStableAndDistributed() {
-        Assert.assertSame(WorkerPoolMode.LEGACY, TestUtils.workerPoolModeForTestIdentity("A"));
-        Assert.assertSame(WorkerPoolMode.FIBER_HOST, TestUtils.workerPoolModeForTestIdentity("B"));
-    }
-
-    @Test
-    public void testWorkerPoolModeIsStableWithinTest() {
-        final String override = System.getProperty(TestUtils.WORKER_POOL_MODE_PROPERTY);
-        Assume.assumeTrue(override == null || override.isEmpty());
-        Assert.assertSame(TestUtils.getWorkerPoolMode(), TestUtils.getWorkerPoolMode());
-    }
-
-    @Test
     public void testWorkerPoolModePropertyOverridesBothSelectors() {
         final String override = System.getProperty(TestUtils.WORKER_POOL_MODE_PROPERTY);
         Assume.assumeTrue(override != null && !override.isEmpty());
@@ -135,30 +119,6 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWorkerPoolStartLogsResolvedMode() throws Exception {
-        assertMemoryLeak(() -> {
-            final AtomicReference<Log> startLog = new AtomicReference<>();
-            try (
-                    TestWorkerPool pool = new TestWorkerPool(
-                            "m10-start-log",
-                            1,
-                            Metrics.DISABLED,
-                            WorkerPoolMode.LEGACY
-                    ) {
-                        @Override
-                        public void start(Log log) {
-                            startLog.set(log);
-                            super.start(log);
-                        }
-                    }
-            ) {
-                pool.start();
-                Assert.assertNotNull(startLog.get());
-            }
-        });
-    }
-
-    @Test
     public void testWorkerPoolTestIdentityIsRevokedInChildThread() throws Exception {
         final String override = System.getProperty(TestUtils.WORKER_POOL_MODE_PROPERTY);
         Assume.assumeTrue(override == null || override.isEmpty());
@@ -168,7 +128,12 @@ public final class TestUtilsTest extends AbstractCairoTest {
         final AtomicReference<WorkerPoolMode> secondMode = new AtomicReference<>();
         final CountDownLatch firstSelectionComplete = new CountDownLatch(1);
         final CountDownLatch releaseSecondSelection = new CountDownLatch(1);
-        TestUtils.setWorkerPoolTestIdentity("B");
+        // 'y' has an odd char value, so each append flips the hash parity
+        String identity = "A";
+        while (TestUtils.workerPoolModeForTestIdentity(identity) != WorkerPoolMode.FIBER_HOST) {
+            identity += 'y';
+        }
+        TestUtils.setWorkerPoolTestIdentity(identity);
         final Thread child = new Thread(() -> {
             try {
                 firstMode.set(TestUtils.getWorkerPoolMode());

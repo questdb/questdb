@@ -1279,7 +1279,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.query.cache.block.count\tQDB_HTTP_QUERY_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
                                     "http.query.cache.enabled\tQDB_HTTP_QUERY_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "http.query.cache.row.count\tQDB_HTTP_QUERY_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
-                                    "http.fiber.enabled\tQDB_HTTP_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.fiber.enabled\tQDB_HTTP_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.worker.fiber.max.live\tQDB_HTTP_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
                                     "http.worker.fiber.max.retained\tQDB_HTTP_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
                                     "http.worker.fiber.mount.budget\tQDB_HTTP_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
@@ -1451,7 +1451,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.recv.buffer.size\tQDB_PG_RECV_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
                                     "pg.security.readonly\tQDB_PG_SECURITY_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.select.cache.block.count\tQDB_PG_SELECT_CACHE_BLOCK_COUNT\t32\tdefault\tfalse\tfalse\n" +
-                                    "pg.fiber.enabled\tQDB_PG_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.fiber.enabled\tQDB_PG_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.fiber.max.live\tQDB_PG_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
                                     "pg.worker.fiber.max.retained\tQDB_PG_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
                                     "pg.worker.fiber.mount.budget\tQDB_PG_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +

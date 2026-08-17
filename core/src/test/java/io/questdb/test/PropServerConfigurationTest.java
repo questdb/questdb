@@ -1717,21 +1717,21 @@ public class PropServerConfigurationTest {
     @Test
     public void testNetworkPoolFiberHostFollowsSharedProtocolFlags() throws Exception {
         final Properties properties = new Properties();
-        properties.setProperty(PropertyKey.PG_FIBER_ENABLED.getPropertyPath(), "false");
-        properties.setProperty(PropertyKey.HTTP_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.PG_FIBER_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
         Assert.assertEquals(
                 WorkerPoolMode.FIBER_HOST,
                 newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.PG_FIBER_ENABLED.getPropertyPath(), "false");
-        properties.setProperty(PropertyKey.HTTP_FIBER_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
         Assert.assertEquals(
                 WorkerPoolMode.FIBER_HOST,
                 newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
@@ -1750,8 +1750,8 @@ public class PropServerConfigurationTest {
                 newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.PG_FIBER_ENABLED.getPropertyPath(), "false");
-        properties.setProperty(PropertyKey.HTTP_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
         Assert.assertEquals(
                 WorkerPoolMode.FIBER_HOST,
@@ -2812,7 +2812,7 @@ public class PropServerConfigurationTest {
     @Test
     public void testWorkerPoolFiberModeProperties() throws Exception {
         assertWorkerPoolModeProperty(
-                PropertyKey.HTTP_FIBER_ENABLED,
+                PropertyKey.HTTP_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getHttpServerConfiguration
         );
         assertWorkerPoolModeProperty(
@@ -2832,7 +2832,7 @@ public class PropServerConfigurationTest {
                 PropServerConfiguration::getMatViewRefreshPoolConfiguration
         );
         assertWorkerPoolModeProperty(
-                PropertyKey.PG_FIBER_ENABLED,
+                PropertyKey.PG_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getPGWireConfiguration
         );
     }
@@ -2864,10 +2864,11 @@ public class PropServerConfigurationTest {
     public void testWorkerPoolFiberRetainedCountClampedToDerivedLiveCount() throws Exception {
         final Properties properties = new Properties();
         properties.setProperty(PropertyKey.SHARED_WORKER_COUNT.getPropertyPath(), "32");
-        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "200");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "300");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
-        Assert.assertEquals(200, configuration.getSharedWorkerPoolNetworkConfiguration().getFiberRetainedCount());
+        // derived live limit is max(64, 8 * 32) = 256, so the explicit 300 is clamped
+        Assert.assertEquals(256, configuration.getSharedWorkerPoolNetworkConfiguration().getFiberRetainedCount());
     }
 
     @Test

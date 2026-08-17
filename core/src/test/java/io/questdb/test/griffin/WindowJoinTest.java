@@ -3719,9 +3719,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testNonParallelAggregateWindowJoinDowngradesToSerial() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            // These aggregates report supportsParallelism() == false: their per-worker clones
-            // keep private state that the parallel window join cannot merge, so the planner
-            // must pick the serial factory.
+            // these aggregates report supportsParallelism() == false
             final String query = """
                     SELECT t.sym, t.ts, %s
                     FROM trades t
