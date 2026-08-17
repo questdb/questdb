@@ -1075,13 +1075,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         };
     }
 
-    // Drives the named view's seed sweep to completion, re-fetching the instance
-    // each pass, then applies the LV WAL. Mirrors the fuzz harness.
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing the
-    // clock each pass so deferred flushes land, and applying the LV's own WAL after
-    // each burst. Mirrors the fuzz harness.
-
     // Like newPacedWriterThread, but for the var-size base table (ts, vs STRING,
     // vv VARCHAR): writer w ingests the round-robin slice fromIndex+w, fromIndex+w+numWriters,
     // ... one batch per refresh tick. Each row's var-length values are derived from its

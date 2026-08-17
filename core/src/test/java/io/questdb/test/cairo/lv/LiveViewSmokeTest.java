@@ -274,15 +274,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         return String.format("2026-01-%02dT00:00:00.000000Z", day);
     }
 
-    // Drives the named view's seed sweep to completion across however many
-    // turns the configured budget needs (each drainJob burst is capped at 64
-    // turns), reusing the caller's refresh job. Re-fetches the instance each
-    // pass so it survives a simulated restart that rebuilds the registry, and
-    // applies the LV WAL at the end. The caller owns the job's lifecycle: a
-    // seed test must drive the whole sweep through a single
-    // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
-    // fresh one is not a path production takes (the pool keeps jobs alive).
-
     // Names the base table's WAL directory that currently holds the WAL-level symbol dictionary of
     // the given column, or null when no WAL directory does. Every already-written segment of that
     // WAL resolves its clean symbol band through those files, so this is the artifact a symbol
@@ -7345,10 +7336,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
-    // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
-    // on the non-version branch.
-
     /**
      * Reads the seed cursor the view's durable timeline generation carries, or
      * {@link Numbers#LONG_NULL} when it has no valid generation or the generation was published by
@@ -7400,6 +7387,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 .concat("_ring");
     }
 
+    // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
+    // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
+    // on the non-version branch.
     private void truncateLiveViewStateFile(FilesFacade ff, TableToken lvToken) {
         try (Path sPath = new Path()) {
             sPath.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
