@@ -60,6 +60,17 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     // searching partition from top every time
     protected long partitionLimit;
     protected int partitionLo;
+    // 9A day-run state. A "run" is the maximal set of partitions sharing one partition timestamp --
+    // i.e. all cells of one day, which are CONTIGUOUS in partition-index order (asserted directly by
+    // CompositeDayRunUnitTest). Both concrete cursors walk a run CELL-MAJOR: every cell restarts at
+    // runIntervalLo, so every cell sees every interval, and runResume carries the one interval index
+    // the run resumes the global walk at. For a PLAIN table every run is exactly one partition, so the
+    // inner walk runs once and reduces to the pre-9A walk -- which is what keeps plain byte-identical
+    // without a composite-detection branch. -1/-1 means "no run open".
+    protected int runHi = -1;
+    protected int runIntervalLo;
+    protected int runLo = -1;
+    protected int runResume;
     protected TableReader reader;
     protected long sizeSoFar = 0;
     private int initialIntervalsHi;
@@ -145,6 +156,65 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     /**
+     * Opens the day-run beginning at {@code partitionHi - 1} for a BACKWARD walk. Mirror of
+     * {@link #beginForwardRun()}: the run is entered from its top, every cell of it is walked from
+     * {@code runIntervalLo} downward, and {@code runResume} accumulates the MAXIMUM interval bound the
+     * run's cells reach. The maximum, because walking downward an interval that reaches BELOW this day
+     * must stay live for the next (earlier) day.
+     */
+    protected void beginBackwardRun() {
+        runHi = partitionHi;
+        runLo = backwardRunStart(partitionHi - 1, partitionLo);
+        runIntervalLo = intervalsHi;
+        runResume = intervalsLo;
+    }
+
+    /**
+     * Opens the day-run beginning at {@code partitionLo} for a FORWARD walk. Every cell of the run is
+     * walked from {@code runIntervalLo}, so each cell sees every interval -- the monotonic constraint
+     * that produced this cursor family's three silent-wrong-answer defects is gone.
+     * <p>
+     * {@code runResume} accumulates the MINIMUM interval index the run's cells reach, and becomes the
+     * global {@code intervalsLo} once the run completes. The minimum, not the last cell's index: an
+     * interval reaching past this day must stay live for the next one, and taking the last cell's index
+     * would retire it early and silently drop its rows -- exactly the defect class 9A exists to end.
+     */
+    protected void beginForwardRun() {
+        runLo = partitionLo;
+        runHi = forwardRunEnd(partitionLo, partitionHi);
+        runIntervalLo = intervalsLo;
+        runResume = intervalsHi;
+    }
+
+    /**
+     * First partition index of the day-run containing {@code partitionIndex}, clamped at
+     * {@code loBound}. Takes the bound explicitly so {@code calculateSize()} can call it with its own
+     * local copy of {@code partitionLo} rather than the field.
+     */
+    protected int backwardRunStart(int partitionIndex, int loBound) {
+        final long ts = reader.getPartitionTimestampByIndex(partitionIndex);
+        int start = partitionIndex;
+        while (start > loBound && reader.getPartitionTimestampByIndex(start - 1) == ts) {
+            start--;
+        }
+        return start;
+    }
+
+    /**
+     * One past the last partition index of the day-run containing {@code partitionIndex}, clamped at
+     * {@code hiBound}. O(cells-in-day) and called once per run, not per frame. Takes the bound
+     * explicitly for the same reason as {@link #backwardRunStart(int, int)}.
+     */
+    protected int forwardRunEnd(int partitionIndex, int hiBound) {
+        final long ts = reader.getPartitionTimestampByIndex(partitionIndex);
+        int end = partitionIndex + 1;
+        while (end < hiBound && reader.getPartitionTimestampByIndex(end) == ts) {
+            end++;
+        }
+        return end;
+    }
+
+    /**
      * Task 5b: {@code true} unless a composite dimension predicate was resolved to an allowed-cellKey
      * set AND this slot's cell is not in it. Every concrete {@code next()}/{@code calculateSize()} in
      * both {@link IntervalFwdPartitionFrameCursor} and {@link IntervalBwdPartitionFrameCursor} composes
@@ -207,6 +277,13 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         partitionLo = initialPartitionLo;
         partitionHi = initialPartitionHi;
         sizeSoFar = 0;
+        // 9A: -1/-1 is "no run open" -- both concrete cursors open one lazily on the next call. Every
+        // early return from next() is a resumption point, so this reset is what makes a re-scan from
+        // the top identical to a first scan.
+        runLo = -1;
+        runHi = -1;
+        runIntervalLo = 0;
+        runResume = 0;
     }
 
     private void calculateRanges(TableReader reader, LongList intervals) {
