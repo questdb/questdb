@@ -214,6 +214,112 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDecimalToDouble() throws Exception {
+        assertChangeDecimal("12", "12.0", "decimal(2, 0)", "double");
+        assertChangeDecimal("1.2m", "1.2", "decimal(2, 1)", "double");
+        assertChangeDecimal("1234", "1234.0", "decimal(4, 0)", "double");
+        assertChangeDecimal("12.34m", "12.34", "decimal(4, 2)", "double");
+        assertChangeDecimal("123456789", "1.23456789E8", "decimal(9, 0)", "double");
+        assertChangeDecimal("123456.789m", "123456.789", "decimal(9, 3)", "double");
+        assertChangeDecimal("123456789012345678m", "1.2345678901234568E17", "decimal(18, 0)", "double");
+        assertChangeDecimal("12345678901234.5678m", "1.2345678901234568E13", "decimal(18, 4)", "double");
+        assertChangeDecimal("-99.9999m", "-99.9999", "decimal(18, 4)", "double");
+        assertChangeDecimal("12345678901234567890123456789012345678m", "1.2345678901234568E37", "decimal(38, 0)", "double");
+        assertChangeDecimal("12345678901234567890123456789012345678901234567890123456789012345678901234.5m",
+                "1.2345678901234569E73", "decimal(76, 1)", "double");
+        // a scale past 10^22, the largest power of ten a double holds exactly, leaves the
+        // divide shortcut in DecimalUtil.toDouble for the format-and-parse fallback
+        assertChangeDecimal("1.2345678901234567890123456m", "1.2345678901234567", "decimal(30, 25)", "double");
+    }
+
+    @Test
+    public void testChangeDecimalToFloat() throws Exception {
+        assertChangeDecimal("12", "12.0", "decimal(2, 0)", "float");
+        assertChangeDecimal("1.2m", "1.2", "decimal(2, 1)", "float");
+        assertChangeDecimal("1234", "1234.0", "decimal(4, 0)", "float");
+        assertChangeDecimal("12.34m", "12.34", "decimal(4, 2)", "float");
+        assertChangeDecimal("123456.789m", "123456.79", "decimal(9, 3)", "float");
+        assertChangeDecimal("-99.9999m", "-99.9999", "decimal(18, 4)", "float");
+        // a magnitude past Float.MAX_VALUE reads as NULL, the rule cast(<double> AS FLOAT) applies
+        assertChangeDecimal("999999999999999999999999999999999999999m", "null", "decimal(39, 0)", "float");
+        // a scale past 10^22, the largest power of ten a double holds exactly, leaves the
+        // divide shortcut in DecimalUtil.toFloat for the format-and-parse fallback
+        assertChangeDecimal("1.2345678901234567890123456m", "1.2345679", "decimal(30, 25)", "float");
+    }
+
+    @Test
+    public void testChangeDecimalToFloatWithNull() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{
+                    "DECIMAL(2, 1)",
+                    "DECIMAL(4, 2)",
+                    "DECIMAL(9, 3)",
+                    "DECIMAL(18, 4)",
+                    "DECIMAL(38, 4)",
+                    "DECIMAL(76, 4)",
+            }) {
+                execute("CREATE TABLE x (ts TIMESTAMP, col " + source + ") TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+                execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 1.1m)", sqlExecutionContext);
+                execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
+                execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -2.2m)", sqlExecutionContext);
+                drainWalQueue();
+
+                execute("ALTER TABLE x ALTER COLUMN col TYPE FLOAT", sqlExecutionContext);
+                drainWalQueue();
+
+                assertQuery("x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tcol
+                                2024-05-14T16:00:00.000000Z\t1.1
+                                2024-05-14T16:00:01.000000Z\tnull
+                                2024-05-14T16:00:02.000000Z\t-2.2
+                                """);
+
+                execute("DROP TABLE x");
+            }
+        });
+    }
+
+    @Test
+    public void testChangeDecimalToDoubleWithNull() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{
+                    "DECIMAL(2, 1)",
+                    "DECIMAL(4, 2)",
+                    "DECIMAL(9, 3)",
+                    "DECIMAL(18, 4)",
+                    "DECIMAL(38, 4)",
+                    "DECIMAL(76, 4)",
+            }) {
+                execute("CREATE TABLE x (ts TIMESTAMP, col " + source + ") TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+                execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 1.1m)", sqlExecutionContext);
+                execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
+                execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -2.2m)", sqlExecutionContext);
+                drainWalQueue();
+
+                execute("ALTER TABLE x ALTER COLUMN col TYPE DOUBLE", sqlExecutionContext);
+                drainWalQueue();
+
+                assertQuery("x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tcol
+                                2024-05-14T16:00:00.000000Z\t1.1
+                                2024-05-14T16:00:01.000000Z\tnull
+                                2024-05-14T16:00:02.000000Z\t-2.2
+                                """);
+
+                execute("DROP TABLE x");
+            }
+        });
+    }
+
+    @Test
     public void testChangeDecimalToString() throws Exception {
         // DECIMAL64 -> STRING
         assertChangeDecimalToVar("123456789012345678m", "123456789012345678", "decimal(18, 0)", "STRING");
@@ -303,6 +409,91 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDoubleToDecimal() throws Exception {
+        assertChangeDecimal("1.5", "1.50", "double", "decimal(4, 2)");
+        assertChangeDecimal("-1.5", "-1.50", "double", "decimal(4, 2)");
+        assertChangeDecimal("0.0", "0.00", "double", "decimal(4, 2)");
+        assertChangeDecimal("12", "12.00", "double", "decimal(4, 2)");
+        // excess fractional digits truncate, which is what the DOUBLE -> DECIMAL cast does
+        assertChangeDecimal("3.14159", "3.14", "double", "decimal(10, 2)");
+        assertChangeDecimal("-3.14159", "-3.14", "double", "decimal(10, 2)");
+        assertChangeDecimal("2.999", "2.99", "double", "decimal(10, 2)");
+        // every target width
+        assertChangeDecimal("1.5", "1.5", "double", "decimal(2, 1)");
+        assertChangeDecimal("1.5", "1.50", "double", "decimal(4, 2)");
+        assertChangeDecimal("1.5", "1.500", "double", "decimal(9, 3)");
+        assertChangeDecimal("1.5", "1.5000", "double", "decimal(18, 4)");
+        assertChangeDecimal("1.5", "1.50000", "double", "decimal(38, 5)");
+        assertChangeDecimal("1.5", "1.500000", "double", "decimal(76, 6)");
+        // a magnitude the target precision cannot hold becomes NULL rather than failing the ALTER,
+        // and the widest value that does fit still lands
+        assertChangeDecimal("9999.0", "9999", "double", "decimal(4, 0)");
+        assertChangeDecimal("-9999.0", "-9999", "double", "decimal(4, 0)");
+        assertChangeDecimalToNull("1e300", "double", "decimal(10, 2)");
+        assertChangeDecimalToNull("12345.0", "double", "decimal(4, 0)");
+        // negative zero stores as zero
+        assertChangeDecimal("-0.0", "0.00", "double", "decimal(4, 2)");
+    }
+
+    @Test
+    public void testChangeDoubleToDecimalMatchesCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1.5),
+                    ('2024-05-14T16:00:03.000000Z', 3.14159265358979),
+                    ('2024-05-14T16:00:04.000000Z', -0.000123456),
+                    ('2024-05-14T16:00:05.000000Z', 1234567.891),
+                    ('2024-05-14T16:00:06.000000Z', NULL)""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("CREATE TABLE expected AS (SELECT ts, col::DECIMAL(18,4) col FROM x)", sqlExecutionContext);
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18,4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursors("expected ORDER BY ts", "x ORDER BY ts");
+
+            execute("DROP TABLE x");
+            execute("DROP TABLE expected");
+        });
+    }
+
+    @Test
+    public void testChangeDoubleToDecimalNonFiniteAndNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            // SQL cannot spell an infinity, so the exact bits go in through the writer
+            try (TableWriter writer = getWriter("x")) {
+                appendDouble(writer, "2024-05-14T16:00:00.000000Z", 1.25);
+                appendDouble(writer, "2024-05-14T16:00:01.000000Z", Double.NaN);
+                appendDouble(writer, "2024-05-14T16:00:02.000000Z", Double.POSITIVE_INFINITY);
+                appendDouble(writer, "2024-05-14T16:00:03.000000Z", Double.NEGATIVE_INFINITY);
+                writer.commit();
+            }
+
+            // NaN is the DOUBLE NULL and neither infinity has a decimal representation
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18,4)", sqlExecutionContext);
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t1.2500
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
     public void testChangeVarcharToIntRejectsMalformedUtf8() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
@@ -323,6 +514,231 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             col
                             null
                             """);
+        });
+    }
+
+    @Test
+    public void testChangeDoubleToDecimalNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 1.25),
+                    ('2024-05-14T16:00:01.000000Z', NULL),
+                    ('2024-05-15T16:00:02.000000Z', -8.5)""", sqlExecutionContext);
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18,4)", sqlExecutionContext);
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t1.2500
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-15T16:00:02.000000Z\t-8.5000
+                            """);
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DOUBLE", sqlExecutionContext);
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t1.25
+                            2024-05-14T16:00:01.000000Z\tnull
+                            2024-05-15T16:00:02.000000Z\t-8.5
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeDoubleToDecimalRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1234.5678),
+                    ('2024-05-14T16:00:03.000000Z', NULL)""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(38,4)", sqlExecutionContext);
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DOUBLE", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0.0
+                            2024-05-14T16:00:01.000000Z\t1.5
+                            2024-05-14T16:00:02.000000Z\t-1234.5678
+                            2024-05-14T16:00:03.000000Z\tnull
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeFloatToDecimal() throws Exception {
+        assertChangeDecimal("1.5", "1.50", "float", "decimal(4, 2)");
+        assertChangeDecimal("-1.5", "-1.50", "float", "decimal(4, 2)");
+        assertChangeDecimal("0.0", "0.00", "float", "decimal(4, 2)");
+        // the value routes through its shortest float text, so 0.1f stores as 0.1 rather than the
+        // 0.100000001490116119384765625 a widening to double would expose
+        assertChangeDecimal("0.1", "0.100000", "float", "decimal(10, 6)");
+        assertChangeDecimal("3.14159", "3.14", "float", "decimal(10, 2)");
+        assertChangeDecimal("-3.14159", "-3.14", "float", "decimal(10, 2)");
+        // every target width
+        assertChangeDecimal("1.5", "1.5", "float", "decimal(2, 1)");
+        assertChangeDecimal("1.5", "1.500", "float", "decimal(9, 3)");
+        assertChangeDecimal("1.5", "1.5000", "float", "decimal(18, 4)");
+        assertChangeDecimal("1.5", "1.50000", "float", "decimal(38, 5)");
+        assertChangeDecimal("1.5", "1.500000", "float", "decimal(76, 6)");
+        // a magnitude the target precision cannot hold becomes NULL rather than failing the ALTER,
+        // and the widest value that does fit still lands
+        assertChangeDecimal("9999.0", "9999", "float", "decimal(4, 0)");
+        assertChangeDecimal("-9999.0", "-9999", "float", "decimal(4, 0)");
+        assertChangeDecimalToNull("1e30", "float", "decimal(10, 2)");
+        assertChangeDecimalToNull("12345.0", "float", "decimal(4, 0)");
+        // negative zero stores as zero
+        assertChangeDecimal("-0.0", "0.00", "float", "decimal(4, 2)");
+    }
+
+    @Test
+    public void testChangeFloatToDecimalMatchesCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col FLOAT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1.5),
+                    ('2024-05-14T16:00:03.000000Z', 0.1),
+                    ('2024-05-14T16:00:04.000000Z', 3.14159),
+                    ('2024-05-14T16:00:05.000000Z', -0.000123456),
+                    ('2024-05-14T16:00:06.000000Z', NULL)""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("CREATE TABLE expected AS (SELECT ts, col::DECIMAL(18,4) col FROM x)", sqlExecutionContext);
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18,4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursors("expected ORDER BY ts", "x ORDER BY ts");
+
+            execute("DROP TABLE x");
+            execute("DROP TABLE expected");
+        });
+    }
+
+    @Test
+    public void testChangeFloatToDecimalNonFiniteAndNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col FLOAT) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            // SQL cannot spell an infinity, so the exact bits go in through the writer
+            try (TableWriter writer = getWriter("x")) {
+                appendFloat(writer, "2024-05-14T16:00:00.000000Z", 1.25f);
+                appendFloat(writer, "2024-05-14T16:00:01.000000Z", Float.NaN);
+                appendFloat(writer, "2024-05-14T16:00:02.000000Z", Float.POSITIVE_INFINITY);
+                appendFloat(writer, "2024-05-14T16:00:03.000000Z", Float.NEGATIVE_INFINITY);
+                writer.commit();
+            }
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18,4)", sqlExecutionContext);
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t1.2500
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeFloatToDecimalNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col FLOAT) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 1.25),
+                    ('2024-05-14T16:00:01.000000Z', NULL),
+                    ('2024-05-15T16:00:02.000000Z', -8.5)""", sqlExecutionContext);
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18,4)", sqlExecutionContext);
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t1.2500
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-15T16:00:02.000000Z\t-8.5000
+                            """);
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE FLOAT", sqlExecutionContext);
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t1.25
+                            2024-05-14T16:00:01.000000Z\tnull
+                            2024-05-15T16:00:02.000000Z\t-8.5
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testChangeFloatToDecimalRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col FLOAT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1234.5),
+                    ('2024-05-14T16:00:03.000000Z', NULL)""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(38,4)", sqlExecutionContext);
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN col TYPE FLOAT", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0.0
+                            2024-05-14T16:00:01.000000Z\t1.5
+                            2024-05-14T16:00:02.000000Z\t-1234.5
+                            2024-05-14T16:00:03.000000Z\tnull
+                            """);
+
+            execute("DROP TABLE x");
         });
     }
 
@@ -1802,6 +2218,112 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalWriterConvertsRowOnUncommittedDataDecimalToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeWal();
+            execute("""
+                    CREATE TABLE x AS (
+                    SELECT 1.5m::DECIMAL(18,4) c, to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp
+                    FROM long_sequence(100)
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR WAL""");
+
+            try (WalWriter walWriter = getWalWriter("x")) {
+                TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-02-04"));
+                // DECIMAL(18,4) is backed by a long holding the unscaled value
+                row.putLong(0, 25_000);
+                row.append();
+                execute("alter table x alter column c type double", sqlExecutionContext);
+                walWriter.commit();
+            }
+            drainWalQueue();
+
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\n2.5\n");
+        });
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataDoubleToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeWal();
+            execute("""
+                    CREATE TABLE x AS (
+                    SELECT 1.5 c, to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp
+                    FROM long_sequence(100)
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR WAL""");
+
+            try (WalWriter walWriter = getWalWriter("x")) {
+                TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-02-04"));
+                row.putDouble(0, 2.5);
+                row.append();
+                execute("alter table x alter column c type decimal(18,4)", sqlExecutionContext);
+                walWriter.commit();
+            }
+            drainWalQueue();
+
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\n2.5000\n");
+        });
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataDecimalToFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeWal();
+            execute("""
+                    CREATE TABLE x AS (
+                    SELECT 1.5m::DECIMAL(18,4) c, to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp
+                    FROM long_sequence(100)
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR WAL""");
+
+            try (WalWriter walWriter = getWalWriter("x")) {
+                TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-02-04"));
+                // DECIMAL(18,4) is backed by a long holding the unscaled value
+                row.putLong(0, 25_000);
+                row.append();
+                execute("alter table x alter column c type float", sqlExecutionContext);
+                walWriter.commit();
+            }
+            drainWalQueue();
+
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\n2.5\n");
+        });
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataFloatToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeWal();
+            execute("""
+                    CREATE TABLE x AS (
+                    SELECT 1.5f c, to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp
+                    FROM long_sequence(100)
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR WAL""");
+
+            try (WalWriter walWriter = getWalWriter("x")) {
+                TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-02-04"));
+                row.putFloat(0, 2.5f);
+                row.append();
+                execute("alter table x alter column c type decimal(18,4)", sqlExecutionContext);
+                walWriter.commit();
+            }
+            drainWalQueue();
+
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\n2.5000\n");
+        });
+    }
+
+    @Test
     public void testWalWriterConvertsRowOnUncommittedDataStringToSymbol() throws Exception {
         assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.STRING, " rnd_str(5,1024,2) c,", "symbol"));
     }
@@ -1834,6 +2356,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     // Encodes the given native partition to parquet through TableUtils.produceParquetFromNative
     // with the reader's compacted metadata -- the shape the storage-policy TO PARQUET conversion
     // uses -- and returns the absolute path to the produced data.parquet.
+    private static void appendDouble(TableWriter writer, String timestamp, double value) {
+        TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        row.putDouble(1, value);
+        row.append();
+    }
+
+    private static void appendFloat(TableWriter writer, String timestamp, float value) {
+        TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        row.putFloat(1, value);
+        row.append();
+    }
+
     private static String produceParquetForPartition(TableReader reader, int partitionIndex) {
         final DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
         final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();

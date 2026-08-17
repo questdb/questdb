@@ -48,6 +48,8 @@ import io.questdb.std.str.Utf8s;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
 public class LineTcpEventBuffer {
+    // size of a decimal entity, excluding the leading entity type byte
+    static final int DECIMAL_VALUE_LENGTH = Integer.BYTES + Byte.BYTES + Decimal256.BYTES;
     private final BorrowedArray borrowedDirectArrayView = new BorrowedArray();
     private final long bufLo;
     private final long bufSize;
@@ -157,7 +159,7 @@ public class LineTcpEventBuffer {
         // |   4 bytes   | 1 byte | 32 bytes |
         // +-------------+--------+----------+
 
-        checkCapacity(address, Byte.BYTES * 2 + Integer.BYTES + Decimal256.BYTES);
+        checkCapacity(address, Byte.BYTES + DECIMAL_VALUE_LENGTH);
         Unsafe.putByte(address, LineTcpParser.ENTITY_TYPE_DECIMAL);
         Unsafe.putInt(address + Byte.BYTES, columnType);
         Unsafe.putByte(address + Integer.BYTES + Byte.BYTES, (byte) decimal256.getScale());
@@ -165,7 +167,7 @@ public class LineTcpEventBuffer {
         Unsafe.putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES, decimal256.getHl());
         Unsafe.putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES * 2, decimal256.getLh());
         Unsafe.putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES * 3, decimal256.getLl());
-        return address + Byte.BYTES * 2 + Integer.BYTES + Decimal256.BYTES;
+        return address + Byte.BYTES + DECIMAL_VALUE_LENGTH;
     }
 
     public void addDesignatedTimestamp(long address, long timestamp) {
@@ -355,6 +357,9 @@ public class LineTcpEventBuffer {
             case LineTcpParser.ENTITY_TYPE_FLOAT -> Float.BYTES;
             case LineTcpParser.ENTITY_TYPE_DOUBLE -> Double.BYTES;
             case LineTcpParser.ENTITY_TYPE_UUID -> Long128.BYTES;
+            case LineTcpParser.ENTITY_TYPE_DECIMAL -> DECIMAL_VALUE_LENGTH;
+            // ascii flag, then the utf8 size, then the utf8 payload
+            case LineTcpParser.ENTITY_TYPE_VARCHAR -> Byte.BYTES + Integer.BYTES + readInt(offset + Byte.BYTES);
             case LineTcpParser.ENTITY_TYPE_ARRAY -> readInt(offset);
             case ENTITY_TYPE_NULL -> 0;
             default -> throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");

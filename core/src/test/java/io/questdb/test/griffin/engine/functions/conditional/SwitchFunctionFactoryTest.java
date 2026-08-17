@@ -695,6 +695,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalSwitchKeyRejected() throws Exception {
+        // CaseCommon routes decimal targets to DecimalUtil.getImplicitCastFunction, which
+        // has no CHAR arm; 'switch' then rejects the decimal key type itself.
+        assertQuery("SELECT CASE d WHEN 'a' THEN 1 ELSE 2 END FROM test")
+                .ddl("CREATE TABLE test (d DECIMAL(10,2))")
+                .fails(12, "type DECIMAL(10,2) is not supported in 'switch' type of 'case' statement");
+    }
+
+    @Test
     public void testDouble() throws Exception {
         assertQuery("""
                 select\s
