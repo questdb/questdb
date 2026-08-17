@@ -294,6 +294,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseApplyDuringRederiveForTest;
+    // Test-only: when armed, the fallback scan runs this action BETWEEN the ahead guard's two
+    // reads - after the view watermark read, before the base sequencer head read. That interval
+    // is the contract, not a convenience: it is the window a concurrent refresh worker used to
+    // race, so a test can publish and refresh the next base commit there instead of relying on
+    // thread timing. Keep the call between the two reads. Moving it outside them, or reordering
+    // the reads across it, makes the guard sample a coherent pair either way and silently strips
+    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the two orders
+    // apart.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
     // Test-only: an extra closeable whose close() throws. consumeBaseMetadataCloseFaultForTest
     // closes it and returns the resulting throwable as the primary of the very freeBestEffort call
     // that closes the pooled base metadata, so the fault lands in closeFailure exactly where a real
@@ -550,6 +561,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateBaseApplyDuringRederiveForTest(Runnable action) {
         this.simulateBaseApplyDuringRederiveForTest = action;
+    }
+
+    /**
+     * Test-only: arms a one-shot action that the fallback scan runs BETWEEN the two reads feeding
+     * the live-view-ahead guard - after the view watermark read, after which it blocks the scan,
+     * and before the base sequencer head read. The interval is what the arming test asserts on:
+     * a commit published there is visible to the base-head read but not to the already-captured
+     * watermark, which is exactly the asymmetry that distinguishes the correct read order from
+     * the racy one. Relocating this call outside the two reads leaves
+     * {@code testConcurrentRefreshCannotInvalidateFromStaleBaseHead} green under a read-order
+     * swap that fully restores the race.
+     * <p>
+     * Unlike {@link #setSimulateBaseApplyDuringRederiveForTest}, the action runs with no refresh
+     * latch held and no enclosing {@code catch}, so it may block and a throwable it raises
+     * propagates out of {@code Job.run()} to the caller rather than being swallowed. Production
+     * never calls this.
+     */
+    @TestOnly
+    public void setSimulateBaseCommitBetweenAheadGuardReadsForTest(Runnable action) {
+        this.simulateBaseCommitBetweenAheadGuardReadsForTest = action;
     }
 
     /**
@@ -8178,11 +8209,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // mirroring the mat-view "view is ahead of base table and cannot be synchronized" guard in
             // CairoEngine.loadMatViewIntoStore. A strict no-op on a healthy node, where a view never
             // outruns the base it derives from.
+            // Read the view watermark first. A refresh publishes it only after consuming the
+            // corresponding sequencer transaction, so observing that volatile write before reading
+            // the monotonic base head yields a coherent pair. Reading base first lets another worker
+            // advance the view between the reads and manufactures a false ahead state from two
+            // different points in time. Monotonicity is what makes the order sufficient rather than
+            // merely narrower: TableTransactionLog.lastTxn is a volatile field over an append-only
+            // log, and lastTxn() reads it under the sequencer READ lock, so it cannot observe the
+            // appender's half-published state.
+            final long lastProcessedSeqTxn = instance.getLastProcessedSeqTxn();
+            final Runnable aheadGuardAction = simulateBaseCommitBetweenAheadGuardReadsForTest;
+            if (aheadGuardAction != null) {
+                simulateBaseCommitBetweenAheadGuardReadsForTest = null;
+                aheadGuardAction.run();
+            }
             final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-            if (instance.getLastProcessedSeqTxn() > baseSeqLastTxn) {
+            if (lastProcessedSeqTxn > baseSeqLastTxn) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
-                        .$(", lastProcessedSeqTxn=").$(instance.getLastProcessedSeqTxn())
+                        .$(", lastProcessedSeqTxn=").$(lastProcessedSeqTxn)
                         .$(", baseTableTxn=").$(baseSeqLastTxn)
                         .I$();
                 engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
