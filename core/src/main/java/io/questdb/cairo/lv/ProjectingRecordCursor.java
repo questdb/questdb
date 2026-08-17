@@ -74,11 +74,11 @@ final class ProjectingRecordCursor implements RecordCursor {
     private RecordCursor base;
 
     /**
-     * @param functions             the projection's output functions, one per output column,
-     *                              owned by the compiled factory
+     * @param functions                  the projection's output functions, one per output column,
+     *                                   owned by the compiled factory
      * @param virtualColumnReservedSlots where the projection's own outputs stop and its base's
-     *                              columns start in the function address space, which is what
-     *                              lets a projection reference a column it produced itself
+     *                                   columns start in the function address space, which is what
+     *                                   lets a projection reference a column it produced itself
      */
     ProjectingRecordCursor(ObjList<Function> functions, int virtualColumnReservedSlots) {
         this.functions = functions;

@@ -345,7 +345,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             .withPlanContaining("FilterOnExcludedValues symbolOrder: asc")
                             .returns("""
                                     s
-
+                                    
                                     b
                                     w
                                     """);
@@ -356,7 +356,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                     s
                                     w
                                     b
-
+                                    
                                     """);
                     execute("DROP TABLE a");
                 }
