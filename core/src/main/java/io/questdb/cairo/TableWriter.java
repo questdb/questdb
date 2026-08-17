@@ -7035,6 +7035,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Drain every live indexer's seal-purge outbox before a
+     * {@link #closeActivePartition(boolean)} frees the indexers.
+     * <p>
+     * {@code freeIndexers()} reaches {@code PostingIndexWriter.close()}, which calls
+     * {@code releasePendingPurges()} -- that returns outbox entries to the pool WITHOUT
+     * publishing them, so any superseded {@code .pv} / {@code .pc} they name is never
+     * handed to {@code PostingSealPurgeJob} and leaks on disk: the writer-open recovery
+     * walk is chain-driven and cannot rediscover a never-published sealTxn.
+     * {@code deferPendingPostingSealPurges} publishes what is already safe for the
+     * committed txn and parks the finite-future entries in the TableWriter-owned
+     * {@code deferredPostingSealPurges} list, which survives the indexer reopen.
+     * <p>
+     * Idempotent no-op on an empty outbox, which is the common case. Mirrors the drain
+     * {@code switchPartition} and the O3 / parquet reseal paths already perform before
+     * they release an indexer.
+     */
+    private void drainPendingPostingSealPurgesBeforeIndexerRelease() {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            deferPendingPostingSealPurges(denseIndexers.getQuick(i), txWriter.getTxn());
+        }
+    }
+
     private long dropFuturePostingIndexChainEntriesBeforeLink(
             int srcDirLen,
             CharSequence columnName,
@@ -14507,6 +14530,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
                 lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
                 if (lastPartitionSquashed) {
+                    // closeActivePartition frees the indexers, and PostingIndexWriter.close()
+                    // drops an undrained outbox rather than publishing it.
+                    drainPendingPostingSealPurgesBeforeIndexerRelease();
                     closeActivePartition(false);
                     partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
                 }
@@ -14608,6 +14634,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (lastPartitionSquashed) {
                     openLastPartition();
                 } else {
+                    // Same reason as the lastPartitionSquashed close above: freeIndexers ->
+                    // PostingIndexWriter.close() -> releasePendingPurges() drops the outbox
+                    // instead of publishing it, leaking the superseded .pv/.pc it names.
+                    drainPendingPostingSealPurgesBeforeIndexerRelease();
                     closeActivePartition(false);
                     // openPartition re-points partitionTimestampHi at whatever it opens, but the
                     // target is NOT the last partition here. partitionTimestampHi is the writer's
