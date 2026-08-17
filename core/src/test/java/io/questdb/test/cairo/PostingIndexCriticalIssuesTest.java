@@ -79,6 +79,7 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -98,6 +99,11 @@ import static io.questdb.cairo.TableUtils.*;
  * conditions are marked with comments describing what they need.
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
+
+    @After
+    public void resetMidPartitionAppendPin() {
+        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+    }
 
     @Override
     public void setUp() {
@@ -3043,6 +3049,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testSquashPartitionsKeepsRetainedDeferredPostingSealPurgeAcrossSuccessfulCommit() throws Exception {
+        // Pinned to the reseal path: the assertion is that the .pv/.pc captured
+        // below are eventually purged, which requires the O3 insert to ROTATE
+        // them. A pure append now publishes an incremental covered fragment into
+        // the same files (they stay live, nothing to purge), and forcing a merge
+        // instead would rewrite the partition into a new directory - making the
+        // "files are gone" assertion pass for the wrong reason.
+        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = true;
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
@@ -3110,6 +3123,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testAttachDetachForceRemoveKeepRetainedDeferredPostingSealPurgeAcrossCommits() throws Exception {
+        // Pinned to the reseal path for the same reason as the squash variant
+        // above: the purge assertion needs the O3 insert to rotate .pv/.pc.
+        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = true;
         node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, DETACHED_DIR_MARKER);
 
         assertMemoryLeak(() -> {
@@ -5431,6 +5447,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         };
 
+        // Pinned to the reseal path: this test targets a partial-seal FAILURE
+        // during the covering reseal (the path every merge, split, squash and
+        // parquet commit still takes), and both its fault injection and its
+        // assertions are expressed in terms of the .pv rotation that reseal
+        // performs. The covered append path a pure append now takes publishes an
+        // incremental fragment into the SAME .pv instead, so the scenario cannot
+        // be built there; forcing a merge instead is not equivalent either -
+        // a merge rewrites the partition into a new directory, and the
+        // chain-head checks below read the un-suffixed one.
+        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = true;
         assertMemoryLeak(ff, () -> {
             // sym carries an explicit INCLUDE (ts) so the index is covering:
             // the test arms a fault on the second seal-time .pv rotation, which

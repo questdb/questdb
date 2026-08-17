@@ -128,6 +128,25 @@ public class PostingIndexWriter implements IndexWriter {
     // thread that sets the flag, so there is no cross-thread visibility hazard.
     @TestOnly
     public static boolean COVERING_FASTPATH_DISABLED = false;
+    // @TestOnly override: when true, a pure O3 append into an existing partition
+    // does NOT take the covered append path (index only the appended range at
+    // seal time + incremental covered fragment). O3 indexes the rows as before
+    // and the seal full-reseals. Lets the differential fuzz apply the SAME
+    // stream both ways and assert byte-identical results, and lets a regression
+    // be attributed to the append path. Default false -> never set in
+    // production, so the JIT elides the always-false guard.
+    // Plain (non-volatile) boolean, like the flags above: tests flip it on the
+    // thread that then applies the WAL synchronously.
+    @TestOnly
+    public static boolean COVERING_MIDPART_APPEND_DISABLED = false;
+    // @TestOnly: number of times the O3 seal sweep updated a COVERING index by
+    // indexing only the appended range and publishing an incremental covered
+    // fragment, instead of resealing the partition. Lets a test assert the path
+    // FIRED rather than infer it from COVERING_FULL_RESEAL_COUNT staying 0
+    // (which is also true when nothing happened at all). Gated by
+    // COVERING_COUNTERS_ENABLED like the others.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_MIDPART_APPEND_COUNT = new java.util.concurrent.atomic.AtomicLong();
     // @TestOnly: how many times TableWriter.tryFastAppendInOrderBlock actually
     // committed a block. Distinct from COVERING_FASTLAG_COMMIT_COUNT, which counts
     // the SHARED fast-lag covered publish that the pre-existing single-txn path
@@ -973,6 +992,38 @@ public class PostingIndexWriter implements IndexWriter {
     // from the writer's live coverCount.
     private int headStoredCoveringFormat() {
         return PostingIndexChainEntry.unpackCoveringFormat(keyMem.getInt(chain.getHeadEntryOffset() + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
+    }
+
+    /**
+     * The table {@code _txn} the live chain head's most recent generation was
+     * tagged with, or {@code -1} when there is no head. A value ABOVE the
+     * committed table txn means the newest publish came from an attempt that
+     * never committed (its writer was distressed before {@code txWriter.commit}
+     * landed). Such a head cannot simply be dropped at seal time - a commit in
+     * flight tags its own publishes the same way, so the two are
+     * indistinguishable there - which means any caller that READS the chain to
+     * decide what is already indexed must instead treat it as untrustworthy and
+     * rebuild.
+     */
+    public long getHeadTxnAtSeal() {
+        if (!keyMem.isOpen() || !chain.hasHead()) {
+            return -1L;
+        }
+        if (genCount <= 0) {
+            // No generation, so no "most recent generation" to report. Returning
+            // the entry-level value here would hand back exactly the stale
+            // slot[0] reading this method exists to avoid.
+            return -1L;
+        }
+        // The NEWEST gen's slot, not the entry-level value: the latter is
+        // slot[0]'s, and extendHead deliberately never rewrites slot[0]
+        // (see its "(newGenCount-1)'s gen-dir slot never overwrites it"
+        // note), so an entry extended in place still reports the txn of its
+        // FIRST gen. That is precisely the shape an in-place append leaves,
+        // which is the shape callers here need to judge. Gen-dir TXN_AT_SEAL
+        // is monotonic (enforced by checkGenDirMonotonic), so the last slot
+        // is the most recent publish.
+        return keyMem.getLong(resolveHeadGenDirOffset(genCount - 1) + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
     }
 
     /**
