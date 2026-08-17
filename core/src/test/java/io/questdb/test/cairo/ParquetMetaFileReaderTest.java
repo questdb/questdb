@@ -144,6 +144,71 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnIdLookupBuildsIndexOncePerBinding() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    ParquetMetaTestFile wide = buildFile(64, 1);
+                    ParquetMetaTestFile narrow = buildFile(3, 1)
+            ) {
+                final CountingColumnIdReader reader = new CountingColumnIdReader();
+                reader.of(wide.dataPtr, wide.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+
+                Assert.assertEquals(63, reader.getColumnIndexById(63));
+                Assert.assertEquals(0, reader.getColumnIndexById(0));
+                Assert.assertEquals(-1, reader.getColumnIndexById(1_000));
+                Assert.assertEquals(
+                        "repeated lookups must scan the bound column descriptors only once",
+                        64,
+                        reader.getColumnIdReadCount()
+                );
+
+                reader.of(narrow.dataPtr, narrow.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+                Assert.assertEquals(2, reader.getColumnIndexById(2));
+                Assert.assertEquals(
+                        "rebinding must invalidate and rebuild the id index for the new footer",
+                        67,
+                        reader.getColumnIdReadCount()
+                );
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testColumnIdLookupPreservesLegacyAndFirstMatchSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    ParquetMetaTestFile positional = buildFile(new int[]{-1, -1, -1}, 1);
+                    ParquetMetaTestFile collisions = buildFile(new int[]{-1, 0, 5, 5}, 1)
+            ) {
+                final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(positional.dataPtr, positional.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+
+                Assert.assertEquals(0, reader.getColumnIndexById(0));
+                Assert.assertEquals(2, reader.getColumnIndexById(2));
+                Assert.assertEquals(-1, reader.getColumnIndexById(3));
+
+                reader.of(collisions.dataPtr, collisions.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+                Assert.assertEquals(
+                        "the first descriptor must win an effective-id collision",
+                        0,
+                        reader.getColumnIndexById(0)
+                );
+                Assert.assertEquals(
+                        "the first duplicate id must win",
+                        2,
+                        reader.getColumnIndexById(5)
+                );
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
     public void testColumnMetadataAccessors() throws Exception {
         assertMemoryLeak(() -> {
             // Build a multi-column file with varied types and explicit IDs.
@@ -271,30 +336,21 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testCorruptedColumnCountValidatedBeforeAccess() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                // Corrupt columnCount to a huge value. Without the bounds check,
-                // accessing column descriptors would read past the mmap (SIGSEGV).
-                Unsafe.putInt(file.dataPtr + 24, 1_000_000_000);
-                // Re-checksum so the file is "consistently corrupt": the CRC
-                // matches the modified bytes and resolveFooter's up-front
-                // verifyChecksum0 step lets the columnCount validation fire.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then corrupt columnCount.
+                    // The second resolve reuses that cached verification and must reach the
+                    // Java bounds check before any descriptor access can run past the mmap.
+                    Unsafe.putInt(file.dataPtr + 24, 1_000_000_000);
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Either the Rust-side message ("file too small for ...
-                    // columns") at CRC-verify time or the Java-side message
-                    // ("invalid _pm columnCount") in resolveFooter — both
-                    // prove the corrupt columnCount surfaces a clean
-                    // exception instead of a SIGSEGV.
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("invalid _pm columnCount")
-                                    || e.getMessage().contains("file too small for")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "invalid _pm columnCount [count=1000000000");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -308,29 +364,21 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 int footerLength = Unsafe.getInt(file.dataPtr + file.dataLen - 4);
                 long footerAddr = file.dataPtr + file.dataLen - 4 - Integer.toUnsignedLong(footerLength);
 
-                // Corrupt rowGroupCount to a huge value. Without the validation-before-loop
-                // fix, this causes an out-of-bounds read (SIGSEGV) instead of a clean exception.
-                Unsafe.putInt(footerAddr + 12, 1_000_000_000);
-                // Re-checksum so resolveFooter's up-front verifyChecksum0 step
-                // lets the rowGroupCount validation fire.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then corrupt the footer.
+                    // Reusing the same reader bypasses native reparsing so the Java
+                    // length check must reject the count before the row-group loop.
+                    Unsafe.putInt(footerAddr + 12, 1_000_000_000);
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Either the Rust-side message ("footer too small for ...
-                    // row groups") at CRC-verify time or the Java-side
-                    // message ("invalid _pm footer length") in resolveFooter
-                    // — both prove the corrupt rowGroupCount surfaces a clean
-                    // exception instead of a SIGSEGV.
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("invalid _pm footer length")
-                                    || e.getMessage().contains("footer too small for")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "invalid _pm footer length [rowGroupCount=1000000000");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -342,7 +390,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // buildFile sets dts=-1 and no sorting columns, so SORTING_IS_DTS_ASC
             // is clear and resolveFooter enters the explicit sorting-array bound
             // check. The first resolveFooter caches the CRC; the second skips
-            // verifyChecksum0 (which would otherwise reject the corrupt count via
+            // the checksum parse (which would otherwise reject the corrupt count via
             // the Rust header parse) and reaches the Java-side bound check, which
             // must reject before any accessor reads past the sorting array.
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
@@ -368,7 +416,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
                 // Corrupt the footer length trailer to point past the file.
                 // The trailer sits outside the CRC region, so re-checksumming
-                // would not help: verifyChecksum0's from_file_size step uses
+                // would not help: the checksum parse's from_file_size step uses
                 // the trailer to derive the footer offset and rejects the
                 // file ("footer length ... exceeds file size") before
                 // computing the CRC. The Java-side resolveFooter has the
@@ -671,7 +719,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         Unsafe.putLong(newBuf, newTotalLen);   // header parquet_meta_file_size
 
                         // Recompute CRC after the snapshot is fully published
-                        // so resolveFooter's up-front verifyChecksum0 step
+                        // so resolveFooter's up-front checksum step
                         // accepts the file and the chain-walk validation
                         // (the test's actual subject) gets to fire.
                         patchCrc(newBuf, newTotalLen);
@@ -1736,31 +1784,22 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testUnknownRequiredFeatureFlagRejected() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                // Set bit 32 (a required feature flag) in the header feature flags at offset 8.
-                long originalFlags = Unsafe.getLong(file.dataPtr + 8);
-                Unsafe.putLong(file.dataPtr + 8, originalFlags | (1L << 32));
-                // Re-checksum so the file is "consistently corrupt": the CRC
-                // matches the modified bytes. The Rust-side reader rejects
-                // the unknown required header flag while parsing the header
-                // (during verifyChecksum0's from_file_size step) before the
-                // Java-side validation in resolveFooter ever runs.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then set required bit 32.
+                    // The second resolve reuses the cached native reader and must reach
+                    // the Java required-feature guard.
+                    long originalFlags = Unsafe.getLong(file.dataPtr + 8);
+                    Unsafe.putLong(file.dataPtr + 8, originalFlags | (1L << 32));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Either the Rust-side message ("unsupported required
-                    // feature flags") at CRC-verify time or the Java-side
-                    // message ("unsupported required _pm feature flags") in
-                    // resolveFooter — both prove the bad flag is rejected.
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("unsupported required feature flags")
-                                    || e.getMessage().contains("unsupported required _pm feature flags")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm feature flags [flags=0x100000000]");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -1770,36 +1809,25 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testUnknownRequiredFooterFeatureFlagRejected() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                // Footer feature flags live at footerOffset + 32 (FOOTER_FEATURE_FLAGS_OFF).
-                // Derive the footer offset from the trailer, then set bit 32
-                // (a required footer feature flag) on the footer flags.
                 int footerLength = Unsafe.getInt(file.dataPtr + file.parquetMetaFileSize - 4);
                 long footerOffset = file.parquetMetaFileSize - 4 - Integer.toUnsignedLong(footerLength);
                 long footerFlagsAddr = file.dataPtr + footerOffset + 32;
-                long originalFlags = Unsafe.getLong(footerFlagsAddr);
-                Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
-                // Re-checksum so the file is "consistently corrupt": the CRC
-                // matches the modified bytes. The Rust-side reader rejects
-                // the unknown required footer flag during verifyChecksum0's
-                // from_file_size step, before the Java-side validation in
-                // resolveFooter runs.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then set required bit 32.
+                    // The second resolve reuses the cached native reader and must reach
+                    // the Java required-footer-feature guard.
+                    long originalFlags = Unsafe.getLong(footerFlagsAddr);
+                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Accept either the Rust-side message ("unsupported
-                    // required footer feature flags") or the Java-side
-                    // message ("unsupported required _pm footer feature
-                    // flags").
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("unsupported required footer feature flags")
-                                    || e.getMessage().contains("unsupported required _pm footer feature flags")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x100000000]");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -1841,6 +1869,38 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
             }
             ParquetMetaFileWriter.setParquetFooter(writerPtr, parquetFooterOff, parquetFooterLen);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new ParquetMetaTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
+    private static ParquetMetaTestFile buildFile(int[] columnIds, long... rowGroupSizes) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
+            for (int i = 0; i < columnIds.length; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(
+                            writerPtr,
+                            name.ptr(),
+                            (int) name.size(),
+                            columnIds[i],
+                            5,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                    );
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+            }
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
             return new ParquetMetaTestFile(resultPtr);
         } finally {
@@ -1900,6 +1960,20 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    private static final class CountingColumnIdReader extends ParquetMetaFileReader {
+        private int columnIdReadCount;
+
+        @Override
+        public int getColumnId(int columnIndex) {
+            columnIdReadCount++;
+            return super.getColumnId(columnIndex);
+        }
+
+        private int getColumnIdReadCount() {
+            return columnIdReadCount;
+        }
+    }
+
     /**
      * Recomputes and patches the CRC32 in a {@code _pm} snapshot whose footer
      * ends at byte offset {@code snapshotEnd} from {@code addr}.
@@ -1910,7 +1984,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
      * mutable {@code parquet_meta_file_size} field at offset 0.
      * <p>
      * Tests that hand-build {@code _pm} bytes (or corrupt fields inside the CRC
-     * region) call this so the reader's up-front {@code verifyChecksum0} step
+     * region) call this so the reader's up-front checksum step
      * accepts the file and the test's specific structural validation can fire.
      */
     private static void patchCrc(long addr, long snapshotEnd) {

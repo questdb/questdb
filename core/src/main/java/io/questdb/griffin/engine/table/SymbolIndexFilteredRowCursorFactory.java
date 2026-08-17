@@ -74,6 +74,16 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
         return false;
     }
 
+    // Both selecting values must be stable: the symbol key AND the residual index filter. A null key
+    // function means a compile-time-resolved constant key (stable); a single unstable source
+    // (e.g. rnd_* in either) makes the selected rows vary across opens.
+    @Override
+    public boolean isStableWithinExecution() {
+        final Function filter = cursor.getFilter();
+        return (symbolFunction == null || symbolFunction.isStableWithinExecution())
+                && (filter == null || filter.isStableWithinExecution());
+    }
+
     @Override
     public boolean isUsingIndex() {
         return true;

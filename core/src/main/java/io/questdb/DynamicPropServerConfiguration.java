@@ -105,6 +105,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES,
             PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES,
             PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES,
+            PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES,
             PropertyKey.MEMORY_USAGE_LOG_ENABLED,
             PropertyKey.MEMORY_USAGE_LOG_INTERVAL,
             PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL
@@ -355,6 +356,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getLineUdpReceiverConfiguration();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getLiveViewRefreshPoolConfiguration();
     }
 
     @Override

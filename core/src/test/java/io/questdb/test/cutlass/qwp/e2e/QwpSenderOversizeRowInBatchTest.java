@@ -46,6 +46,7 @@ import org.junit.Test;
 import java.net.ServerSocket;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 
 /**
  * End-to-end red test for the "row too large" producer-side guard inside
@@ -87,6 +88,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
     // 600 KB payload comfortably exceeds the 131058 cap with margin for
     // per-column metadata.
     private static final int ROW_PAYLOAD_SIZE_BYTES = 600_000;
+    private static final String TABLE_NAME = "oversize_batch_t";
 
     @Test
     public void testOversizeBatchFlushTripsProducerGuard() throws Exception {
@@ -108,7 +110,26 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                         + ";auto_flush_bytes=off"
                         + ";auto_flush_interval=60000;";
 
-                try (Sender sender = Sender.builder(config).build()) {
+                // A small batch that flushes and commits cleanly before the
+                // oversized one below is even buffered. close() must not
+                // abandon these rows when it later discards the permanently
+                // oversized batch.
+                int rowsFlushedBeforeTheOversizedBatch = 3;
+
+                // Not try-with-resources: close() is expected to still throw
+                // below (rethrowTerminal surfaces the discarded batch's error
+                // after close() finishes committing/draining the earlier
+                // rows), and try-with-resources would let that throw escape
+                // uncaught, aborting the test before the row-count assertion.
+                Sender sender = Sender.builder(config).build();
+                try {
+                    for (int i = 0; i < rowsFlushedBeforeTheOversizedBatch; i++) {
+                        sender.table(TABLE_NAME)
+                                .stringColumn("payload", "small-row-" + i)
+                                .at(100L * (i + 1), ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+
                     char[] chunkChars = new char[ROW_CHUNK_BYTES];
                     Arrays.fill(chunkChars, 'x');
                     String chunk = new String(chunkChars);
@@ -117,7 +138,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                     // sidecar's ~131 KB cap. Each individual row is far
                     // below the cap so the per-row guard cannot help.
                     for (int i = 0; i < BATCH_ROW_COUNT; i++) {
-                        sender.table("oversize_batch_t")
+                        sender.table(TABLE_NAME)
                                 .stringColumn("payload", chunk)
                                 .at(1_000L * (i + 1), ChronoUnit.MICROS);
                     }
@@ -139,7 +160,49 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                             "expected 'batch too large for server batch cap' message,"
                                     + " got: " + msg,
                             msg.contains("batch too large for server batch cap"));
+                    Assert.assertTrue("the rejection must name reset() as the non-destructive "
+                                    + "recovery [msg=" + msg + ']',
+                            msg.contains("reset()"));
+
+                    // A failed flush intentionally retains the buffered rows for retry
+                    // -- so the permanently oversized batch stays buffered here, and
+                    // close() (in the finally block below) is what must discard it.
+                } finally {
+                    LineSenderException closeThrown = null;
+                    try {
+                        sender.close();
+                    } catch (LineSenderException e) {
+                        closeThrown = e;
+                    }
+                    Assert.assertNotNull(
+                            "expected close() to still surface the discarded batch's error via"
+                                    + " rethrowTerminal, after committing the earlier rows",
+                            closeThrown);
+                    String closeMsg = closeThrown.getMessage();
+                    Assert.assertNotNull(closeMsg);
+                    Assert.assertTrue(
+                            "expected 'batch too large for server batch cap' message from close(),"
+                                    + " got: " + closeMsg,
+                            closeMsg.contains("batch too large for server batch cap"));
+                    Assert.assertTrue("the rejection must name reset() as the non-destructive "
+                                    + "recovery [msg=" + closeMsg + ']',
+                            closeMsg.contains("reset()"));
                 }
+
+                // Rows flushed BEFORE the oversized batch must still be COMMITTED by
+                // close(), not abandoned with it. Letting the pre-flight rejection escape
+                // skips sendCommitMessage/sealAndSwapBuffer and these rows never reach a
+                // transaction at all -- mutation-verified: this assertion then fails with
+                // "txn timed out [expectedTxn=1, writerTxn=0]".
+                //
+                // Scope: this pins the COMMIT, not the close-time DRAIN. Over localhost the
+                // rows are normally acked before close() is even entered, so drainOnClose
+                // returns at its "ackedFsn >= target" early-out and skipping it leaves this
+                // test green (also mutation-verified). The drain is pinned deterministically
+                // by CloseDrainTest.testCloseDrainsEarlierRowsBeforeSurfacingRetainedBatchError
+                // in java-questdb-client, which withholds acks so the drain provably has an
+                // unacknowledged target and asserts its close-drain witness fired.
+                assertRowCountEventually(TABLE_NAME, rowsFlushedBeforeTheOversizedBatch);
             } finally {
                 server.stop();
                 drainWalQueue();
@@ -209,6 +272,24 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                 engine.releaseInactive();
                 engine.getMemoryTrackerProvider().clear();
             }
+        });
+    }
+
+    /**
+     * Polls until {@code tableName} carries exactly {@code expectedRowCount} rows.
+     * WAL apply and the row's arrival over the wire both happen off the producer
+     * thread, so this retries {@code drainWalQueue()} and the count query instead
+     * of asserting them once.
+     */
+    private void assertRowCountEventually(String tableName, long expectedRowCount) throws Exception {
+        TestUtils.assertEventually(() -> {
+            drainWalQueue();
+            engine.awaitTable(tableName, 30, TimeUnit.SECONDS);
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + expectedRowCount + "\n");
         });
     }
 

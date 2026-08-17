@@ -89,24 +89,20 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
             if (Numbers.isNull(value)) {
                 return null;
             }
-
-            final int key = Float.floatToIntBits(value);
-            final int keyIndex = symbolTableShortcut.keyIndex(key);
-            if (keyIndex < 0) {
-                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
-            }
-
-            symbolTableShortcut.putAt(keyIndex, key, next++);
-            sink.clear();
-            sink.put(value);
-            final String str = Chars.toString(sink);
-            symbols.add(Chars.toString(sink));
-            return str;
+            return getSymbol0(Float.floatToIntBits(value));
         }
 
         @Override
         protected AbstractCastToSymbolFunction newFunc() {
             return new Func(arg);
+        }
+
+        @Override
+        protected String symbolOf(int key) {
+            // The shortcut keys on the raw bits, so render the float they encode.
+            sink.clear();
+            sink.put(Float.intBitsToFloat(key));
+            return Chars.toString(sink);
         }
     }
 }

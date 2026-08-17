@@ -33,6 +33,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 
 import java.math.RoundingMode;
 
@@ -49,6 +50,61 @@ public class DecimalColumnTypeConverter {
     private static final Loader loaderFromShort = DecimalColumnTypeConverter::loadDecimalFromShort;
 
     public static boolean convertToDecimal(long srcMem, int srcType, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+        // A binary float has no per-column scale - 1.5 is scale 1 and 3.14159 is scale 5 - so the
+        // Loader indirection, which reads one srcScale for the whole column, cannot describe it.
+        // Both convert straight to the target precision and scale instead.
+        switch (ColumnType.tagOf(srcType)) {
+            case ColumnType.DOUBLE:
+                convertDoubleToDecimal(srcMem, dstMem, dstType, srcColumnTypeSize, rowCount);
+                return true;
+            case ColumnType.FLOAT:
+                convertFloatToDecimal(srcMem, dstMem, dstType, srcColumnTypeSize, rowCount);
+                return true;
+            default:
+                return convertFixedToDecimal(srcMem, srcType, dstMem, dstType, srcColumnTypeSize, rowCount);
+        }
+    }
+
+    static Loader getLoader(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BYTE -> loaderFromByte;
+            case ColumnType.SHORT -> loaderFromShort;
+            case ColumnType.INT -> loaderFromInt;
+            case ColumnType.LONG -> loaderFromLong;
+            case ColumnType.DECIMAL8 -> loaderFromDecimal8;
+            case ColumnType.DECIMAL16 -> loaderFromDecimal16;
+            case ColumnType.DECIMAL32 -> loaderFromDecimal32;
+            case ColumnType.DECIMAL64 -> loaderFromDecimal64;
+            case ColumnType.DECIMAL128 -> loaderFromDecimal128;
+            case ColumnType.DECIMAL256 -> loaderFromDecimal256;
+            default -> null;
+        };
+    }
+
+    private static void convertDoubleToDecimal(long srcMem, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+        final int dstScale = ColumnType.getDecimalScale(dstType);
+        final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
+        final Decimal256 decimal = Misc.getThreadLocalDecimal256();
+        final long hi = srcMem + rowCount * srcColumnTypeSize;
+        for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
+            final double value = Unsafe.getDouble(i);
+            // NaN is the DOUBLE NULL and neither infinity has a decimal representation. A magnitude
+            // beyond the target precision becomes NULL too, the same policy the loop above follows.
+            // Excess fractional digits truncate, matching the DOUBLE -> DECIMAL SQL cast.
+            if (Numbers.isFinite(value)) {
+                try {
+                    Numbers.doubleToDecimal(value, decimal, dstPrecision, dstScale, true);
+                } catch (NumericException ignored) {
+                    decimal.ofNull();
+                }
+            } else {
+                decimal.ofNull();
+            }
+            DecimalUtil.store(decimal, dstMem, dstType);
+        }
+    }
+
+    private static boolean convertFixedToDecimal(long srcMem, int srcType, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
         final int srcScale = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
         final int dstScale = ColumnType.getDecimalScale(dstType);
         final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
@@ -95,20 +151,32 @@ public class DecimalColumnTypeConverter {
         return true;
     }
 
-    static Loader getLoader(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BYTE -> loaderFromByte;
-            case ColumnType.SHORT -> loaderFromShort;
-            case ColumnType.INT -> loaderFromInt;
-            case ColumnType.LONG -> loaderFromLong;
-            case ColumnType.DECIMAL8 -> loaderFromDecimal8;
-            case ColumnType.DECIMAL16 -> loaderFromDecimal16;
-            case ColumnType.DECIMAL32 -> loaderFromDecimal32;
-            case ColumnType.DECIMAL64 -> loaderFromDecimal64;
-            case ColumnType.DECIMAL128 -> loaderFromDecimal128;
-            case ColumnType.DECIMAL256 -> loaderFromDecimal256;
-            default -> null;
-        };
+    private static void convertFloatToDecimal(long srcMem, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+        final int dstScale = ColumnType.getDecimalScale(dstType);
+        final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
+        final Decimal256 decimal = Misc.getThreadLocalDecimal256();
+        final StringSink sink = Misc.getThreadLocalSink();
+        final long hi = srcMem + rowCount * srcColumnTypeSize;
+        for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
+            final float value = Unsafe.getFloat(i);
+            // Same NULL and overflow policy as the double loop below. The value routes through its
+            // shortest round-trip text rather than a widening to double, because widening exposes
+            // the binary residue - 0.1f becomes 0.100000001490116119384765625 - which the
+            // FLOAT -> DECIMAL SQL cast does not store either.
+            if (Float.isFinite(value)) {
+                sink.clear();
+                sink.put(value);
+                try {
+                    decimal.ofString(sink, 0, sink.length(), dstPrecision, dstScale, false, true);
+                } catch (NumericException ignored) {
+                    decimal.ofNull();
+                }
+            } else {
+                decimal.ofNull();
+            }
+            DecimalUtil.store(decimal, dstMem, dstType);
+        }
+        sink.clear();
     }
 
     private static void loadDecimalFromByte(Decimal256 decimal, long addr) {

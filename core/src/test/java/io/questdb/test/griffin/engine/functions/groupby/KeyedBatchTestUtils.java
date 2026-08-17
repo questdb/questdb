@@ -82,9 +82,37 @@ final class KeyedBatchTestUtils {
     // split 4/4 between primed (existing) and fresh (new) slots. The priming
     // batch targets entries 0..3 via rows 0, 2, 4, 6; the test batch pairs
     // each of the eight entries with a distinct row index.
+    //
+    // The batches run at base rowIds 2000, 3000, then 1000: the test batch replays above the
+    // primed rowIds, the descending batch below every rowId written so far. Without it every
+    // incoming rowId exceeds every stored one, so "rowId < stored" is never true and
+    // "rowId > stored" never false, leaving a first_not_null override's rowId comparison and a
+    // last_not_null override's stored-value-is-null guard as redundant disjuncts that no
+    // assertion can tell apart from the plain base.
+    //
+    // Null placement varies by type (notably IPv4), so which entries hold a stored NULL also varies.
+    // The descending rows are chosen to revisit the mix with lower rowIds; rows may repeat because
+    // buildBatchBuffer pairs rows with entry offsets independently.
+    private static final long DESCENDING_BASE_ROW_ID = 1000;
+    private static final boolean[] DESCENDING_IS_NEW = {false, false, false, false, false, false, false, false};
+    private static final long[] DESCENDING_ROWS = {0, 4, 1, 7, 2, 6, 6, 0};
     private static final int ENTRY_COUNT = 8;
+    private static final long PRIME_BASE_ROW_ID = 2000;
     private static final boolean[] PRIME_IS_NEW = {true, true, true, true};
     private static final long[] PRIME_ROWS = {0, 2, 4, 6};
+    // Every batch above pairs each entry with exactly ONE row, so none of them covers a key that
+    // several rows of the same batch land on - what a low-cardinality key does in production, where
+    // a 2048-row frame collapses onto a handful of entries. Nor can they tell one scan direction
+    // from another. This batch covers it: four entries, two rows each, ascending rows, over fresh
+    // regions so the first row to reach an entry creates it, as probeBatch marks it.
+    //
+    // The exact NULL/non-null combination for each entry depends on the type-specific fixture. The
+    // shared invariant is that every entry receives two rows, exercising revisits and scan direction;
+    // fixtures with NULLs additionally exercise replacing or retaining stored NULL values.
+    private static final long REPEATED_BASE_ROW_ID = 4000;
+    private static final boolean[] REPEATED_IS_NEW = {true, true, true, false, false, true, false, false};
+    private static final long[] REPEATED_ROWS = {0, 1, 2, 3, 4, 5, 6, 7};
+    private static final long TEST_BASE_ROW_ID = 3000;
     private static final boolean[] TEST_IS_NEW = {false, false, false, false, true, true, true, true};
     private static final long[] TEST_ROWS = {3, 1, 6, 5, 0, 1, 2, 5};
 
@@ -244,7 +272,10 @@ final class KeyedBatchTestUtils {
      *         entries);</li>
      *     <li>the test batch then pairs each of those eight entries with a
      *         distinct row, producing every {isNew, isNull} combination in a
-     *         single pass.</li>
+     *         single pass, at rowIds above the primed ones;</li>
+     *     <li>the descending batch finally revisits all eight entries at rowIds
+     *         below every rowId written so far, so both rowId directions are
+     *         exercised against both a stored non-null value and a stored NULL.</li>
      * </ul>
      * The caller supplies an already-allocated argument buffer along with its
      * element size (in bytes); ownership transfers to the returned record so
@@ -269,8 +300,8 @@ final class KeyedBatchTestUtils {
                 final long[] primeOffsets = {0, valueSize, 2 * valueSize, 3 * valueSize};
                 final long primeBatch = buildBatchBuffer(PRIME_ROWS, primeOffsets, PRIME_IS_NEW);
                 try {
-                    runReferencePath(function, record, flyweightA, baseA, primeBatch, PRIME_ROWS.length, 0);
-                    runReferencePath(function, record, flyweightB, baseB, primeBatch, PRIME_ROWS.length, 0);
+                    runReferencePath(function, record, flyweightA, baseA, primeBatch, PRIME_ROWS.length, PRIME_BASE_ROW_ID);
+                    runReferencePath(function, record, flyweightB, baseB, primeBatch, PRIME_ROWS.length, PRIME_BASE_ROW_ID);
                 } finally {
                     Unsafe.free(primeBatch, (long) PRIME_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -281,24 +312,61 @@ final class KeyedBatchTestUtils {
                 assertBytesEqual(baseA, baseB, regionBytes);
 
                 // Test batch: existing entries first, then new entries. Row
-                // indexes alternate null / non-null values from the caller's
-                // ARG_VALUES to cover {isNew, isNull} × {true, false}.
+                // indexes select the caller's type-specific mix of null and non-null values to cover
+                // new and existing entries with both value states.
                 final long[] testOffsets = {
                         0, valueSize, 2 * valueSize, 3 * valueSize,
                         4 * valueSize, 5 * valueSize, 6 * valueSize, 7 * valueSize
                 };
                 final long testBatch = buildBatchBuffer(TEST_ROWS, testOffsets, TEST_IS_NEW);
                 try {
-                    runReferencePath(function, record, flyweightA, baseA, testBatch, TEST_ROWS.length, 1000);
-                    function.computeKeyedBatch(record, flyweightB, baseB, testBatch, TEST_ROWS.length, 1000);
+                    runReferencePath(function, record, flyweightA, baseA, testBatch, TEST_ROWS.length, TEST_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseB, testBatch, TEST_ROWS.length, TEST_BASE_ROW_ID);
                 } finally {
                     Unsafe.free(testBatch, (long) TEST_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                assertBytesEqual(baseA, baseB, regionBytes);
+
+                // Descending batch: revisits all eight entries below every rowId written so far,
+                // so a lower incoming rowId meets both a stored non-null value (which "first"
+                // must replace and "last" must keep) and a stored NULL (which both not-null
+                // variants must replace).
+                final long descendingBatch = buildBatchBuffer(DESCENDING_ROWS, testOffsets, DESCENDING_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseA, descendingBatch, DESCENDING_ROWS.length, DESCENDING_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseB, descendingBatch, DESCENDING_ROWS.length, DESCENDING_BASE_ROW_ID);
+                } finally {
+                    Unsafe.free(descendingBatch, (long) DESCENDING_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
 
                 assertBytesEqual(baseA, baseB, regionBytes);
             } finally {
                 Unsafe.free(baseA, regionBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(baseB, regionBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            // Repeated-entry batch, on its own pair of regions so that an entry can be created and
+            // then revisited within the one batch. See REPEATED_ROWS for what each entry covers.
+            final long baseC = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightA);
+            final long baseD = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightB);
+            try {
+                final long[] repeatedOffsets = {
+                        0, valueSize, 2 * valueSize, 0,
+                        valueSize, 3 * valueSize, 2 * valueSize, 3 * valueSize
+                };
+                final long repeatedBatch = buildBatchBuffer(REPEATED_ROWS, repeatedOffsets, REPEATED_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseC, repeatedBatch, REPEATED_ROWS.length, REPEATED_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseD, repeatedBatch, REPEATED_ROWS.length, REPEATED_BASE_ROW_ID);
+                } finally {
+                    Unsafe.free(repeatedBatch, (long) REPEATED_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                assertBytesEqual(baseC, baseD, regionBytes);
+            } finally {
+                Unsafe.free(baseC, regionBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(baseD, regionBytes, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

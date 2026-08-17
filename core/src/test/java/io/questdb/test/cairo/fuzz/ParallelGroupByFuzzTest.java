@@ -43,7 +43,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -4891,7 +4890,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_geohash(12) ageoshort," +
                                         " rnd_char() achar," +
                                         " rnd_int(0,1000,3) anint," +
-                                        " rnd_ipv4() anipv4," +
+                                        " CASE WHEN x % 7 = 0 THEN NULL ELSE rnd_ipv4() END anipv4," +
                                         " rnd_geohash(16) ageoint," +
                                         " rnd_symbol(4,4,4,2) asymbol," +
                                         " rnd_float(3) afloat," +
@@ -5141,7 +5140,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
                         final NetworkSqlExecutionCircuitBreaker circuitBreaker =
-                                new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
+                                new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration);
                         try {
                             engine.execute(
                                     "CREATE TABLE tab ( " +
