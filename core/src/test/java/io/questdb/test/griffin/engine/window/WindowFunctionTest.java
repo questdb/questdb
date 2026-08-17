@@ -1943,7 +1943,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // ORDER BY designated timestamp -> dismissOrder=true path.
             assertQuery("SELECT cume_dist() OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [cume_dist() over (order by [ts])]
                                         PageFrame
@@ -1952,7 +1952,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
                                         PageFrame
@@ -1963,7 +1963,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // ORDER BY non-timestamp column -> dismissOrder=false path (the previously-broken one).
             assertQuery("SELECT cume_dist() OVER (ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
                                         PageFrame
@@ -1972,7 +1972,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT cume_dist() OVER (PARTITION BY i ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
                                         PageFrame
@@ -10956,7 +10956,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("SELECT ts, ntile(3) OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [ntile(3) over (order by [ts])]
                                         PageFrame
@@ -10965,7 +10965,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ts, ntile(2) OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
                                         PageFrame
@@ -10975,7 +10975,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("SELECT ts, cume_dist() OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [cume_dist() over (order by [ts])]
                                         PageFrame
@@ -10984,7 +10984,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ts, cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
                                         PageFrame
@@ -10994,7 +10994,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("SELECT ts, nth_value(val, 2) OVER (PARTITION BY i) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over (partition by [i])]
                                         PageFrame
@@ -12552,7 +12552,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
             assertQuery("select ts, nth_value(val, 2) over () from tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over ()]
                                         PageFrame
@@ -12595,7 +12595,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i) from tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over (partition by [i])]
                                         PageFrame
@@ -15863,7 +15863,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
             assertQuery("select ts, nth_value(val, 2) over () from tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over ()]
                                         PageFrame
@@ -15906,7 +15906,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i) from tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over (partition by [i])]
                                         PageFrame
@@ -16111,7 +16111,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverWholeResultSetFunction
             assertQuery("select ts, nth_value(val, 2) over () from tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over ()]
                                         PageFrame
@@ -16160,7 +16160,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverPartitionFunction (whole partition)
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i) from tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [nth_value(val,2) over (partition by [i])]
                                         PageFrame
@@ -16702,7 +16702,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("SELECT ntile(3) OVER () FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [ntile(3) over ()]
                                         PageFrame
@@ -16711,7 +16711,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [ntile(3) over (partition by [i])]
                                         PageFrame
@@ -16720,7 +16720,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ntile(3) OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [ntile(3) over (order by [ts])]
                                         PageFrame
@@ -16729,7 +16729,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
                                         PageFrame
@@ -16738,7 +16738,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ntile(3) OVER (ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
                                         PageFrame
@@ -16747,7 +16747,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
                                         PageFrame

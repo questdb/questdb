@@ -79,10 +79,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
     }
 
     private void testJoinThrowsLimitOverflowException(String sql) throws Exception {
-        // The smallest page the startup floor accepts. Combined with zero resizes it still overflows
-        // on the second column added to the join metadata, which is what these tests are after; the
-        // 10 this used to pass is now rejected as a configuration error.
-        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 32);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 10);
         node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, 0);
 
         assertMemoryLeak(() -> {

@@ -627,11 +627,12 @@ public class OrderedMap implements Map, Reopenable {
      * two - 32GB against 512GB - so it is the one that binds; the assert keeps that ordering honest
      * if either constant ever moves.
      * <p>
-     * Both allocation sites route through here. Checking only the batch bound let the constructor
-     * allocate an initial page up to 512GB: entries starting above the 32GB mark then compressed to
-     * a truncated offset or to the empty-slot encoding, so a probe aliased an earlier entry or read
-     * a live one as empty. resize() clamps to the ceiling and so cannot reach that state, but it
-     * validates too, for the same reason the constructor does.
+     * The constructor and resize() route through here. reopen(int, long) does not: it assigns
+     * initialHeapSize directly and allocates it through restoreInitialCapacity(). Checking only the
+     * batch bound let the constructor allocate an initial page up to 512GB: entries starting above
+     * the 32GB mark then compressed to a truncated offset or to the empty-slot encoding, so a probe
+     * aliased an earlier entry or read a live one as empty. resize() clamps to the ceiling and so
+     * cannot reach that state, but it validates too, for the same reason the constructor does.
      */
     private static void validateHeapAddressable(long sizeBytes) {
         assert MAX_HEAP_SIZE <= Map.BATCH_OFFSET_MASK;
