@@ -24,10 +24,469 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class GroupByRewriteTest extends AbstractCairoTest {
+
+    @Test
+    public void testFilterAliasIsNotAClause() throws Exception {
+        // 'filter' is not reserved, so it stays usable as a column alias when '(' does not follow it
+        assertAggQuery("""
+                        filter
+                        55
+                        """,
+                "select sum(x) filter from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterArgMaxDoesNotLetNonMatchingKeyWin() throws Exception {
+        // arg_max null-checks only its ordering key, so the key must be wrapped too. Without that,
+        // the row holding the global maximum key (k=10) would win even though it fails the condition.
+        assertAggQuery("""
+                        r
+                        5.0
+                        """,
+                "select arg_max(v, k) filter (where k <= 5) r from t",
+                "create table t as ( select x::double v, x::double k from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterAvgMinMaxMatchFilteredSubQuery() throws Exception {
+        assertAggQuery("""
+                        a\tmi\tma
+                        8.0\t6\t10
+                        """,
+                "select avg(x) a, min(x) mi, max(x) ma from (select x from y where x > 5)",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        a\tmi\tma
+                        8.0\t6\t10
+                        """,
+                "select avg(x) filter (where x > 5) a, min(x) filter (where x > 5) mi, max(x) filter (where x > 5) ma from y",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterBindVariableCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 5);
+            assertQuery("select sum(x) filter (where x > $1) r from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            40
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterCoalesceRestoresZero() throws Exception {
+        assertAggQuery("""
+                        r
+                        0
+                        """,
+                "select coalesce(sum(x) filter (where x > 100), 0) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterComplexCondition() throws Exception {
+        assertAggQuery("""
+                        r
+                        4
+                        """,
+                "select count(*) filter (where x > 2 and x < 8 and x != 5) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        5
+                        """,
+                "select count(*) filter (where not (x > 5)) r from y",
+                null
+        );
+        assertAggQuery("""
+                        r
+                        3
+                        """,
+                "select count(*) filter (where x between 3 and 5) r from y",
+                null
+        );
+        assertAggQuery("""
+                        r
+                        3
+                        """,
+                "select count(*) filter (where x in (1, 2, 3)) r from y",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterConstantParameterPassesThrough() throws Exception {
+        // string_agg's delimiter is a configuration parameter, not a per-row value, so it must not
+        // be wrapped in the CASE - otherwise non-matching rows would null the delimiter itself
+        assertAggQuery("""
+                        r
+                        a4,a5
+                        """,
+                "select string_agg(s, ',') filter (where x > 3) r from t",
+                "create table t as ( select 'a' || x s, x from long_sequence(5) )"
+        );
+        // approx_percentile takes a non-constant-typed percentile argument that is still a parameter
+        assertAggQuery("""
+                        r
+                        8.25
+                        """,
+                "select approx_percentile(x::double, 0.5) filter (where x > 5) r from t2",
+                "create table t2 as ( select x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        8.25
+                        """,
+                "select approx_percentile(x::double, 0.5) r from (select x from t2 where x > 5)",
+                null
+        );
+        // three arguments exercises the args-list path, where only argument 0 is wrapped and the
+        // trailing percentile and precision constants pass through. An explicit precision changes
+        // the approximation, so the value differs from the two-argument form above - what matters
+        // is that the filtered and pre-filtered forms agree exactly
+        assertAggQuery("""
+                        r
+                        8.000030517578125
+                        """,
+                "select approx_percentile(x::double, 0.5, 5) filter (where x > 5) r from t2",
+                null
+        );
+        assertAggQuery("""
+                        r
+                        8.000030517578125
+                        """,
+                "select approx_percentile(x::double, 0.5, 5) r from (select x from t2 where x > 5)",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterCorrMatchesFilteredSubQuery() throws Exception {
+        assertAggQuery("""
+                        r
+                        1.0
+                        """,
+                "select corr(a, b) filter (where id > 5) r from t",
+                "create table t as ( select x::double a, (x * 2)::double b, x id from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        1.0
+                        """,
+                "select corr(a, b) r from (select a, b from t where id > 5)",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterCountDistinctMatchesFilteredSubQuery() throws Exception {
+        assertAggQuery("""
+                        r
+                        3
+                        """,
+                "select count_distinct(g) filter (where x > 5) r from t",
+                "create table t as ( select x % 3 g, x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        3
+                        """,
+                "select count_distinct(g) r from (select g from t where x > 5)",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterCountStarMatchesFilteredSubQuery() throws Exception {
+        assertAggQuery("""
+                        r
+                        5
+                        """,
+                "select count(*) filter (where x > 5) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        5
+                        """,
+                "select count(*) r from (select x from y where x > 5)",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterDeclareVariableCondition() throws Exception {
+        assertAggQuery("""
+                        r
+                        40
+                        """,
+                "declare @lim := 5 select sum(x) filter (where x > @lim) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterDistinctConditionsAreNotDeduplicated() throws Exception {
+        // two aggregates that differ only in their condition must stay distinct
+        assertAggQuery("""
+                        a\tb
+                        40\t15
+                        """,
+                "select sum(x) filter (where x > 5) a, sum(x) filter (where x <= 5) b from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterInCte() throws Exception {
+        assertAggQuery("""
+                        r
+                        40
+                        """,
+                "with c as (select sum(x) filter (where x > 5) r from y) select * from c",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterInSubQuery() throws Exception {
+        assertAggQuery("""
+                        r
+                        40
+                        """,
+                "select * from (select sum(x) filter (where x > 5) r from y)",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterKeyedGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x, (case when x % 2 = 0 then 'even' else 'odd' end)::symbol g from long_sequence(10) )");
+            assertQuery("select g, count(*) filter (where x > 5) c from t order by g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tc
+                            even\t3
+                            odd\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterNumericTypes() throws Exception {
+        assertAggQuery("""
+                        si\tsl\tss\tsf\tsd
+                        40\t40\t40\t40.0\t40.0
+                        """,
+                "select sum(i) filter (where l > 5) si, sum(l) filter (where l > 5) sl, sum(s) filter (where l > 5) ss," +
+                        " sum(f) filter (where l > 5) sf, sum(d) filter (where l > 5) sd from t",
+                "create table t as ( select x::int i, x::long l, x::short s, x::float f, x::double d from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into t select x, timestamp_sequence(0, 1000000) from long_sequence(10)");
+            assertQuery("select sum(x) filter (where x > 5) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            40
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterOnEmptyMatchReturnsNull() throws Exception {
+        assertAggQuery("""
+                        r
+                        null
+                        """,
+                "select sum(x) filter (where x > 100) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterParserErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertException("select sum(x) filter (x > 5) from y", 22, "'where' expected");
+            assertException("select sum(x) filter (where x > 5 from y", 34, "')' expected");
+        });
+    }
+
+    @Test
+    public void testFilterParallelGroupByMatchesSerial() throws Exception {
+        // the lowered aggregate still goes through the parallel path, and must agree with the
+        // single-threaded result for the same data
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x, (x % 2)::symbol g from long_sequence(100_000) )");
+            final String query = "select g, sum(x) filter (where x <= 50_000) s, count(*) filter (where x > 50_000) c from t order by g";
+            // even x in 2..50000 sum to 25000 * 25001; odd x in 1..49999 sum to 25000 squared;
+            // each parity contributes 25000 rows above 50000
+            final String expected = """
+                    g\ts\tc
+                    0\t625025000\t25000
+                    1\t625000000\t25000
+                    """;
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+            assertQuery(query).noLeakCheck().expectSize().returns(expected);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "false");
+            assertQuery(query).noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testFilterPlanShowsLoweredCase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertQuery("select count(*) filter (where x > 5) c from y")
+                    .noLeakCheck()
+                    .assertsPlanContaining("case([5<x,1,null])");
+        });
+    }
+
+    @Test
+    public void testFilterRejectedForAggregateInCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertException(
+                    "select sum(x) filter (where sum(x) > 5) from y",
+                    28,
+                    "aggregate functions are not allowed in FILTER"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterRejectedForNonAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertException(
+                    "select abs(x) filter (where x > 5) from y",
+                    7,
+                    "FILTER is supported only for aggregate functions"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterRejectedForNullPreservingAggregates() throws Exception {
+        // these aggregates treat a NULL input as a value rather than skipping the row, so the
+        // CASE lowering would change their result instead of dropping non-matching rows
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x, x % 2 = 0 b, x::double d from long_sequence(10) )");
+            assertException("select first(x) filter (where x > 5) from y", 7, "FILTER is not supported for 'first'");
+            assertException("select last(x) filter (where x > 5) from y", 7, "FILTER is not supported for 'last'");
+            assertException("select array_agg(d) filter (where x > 5) from y", 7, "FILTER is not supported for 'array_agg'");
+            assertException("select bool_and(b) filter (where x > 5) from y", 7, "FILTER is not supported for 'bool_and'");
+            assertException("select bool_or(b) filter (where x > 5) from y", 7, "FILTER is not supported for 'bool_or'");
+            assertException("select mode(b) filter (where x > 5) from y", 7, "FILTER is not supported for 'mode'");
+        });
+    }
+
+    @Test
+    public void testFilterRejectedForWindowFunctionInCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertException(
+                    "select sum(x) filter (where row_number() over () > 1) from y",
+                    28,
+                    "window functions are not allowed in FILTER"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x, timestamp_sequence(0, 1000000) ts from long_sequence(10) ) timestamp(ts) partition by day");
+            assertQuery("select ts, count(*) filter (where x > 5) c from t sample by 5s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t0
+                            1970-01-01T00:00:05.000000Z\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterSumMatchesFilteredSubQuery() throws Exception {
+        assertAggQuery("""
+                        r
+                        40
+                        """,
+                "select sum(x) filter (where x > 5) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        40
+                        """,
+                "select sum(x) r from (select x from y where x > 5)",
+                null
+        );
+    }
+
+    @Test
+    public void testFilterSumOfConstantCountsMatchingRows() throws Exception {
+        // argument 0 is wrapped even when it is a constant, so this counts matching rows rather
+        // than degrading into sum(1) over every row
+        assertAggQuery("""
+                        r
+                        5
+                        """,
+                "select sum(1) filter (where x > 5) r from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterWeightedAvgMatchesFilteredSubQuery() throws Exception {
+        assertAggQuery("""
+                        r
+                        8.25
+                        """,
+                "select weighted_avg(v, w) filter (where id > 5) r from t",
+                "create table t as ( select x::double v, x::double w, x id from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        r
+                        8.25
+                        """,
+                "select weighted_avg(v, w) r from (select v, w from t where id > 5)",
+                null
+        );
+    }
 
     @Test
     public void testRewriteAggregateDoesNotCreateDuplicateKey() throws Exception {

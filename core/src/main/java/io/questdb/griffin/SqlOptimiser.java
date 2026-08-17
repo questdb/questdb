@@ -163,6 +163,13 @@ public class SqlOptimiser implements Mutable {
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
 
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
+    // Aggregates that treat a NULL input as a meaningful value rather than skipping the row.
+    // lowerAggregateFilters() rewrites FILTER (WHERE c) into CASE WHEN c THEN arg END, which nulls
+    // the value instead of dropping the row, so it changes the result for these and they are
+    // rejected. first/last pick a winner by row id with no null test; array_agg appends the NaN as
+    // a real element; bool_and/bool_or and mode(boolean) read a BOOLEAN, whose null constant is
+    // FALSE, so a non-matching row votes.
+    private static final LowerCaseAsciiCharSequenceHashSet filterUnsupportedAggregates;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
@@ -174,6 +181,7 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
+    private final AggregateFilterVisitor aggregateFilterVisitor = new AggregateFilterVisitor();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
@@ -5275,6 +5283,124 @@ public class SqlOptimiser implements Mutable {
             current = current.getNestedModel();
         }
         return null;
+    }
+
+    /**
+     * Rewrites a single aggregate carrying a FILTER (WHERE ...) condition into the equivalent
+     * CASE expression, so that rows failing the condition contribute nothing:
+     * <pre>
+     * sum(x) FILTER (WHERE c)  ->  sum(CASE WHEN c THEN x END)
+     * count(*) FILTER (WHERE c)  ->  count(CASE WHEN c THEN 1 END)
+     * </pre>
+     * Every value argument is wrapped, not just the first: arg_max/arg_min null-check only their
+     * ordering key, so leaving the key un-nulled would let a non-matching row win. Constants and
+     * bind variables after the first argument are configuration parameters rather than per-row
+     * values (approx_percentile's percentile, string_agg's delimiter) and pass through untouched.
+     */
+    private void lowerAggregateFilter(ExpressionNode node) throws SqlException {
+        final ExpressionNode condition = node.filterExpression;
+        node.filterExpression = null;
+
+        if (node.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+            throw SqlException.$(node.position, "FILTER is supported only for aggregate functions");
+        }
+        if (filterUnsupportedAggregates.contains(node.token)) {
+            throw SqlException.$(node.position, "FILTER is not supported for '").put(node.token)
+                    .put("', filter rows in a subquery instead");
+        }
+        validateFilterCondition(condition);
+
+        switch (node.paramCount) {
+            case 0:
+                // count() and count(*) have no value argument, so count a constant instead
+                node.rhs = lowerAggregateFilterArg(expressionNodePool.next().of(CONSTANT, "1", 0, node.position), condition);
+                node.paramCount = 1;
+                break;
+            case 1:
+                node.rhs = lowerAggregateFilterArg(node.rhs, condition);
+                break;
+            case 2:
+                node.lhs = lowerAggregateFilterArg(node.lhs, condition);
+                if (node.rhs.type != CONSTANT && node.rhs.type != BIND_VARIABLE) {
+                    node.rhs = lowerAggregateFilterArg(node.rhs, ExpressionNode.deepClone(expressionNodePool, condition));
+                }
+                break;
+            default:
+                // args holds the arguments in reverse source order, so the last entry is argument 0,
+                // which is always wrapped; the rest are wrapped only when they carry per-row values
+                final int n = node.args.size();
+                for (int i = n - 1; i > -1; i--) {
+                    final ExpressionNode arg = node.args.getQuick(i);
+                    if (i < n - 1 && (arg.type == CONSTANT || arg.type == BIND_VARIABLE)) {
+                        continue;
+                    }
+                    // argument 0 is the last entry and keeps the original condition node; every
+                    // other wrapper needs its own copy, as one node cannot occupy two tree positions
+                    ExpressionNode argCondition = condition;
+                    if (i < n - 1) {
+                        argCondition = ExpressionNode.deepClone(expressionNodePool, condition);
+                    }
+                    node.args.setQuick(i, lowerAggregateFilterArg(arg, argCondition));
+                }
+                break;
+        }
+    }
+
+    /**
+     * Wraps one aggregate argument into {@code CASE WHEN condition THEN arg END}. The condition must
+     * be a distinct node per wrapper - callers deep-clone it - because one node cannot occupy two
+     * positions in the tree.
+     */
+    private ExpressionNode lowerAggregateFilterArg(ExpressionNode arg, ExpressionNode condition) {
+        final ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, arg.position);
+        caseNode.paramCount = 3;
+        // args are consumed in reverse, so this builds CASE WHEN condition THEN arg ELSE null END
+        caseNode.args.add(expressionNodePool.next().of(CONSTANT, "null", 0, arg.position));
+        caseNode.args.add(arg);
+        caseNode.args.add(condition);
+        return caseNode;
+    }
+
+    /**
+     * Lowers every aggregate FILTER (WHERE ...) clause in the model tree into a CASE expression.
+     * <p>
+     * Runs as the first pass of {@link #optimise}, which puts it ahead of rewritePivot, ahead of
+     * rewriteSampleBy - the first pass that classifies aggregates by name - and ahead of
+     * detectDuplicateAggregates, so two columns that differ only in their filter condition are not
+     * collapsed into one. Expression sub-query models are covered because optimiseExpressionModels
+     * re-enters optimise() for each of them. CTEs need no special traversal: the parser inlines each
+     * use site into the nested model before optimisation runs.
+     */
+    private void lowerAggregateFilters(IQueryModel model) throws SqlException {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            traversalAlgo.traverse(columns.getQuick(i).getAst(), aggregateFilterVisitor);
+        }
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            traversalAlgo.traverse(orderBy.getQuick(i), aggregateFilterVisitor);
+        }
+        final ObjList<ExpressionNode> groupBy = model.getGroupBy();
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            traversalAlgo.traverse(groupBy.getQuick(i), aggregateFilterVisitor);
+        }
+        // PIVOT keeps its aggregates here rather than in the bottom-up columns, and rewritePivot
+        // rebuilds its output from them, so an unlowered condition would be dropped silently
+        final ObjList<QueryColumn> pivotAggregates = model.getPivotGroupByColumns();
+        for (int i = 0, n = pivotAggregates.size(); i < n; i++) {
+            traversalAlgo.traverse(pivotAggregates.getQuick(i).getAst(), aggregateFilterVisitor);
+        }
+
+        lowerAggregateFilters(model.getNestedModel());
+        lowerAggregateFilters(model.getUnionModel());
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            lowerAggregateFilters(joinModels.getQuick(i));
+        }
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -11718,6 +11844,30 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Rejects aggregate and window functions inside an aggregate's FILTER (WHERE ...) condition,
+     * matching PostgreSQL. Reported before the condition is lowered into a CASE expression, so the
+     * error position points at the user's SQL rather than at a synthesized node.
+     */
+    private void validateFilterCondition(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == FUNCTION) {
+            if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                throw SqlException.$(node.position, "aggregate functions are not allowed in FILTER");
+            }
+            if (node.windowExpression != null || functionParser.getFunctionFactoryCache().isWindow(node.token)) {
+                throw SqlException.$(node.position, "window functions are not allowed in FILTER");
+            }
+        }
+        validateFilterCondition(node.lhs);
+        validateFilterCondition(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            validateFilterCondition(node.args.getQuick(i));
+        }
+    }
+
     // throws exception if given node tree contains reference to aggregate or window function that are not allowed in GROUP BY clause
     private void validateGroupByExpression(@Transient ExpressionNode node, int originalNodePosition) throws SqlException {
         try {
@@ -12579,6 +12729,7 @@ public class SqlOptimiser implements Mutable {
         }
         IQueryModel rewrittenModel = model;
         try {
+            lowerAggregateFilters(rewrittenModel);
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
@@ -12831,6 +12982,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private class AggregateFilterVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+        @Override
+        public void visit(ExpressionNode node) throws SqlException {
+            if (node.filterExpression != null) {
+                lowerAggregateFilter(node);
+            }
+        }
+    }
+
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
 
         @Override
@@ -12988,5 +13148,15 @@ public class SqlOptimiser implements Mutable {
         orderedGroupByFunctions.add("first_not_null");
         orderedGroupByFunctions.add("last");
         orderedGroupByFunctions.add("last_not_null");
+    }
+
+    static {
+        filterUnsupportedAggregates = new LowerCaseAsciiCharSequenceHashSet();
+        filterUnsupportedAggregates.add("array_agg");
+        filterUnsupportedAggregates.add("bool_and");
+        filterUnsupportedAggregates.add("bool_or");
+        filterUnsupportedAggregates.add("first");
+        filterUnsupportedAggregates.add("last");
+        filterUnsupportedAggregates.add("mode");
     }
 }

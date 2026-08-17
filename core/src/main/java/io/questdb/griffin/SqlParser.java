@@ -430,6 +430,12 @@ public class SqlParser {
             }
         }
 
+        // Traverse an aggregate's FILTER (WHERE ...) condition, which hangs off the function node
+        // rather than being one of its arguments
+        if (node.filterExpression != null) {
+            node.filterExpression = recursiveReplace(node.filterExpression, visitor);
+        }
+
         return visitor.visit(node);
     }
 

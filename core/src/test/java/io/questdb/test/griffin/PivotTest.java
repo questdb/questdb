@@ -225,6 +225,29 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotAggregateFilter() throws Exception {
+        // PIVOT checks aggregate names at parse time, and FILTER leaves the aggregate's own name
+        // untouched, so the clause composes with PIVOT. The lowering runs before rewritePivot.
+        assertQuery("""
+                trades PIVOT (
+                count(*) FILTER (WHERE price > 1),
+                count(*) FILTER (WHERE price > 200000)
+                FOR symbol IN ('BTC-USD')
+                GROUP BY side
+                ) order by side;""")
+                .ddl(ddlTrades)
+                .mutateWith(dmlTrades)
+                .expectSize()
+                // every BTC-USD price is ~101500, so the first condition keeps all 10 buys and 12
+                // sells while the second keeps none - two different conditions, two different results
+                .returns("side\tBTC-USD_count()\tBTC-USD_count()_2\n", """
+                        side\tBTC-USD_count()\tBTC-USD_count()_2
+                        buy\t10\t0
+                        sell\t12\t0
+                        """);
+    }
+
+    @Test
     public void testPivotAliasedAggregateProtectedColumnNames() throws Exception {
         // Regression: a pivot with an ALIASED aggregate builds a composite output column name
         // (value_aggregate). When the value is a protective-quoted operator token or dotted name,

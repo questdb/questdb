@@ -401,8 +401,56 @@ public class ExpressionParser {
         return argStackDepth - node.paramCount + 1;
     }
 
+    /**
+     * Parses the body of an aggregate's FILTER (WHERE ...) clause and attaches the condition to the
+     * function node. The caller has already consumed both the FILTER keyword and the opening '('.
+     * SqlOptimiser.lowerAggregateFilters() later rewrites the aggregate's arguments against this
+     * condition and clears the field.
+     *
+     * @param lexer             the lexer positioned after the clause's opening '('
+     * @param functionNode      the aggregate node to attach the condition to
+     * @param sqlParserCallback callback for nested expression parsing
+     * @param decls             declarations for expression parsing
+     */
+    private void parseFilterClause(
+            GenericLexer lexer,
+            ExpressionNode functionNode,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !SqlKeywords.isWhereKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'where' expected");
+        }
+        ExpressionNode condition = parseWindowExpr(lexer, sqlParserCallback, decls);
+        if (condition == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "filter condition expected");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !Chars.equals(tok, ')')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+        }
+        functionNode.filterExpression = condition;
+    }
+
     private int parseOverExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, ExpressionNode node, int localParamCount, int argStackDepth, int prevBranch) throws SqlException {
         CharSequence nextTok = SqlUtil.fetchNext(lexer);
+
+        // Check for an aggregate FILTER (WHERE ...) clause, which the SQL standard places before OVER.
+        // 'filter' is deliberately not a reserved keyword, so it only starts the clause when '(' follows
+        // it. Otherwise the lexer rewinds and 'filter' remains usable as a column alias.
+        if (nextTok != null && SqlKeywords.isFilterKeyword(nextTok)) {
+            final CharSequence filterTok = GenericLexer.immutableOf(nextTok);
+            final int posAfterFilter = lexer.getPosition();
+            final CharSequence afterFilter = SqlUtil.fetchNext(lexer);
+            if (afterFilter != null && Chars.equals(afterFilter, '(')) {
+                parseFilterClause(lexer, node, sqlParserCallback, decls);
+                nextTok = SqlUtil.fetchNext(lexer);
+            } else {
+                lexer.backTo(posAfterFilter, filterTok);
+                nextTok = filterTok;
+            }
+        }
 
         // Check for IGNORE NULLS or RESPECT NULLS before OVER
         boolean ignoreNulls = false;
@@ -542,7 +590,8 @@ public class ExpressionParser {
     }
 
     /**
-     * Parses an expression within a window clause context.
+     * Parses a nested expression within a clause that hangs off a function call, such as a window
+     * clause or an aggregate FILTER (WHERE ...) condition.
      * Uses a separate tree builder to avoid state conflicts with the outer expression parsing.
      * Saves and restores parser state since we're calling parseExpr recursively.
      */

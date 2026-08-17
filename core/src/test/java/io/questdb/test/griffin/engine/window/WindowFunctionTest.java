@@ -2548,6 +2548,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOverPartitionByAndOrderBy() throws Exception {
+        // an aggregate FILTER (WHERE ...) clause also applies to the window form: rows failing the
+        // condition contribute nothing to the frame, so a frame holding only such rows sums to null
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, v long) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', 1), " +
+                    "('2021-01-02T00:00:00.000000Z', 'A', 2), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', 3), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', 1), " +
+                    "('2021-01-05T00:00:00.000000Z', 'B', 2)");
+            assertQuery("SELECT ts, grp, v, sum(v) FILTER (WHERE v > 1) OVER (PARTITION BY grp ORDER BY ts) s FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tv\ts
+                            2021-01-01T00:00:00.000000Z\tA\t1\tnull
+                            2021-01-02T00:00:00.000000Z\tA\t2\t2.0
+                            2021-01-03T00:00:00.000000Z\tA\t3\t5.0
+                            2021-01-04T00:00:00.000000Z\tB\t1\tnull
+                            2021-01-05T00:00:00.000000Z\tB\t2\t2.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFirstValueDateOverPartitionByAndOrderBy() throws Exception {
         // first_value() over a DATE argument; default frame's first row of each partition
         assertMemoryLeak(() -> {
