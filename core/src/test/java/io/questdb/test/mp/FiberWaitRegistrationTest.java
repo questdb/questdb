@@ -648,6 +648,72 @@ public class FiberWaitRegistrationTest {
     }
 
     @Test
+    public void testSlotRegistrationRollbackReleasesGrantedSlotOutsideCoordinatorMonitor() throws Exception {
+        final TestTarget target = new TestTarget();
+        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        final AtomicInteger releasedSlot = new AtomicInteger(-1);
+        final FiberSlotWaitQueue queue = new FiberSlotWaitQueue(slot -> {
+            releasedSlot.set(slot);
+            Assert.assertFalse(
+                    "slot registration rollback held the coordinator monitor",
+                    Thread.holdsLock(coordinator)
+            );
+        });
+        final long token = coordinator.beginBuild(1);
+        final FiberSlotWaitRegistration registration = coordinator.acquireSlot(token);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicReference<SourceRegistrationResult> result = new AtomicReference<>();
+        final Thread registrationThread = new Thread(() -> {
+            try {
+                result.set(registration.register(queue));
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        }, "slot-registration-rollback");
+        registrationThread.setDaemon(true);
+
+        boolean isSlotGranted = false;
+        try {
+            synchronized (coordinator) {
+                registrationThread.start();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (!queue.hasWaiters()
+                        && registrationThread.isAlive()
+                        && System.nanoTime() < deadline) {
+                    Thread.onSpinWait();
+                }
+                Assert.assertTrue("slot registration did not reach the queue", queue.hasWaiters());
+                Assert.assertTrue("slot registration did not accept the grant", queue.transfer(7));
+                isSlotGranted = true;
+                Assert.assertTrue("wait build did not abort", coordinator.abort(token));
+            }
+            registrationThread.join(10_000);
+        } finally {
+            registrationThread.interrupt();
+            registration.cancel();
+            coordinator.abort(token);
+            try {
+                registrationThread.join(10_000);
+            } finally {
+                Assert.assertFalse("slot registration thread did not stop", registrationThread.isAlive());
+                Assert.assertFalse(queue.hasWaiters());
+                Assert.assertFalse(coordinator.hasInFlightRegistrations());
+                Assert.assertEquals(1, target.acquiredRegistrationCount);
+                Assert.assertEquals(1, target.releasedRegistrationCount);
+                Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
+                if (isSlotGranted) {
+                    Assert.assertEquals(7, releasedSlot.get());
+                }
+            }
+        }
+        final Throwable th = failure.get();
+        if (th != null) {
+            throw new AssertionError("slot registration rollback failed", th);
+        }
+        Assert.assertSame(SourceRegistrationResult.NOT_ACCEPTED, result.get());
+    }
+
+    @Test
     public void testSlotWaitBuildRejectsSecondRegistration() {
         final TestTarget target = new TestTarget();
         final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
