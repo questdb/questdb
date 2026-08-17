@@ -52,6 +52,7 @@ import java.util.Base64;
 public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
+    public static final Utf8String HEADER_HOST = new Utf8String("Host");
     public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
     public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
@@ -230,6 +231,44 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
+     * Returns {@code true} when a browser WebSocket Origin belongs to the HTTP
+     * Host receiving the upgrade. RFC 6455 browsers always send Origin and do
+     * not let JavaScript remove it, while non-browser QWP clients normally omit
+     * it. Restricting browser upgrades to same-origin keeps the CSWSH protection
+     * without making QWP inaccessible to web applications served by QuestDB or
+     * a same-origin reverse proxy.
+     */
+    public static boolean isSameOrigin(Utf8Sequence origin, Utf8Sequence host) {
+        if (origin == null || host == null) {
+            return false;
+        }
+        final int prefixLength;
+        if (startsWithIgnoreCaseAscii(origin, "http://")) {
+            prefixLength = 7;
+        } else if (startsWithIgnoreCaseAscii(origin, "https://")) {
+            prefixLength = 8;
+        } else {
+            return false;
+        }
+        final int authorityLength = origin.size() - prefixLength;
+        if (authorityLength <= 0 || authorityLength != host.size()) {
+            return false;
+        }
+        for (int i = 0; i < authorityLength; i++) {
+            final byte originByte = origin.byteAt(prefixLength + i);
+            final byte hostByte = host.byteAt(i);
+            // Serialized origins never contain a path, query, fragment, user
+            // info, whitespace, or controls. Reject them explicitly instead of
+            // accidentally treating a malformed value as an authority.
+            if (originByte <= ' ' || originByte == '/' || originByte == '?' || originByte == '#'
+                    || originByte == '@' || toLowerAscii(originByte) != toLowerAscii(hostByte)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Validates the Sec-WebSocket-Key header.
      * The key must be a base64-encoded 16-byte value.
      *
@@ -339,10 +378,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * @return null if valid, error message otherwise
      */
     public static String validateHandshake(HttpRequestHeader header) {
-        // Reject browser-originated requests. QWP is a machine-to-machine protocol;
-        // browsers send Origin automatically, legitimate clients do not.
-        // This prevents Cross-Site WebSocket Hijacking (CSWSH).
-        if (header.getHeader(HEADER_ORIGIN) != null) {
+        // Browsers always send Origin. Permit a same-origin browser application,
+        // but retain the Cross-Site WebSocket Hijacking (CSWSH) guard for every
+        // cross-origin or malformed request. Machine clients normally omit it.
+        Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
+        if (origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST))) {
             return ERROR_ORIGIN_HEADER_NOT_ALLOWED;
         }
 
@@ -401,6 +441,22 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             Unsafe.putByte(buf + offset++, b);
         }
         return offset;
+    }
+
+    private static boolean startsWithIgnoreCaseAscii(Utf8Sequence value, String prefix) {
+        if (value.size() < prefix.length()) {
+            return false;
+        }
+        for (int i = 0; i < prefix.length(); i++) {
+            if (toLowerAscii(value.byteAt(i)) != prefix.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static byte toLowerAscii(byte value) {
+        return value >= 'A' && value <= 'Z' ? (byte) (value + ('a' - 'A')) : value;
     }
 
     /**

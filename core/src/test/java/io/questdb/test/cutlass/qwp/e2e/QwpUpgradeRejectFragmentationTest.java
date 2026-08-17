@@ -47,6 +47,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -78,11 +79,13 @@ import java.nio.charset.StandardCharsets;
 public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpUpgradeRejectFragmentationTest.class);
-    // Server defaults from DefaultIODispatcherConfiguration. These tests do
-    // not override the recv / send buffer sizes, so the actual buffers are
-    // this size; the fuzzed chunk sizes must not exceed them.
+    // Server defaults from DefaultIODispatcherConfiguration. The egress
+    // fixture uses a larger response buffer because its successful upgrade
+    // reserves space for the maximum SERVER_INFO frame, but fragmentation is
+    // deliberately fuzzed only across this default-sized range.
     private static final int RECV_BUFFER_SIZE = 131_072;
     private static final int SEND_BUFFER_SIZE = 131_072;
+    private static final int EGRESS_SEND_BUFFER_SIZE = 262_144;
     // Canonical 400 Bad Request body written when the Origin header is
     // present. Hardcoded so the test asserts on exact wire bytes; the
     // server-side templates are package-private.
@@ -223,6 +226,52 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEgressSameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSendEgress(port -> assertSameOriginUpgradeAccepted(port, "/read/v1"));
+    }
+
+    @Test
+    public void testIngressSameOriginBrowserUpgradeIsAccepted() throws Exception {
+        runWithFragmentedSend(port -> assertSameOriginUpgradeAccepted(port, "/write/v4"));
+    }
+
+    private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = "GET " + path + " HTTP/1.1\r\n"
+                    + "Host: localhost:" + port + "\r\n"
+                    + "Origin: http://localhost:" + port + "\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n"
+                    + "\r\n";
+            OutputStream out = socket.getOutputStream();
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            ByteArrayOutputStream response = new ByteArrayOutputStream();
+            InputStream in = socket.getInputStream();
+            int matched = 0;
+            while (response.size() < 16_384 && matched < 4) {
+                int value = in.read();
+                if (value < 0) {
+                    break;
+                }
+                response.write(value);
+                if (value == (matched == 0 || matched == 2 ? '\r' : '\n')) {
+                    matched++;
+                } else {
+                    matched = value == '\r' ? 1 : 0;
+                }
+            }
+            String headers = response.toString(StandardCharsets.US_ASCII);
+            Assert.assertTrue("expected WebSocket 101 response, got: " + headers,
+                    headers.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+        }
+    }
+
     private static void assertFullRejectDelivered(int port, String request, byte[] expected) throws Exception {
         try (Socket socket = new Socket("localhost", port)) {
             socket.setSoTimeout(5_000);
@@ -341,6 +390,11 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             @Override
             public int getBindPort() {
                 return 0;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return EGRESS_SEND_BUFFER_SIZE;
             }
         };
 
