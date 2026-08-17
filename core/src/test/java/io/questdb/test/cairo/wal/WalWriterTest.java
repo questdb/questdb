@@ -52,6 +52,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
@@ -5158,6 +5159,156 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTenantCloseRunsPoolBookkeepingWhenColumnarCancelFails() throws Exception {
+        // M2 follow-up: cleanupBeforeClose() also cancels a pending columnar
+        // write, via WalColumnarRowAppender.cancelColumnarWrite() ->
+        // WalWriter.cancelColumnarWrite(startRowId) -> setAppendPosition() --
+        // the same IO-performing rollback call as
+        // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(). Before the
+        // distressed latch was added to cleanupBeforeClose(), this path had
+        // no try/catch and no distressed marking on failure, so routing
+        // close() purely on isDistressed() would have handed this half-
+        // cancelled, still-open writer back to the pool via returnToPool() --
+        // a poisoned instance handed to the next acquirer, worse than the
+        // plain stranding covered above. WalWriterTenant.close() still routes
+        // on isCleanedUp, not just isDistressed(), so this stays correct even
+        // if a future cleanup failure mode doesn't latch. This test pins both:
+        // the pool routing above, and that the latch stops the expel branch's
+        // retry from re-running the failing IO (mapFailures == 1, asserted
+        // below).
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger mapFailures = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                // Persistent while armed, unlike a one-shot: the expel branch
+                // re-enters cleanupBeforeClose() via super.close(), and a
+                // one-shot injection would let that retry silently succeed,
+                // hiding whether close retried the failed IO at all.
+                if (armed.get()) {
+                    mapFailures.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tenant_close_columnar (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tenant_close_columnar");
+
+            WalWriter w = engine.getWalWriter(token);
+            ColumnarRowAppender appender = w.getColumnarRowAppender();
+            final int rowCount = rowsCrossingAppendPages(pageSize);
+            appender.beginColumnarWrite(rowCount);
+            // cancelColumnarWrite() rolls back every column's append pointer
+            // regardless of what was written, so writing only the designated-
+            // timestamp column -- and pushing it across a page boundary, same
+            // mechanism as the row-oriented test above -- is enough to force
+            // the ff.mmap() remap on cancel.
+            w.putServerAssignedTimestampColumnar(rowCount, 1_000_000L);
+
+            armed.set(true);
+            try {
+                w.close();
+                Assert.fail("close must propagate the columnar cancel failure");
+            } catch (CairoException expected) {
+            } finally {
+                armed.set(false);
+            }
+            Assert.assertEquals("cleanup must not retry the failed IO on the expel path", 1, mapFailures.get());
+
+            // In-body discriminator: on the unfixed pool the stranded busy
+            // entry kept this writer open with its fds. The fresh acquire
+            // below does NOT discriminate -- the pool simply hands out the
+            // next free slot even when an entry is stranded -- it only proves
+            // the pool still functions; assertMemoryLeak's shutdown check
+            // backstops the stranded entry itself.
+            Assert.assertFalse("expelled writer must be fully closed", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotSame(w, w2);
+                TableWriter.Row row = w2.newRow(2_000_000L);
+                row.putInt(1, 1);
+                row.append();
+                w2.commit();
+            }
+        });
+    }
+
+    @Test
+    public void testTenantCloseRunsPoolBookkeepingWhenRollbackFails() throws Exception {
+        // M2: the pooled WAL writer's close() ran cleanupBeforeClose() before any
+        // pool bookkeeping and outside any try/finally -- unlike WalWriter.close()
+        // itself, which is try { cleanupBeforeClose(); } finally { doClose(...); }.
+        // A rollback IO failure therefore propagated before returnToPool/
+        // expelFromPool ran, stranding the pool entry as busy with the writer's
+        // fds open, permanently. rollback0() marks the writer distressed before
+        // rethrowing, so with the try/finally in place the failure routes to the
+        // expel branch: full close, entry released, exception still propagates.
+        //
+        // The injection targets ff.mmap(), not ff.truncate()/ff.allocate(): a
+        // rollback to offset 0 only performs real IO when it forces MemoryPARWImpl
+        // to remap a different page (jumpTo()'s p > pageLo && p < pageHi fast path
+        // otherwise just moves the in-memory append pointer, and TableUtils
+        // .allocateDiskSpace() skips ff.allocate() whenever the file is already
+        // that long, which it is once rows have been appended). A small append
+        // page size plus enough buffered rows forces the designated-timestamp
+        // column across a page boundary, so its rollback must remap page 0 via
+        // ff.mmap() -- confirmed empirically by instrumenting every FilesFacade
+        // method the WAL writer path could plausibly touch during close().
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        AtomicBoolean armed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (armed.compareAndSet(true, false)) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tenant_close (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tenant_close");
+
+            WalWriter w = engine.getWalWriter(token);
+            // Buffer enough uncommitted rows that the designated-timestamp column's
+            // append pointer crosses into a second page: rollback to row 0 then has
+            // to remap page 0, forcing a real ff.mmap() call.
+            final int rowCount = rowsCrossingAppendPages(pageSize);
+            for (int i = 0; i < rowCount; i++) {
+                TableWriter.Row row = w.newRow(1_000_000L + i);
+                row.putInt(1, i);
+                row.append();
+            }
+
+            armed.set(true);
+            try {
+                w.close();
+                Assert.fail("close must propagate the rollback failure -- the ff.mmap() injection never fired,"
+                        + " so rolling back " + rowCount + " rows never left page 0"
+                        + " of the " + Files.ceilPageSize(pageSize) + "-byte effective append page");
+            } catch (CairoException expected) {
+            } finally {
+                armed.set(false);
+            }
+
+            // In-body discriminator: on the unfixed pool the stranded busy
+            // entry kept this writer open with its fds. The fresh acquire
+            // below does NOT discriminate -- the pool simply hands out the
+            // next free slot even when an entry is stranded -- it only proves
+            // the pool still functions; assertMemoryLeak's shutdown check
+            // backstops the stranded entry itself.
+            Assert.assertFalse("expelled writer must be fully closed", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotNull(w2);
+            }
+        });
+    }
+
+    @Test
     public void testTruncateFollowedByTwoInserts() throws Exception {
         // Reproduces a block-sizing bug: after TRUNCATE, two INSERT WAL transactions
         // are visible to the applier, but the second INSERT gets LAST_ROW_COMMIT
@@ -6299,6 +6450,22 @@ public class WalWriterTest extends AbstractCairoTest {
                 .col("b", ColumnType.STRING)
                 .timestamp("ts")
                 .wal();
+    }
+
+    private static int rowsCrossingAppendPages(long requestedPageSize) {
+        // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
+        // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
+        // granularity: 4 KB on Linux x64, 16 KB on macOS arm64, but 64 KB on
+        // Windows (GetSystemInfo().dwAllocationGranularity). A hard-coded row
+        // count is therefore a silent no-op on Windows -- the append pointer
+        // never leaves page 0, rollback takes jumpTo()'s in-page fast path,
+        // and the injected ff.mmap() failure never fires. The WAL designated
+        // timestamp occupies a 128-bit (timestamp, rowId) pair per row, so
+        // size the count off the effective page size: two full pages plus a
+        // margin, which also lands the append pointer mid-page instead of
+        // exactly on a page boundary.
+        final long timestampEntryBytes = 2L * Long.BYTES;
+        return (int) ((Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100);
     }
 
     private static void testReadMatViewState(int chunkSize) {
