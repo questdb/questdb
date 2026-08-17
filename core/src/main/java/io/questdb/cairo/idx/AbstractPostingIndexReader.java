@@ -1384,8 +1384,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 if (snapshotGenCount < entryScratch.genCount) {
                     int corruptionKind = genLookup.getSnapshotCorruptionKind();
                     CharSequence reason = switch (corruptionKind) {
-                        case PostingGenLookup.SNAPSHOT_CORRUPTION_ALL_ZERO_SLOT ->
-                                "declared gen-dir slot is all zero";
+                        case PostingGenLookup.SNAPSHOT_CORRUPTION_ALL_ZERO_SLOT -> "declared gen-dir slot is all zero";
                         case PostingGenLookup.SNAPSHOT_CORRUPTION_INVALID_SLOT ->
                                 "declared gen-dir slot is structurally invalid";
                         default -> "gen-dir TXN_AT_SEAL not monotonic";

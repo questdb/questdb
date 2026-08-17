@@ -306,7 +306,7 @@ public class PostingGenLookup implements Closeable {
      * {@code storeFence} that orders it behind the slot's payload fields, and
      * only then does {@code extendHead} bump the entry's {@code GEN_COUNT}.
      * <p>
- * Because the writer only ever tags slots with a non-decreasing table txn
+     * Because the writer only ever tags slots with a non-decreasing table txn
      * ({@code publishToChain} clamps a regressing slot up to its predecessor's
      * tag), a slot tagged BELOW its predecessor never completed its publish, so
      * this method STOPS there and reports the truncated count.
