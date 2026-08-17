@@ -55,6 +55,7 @@ import java.util.Map;
  */
 public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
 
+    private final List<String> barrierOrder = new ArrayList<>();
     private final Map<Long, String> fdToPath = new HashMap<>();
     private final Map<String, int[]> fsyncs = new HashMap<>();
     private final List<long[]> mappings = new ArrayList<>(); // {addrLo, addrHi, fd}
@@ -75,7 +76,18 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
     public synchronized void clearCounters() {
         msyncs.clear();
         fsyncs.clear();
+        barrierOrder.clear();
         syncfsCount = 0;
+    }
+
+    /**
+     * Every barrier since the last {@link #clearCounters()}, in the order it was issued.
+     * <p>
+     * Counters answer "how many"; ordering invariants ("the data is durable before the pointer that
+     * names it") need "in what order", and a count cannot express that.
+     */
+    public synchronized List<String> barrierOrder() {
+        return new ArrayList<>(barrierOrder);
     }
 
     /**
@@ -241,11 +253,15 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
     }
 
     private synchronized void recordFsync(long fd) {
-        bump(fsyncs, pathOfFd(fd));
+        final String path = pathOfFd(fd);
+        bump(fsyncs, path);
+        barrierOrder.add(path);
     }
 
     private synchronized void recordMsync(long addr) {
-        bump(msyncs, pathOfAddress(addr));
+        final String path = pathOfAddress(addr);
+        bump(msyncs, path);
+        barrierOrder.add(path);
     }
 
     /**

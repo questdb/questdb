@@ -803,6 +803,16 @@ public class TableWriterTest extends AbstractCairoTest {
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
+
+            @Override
+            public boolean isPartitionChecksumEnabled() {
+                // This test injects a failure into the Nth openRO of "supplier.d" to make addIndex
+                // fail. The partition checksum seal also opens covered column files read-only, so
+                // with checksums on it consumes that injection first -- and swallows it by design,
+                // leaving addIndex to succeed and the test to fail on Assert.fail(). The subject
+                // here is index failure, not checksums, so take them out of the counting.
+                return false;
+            }
         };
 
         testAddIndexAndFailToIndexHalfWay(configuration, PartitionBy.DAY, 1000);
