@@ -50,6 +50,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * State management for QWP v1 processing.
@@ -503,6 +504,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public Status getStatus() {
         return currentStatus;
+    }
+
+    @TestOnly
+    public QwpStreamingDecoder getStreamingDecoder() {
+        return streamingDecoder;
     }
 
     /**
@@ -1205,6 +1211,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
 
         } catch (QwpParseException e) {
+            if (e.getErrorCode() != QwpParseException.ErrorCode.DELTA_DICT_GAP) {
+                streamingDecoder.releaseCachedResources();
+            }
             LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
             reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
         } catch (CommitFailedException e) {

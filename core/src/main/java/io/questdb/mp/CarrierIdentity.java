@@ -79,6 +79,8 @@ public final class CarrierIdentity {
         int id = RECYCLED.tryDequeue(holder) ? holder.id : NEXT_ID.getAndIncrement();
         try {
             BIND.invokeExact(id);
+        } catch (RuntimeException | Error e) {
+            throw e;
         } catch (Throwable t) {
             throw new AssertionError(t);
         }
@@ -88,6 +90,8 @@ public final class CarrierIdentity {
     public static int current() {
         try {
             return (int) CURRENT.invokeExact();
+        } catch (RuntimeException | Error e) {
+            throw e;
         } catch (Throwable t) {
             throw new AssertionError(t);
         }
@@ -108,6 +112,8 @@ public final class CarrierIdentity {
         CarrierLocal.releaseRow(id);
         try {
             BIND.invokeExact(UNBOUND);
+        } catch (RuntimeException | Error e) {
+            throw e;
         } catch (Throwable t) {
             throw new AssertionError(t);
         }
