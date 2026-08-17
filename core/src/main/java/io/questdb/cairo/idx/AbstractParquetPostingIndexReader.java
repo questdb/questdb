@@ -74,6 +74,17 @@ import java.util.Arrays;
  */
 public abstract class AbstractParquetPostingIndexReader implements PostingIndexReader {
     private static final Log LOG = LogFactory.getLog(AbstractParquetPostingIndexReader.class);
+    /**
+     * Appended to every message that reports a damaged or unreadable index
+     * artifact. These are operator-facing: the query cannot proceed, and the
+     * only thing that fixes it is rebuilding the index or taking the partition
+     * back to the native form. Saying so in the message is the difference
+     * between an incident and a support ticket.
+     */
+    private static final String RECOVERY_HINT =
+            "; rebuild it with ALTER TABLE <table> ALTER COLUMN <column> DROP INDEX"
+                    + " then ADD INDEX TYPE POSTING, or take the partition back to native with"
+                    + " ALTER TABLE <table> CONVERT PARTITION TO NATIVE LIST '<partition>'";
     protected final IndexMetaFileReader imReader = new IndexMetaFileReader();
     protected long columnTop;
     protected long decodedRowCount;
@@ -930,7 +941,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // to read.
                 throw CairoException.critical(0)
                         .put("could not read the covering index _im named by the partition metadata [file=")
-                        .put(imFile).put(']');
+                        .put(imFile).put(']').put(RECOVERY_HINT);
             }
             if (imReader.getPayloadKind() != IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING) {
                 // Only arm N is written today. Decoding an arm B payload with
@@ -939,7 +950,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 throw CairoException.critical(0)
                         .put("unsupported covering index payload kind [payloadKind=").put(imReader.getPayloadKind())
                         .put(", expected=").put(IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING)
-                        .put(", file=").put(imFile).put(']');
+                        .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
             }
             if (imReader.getFileSize() != imFileSize) {
                 // The token records the _im size the seal committed. A file
@@ -949,7 +960,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 throw CairoException.critical(0)
                         .put("covering index _im size disagrees with the published token [tokenImFileSize=").put(imFileSize)
                         .put(", imFileSize=").put(imReader.getFileSize())
-                        .put(", file=").put(imFile).put(']');
+                        .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
             }
             path.trimTo(plen);
             final LPSZ pidxFile = ParquetIndexSeal.indexParquetFileName(path, columnName, indexTxn);
@@ -960,7 +971,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             if (size <= 0) {
                 throw CairoException.critical(0)
                         .put("covering index parquet size is not addressable [pidxFileSize=").put(size)
-                        .put(", file=").put(pidxFile).put(']');
+                        .put(", file=").put(pidxFile).put(']').put(RECOVERY_HINT);
             }
             pidxAddr = TableUtils.mapRO(ff, pidxFile, LOG, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxSize = size;
