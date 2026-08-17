@@ -29,4 +29,9 @@ public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
     boolean containsNullValue();
 
     int getSymbolCount();
+
+    @Override
+    default boolean supportsKeyValueAccess() {
+        return true;
+    }
 }

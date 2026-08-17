@@ -152,6 +152,37 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testRowCountWithSignBitSetIsRejectedWithoutCrashingServer() throws Exception {
+        runInContext((port) -> {
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                performWebSocketHandshake(socket, port);
+
+                OutputStream out = socket.getOutputStream();
+                out.write(createMaskedFrame(WebSocketOpcode.BINARY, buildSignBitRowCountMessage(), true));
+                out.flush();
+
+                byte[] payload = readBinaryFramePayload(socket.getInputStream());
+                Assert.assertEquals(QwpConstants.STATUS_PARSE_ERROR, payload[0]);
+                Assert.assertTrue("Parse-error payload is too short: " + payload.length, payload.length >= 11);
+                int msgLen = (payload[9] & 0xFF) | ((payload[10] & 0xFF) << 8);
+                Assert.assertEquals("Parse-error payload must be status(1)+seq(8)+len(2)+msg(msgLen)",
+                        11 + msgLen, payload.length);
+                String msg = new String(payload, 11, msgLen, StandardCharsets.UTF_8);
+                Assert.assertTrue("Expected row-count rejection, got: " + msg,
+                        msg.contains("row count exceeds maximum: 9223372039002259456"));
+            }
+
+            // The malformed frame used to crash the JVM in an unsafe column cursor.
+            // A fresh upgrade verifies that the server remains available after rejecting it.
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                performWebSocketHandshake(socket, port);
+            }
+        });
+    }
+
+    @Test
     public void testFragmentedBinaryFrameRejected() throws Exception {
         // A binary frame with FIN=0 is what a proxy sends when it splits a large
         // binary message.
@@ -575,6 +606,16 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
         } finally {
             Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static byte[] buildSignBitRowCountMessage() {
+        return new byte[]{
+                'Q', 'W', 'P', '1', 1, 0, 1, 0, 21, 0, 0, 0,
+                5, 'c', 'r', 'a', 's', 'h',
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x88,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01,
+                1, 1, 's', QwpConstants.TYPE_VARCHAR, 0
+        };
     }
 
     private static String computeAcceptKey(String key) throws Exception {

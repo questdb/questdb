@@ -102,6 +102,10 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, targetType).position(position);
         }
+        // NaN and Infinity parse to null
+        if (decimal.isNull()) {
+            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
+        }
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
 
@@ -199,7 +203,8 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, type).position(position);
             }
-            return true;
+            // NaN and Infinity parse to null
+            return !decimal.isNull();
         }
     }
 }
