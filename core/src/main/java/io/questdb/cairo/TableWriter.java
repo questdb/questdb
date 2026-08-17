@@ -15484,7 +15484,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll);
 
+        void putDecimalChar(int columnIndex, char decimalValue);
+
         void putDecimalStr(int columnIndex, CharSequence decimalValue);
+
+        void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue);
 
         void putDouble(int columnIndex, double value);
 
@@ -15677,7 +15681,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            // no-op
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
             // no-op
         }
 
@@ -15914,9 +15928,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalChar(columnIndex, decimal256Sink, decimalValue, type, this);
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             final int type = metadata.getColumnType(columnIndex);
             WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, type, this);
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256Sink, decimalValue, type, this);
         }
 
         @Override

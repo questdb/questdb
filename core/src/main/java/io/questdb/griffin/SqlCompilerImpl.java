@@ -6008,10 +6008,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
             // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
             // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
+            // DOUBLE and FLOAT go both ways, but only on the native path: ConvertOperatorImpl
+            // rewrites a parquet partition to native before converting it.
             columnConversionSupport[ColumnType.BYTE][i] = true;
             columnConversionSupport[ColumnType.SHORT][i] = true;
             columnConversionSupport[ColumnType.INT][i] = true;
             columnConversionSupport[ColumnType.LONG][i] = true;
+            addSupportedConversion(i, ColumnType.DOUBLE, ColumnType.FLOAT);
             addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
             addSupportedConversion(ColumnType.STRING, i);
             addSupportedConversion(ColumnType.VARCHAR, i);

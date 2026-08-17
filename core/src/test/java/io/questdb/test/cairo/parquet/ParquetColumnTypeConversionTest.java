@@ -1079,6 +1079,39 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBinaryFloatToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DOUBLE", "DECIMAL(18, 4)");
+            assertPrePassMadePartitionNative("FLOAT", "DECIMAL(18, 4)");
+            String values = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e300, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("DOUBLE", "DECIMAL(18, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(38, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(76, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(9, 2)", values);
+            assertConversion("DOUBLE", "DECIMAL(4, 1)", values);
+            assertConversion("DOUBLE", "DECIMAL(2, 1)", values);
+
+            String floatValues = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e30, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("FLOAT", "DECIMAL(18, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(38, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(76, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(9, 2)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(4, 1)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(2, 1)", floatValues);
+        });
+    }
+
+    @Test
     public void testDoubleToLongBoundary() throws Exception {
         assertMemoryLeak(() -> {
             // 9.223372036854775807E18 parses to the nearest f64, 2^63 (one ULP
@@ -3919,6 +3952,27 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("nt");
             tryDrop("pt");
+        }
+    }
+
+    private void assertPrePassMadePartitionNative(String sourceType, String targetType) throws Exception {
+        try {
+            execute("CREATE TABLE pp (ts TIMESTAMP, val " + sourceType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pp VALUES ('2024-01-01T00:00:01.000000Z', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE pp CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+            }
+
+            execute("ALTER TABLE pp ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormat(0));
+            }
+        } finally {
+            tryDrop("pp");
         }
     }
 

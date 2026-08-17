@@ -448,6 +448,7 @@ public class PostingIndexWriter implements IndexWriter {
     public void close() {
         try {
             if (keyMem.isOpen()) {
+                boolean isTrimSized = false;
                 try {
                     // v1 trimmed to KEY_FILE_RESERVED because the only live
                     // bytes were the two header pages. v2 keeps chain entries
@@ -456,12 +457,68 @@ public class PostingIndexWriter implements IndexWriter {
                     // regionLimit equals the entry region base which equals
                     // KEY_FILE_RESERVED.
                     long liveSize = chain.getRegionLimit();
+                    // chain.getRegionLimit() is THIS instance's cached
+                    // high-water, snapshotted when this instance last published.
+                    // It can lag the file: more than one PostingIndexWriter can
+                    // be open on the same .pk -- the O3 copy path opens its own
+                    // instance via openFromO3Context and frees it in a finally,
+                    // alongside the TableWriter's own indexer -- so another
+                    // instance may have appended or extended a chain entry since.
+                    // Truncating to the stale cached value lops off the tail of
+                    // the most recently published entry (typically its last
+                    // 44-byte gen-dir slot). The lost bytes read back as zeros,
+                    // so that gen's TXN_AT_SEAL regresses to 0 behind a real txn
+                    // and every reader then sees a non-monotonic gen-dir with a
+                    // silently empty generation.
+                    //
+                    // The header's regionLimit is the authoritative live
+                    // high-water: it is published under the chain-header seqlock
+                    // by whichever instance extended the region last. Never trim
+                    // below it. This mirrors of(), which already refuses to trust
+                    // the reported file length for the same reason.
+                    long publishedRegionLimit = chain.peekRegionLimit(keyMem);
+                    if (publishedRegionLimit > liveSize) {
+                        liveSize = publishedRegionLimit;
+                    }
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;
                     }
                     keyMem.setSize(liveSize);
+                    isTrimSized = true;
+                } catch (Throwable th) {
+                    // close() is a cleanup method and callers treat it as one:
+                    // TableWriter.doClose reaches it through
+                    // Misc.freeObjList(indexers) -> SymbolColumnIndexer.close ->
+                    // Misc.free(writer), and neither the list loop nor the indexer
+                    // guards its element. A throw here would abort that loop before
+                    // SymbolColumnIndexer frees its NATIVE_INDEX_READER buffer, before
+                    // the ~25 Misc.free(...) calls that follow, and before
+                    // releaseLock() -- leaking the writer's native memory and stranding
+                    // the table lock. Log and carry on instead. The catch is broad on
+                    // purpose: what the caller needs is to keep freeing, and that does
+                    // not depend on which throwable the sizing raised. Both throw
+                    // sources are here -- peekRegionLimit rejects a damaged header, and
+                    // setSize extends the mapping when the published high-water sits
+                    // past it, which can fail on allocate/mremap.
+                    LOG.critical()
+                            .$("posting index close could not size the .pk trim, releasing without truncation [index=").$safe(indexName)
+                            .$(", err=").$(th)
+                            .I$();
                 } finally {
-                    Misc.free(keyMem);
+                    if (isTrimSized) {
+                        Misc.free(keyMem);
+                    } else if (keyMem.isOpen()) {
+                        // Misc.free(keyMem) truncates the .pk to keyMem's CURRENT append
+                        // offset, which is this instance's stale cached high-water -- the
+                        // exact trim the sizing above exists to prevent. With the header
+                        // unreadable there is no trusted high-water to trim to, so release
+                        // the mapping WITHOUT truncating and leave the file intact for the
+                        // next open. of() reads the length from the header rather than from
+                        // ff.length(), so a .pk carrying an untrimmed tail reopens fine; a
+                        // .pk cut below its published region does not. of()'s own error
+                        // path already makes this same choice.
+                        keyMem.close(false);
+                    }
                 }
             }
         } finally {
@@ -2392,6 +2449,75 @@ public class PostingIndexWriter implements IndexWriter {
                 endOffset = coverEndOffsetsCache.getQuick(c);
             }
             coverEndOffsetsScratch.setQuick(c, endOffset);
+        }
+    }
+
+    /**
+     * Pre-condition for every chain publish: the gen-dir TXN_AT_SEAL sequence the
+     * publish is about to expose must be non-decreasing across all
+     * {@code newGenCount} slots. publishToChain writes exactly ONE slot per call
+     * and then publishes a GEN_COUNT covering all of them, so it relies on slots
+     * {@code [0, overrideGenIndex)} already being fully published and monotonic.
+     * The clamp in publishToChain cannot repair those: it only constrains the
+     * single slot this call wrote, while the prefix comes off disk and a
+     * pre-9.4.x build can have left a regression there.
+     * <p>
+     * publishToChain calls this AFTER writing its own slot but BEFORE
+     * appendNewEntry / extendHead, for two reasons. The just-written slot sits at
+     * or past the head's published GEN_COUNT, so no reader can reach it and
+     * failing here means none of the publishing publishToChain would do has
+     * happened: the extend aborts with nothing partially published to unwind.
+     * (The format-1 COW migration earlier in publishToChain can already have
+     * moved the head entry and the header sequence, but it copies the entry
+     * verbatim -- same genCount, same gen-dir bytes, so an already-corrupt prefix
+     * stays exactly as corrupt to readers -- and it is idempotent if the publish
+     * runs again.) That does not make the failure transparent in production.
+     * Three TableWriter paths reach an indexer commit and none of them retries:
+     * syncColumns and the switch-partition seal each wrap the commit in
+     * {@code catch (CairoException e) { throwDistressException(e); }}, while
+     * publishPostingIndexesForLastPartitionFastLag does not catch at all --
+     * applyLagToLastPartition sets {@code distressed = true} and rethrows, so on
+     * a WAL table the exception reaches ApplyWal2TableJob.handleWalApplyFailure
+     * and suspends the table. Every route ends at a failed commit over an
+     * already-corrupt prefix, which only REINDEX clears. And every offset the
+     * loop reads is at or below that slot, so keyMem already covers the range.
+     * <p>
+     * It throws for the same reason the cover-set guard in publishToChain does:
+     * deployments run both with and without {@code -ea}, so an assert is a no-op
+     * on some of them and an unhandleable Error on the commit path of the rest.
+     * The cover-footer clobber an equivalent post-publish check would additionally
+     * catch cannot happen: in format 1 the footer precedes the gen-dir, and the
+     * only way it can overflow into slot 0 is the cover-set change publishToChain
+     * already rejects before mutating anything; in format 0 the footer trails the
+     * gen-dir, so it can never reach a slot in {@code [0, newGenCount)}.
+     */
+    private void checkGenDirMonotonic(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
+        long prev = Long.MIN_VALUE;
+        for (int i = 0; i < newGenCount; i++) {
+            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
+            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (txnAtSeal < prev) {
+                LOG.critical()
+                        .$("posting index refused to publish a non-monotonic gen-dir [index=").$safe(indexName)
+                        .$(", entryOffset=").$(entryBase)
+                        .$(", genCount=").$(newGenCount)
+                        .$(", badGen=").$(i)
+                        .$(", txnAtSeal=").$(txnAtSeal)
+                        .$(", prevTxnAtSeal=").$(prev)
+                        .$(", writtenGen=").$(overrideGenIndex)
+                        .$(", sealTxn=").$(sealTxn)
+                        .$(']').$();
+                throw CairoException.critical(0)
+                        .put("posting index is corrupt")
+                        .put(" [reason=writer refused to publish a non-monotonic gen-dir, index=").put(indexName)
+                        .put(", entryOffset=").put(entryBase)
+                        .put(", genCount=").put(newGenCount)
+                        .put(", badGen=").put(i)
+                        .put(", txnAtSeal=").put(txnAtSeal)
+                        .put(", prevTxnAtSeal=").put(prev)
+                        .put(']');
+            }
+            prev = txnAtSeal;
         }
     }
 
@@ -4466,6 +4592,34 @@ public class PostingIndexWriter implements IndexWriter {
         }
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
+        // The gen-dir's TXN_AT_SEAL sequence must never regress: readers use it
+        // both as the per-gen visibility gate (gen visible when
+        // txnAtSeal <= pinnedTxn) and as the publish-completion marker, and
+        // trimInFlightTailGens walks the tail assuming it is non-decreasing.
+        // Two callers can otherwise drive it backwards:
+        //   - the pendingTxnAtSeal<0 fallback above tags the slot 0, which is
+        //     BELOW every real txn. close() resets the field to -1, so any
+        //     extend on a REOPENED writer whose caller did not re-arm
+        //     setNextTxnAtSeal lands here and buries a 0 after a real txn.
+        //   - callers legitimately disagree by one: the O3/seal paths tag
+        //     getTxn()+1 while the WAL fast-lag path tags getTxn().
+        // Clamping up to the predecessor is the conservative repair: a later
+        // gen must never become visible EARLIER than an earlier one, so the
+        // predecessor's txn is the lowest value this slot may legally carry.
+        if (overrideGenIndex > 0) {
+            long prevSlotOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex - 1, writeFormat, writeCoverCount);
+            long prevSlotTxnAtSeal = keyMem.getLong(prevSlotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (slotTxnAtSeal < prevSlotTxnAtSeal) {
+                LOG.info()
+                        .$("posting index clamped a regressing gen txnAtSeal [index=").$safe(indexName)
+                        .$(", gen=").$(overrideGenIndex)
+                        .$(", from=").$(slotTxnAtSeal)
+                        .$(", to=").$(prevSlotTxnAtSeal)
+                        .$(", pendingTxnAtSeal=").$(pendingTxnAtSeal)
+                        .$(']').$();
+                slotTxnAtSeal = prevSlotTxnAtSeal;
+            }
+        }
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
@@ -4477,6 +4631,25 @@ public class PostingIndexWriter implements IndexWriter {
         // the matching slot payload too.
         Unsafe.storeFence();
         keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
+
+        // Validate the whole gen-dir the publish below is about to expose, while
+        // the chain still shows the OLD head. The clamp above only constrains the
+        // ONE slot this call wrote; slots [0, overrideGenIndex) come off disk and
+        // a pre-fix build can have left a regressing prefix there. Running this
+        // BEFORE appendNewEntry/extendHead leaves nothing partially published to
+        // unwind: the slot just written sits at or past the head's published
+        // GEN_COUNT, so none of the publishing this method would do has happened
+        // yet, and the one mutation that can already have run, the format-1 COW
+        // migration above, copies the entry verbatim (same genCount, same gen-dir
+        // bytes -- an already-corrupt prefix stays exactly as corrupt to readers).
+        // No production caller turns that into a retry: syncColumns and the
+        // switch-partition seal call throwDistressException on this
+        // CairoException, and the WAL fast-lag path lets it escape into
+        // applyLagToLastPartition, which marks the writer distressed and
+        // rethrows -- suspending the table when it is a WAL one. Every route
+        // fails the commit over an already-corrupt prefix; see
+        // checkGenDirMonotonic.
+        checkGenDirMonotonic(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
         // and not-yet-opened slots publish 0; readers treat them as "no file
