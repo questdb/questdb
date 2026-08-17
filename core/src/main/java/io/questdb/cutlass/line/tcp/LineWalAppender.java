@@ -163,9 +163,10 @@ public class LineWalAppender implements QuietCloseable {
                             try {
                                 int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent);
                                 if (newColumnType == ColumnType.DECIMAL) {
+                                    // the surrogate DECIMAL carries no precision or scale, so it cannot back a column
                                     throw CairoException.nonCritical()
                                             .put("decimal columns cannot be created automatically [table=")
-                                            .put(writer.getTableToken())
+                                            .put(tud.getTableNameUtf16())
                                             .put(", columnName=")
                                             .put(columnNameUtf16)
                                             .put(']');
@@ -537,6 +538,9 @@ public class LineWalAppender implements QuietCloseable {
                         }
                         break;
                     case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        if (!ColumnType.isDecimalType(ColumnType.tagOf(colType))) {
+                            throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                        }
                         Decimal256 decimal = ent.getDecimalValue();
                         if (decimal.isNull()) {
                             DecimalUtil.storeNull(r, columnIndex, colType);

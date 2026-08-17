@@ -286,7 +286,7 @@ public class LineTcpMeasurementEvent implements Closeable {
                     case LineTcpParser.ENTITY_TYPE_DECIMAL:
                         int columnType = buffer.readDecimal(address, decimal256);
                         DecimalUtil.store(decimal256, row, colIndex, columnType);
-                        address += Byte.BYTES + Integer.BYTES + Decimal256.BYTES;
+                        address += LineTcpEventBuffer.DECIMAL_VALUE_LENGTH;
                         break;
                     default:
                         throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
@@ -350,6 +350,15 @@ public class LineTcpMeasurementEvent implements Closeable {
                     securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entity);
+                    if (colType == ColumnType.DECIMAL) {
+                        // the surrogate DECIMAL carries no precision or scale, so it cannot back a column
+                        throw CairoException.nonCritical()
+                                .put("decimal columns cannot be created automatically [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", columnName=")
+                                .put(colNameUtf16)
+                                .put(']');
+                    }
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(colNameUtf16, tableUpdateDetails.getTableNameUtf16());
                 } else {
@@ -701,6 +710,9 @@ public class LineTcpMeasurementEvent implements Closeable {
                     offset = buffer.addNull(offset);
                     break;
                 case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                    if (!ColumnType.isDecimalType(ColumnType.tagOf(colType))) {
+                        throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, entity.getName());
+                    }
                     final int scale = ColumnType.getDecimalScale(colType);
                     decimal256.copyFrom(entity.getDecimalValue());
                     if (decimal256.getScale() != scale) {
