@@ -192,6 +192,19 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testContainsWebSocketProtocol() {
+        Utf8String durableAck = QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("questdb.qwp.durable-ack.v1"), durableAck));
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1, questdb.qwp.durable-ack.v1\t"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1,questdb.qwp.durable-ack.v10"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("QUESTDB.QWP.DURABLE-ACK.V1"), durableAck));
+    }
+
+    @Test
     public void testKeyWithAllBase64Characters() {
         // Test key containing varied base64 characters
         // Use a valid 24-char base64 string with varied characters including +/
@@ -240,6 +253,29 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 Assert.assertTrue("expected X-QWP-Max-Batch-Size header, got: " + response,
                         response.contains("X-QWP-Max-Batch-Size: " + maxBatchSize + "\r\n"));
                 Assert.assertTrue(response.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testResponseWithDurableAckWebSocketProtocol() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, true, null, null, null, true);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, true, null, null, null, true);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue(response.contains("X-QWP-Durable-Ack: enabled\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Sec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
             } finally {
                 freeBuffer(buf, 512);
             }

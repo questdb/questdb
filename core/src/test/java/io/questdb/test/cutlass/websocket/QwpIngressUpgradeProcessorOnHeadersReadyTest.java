@@ -237,6 +237,22 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testOnHeadersReadyEnablesDurableAckThroughBrowserSubprotocol() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+                "application.v1, questdb.qwp.durable-ack.v1",
+                new FakeEnabledDurableAckRegistry(),
+                true));
+    }
+
+    @Test
+    public void testOnHeadersReadyDoesNotSelectBrowserSubprotocolWhenRegistryDisabled() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+                "questdb.qwp.durable-ack.v1",
+                DefaultDurableAckRegistry.INSTANCE,
+                false));
+    }
+
+    @Test
     public void testOnHeadersReadyFailsHardWhenBadRequestResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -457,6 +473,48 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             QwpIngressProcessorState state = lv.get(context);
             Assert.assertNotNull("state must be populated after successful handshake", state);
             Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setDurableAckRegistry(previous);
+        }
+    }
+
+    private static void assertDurableAckSubprotocolAfterHandshake(
+            String protocols,
+            DurableAckRegistry registry,
+            boolean expectedEnabled
+    ) throws Exception {
+        DurableAckRegistry previous = engine.getDurableAckRegistry();
+        engine.setDurableAckRegistry(registry);
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            header.setHeader("Sec-WebSocket-Protocol", protocols);
+
+            processor.onHeadersReady(context);
+            processor.onRequestComplete(context);
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            QwpIngressProcessorState state = lv.get(context);
+            Assert.assertNotNull("state must be populated after successful handshake", state);
+            Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            String confirmation = "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n";
+            Assert.assertEquals(
+                    "subprotocol confirmation must mirror actual durable-ack enablement: " + response,
+                    expectedEnabled,
+                    response.contains(confirmation));
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             engine.setDurableAckRegistry(previous);

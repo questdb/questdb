@@ -73,6 +73,12 @@ public final class QwpConstants {
      */
     public static final byte FLAG_DEFER_COMMIT = 0x01;
     /**
+     * Flag bit: side-effect-free durable-ack progress poll. This control frame
+     * has zero tables and zero payload and is accepted only on a connection
+     * that negotiated durable acknowledgements.
+     */
+    public static final byte FLAG_DURABLE_ACK_POLL = 0x02;
+    /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.
      */
@@ -150,8 +156,9 @@ public final class QwpConstants {
      * Status: Per-table durable-upload acknowledgment.
      * <p>
      * Sent by the server (only when the client opted in via the
-     * {@code X-QWP-Request-Durable-Ack} handshake header) when WAL segments
-     * have been uploaded to the configured object store. Payload:
+     * {@code X-QWP-Request-Durable-Ack} handshake header or the browser-safe
+     * {@code questdb.qwp.durable-ack.v1} WebSocket subprotocol) when WAL
+     * segments have been uploaded to the configured object store. Payload:
      * 1-byte status + 2-byte tableCount +
      * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
      * Only tables whose durable seqTxn progressed since the last durable ack
