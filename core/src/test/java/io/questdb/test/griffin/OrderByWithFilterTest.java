@@ -323,36 +323,43 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         // values out of the symbol map at once, and on a NOCACHE column both reads
         // land in the same flyweight - so the comparator saw one value twice,
         // returned 0 for every pair, and left the factories in symbol-KEY order,
-        // which is insertion order. 'w' is inserted before 'b' precisely so the two
-        // orders disagree.
+        // which is insertion order.
         assertMemoryLeak(() -> {
+            // Two insertion orders, because one cannot exercise both directions: whichever
+            // direction symbol-KEY order already agrees with passes with the comparator broken.
+            // 'w' before 'b' is already the descending answer - which is how the descending
+            // comparator went unexercised while the ascending one carried the fix - and 'b'
+            // before 'w' is the ascending answer. NULL is inserted last and sorts first either
+            // way, so each order puts two values in the wrong place rather than one.
             for (String cacheClause : new String[]{"cache", "nocache"}) {
-                execute("CREATE TABLE a (s SYMBOL " + cacheClause + " INDEX)");
-                execute("INSERT INTO a VALUES ('a'), ('w'), ('b'), ('a'), (NULL)");
-                // The plan assertion pins the branch the comparator lives on: toPlan prints
-                // symbolOrder only when heapCursorUsed is false, which is the only branch
-                // that sorts the per-symbol factories at all. Without it an optimiser change
-                // routing the query through the heap factory would leave the data assertion
-                // green with the comparator never invoked.
-                assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s")
-                        .noLeakCheck()
-                        .withPlanContaining("FilterOnExcludedValues symbolOrder: asc")
-                        .returns("""
-                                s
-                                
-                                b
-                                w
-                                """);
-                assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s DESC")
-                        .noLeakCheck()
-                        .withPlanContaining("FilterOnExcludedValues symbolOrder: desc")
-                        .returns("""
-                                s
-                                w
-                                b
-                                
-                                """);
-                execute("DROP TABLE a");
+                for (String insertionOrder : new String[]{"('w'), ('b')", "('b'), ('w')"}) {
+                    execute("CREATE TABLE a (s SYMBOL " + cacheClause + " INDEX)");
+                    execute("INSERT INTO a VALUES ('a'), " + insertionOrder + ", ('a'), (NULL)");
+                    // The plan assertion pins the branch the comparator lives on: toPlan prints
+                    // symbolOrder only when heapCursorUsed is false, which is the only branch
+                    // that sorts the per-symbol factories at all. Without it an optimiser change
+                    // routing the query through the heap factory would leave the data assertion
+                    // green with the comparator never invoked.
+                    assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s")
+                            .noLeakCheck()
+                            .withPlanContaining("FilterOnExcludedValues symbolOrder: asc")
+                            .returns("""
+                                    s
+
+                                    b
+                                    w
+                                    """);
+                    assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s DESC")
+                            .noLeakCheck()
+                            .withPlanContaining("FilterOnExcludedValues symbolOrder: desc")
+                            .returns("""
+                                    s
+                                    w
+                                    b
+
+                                    """);
+                    execute("DROP TABLE a");
+                }
             }
         });
     }

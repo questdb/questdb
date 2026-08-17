@@ -860,6 +860,10 @@ public class LiveViewWindow implements QuietCloseable {
      * keys, and the encoding they are named in, belong to the window rather than to any
      * member. What stays each member's own is only its state image and what its root
      * charges - the logical byte baseline it is incremental against.
+     * <p>
+     * The anchor value is not among what this emits, unlike the window's own seal: a
+     * member publishes its function's state image, and the anchor entry the same keys
+     * carry is the window root's, written by that seal from its own walk.
      *
      * @param projectionIndexes the members' projections in the adopted plan
      * @param imagesOut         one image list per member, index-aligned with
@@ -876,7 +880,6 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull MemoryCARW keyBuffer,
             @NotNull IntList projectionIndexes,
             @NotNull ObjList<byte[]> keysOut,
-            @NotNull LongList valuesOut,
             @NotNull ObjList<ObjList<byte[]>> imagesOut,
             @NotNull ObjList<byte[]> removedKeysOut,
             boolean isIncremental,
@@ -908,7 +911,7 @@ public class LiveViewWindow implements QuietCloseable {
         freezeCheckpointEntries(
                 keyBuffer,
                 keysOut,
-                valuesOut,
+                null,
                 removedKeysOut,
                 isIncremental,
                 entryStateBytes,
@@ -939,6 +942,9 @@ public class LiveViewWindow implements QuietCloseable {
      * final and the directory and partition-map writers only read it.
      *
      * @param entryStateBytes   the state bytes one published entry carries, per member
+     * @param valuesOut         the per-key anchor values, index-aligned with
+     *                          {@code keysOut}, or null for a member walk, whose keys are
+     *                          the window root's to publish an anchor value for
      * @param payloadsOut       the per-key images, per member, or null for the legacy
      *                          anchor-only shape that publishes no payload
      * @param logicalBytesInOut each member's running logical total: seeded by the caller
@@ -947,7 +953,7 @@ public class LiveViewWindow implements QuietCloseable {
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
             @NotNull ObjList<byte[]> keysOut,
-            @NotNull LongList valuesOut,
+            @Nullable LongList valuesOut,
             @NotNull ObjList<byte[]> removedKeysOut,
             boolean isIncremental,
             @NotNull IntList entryStateBytes,
@@ -957,8 +963,13 @@ public class LiveViewWindow implements QuietCloseable {
     ) {
         checkpointFreezeScanCount++;
         final int memberCount = entryStateBytes.size();
+        // Read once rather than per key: the walk below runs K times and a member walk
+        // publishes no anchor value at all.
+        final boolean isAnchorValueEmitted = valuesOut != null;
         keysOut.clear();
-        valuesOut.clear();
+        if (isAnchorValueEmitted) {
+            valuesOut.clear();
+        }
         removedKeysOut.clear();
         if (payloadsOut != null) {
             for (int m = 0; m < memberCount; m++) {
@@ -1032,7 +1043,9 @@ public class LiveViewWindow implements QuietCloseable {
             }
             final byte[] key = copyEncodedKey(keyBuffer, (int) length);
             keysOut.add(key);
-            valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
+            if (isAnchorValueEmitted) {
+                valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
+            }
             final boolean isCharged = !isIncremental || isNewSinceCheckpoint;
             for (int m = 0; m < memberCount; m++) {
                 final int stateBytes = entryStateBytes.getQuick(m);

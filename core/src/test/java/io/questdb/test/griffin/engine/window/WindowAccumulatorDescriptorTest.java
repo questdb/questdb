@@ -71,26 +71,78 @@ public class WindowAccumulatorDescriptorTest {
             for (int j = 0; j < n; j++) {
                 final LiveViewAccumulatorDescriptor host = components.getQuick(i);
                 final LiveViewAccumulatorDescriptor guest = components.getQuick(j);
-                final int slot = host.getRuntime().derivedSlotOffset(guest.getRuntime());
                 final String what = label(host) + " containing " + label(guest);
+                // The slot the fold lands on, stated here rather than read back off the
+                // implementation: the durable answer is the runtime one, so comparing the two
+                // agrees with a counter that moved as readily as with one that did not.
+                final int expected = expectedFoldSlot(host, guest);
+                Assert.assertEquals(what + ": slots", expected, host.derivedSlotOffset(guest));
                 // Every family in this build is at the codec version the containment was
-                // proved at, so the durable answer withholds nothing the runtime allows.
-                Assert.assertEquals(what + ": slots", slot, host.derivedSlotOffset(guest));
+                // proved at, so the durable answer withholds nothing the runtime allows. That
+                // is what this comparison is for - a family whose codec version moved would
+                // leave the durable side at -1 while the runtime side still folded.
                 Assert.assertEquals(
-                        what + ": bytes",
-                        slot < 0 ? -1 : slot * Long.BYTES,
-                        host.derivedStateOffset(guest)
+                        what + ": runtime slots",
+                        expected,
+                        host.getRuntime().derivedSlotOffset(guest.getRuntime())
                 );
-                if (slot >= 0) {
+                if (expected < 0) {
+                    Assert.assertEquals(what + ": bytes", -1, host.derivedStateOffset(guest));
+                } else {
                     // A guest's whole state has to fit inside the host from that offset, or
                     // the fold would hand its decoder a neighbour's bytes.
                     Assert.assertTrue(
                             what + ": the guest must fit",
-                            slot + guest.getSlotCount() <= host.getSlotCount()
+                            expected + guest.getSlotCount() <= host.getSlotCount()
                     );
                 }
             }
         }
+
+        // The byte offsets a guest's decoder reads its own image at, as literals. Deriving them
+        // from the slots above would restate the codec's one-word-per-slot rule by the very
+        // multiplication the implementation performs, and so would hold for any width it chose.
+        final LiveViewAccumulatorDescriptor sumDouble = LiveViewAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final LiveViewAccumulatorDescriptor countDouble = LiveViewAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        final LiveViewAccumulatorDescriptor countLong = LiveViewAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                3,
+                ColumnType.LONG
+        );
+        final LiveViewAccumulatorDescriptor welford = LiveViewAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
+                2,
+                ColumnType.DOUBLE
+        );
+        final LiveViewAccumulatorDescriptor kahan = LiveViewAccumulatorDescriptor.of(
+                WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                2,
+                ColumnType.DOUBLE
+        );
+        Assert.assertNotNull(sumDouble);
+        Assert.assertNotNull(countDouble);
+        Assert.assertNotNull(countLong);
+        Assert.assertNotNull(welford);
+        Assert.assertNotNull(kahan);
+        // The whole of a component is at zero inside itself.
+        Assert.assertEquals(0, sumDouble.derivedStateOffset(sumDouble));
+        // (sum, count) keeps the counter behind the total.
+        Assert.assertEquals(Long.BYTES, sumDouble.derivedStateOffset(countDouble));
+        // Welford's (mean, m2, count) and the Kahan (sum, compensation, count) keep it behind
+        // two words rather than one.
+        Assert.assertEquals(2 * Long.BYTES, welford.derivedStateOffset(countDouble));
+        Assert.assertEquals(2 * Long.BYTES, kahan.derivedStateOffset(countDouble));
+        // A counter holds no total, and a counter over another column is another counter.
+        Assert.assertEquals(-1, countDouble.derivedStateOffset(sumDouble));
+        Assert.assertEquals(-1, sumDouble.derivedStateOffset(countLong));
     }
 
     @Test
@@ -928,9 +980,19 @@ public class WindowAccumulatorDescriptorTest {
             final String what = label(component);
             final int slots = component.getSlotCount();
             Assert.assertTrue(what, slots > 0);
-            Assert.assertEquals(what + ": width", slots * Long.BYTES, component.getStateLength());
+            // The persisted width, as a literal per family rather than as the slot count times
+            // the word: the implementation computes it that way, so an expectation that does
+            // the same describes whatever layout it produced instead of the one the format
+            // was proved at.
             Assert.assertEquals(
                     what + ": width",
+                    expectedStateLength(component.getFamily()),
+                    component.getStateLength()
+            );
+            // The same width by the other route the plan checks: off the family table rather
+            // than off a built descriptor.
+            Assert.assertEquals(
+                    what + ": family width",
                     component.getStateLength(),
                     LiveViewAccumulatorDescriptor.familyStateLength(component.getFamily())
             );
@@ -943,12 +1005,15 @@ public class WindowAccumulatorDescriptorTest {
                         ColumnType.sizeOf(component.getSlotColumnType(s))
                 );
             }
+            // The field offsets a restore decodes at, also as literals, and for the same
+            // reason: an expectation derived from getFieldSlot would follow the slot table
+            // wherever it moved.
+            final int[] expectedOffsets = expectedFieldOffsets(component.getFamily());
             for (int f = 0, m = fields.size(); f < m; f++) {
                 final int field = fields.getQuick(f);
-                final int slot = component.getFieldSlot(field);
                 Assert.assertEquals(
                         what + ": field " + field,
-                        slot < 0 ? -1 : slot * Long.BYTES,
+                        expectedOffsets[f],
                         component.getFieldOffset(field)
                 );
             }
@@ -1002,6 +1067,68 @@ public class WindowAccumulatorDescriptorTest {
                 ColumnType.UNDEFINED
         );
         return components;
+    }
+
+    /**
+     * The byte offsets of {@code FIELD_SUM}, {@code FIELD_NON_NULL_COUNT},
+     * {@code FIELD_MEAN} and {@code FIELD_M2} inside one durable component of
+     * {@code family}, in that order, or {@code -1} for a field the family does not carry.
+     * <p>
+     * A restore reads a field out of a persisted image at these offsets, so they are what
+     * the format is, and they are written out here rather than derived from the slot table
+     * they are derived from in the implementation.
+     */
+    private static int[] expectedFieldOffsets(int family) {
+        return switch (family) {
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT -> new int[]{0, Long.BYTES, -1, -1};
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD ->
+                    new int[]{-1, 2 * Long.BYTES, 0, Long.BYTES};
+            case WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                 WindowAccumulatorDescriptor.FAMILY_ROW_COUNT -> new int[]{-1, 0, -1, -1};
+            default -> throw new AssertionError("no expected field layout for family " + family);
+        };
+    }
+
+    /**
+     * The slot {@code guest}'s whole state begins at inside {@code host}, or {@code -1} when
+     * the two do not fold. The proved pairs written out: a fold needs the same argument and
+     * the same contribution predicate, which follows the argument's type, and the only guest
+     * this build folds is a counter.
+     */
+    private static int expectedFoldSlot(
+            LiveViewAccumulatorDescriptor host,
+            LiveViewAccumulatorDescriptor guest
+    ) {
+        if (host.getArgumentColumnIndex() != guest.getArgumentColumnIndex()
+                || host.getArgumentColumnType() != guest.getArgumentColumnType()) {
+            return -1;
+        }
+        if (host.getFamily() == guest.getFamily()) {
+            return 0;
+        }
+        if (guest.getFamily() != WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT) {
+            return -1;
+        }
+        return switch (host.getFamily()) {
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT -> 1;
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD -> 2;
+            default -> -1;
+        };
+    }
+
+    /**
+     * The width one durable component of {@code family} persists at. The number a stored
+     * image's length is checked against on restore, so it is stated rather than recomputed.
+     */
+    private static int expectedStateLength(int family) {
+        return switch (family) {
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT -> 2 * Long.BYTES;
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD -> 3 * Long.BYTES;
+            case WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
+                 WindowAccumulatorDescriptor.FAMILY_ROW_COUNT -> Long.BYTES;
+            default -> throw new AssertionError("no expected width for family " + family);
+        };
     }
 
     private static void addExtremum(

@@ -144,7 +144,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     // ever adds; kept per instance so the seal path allocates nothing for it.
     private final LongList emptySegmentIds = new LongList();
     // The key domain one bucket's shared walk produces, common to every member in it.
-    private final LongList groupedFreezeAnchorValues = new LongList();
     private final ObjList<byte[]> groupedFreezeKeys = new ObjList<>();
     private final LongList groupedFreezeLogicalBytes = new LongList();
     private final ObjList<byte[]> groupedFreezeRemovedKeys = new ObjList<>();
@@ -2128,7 +2127,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
         try {
             groupedFreezeKeys.clear();
-            groupedFreezeAnchorValues.clear();
             groupedFreezeRemovedKeys.clear();
             groupedFreezeLogicalBytes.clear();
             // One image list per member, grown once and reused: a bucket's width follows the
@@ -2144,7 +2142,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     keyBuffer,
                     projectionIndexes,
                     groupedFreezeKeys,
-                    groupedFreezeAnchorValues,
                     memberImages,
                     groupedFreezeRemovedKeys,
                     isIncremental,
@@ -2341,7 +2338,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     private void releaseGroupedFreezeScratch(@NotNull ObjList<ObjList<byte[]>> memberImages) {
         groupedFreezeKeys.clear();
-        groupedFreezeAnchorValues.clear();
         groupedFreezeRemovedKeys.clear();
         groupedFreezeLogicalBytes.clear();
         for (int m = 0, n = memberImages.size(); m < n; m++) {

@@ -576,10 +576,18 @@ public class WalReader implements Closeable {
      * {@code rootLen} - so this must not be called from inside {@link #of} while the path
      * still carries a segment suffix.
      * <p>
-     * Opening by path this late is safe because the WAL directory outlives the scan that
-     * needs it: {@code WalPurgeJob} clamps its purge floor to every live view's consumed
-     * seqTxn, and a view resolving symbols for a transaction has by definition not consumed
-     * it yet. The only other caller of this class is test-only.
+     * Opening by path this late holds the WAL directory for as long as a view that still
+     * counts needs it, and no longer. {@code WalPurgeJob} clamps its purge floor to the
+     * consumed seqTxn of every live view it holds a floor for, and a view resolving symbols
+     * for a transaction has by definition not consumed it yet - but a dropped or invalidated
+     * view releases that floor ({@code WalPurgeJob.getSafeToPurgeUpToTxn} skips it), so a
+     * view dropped or invalidated part-way through a scan can have the segment purged under
+     * it and this open then raises inside the row loop rather than returning a reader. The
+     * raise aborts a refresh cycle whose view has already stopped counting - invalidation is
+     * terminal and the refresh scan skips a dropped or invalid view outright - so the scan it
+     * interrupts is one whose rows no later cycle would have carried anyway. The floor is not
+     * released while a view is merely behind, so a view that still refreshes always finds the
+     * directory. The only other caller of this class is test-only.
      */
     private SymbolMapReaderImpl cleanSymbolReader(int col) {
         SymbolMapReaderImpl cleanReader = col < cleanSymbolReaders.size() ? cleanSymbolReaders.getQuick(col) : null;

@@ -1319,7 +1319,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // Where the value entering the frame sits, counted from the ring's oldest cell, when the
         // frame's high bound lags the current row. One more than the unfused reading of the same
         // thing for a bounded low bound, because the fused ring holds one cell more - see
-        // fusedRingSize.
+        // fusedRingSize. Always below fusedRingSize: a frame is at most as long as the buffer it
+        // is read out of, and validate() admits no high bound above the current row here, so
+        // accumulateWindowState wraps with a compare rather than a modulo.
         private final int fusedEnteringOffset;
         // The fused ring's length. It is the unfused bufferSize plus the one cell a deferred
         // subtraction needs: a bound contributor leaves the current frame's total in the map
@@ -1437,6 +1439,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
             } else {
                 loIdx = value.getLong(windowStateRingIndexSlot);
+                assert loIdx >= 0 && loIdx < fusedRingSize;
                 sum = value.getDouble(windowStateSumSlot);
                 count = value.getLong(windowStateNonNullCountSlot);
                 if (frameLoBounded) {
@@ -1449,11 +1452,20 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         count--;
                     }
                 }
+                // A compare and a subtract rather than a divide, on a row's own path. Both
+                // terms are below fusedRingSize, so one wrap is the most the sum can need:
+                // the slot is written reduced below and by nothing else, and a frame whose
+                // high bound lags the current row by fusedEnteringOffset rows is at most as
+                // long as the ring it is buffered in - which is what the extra cell of a
+                // bounded low bound leaves room for. An unbounded low bound reads the oldest
+                // cell itself, at offset zero.
+                long enteringIdx = loIdx + fusedEnteringOffset;
+                if (enteringIdx >= fusedRingSize) {
+                    enteringIdx -= fusedRingSize;
+                }
                 final double entering = frameIncludesCurrentValue
                         ? d
-                        : memory.getDouble(
-                        ringOffset + ((loIdx + fusedEnteringOffset) % fusedRingSize) * Double.BYTES
-                );
+                        : memory.getDouble(ringOffset + enteringIdx * Double.BYTES);
                 if (Numbers.isFinite(entering)) {
                     sum += entering;
                     count++;
@@ -1462,9 +1474,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putDouble(windowStateSumSlot, sum);
             value.putLong(windowStateNonNullCountSlot, count);
             // The current row's value takes the cell the departing one has now been accounted
-            // for, and the oldest cell moves on to what the next row will drop.
+            // for, and the oldest cell moves on to what the next row will drop. Stored reduced,
+            // which is what lets the reads above skip the divide.
             memory.putDouble(ringOffset + loIdx * Double.BYTES, d);
-            value.putLong(windowStateRingIndexSlot, (loIdx + 1) % fusedRingSize);
+            final long nextLoIdx = loIdx + 1;
+            value.putLong(windowStateRingIndexSlot, nextLoIdx == fusedRingSize ? 0 : nextLoIdx);
         }
 
         @Override

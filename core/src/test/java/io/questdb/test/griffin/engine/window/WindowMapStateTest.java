@@ -1729,7 +1729,17 @@ public class WindowMapStateTest extends AbstractCairoTest {
         Assert.assertEquals(expected, body(render(fused.toString())));
     }
 
-    private static void assertIsBound(String sql, boolean bound) throws SqlException {
+    /**
+     * Whether compiling {@code sql} binds a group at all, which is a lower bound and
+     * deliberately not a count: what a shape fuses into is this class's other cases' subject.
+     * <p>
+     * Package-visible for the {@code *FusionDisabled} runs, which are copies of another suite
+     * at the other setting and so have to prove both halves of the differential they are - that
+     * the switch leaves their compiles unbound, and that the run they copy binds something.
+     * Unbound covers both spellings of it, a null list and an empty one, because the switch
+     * leaves the plan compiled and unbound rather than absent.
+     */
+    static void assertIsBound(String sql, boolean bound) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
             final ObjList<WindowMapState> states = windowFactory(factory).getWindowMapStates();

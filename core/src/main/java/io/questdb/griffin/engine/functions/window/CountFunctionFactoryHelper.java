@@ -1184,6 +1184,9 @@ public class CountFunctionFactoryHelper {
         // Where the flag of the row entering the frame sits, counted from the ring's oldest cell,
         // when the frame's high bound lags the current row. One more than the unfused reading for
         // a bounded low bound, because the fused ring holds one cell more - see fusedRingSize.
+        // Always below fusedRingSize: a frame is at most as long as the buffer it is read out of,
+        // and validate() admits no high bound above the current row here, so
+        // accumulateWindowState wraps with a compare rather than a modulo.
         private final int fusedEnteringOffset;
         // The fused ring's length: the unfused bufferSize plus the one cell a deferred
         // subtraction needs. A bound contributor leaves the current frame's count in the map
@@ -1285,6 +1288,7 @@ public class CountFunctionFactoryHelper {
                 count = frameIncludesCurrentValue && isNotNull ? 1 : 0;
             } else {
                 loIdx = value.getLong(windowStateRingIndexSlot);
+                assert loIdx >= 0 && loIdx < fusedRingSize;
                 count = value.getLong(windowStateNonNullCountSlot);
                 if (frameLoBounded && memory.getBool(ringOffset + loIdx)) {
                     // The oldest cell holds the row the frame dropped between the previous row and
@@ -1292,17 +1296,27 @@ public class CountFunctionFactoryHelper {
                     // needs no extra cell either.
                     count--;
                 }
-                if (frameIncludesCurrentValue
-                        ? isNotNull
-                        : memory.getBool(ringOffset + (loIdx + fusedEnteringOffset) % fusedRingSize)) {
+                // A compare and a subtract rather than a divide, on a row's own path. Both terms
+                // are below fusedRingSize, so one wrap is the most the sum can need: the slot is
+                // written reduced below and by nothing else, and a frame whose high bound lags
+                // the current row by fusedEnteringOffset rows is at most as long as the ring it
+                // is buffered in - which is what the extra cell of a bounded low bound leaves
+                // room for. An unbounded low bound reads the oldest cell itself, at offset zero.
+                long enteringIdx = loIdx + fusedEnteringOffset;
+                if (enteringIdx >= fusedRingSize) {
+                    enteringIdx -= fusedRingSize;
+                }
+                if (frameIncludesCurrentValue ? isNotNull : memory.getBool(ringOffset + enteringIdx)) {
                     count++;
                 }
             }
             value.putLong(windowStateNonNullCountSlot, count);
             // The current row's flag takes the cell the departing one has now been accounted for,
-            // and the oldest cell moves on to what the next row will drop.
+            // and the oldest cell moves on to what the next row will drop. Stored reduced, which
+            // is what lets the reads above skip the divide.
             memory.putBool(ringOffset + loIdx, isNotNull);
-            value.putLong(windowStateRingIndexSlot, (loIdx + 1) % fusedRingSize);
+            final long nextLoIdx = loIdx + 1;
+            value.putLong(windowStateRingIndexSlot, nextLoIdx == fusedRingSize ? 0 : nextLoIdx);
         }
 
         @Override

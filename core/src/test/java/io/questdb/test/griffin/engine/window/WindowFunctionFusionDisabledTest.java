@@ -68,4 +68,31 @@ public class WindowFunctionFusionDisabledTest extends WindowFunctionTest {
     public void testFusionIsDisabledForThisRun() {
         Assert.assertFalse(configuration.isSqlWindowMapFusionEnabled());
     }
+
+    /**
+     * The other half of the same guard, and the one the setting alone cannot give: that the run
+     * this class is a copy of fuses anything at all. A decline rule widened far enough - a
+     * family withdrawn, a spec discrimination added - would leave both runs unfused and every
+     * inherited case comparing one path against itself, with the switch still off here and the
+     * assertion above still green.
+     * <p>
+     * A lower bound rather than the number in this class's own javadoc: how many of the suite's
+     * queries fuse is a function of the suite, and pinning it here would make an added case a
+     * failure of the switch.
+     */
+    @Test
+    public void testTheDefaultRunFusesWhatThisRunDoesNot() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fusion_guard (ts TIMESTAMP, k SYMBOL, x DOUBLE) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY");
+            // Three outputs on one window over one argument, which is the shape the suite's own
+            // fusing queries are: a window carrying one fusible function forms no group.
+            final String sql = "SELECT ts, sum(x) OVER w, avg(x) OVER w, count(x) OVER w "
+                    + "FROM fusion_guard "
+                    + "WINDOW w AS (PARTITION BY k ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)";
+            WindowMapStateTest.assertIsBound(sql, false);
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
+            WindowMapStateTest.assertIsBound(sql, true);
+        });
+    }
 }
