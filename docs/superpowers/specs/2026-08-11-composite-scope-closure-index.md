@@ -190,7 +190,6 @@ composite partitioning does not yet support a covering POSTING index reseal on a
 composite partitioning does not yet support an EXPRESSION dimension referencing column '
 composite partitioning does not yet support an indexed WHERE predicate
 composite partitioning does not yet support checkpoint/snapshot restore of an indexed column
-composite partitioning does not yet support multiple sub-day time intervals over a single multi-cell day
 composite partitioning does not yet support switching a native partition to parquet
 composite partitioning does not yet support the REPLACE commit mode
 composite partitioning is not yet supported with CREATE TABLE AS SELECT
@@ -221,4 +220,9 @@ diff /tmp/code.keys /tmp/spec.keys
 ```
 
 Any line in the code set that is not in the spec set is a NEW gate, and the roadmap has a new hole.
-Verified clean 2026-08-17: 38 refusals in code, 38 known keys, empty diff.
+Verified clean 2026-08-17: 37 refusals in code, 37 known keys, empty diff.
+
+The count went 38 -> 37 when sub-project 9A deleted the multi-sub-day-interval gate. That is the
+first key this project has removed by LIFTING a restriction rather than by discovering one; every
+earlier revision of this list added keys. A key leaving the list is the shape of progress the
+roadmap aims at, so it is recorded here rather than silently renumbered.
