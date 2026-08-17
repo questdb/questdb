@@ -154,14 +154,23 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * returning {@code Numbers.encodeLowHighInts(lo, hiExclusive)} or
      * {@link IndexMetaFileReader#KEY_ABSENT} when the group holds none.
      * <p>
-     * Pruning level 3's EFFECT. The spec's mechanism is Parquet
-     * {@code ColumnIndex}/{@code OffsetIndex} page skipping; the seal does not
-     * write either -- its writer takes {@code statistics_enabled} and nothing
-     * for a page index -- so the indexes are absent from the file rather than
-     * merely unreachable from Java, and Phase 3 must add both. What is
-     * available is {@code decodeRowGroup(..., rowLo, rowHi)}, whose Rust side
-     * skips pages outside the range, so bounding the decode to the key's rows
-     * achieves page skipping through the API that exists.
+     * Pruning level 3's EFFECT, reached by a different route than the spec's
+     * stated mechanism.
+     * <p>
+     * The spec's mechanism is Parquet {@code ColumnIndex}/{@code OffsetIndex}
+     * page skipping, and the seal DOES write both: {@code parquet2}'s
+     * {@code end()} calls {@code write_page_index} unconditionally, with
+     * {@code allow_column_index} bound to {@code write_statistics}, which the
+     * seal passes as true, and the seal's columns are all fixed-width so the
+     * opaque-Binary exclusion does not apply. What is missing is on the READ
+     * side: neither {@code ParquetFileDecoder} nor {@code ParquetPartitionDecoder}
+     * exposes a page-index API in this tree, so Java cannot consult them.
+     * <p>
+     * What Java does have is {@code decodeRowGroup(..., rowLo, rowHi)}, whose
+     * Rust side skips pages outside the range -- so bounding the decode to the
+     * key's rows achieves the same saving through the API that exists. Phase 3
+     * adding a page-index API would let the probe below be replaced by a
+     * lookup, not by newly written indexes.
      * <p>
      * The probe decodes ONLY {@code key_id}, four bytes a row, and binary
      * searches it: the group is key-major, so a key's rows are contiguous.
