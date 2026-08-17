@@ -123,7 +123,11 @@ public class CompositeO3PurgeSkipTest extends AbstractCairoTest {
     }
 
     private void churn(String table, int round) throws Exception {
-        // out-of-order: lands inside the already-written day
+        // Lands inside the already-written day. MOST rounds are genuinely out-of-order; the ones
+        // where (round % 6) == 5 land at 05:30, after the seeded max of 05:00, and are in-order
+        // appends. That is fine for this measurement -- ~17 of 20 rounds still rewrite the partition,
+        // and the growth it produces is unambiguous -- but the distinction is stated rather than
+        // glossed, because a reader who assumed all 20 were O3 would mis-size the leak.
         execute("INSERT INTO " + table + " VALUES ('2023-01-02T0" + (round % 6) + ":30:00.000000Z','E"
                 + (round % 3) + "'," + round + ".0)");
     }
