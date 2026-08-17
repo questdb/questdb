@@ -61,6 +61,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -3540,6 +3541,111 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             assertSqlCursors(
                     "select price, qty from t_pidx where ts in '2024-01-01' and cast(sym as varchar) = 's0'",
                     COVERED_QUERY
+            );
+        });
+    }
+
+    /**
+     * The residue Task 14 reclaims, created the only way it can arise: the DROP
+     * INDEX commits and the token retirement then FAILS.
+     * <p>
+     * The retirement runs after the metadata commit -- deliberately, because
+     * running it before means a crash in between leaves the column indexed with
+     * its token already gone, which is a silent empty result
+     * ({@link #testDropIndexDoesNotRetireTheTokenBeforeTheDropIsCommitted}
+     * pins that ordering). The cost of that ordering is this residue: the drop
+     * is durable, the {@code _pm} still names a pair for a column the committed
+     * metadata says is not indexed, and nothing reclaims it.
+     * <p>
+     * The injection fails the {@code _pm} header patch rather than crashing
+     * after it, so the retirement genuinely does not land.
+     * <p>
+     * <b>Ignored because it reproduces an open defect.</b> Nothing reclaims the
+     * residue. A merge-loop rule keyed on "the metadata says this column is not
+     * indexed" cannot fire, because the merge runs only inside
+     * {@code publishParquetIndexTokens}, which a partition reaches only when a
+     * seal ran for it -- and with the column dropped no seal ever runs again.
+     * Extending the guard to publish when the table indexes nothing does not
+     * help either: the enclosing seal path is itself skipped. Reclaiming this
+     * needs a path that runs for a parquet partition independently of sealing,
+     * or a durable record that a retirement is outstanding, which is a design
+     * change rather than a fix. Kept as the reproduction so the recipe is not
+     * lost: it fires the injection, proves the drop committed, and shows the
+     * two artifacts surviving the next publish.
+     */
+    @Ignore("reproduces an OPEN defect: nothing reclaims this residue yet -- see the javadoc")
+    @Test
+    public void testATokenLeftByAFailedDropIndexRetirementIsReclaimed() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final boolean[] armed = {false};
+        final boolean[] fired = {false};
+        final long[] pmFd = {-1};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (armed[0] && fd > -1 && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                    pmFd[0] = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (armed[0] && fd == pmFd[0] && offset == 0 && len == Long.BYTES) {
+                    // Fail the patch itself: the appended footer is on disk but
+                    // the header still points at the old one, so the retirement
+                    // did not take effect.
+                    armed[0] = false;
+                    fired[0] = true;
+                    return -1;
+                }
+                return super.write(fd, address, len, offset);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            inputRoot = root;
+            createIndexedSparseKeyTable();
+            runPostingSealPurgeJob();
+            final int sealed = countPidxArtifacts();
+            Assert.assertTrue("the fixture must have sealed a pair", sealed >= 2);
+
+            armed[0] = true;
+            try {
+                execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym DROP INDEX");
+                drainWalQueue();
+            } catch (Throwable ignore) {
+                // The retirement failing is the point; the drop itself is
+                // committed by then.
+            } finally {
+                armed[0] = false;
+            }
+            Assert.assertTrue(
+                    "the injection never fired, so the residue was never created and this proves nothing",
+                    fired[0]
+            );
+            engine.releaseInactive();
+
+            // The drop is durable: the column is no longer POSTING-indexed.
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                Assert.assertFalse(
+                        "the drop must have committed, or this is not the residue under test",
+                        IndexType.isPosting(reader.getMetadata().getColumnIndexType(columnIndex))
+                );
+            }
+
+            // A publish for the partition: an out-of-order insert is enough.
+            execute("INSERT INTO " + TABLE_NAME
+                    + " VALUES ('" + INDEXED_PARTITION + "T00:00:00.000005Z', 's7', 1.5, 9)");
+            drainWalQueue();
+            runPostingSealPurgeJob();
+
+            Assert.assertEquals(
+                    "the next publish must reclaim the token the failed retirement left,"
+                            + " so its artifacts are gone",
+                    0,
+                    countPidxArtifacts()
             );
         });
     }
