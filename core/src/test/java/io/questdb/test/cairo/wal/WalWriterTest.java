@@ -66,6 +66,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -5249,6 +5250,45 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (UnsupportedOperationException ex) {
                 TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
+            }
+        });
+    }
+
+    @Test
+    public void testTxnTrackerIfExistsDoesNotCreateOrInstall() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            // registerTable() eagerly installs a tracker; purge it to reproduce the "no tracker
+            // exists yet" case the same way a completed table drop does.
+            engine.getTableSequencerAPI().purgeTxnTracker(tableToken.getDirName());
+            Assert.assertNull(engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+            // The non-creating accessor must not install one as a side effect of the miss above.
+            Assert.assertNull(engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+
+            final SeqTxnTracker created = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            // Once a tracker exists, the non-creating accessor returns that same instance.
+            Assert.assertSame(created, engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken));
+
+            // No OSS caller passes a pre-resolved tracker to isWalApplySuspended(TableToken,
+            // SeqTxnTracker): the 1-arg overload (CairoEngine:2975) always resolves one before
+            // delegating here, so every OSS write path goes through that leg. The two callers
+            // that pass an already-resolved tracker directly are both ENT. Pin its distinctive
+            // legs: a null tracker (no lookup in hand yet) skips the hard-suspension check and
+            // falls through to the config list, while a resolved tracker's hard-suspended flag
+            // short-circuits ahead of the config list either way.
+            final TableToken unconfiguredToken = createTable(testName.getMethodName() + "_unconfigured");
+            final SeqTxnTracker unconfiguredTracker = engine.getTableSequencerAPI().getTxnTracker(unconfiguredToken);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, tableToken.getDirName());
+            try {
+                // 2-arg overload, null-tracker leg: config list decides, no tracker consulted
+                Assert.assertTrue(engine.isWalApplySuspended(tableToken, null));
+                Assert.assertFalse(engine.isWalApplySuspended(unconfiguredToken, null));
+                // 2-arg overload, tracker-hit leg short-circuits ahead of the config list
+                unconfiguredTracker.setHardSuspended(true);
+                Assert.assertTrue(engine.isWalApplySuspended(unconfiguredToken, unconfiguredTracker));
+                Assert.assertFalse(engine.isWalApplySuspended(unconfiguredToken, created));
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
             }
         });
     }
