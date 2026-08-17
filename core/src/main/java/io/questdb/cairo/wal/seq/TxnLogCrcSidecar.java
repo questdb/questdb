@@ -80,13 +80,21 @@ public class TxnLogCrcSidecar implements QuietCloseable {
      * which is the atomicity this codebase already assumes.
      */
     public static final int BODY_OFFSET = 32;
-    /** Entry = [crc:8][stamp:8]. The stamp is the txn the CRC describes; see append(). */
+    /**
+     * Entry = [crc:8][stamp:8]. The stamp is the txn the CRC describes; see append().
+     */
     public static final int ENTRY_SIZE = 2 * Long.BYTES;
-    /** 3: v1 had no stamp, v2 had one but at an unaligned offset. Both are rejected as unreadable. */
+    /**
+     * 3: v1 had no stamp, v2 had one but at an unaligned offset. Both are rejected as unreadable.
+     */
     public static final int FILE_VERSION = 3;
-    /** Offset of the stamp within an entry. */
+    /**
+     * Offset of the stamp within an entry.
+     */
     public static final int ENTRY_STAMP_OFFSET = Long.BYTES;
-    /** Spells " TLCHKSM" on disk (LE), matching the shape of CV_CHECKSUM_MAGIC / TX_CHECKSUM_CAPABILITY_MAGIC. */
+    /**
+     * Spells " TLCHKSM" on disk (LE), matching the shape of CV_CHECKSUM_MAGIC / TX_CHECKSUM_CAPABILITY_MAGIC.
+     */
     public static final long MAGIC = 0x4D534B48434C5420L;
     private static final int OFFSET_ENTRY_SIZE = 12;
     private static final int OFFSET_FILE_VERSION = 8;
@@ -196,7 +204,9 @@ public class TxnLogCrcSidecar implements QuietCloseable {
         firstCoveredTxn = -1;
     }
 
-    /** The capability watermark: the first txn this file guarantees a CRC for. */
+    /**
+     * The capability watermark: the first txn this file guarantees a CRC for.
+     */
     public long firstCoveredTxn() {
         return firstCoveredTxn;
     }
@@ -221,14 +231,18 @@ public class TxnLogCrcSidecar implements QuietCloseable {
         return mem.getLong(offset);
     }
 
-    /** Device flush, for the deferred/batched path. No-op when the sidecar is not open. */
+    /**
+     * Device flush, for the deferred/batched path. No-op when the sidecar is not open.
+     */
     public void fdatasync() {
         if (mem != null) {
             mem.getFilesFacade().fdatasync(mem.getFd());
         }
     }
 
-    /** Makes everything written so far durable. Callers order this against the txnlog header. */
+    /**
+     * Makes everything written so far durable. Callers order this against the txnlog header.
+     */
     public void sync(boolean async) {
         if (mem != null) {
             mem.sync(async);

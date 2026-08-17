@@ -93,17 +93,25 @@ import io.questdb.std.str.Path;
  * failure path here must cost DETECTION, never data or ingestion.
  */
 public class PartitionChecksumSidecar implements QuietCloseable {
-    /** Name of the sidecar within a partition directory. */
+    /**
+     * Name of the sidecar within a partition directory.
+     */
     public static final String FILE_NAME = "_chk";
-    /** Spells " PCHKSM " on disk (little-endian). */
+    /**
+     * Spells " PCHKSM " on disk (little-endian).
+     */
     public static final long MAGIC = 0x204D534B48435020L;
-    /** Spells " PCHKSLT" on disk (little-endian). Distinct from {@link #MAGIC} so a header read as a
-     *  trailer, or vice versa, cannot classify as present. */
+    /**
+     * Spells " PCHKSLT" on disk (little-endian). Distinct from {@link #MAGIC} so a header read as a
+     * trailer, or vice versa, cannot classify as present.
+     */
     public static final long SLOT_TRAILER_MAGIC = 0x544C534B48435020L;
     public static final int FILE_VERSION = 1;
     public static final int HEADER_SIZE = 64;
     public static final int SLOT_HEADER_SIZE = 24;
-    /** Smallest slot worth writing: enough for a handful of single-block files. */
+    /**
+     * Smallest slot worth writing: enough for a handful of single-block files.
+     */
     public static final int MIN_SLOT_CAPACITY = 256;
 
     private static final Log LOG = LogFactory.getLog(PartitionChecksumSidecar.class);
@@ -160,7 +168,9 @@ public class PartitionChecksumSidecar implements QuietCloseable {
         return mem.getInt(entryOffsets.getQuick(entryIndex) + 4);
     }
 
-    /** The file's RECORDED block size. Never reinterpret an existing vector at a different size. */
+    /**
+     * The file's RECORDED block size. Never reinterpret an existing vector at a different size.
+     */
     public int blockSize() {
         return blockSize;
     }
@@ -242,7 +252,9 @@ public class PartitionChecksumSidecar implements QuietCloseable {
         return mem != null;
     }
 
-    /** Block index of the first mismatch found by {@link #verifyFile}, or -1. */
+    /**
+     * Block index of the first mismatch found by {@link #verifyFile}, or -1.
+     */
     public int lastMismatchBlock() {
         return lastMismatchBlock;
     }
@@ -447,7 +459,9 @@ public class PartitionChecksumSidecar implements QuietCloseable {
         selectSlot();
     }
 
-    /** Highest generation whose trailer verifies. Bounds are checked before any address arithmetic. */
+    /**
+     * Highest generation whose trailer verifies. Bounds are checked before any address arithmetic.
+     */
     private void selectSlot() {
         winningSlot = -1;
         generation = 0;

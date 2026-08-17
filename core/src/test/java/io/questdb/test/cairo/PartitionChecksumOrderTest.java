@@ -112,7 +112,9 @@ public class PartitionChecksumOrderTest extends AbstractCairoTest {
         return -1;
     }
 
-    /** Index of the last column-data barrier, i.e. a {@code .d} or {@code .i} file inside a partition. */
+    /**
+     * Index of the last column-data barrier, i.e. a {@code .d} or {@code .i} file inside a partition.
+     */
     private static int lastIndexOfColumnFileBefore(List<String> order, int limit) {
         for (int i = Math.min(limit, order.size()) - 1; i >= 0; i--) {
             final String p = order.get(i);

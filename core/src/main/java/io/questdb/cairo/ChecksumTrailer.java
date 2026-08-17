@@ -48,14 +48,22 @@ package io.questdb.cairo;
  */
 public final class ChecksumTrailer {
 
-    /** A trailer is present and matches the area. */
+    /**
+     * A trailer is present and matches the area.
+     */
     public static final int PRESENT_OK = 0;
-    /** No trailer here. Legacy unless a capability says otherwise. */
+    /**
+     * No trailer here. Legacy unless a capability says otherwise.
+     */
     public static final int ABSENT = 1;
-    /** A trailer is present and does not match, or was guaranteed and is missing. Torn. */
+    /**
+     * A trailer is present and does not match, or was guaranteed and is missing. Torn.
+     */
     public static final int MISMATCH = 2;
 
-    /** On-disk size of the trailer: 8-byte MAGIC + 8-byte checksum. */
+    /**
+     * On-disk size of the trailer: 8-byte MAGIC + 8-byte checksum.
+     */
     public static final int TRAILER_SIZE = TableUtils.CV_CHECKSUM_TRAILER_SIZE;
 
     private ChecksumTrailer() {

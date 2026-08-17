@@ -37,7 +37,9 @@ import org.junit.Test;
 
 public class PartitionChecksumHashingTest extends AbstractCairoTest {
 
-    /** A small block size keeps the fixtures cheap without changing any of the arithmetic. */
+    /**
+     * A small block size keeps the fixtures cheap without changing any of the arithmetic.
+     */
     private static final int BS = 4096;
 
     @FunctionalInterface

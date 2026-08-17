@@ -102,9 +102,9 @@ public final class DurabilityEnvironmentCheck {
      * Pure decision table. Any argument may be {@code null} / empty, meaning "could not be read", which
      * never contributes a flag.
      *
-     * @param darwin        true when running natively on macOS
-     * @param dbRootFsName  db root filesystem name as reported by {@code statfs} (macOS only, e.g. "apfs")
-     * @param dmiSysVendor  content of {@code /sys/class/dmi/id/sys_vendor} (Linux only)
+     * @param darwin           true when running natively on macOS
+     * @param dbRootFsName     db root filesystem name as reported by {@code statfs} (macOS only, e.g. "apfs")
+     * @param dmiSysVendor     content of {@code /sys/class/dmi/id/sys_vendor} (Linux only)
      * @param virtioWriteCache content of a virtio device's {@code queue/write_cache} (Linux only)
      * @return zero or more of the flags in this class, OR-ed
      */

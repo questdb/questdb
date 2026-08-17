@@ -181,7 +181,9 @@ public class PartitionChecksumWritePathTest extends AbstractCairoTest {
         }
     }
 
-    /** Finds the on-disk partition directory, whose name carries a name txn suffix after a rewrite. */
+    /**
+     * Finds the on-disk partition directory, whose name carries a name txn suffix after a rewrite.
+     */
     private File partitionDir(String tableName, String partitionName) {
         final File tableDir = new File(
                 configuration.getDbRoot().toString(),

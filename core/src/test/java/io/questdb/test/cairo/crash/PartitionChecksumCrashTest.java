@@ -51,9 +51,13 @@ import java.io.File;
  */
 public class PartitionChecksumCrashTest extends AbstractCrashConsistencyTest {
 
-    /** Iterations in which a generation actually survived and files were really verified. */
+    /**
+     * Iterations in which a generation actually survived and files were really verified.
+     */
     private int verifiedIterations;
-    /** Covered files actually hashed and compared across the sweep. */
+    /**
+     * Covered files actually hashed and compared across the sweep.
+     */
     private int verifiedFiles;
 
     @Test

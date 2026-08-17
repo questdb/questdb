@@ -224,7 +224,9 @@ public class PartitionChecksumSidecarTest extends AbstractCairoTest {
         });
     }
 
-    /** Flips one byte inside the given slot's body. Must not touch the other slot. */
+    /**
+     * Flips one byte inside the given slot's body. Must not touch the other slot.
+     */
     private void corruptSlot(Path path, int slot) {
         final long slotSize = readIntAt(path, 16);
         final long offset = PartitionChecksumSidecar.HEADER_SIZE + slot * slotSize
