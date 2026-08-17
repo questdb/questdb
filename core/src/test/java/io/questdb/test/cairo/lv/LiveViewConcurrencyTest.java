@@ -432,10 +432,13 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     @Test
     public void testConcurrentRefreshCannotInvalidateFromStaleBaseHead() throws Exception {
         // The fallback worker used to read the base head first and the volatile view watermark
-        // second, without the per-view refresh latch. Freeze it between those reads, publish a new
-        // base commit, and let a notification worker consume that commit. The fallback then has an
-        // old base head and a new view watermark, but that mixed-time pair must not durably
-        // invalidate the healthy view.
+        // second, without the per-view refresh latch. Freeze it BETWEEN those two reads, publish a
+        // new base commit, and let a notification worker consume that commit. The freeze point is
+        // what gives this test its force: the commit lands after one operand is captured and before
+        // the other, so the two read orders disagree. In the correct order the watermark is already
+        // captured (old) and the base head is read after (new), which is coherent; in the racy order
+        // the base head is captured (old) and the watermark is read after (new), and that mixed-time
+        // pair durably invalidates a healthy view. Assert the view survives.
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -466,7 +469,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // fallback worker reaches the ahead guard only for the views it owns. It owns this one today
             // - setUpCairo resets the table id generator per test, making base=1 and lv=2 - but pin the
             // assumption here. Without this, a fixture edit that shifts lv's id (one more CREATE TABLE
-            // ahead of it) would surface as the 30s baseHeadRead timeout below, which names the latch
+            // ahead of it) would surface as the 30s guardReadsSplit timeout below, which names the latch
             // rather than the shard it actually lost.
             final int fallbackWorkerId = 0;
             final int workerCount = 2;
@@ -476,15 +479,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     Math.floorMod(instance.getLiveViewToken().getTableId(), workerCount)
             );
 
-            final CountDownLatch baseHeadRead = new CountDownLatch(1);
+            final CountDownLatch guardReadsSplit = new CountDownLatch(1);
             final CountDownLatch releaseFallback = new CountDownLatch(1);
             final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
             try (
                     LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(fallbackWorkerId, workerCount, engine, 1);
                     LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, workerCount, engine, 1)
             ) {
-                fallbackJob.setSimulateBaseCommitAfterAheadGuardBaseTxnReadForTest(() -> {
-                    baseHeadRead.countDown();
+                fallbackJob.setSimulateBaseCommitBetweenAheadGuardReadsForTest(() -> {
+                    guardReadsSplit.countDown();
                     try {
                         if (!releaseFallback.await(30, TimeUnit.SECONDS)) {
                             throw new AssertionError("timed out waiting to release fallback scan");
@@ -499,7 +502,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         fallbackJob.processNotificationsForTest();
                     } catch (Throwable t) {
                         errors.add(t);
-                        baseHeadRead.countDown();
+                        guardReadsSplit.countDown();
                     } finally {
                         Path.clearThreadLocals();
                     }
@@ -507,8 +510,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 fallbackThread.start();
                 try {
                     Assert.assertTrue(
-                            "fallback scan did not stop after reading the base head",
-                            baseHeadRead.await(30, TimeUnit.SECONDS)
+                            "fallback scan did not stop between the two ahead-guard reads",
+                            guardReadsSplit.await(30, TimeUnit.SECONDS)
                     );
                     if (!errors.isEmpty()) {
                         throw new RuntimeException("fallback scan thread failed", errors.peek());
