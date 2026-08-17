@@ -3887,12 +3887,22 @@ public class CairoEngine implements Closeable, WriterSource {
             int position
     ) throws SqlException {
         final int timestampIndex = metadata.getTimestampIndex();
-        // A view with no designated timestamp at all is a separate shape, and one the
-        // refresh job rejects on its own ("live view requires a designated timestamp").
-        // It cannot reach the ordering hole above: with no output timestamp there is no
-        // second column space to compare against.
+        // A view whose output carries no designated timestamp cannot refresh at all: every
+        // drain path needs one to stamp its rows with, and each throws "live view requires
+        // a designated timestamp" when it finds none. Those throws used to be the only
+        // gate, so CREATE accepted the view and the operator got a table that faulted its
+        // way to INVALID instead of an error. Reject it here, where the SELECT that caused
+        // it is still in hand.
+        //
+        // Two spellings reach this. Dropping the timestamp from the projection is the older
+        // one - the window factory simply does not carry it out - and computing a new
+        // column over it is the one the projections admit, including when the result is
+        // aliased back to the base's own timestamp name. Neither leaves a column the view
+        // can be ordered by, so the message asks for the plain column rather than naming
+        // what was found.
         if (timestampIndex < 0) {
-            return;
+            throw SqlException.$(position, "live view select must project the base table's designated timestamp '")
+                    .put(baseTimestampName).put("' as a plain column");
         }
         final CharSequence timestampName = metadata.getColumnName(timestampIndex);
         if (!Chars.equalsIgnoreCase(timestampName, baseTimestampName)) {
