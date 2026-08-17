@@ -658,15 +658,16 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         );
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnType(0));
 
-        // The live-view layout adds the "initialized" byte and the tombstone byte and nothing
-        // else. The value slot ahead of them is the whole of the accumulator, which is what
-        // lets a fused group carry this state in one slot of its own map value.
-        Assert.assertEquals(2, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        // The live-view layout keeps both extra bytes: the initialized flag at slot 1 (read only
+        // behind the liveView gate) and the tombstone at slot 2 (anchor-driven map compaction).
+        Assert.assertEquals(3, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.DOUBLE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
-        Assert.assertEquals(2, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
+        Assert.assertEquals(3, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
     }
 
     @Test

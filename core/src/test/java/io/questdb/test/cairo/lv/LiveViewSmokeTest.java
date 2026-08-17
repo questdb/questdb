@@ -16560,10 +16560,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
                     //   INT keyType=STRING, INT anchorValueType=TIMESTAMP,
-                    //   INT componentStateBytes, LONG partitionCount=2.
-                    // componentStateBytes is what the fused group's accumulators add per
-                    // entry, and 8 here: the view's one sum(x) is a (sum, nonNullCount)
-                    // component the window owns.
+                    //   LONG partitionCount=2.
                     // The persisted key column type is STRING (not SYMBOL):
                     // LiveViewWindow.build rewrites SYMBOL partition columns as
                     // STRING in the anchor map's key types so cross-WAL-segment
@@ -16579,12 +16576,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     Assert.assertEquals("key column is STRING (SYMBOL columns route through resolved STRING)", ColumnType.STRING, sink.getInt(off));
                     off += Integer.BYTES;
                     Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
-                    off += Integer.BYTES;
-                    Assert.assertEquals(
-                            "the fused (sum, nonNullCount) component rides in the payload",
-                            Double.BYTES + Long.BYTES,
-                            sink.getInt(off)
-                    );
                     off += Integer.BYTES;
                     Assert.assertEquals("partition count is 2", 2L, sink.getLong(off));
 
