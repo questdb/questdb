@@ -2463,6 +2463,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    public long getColumnVersion() {
+        return txWriter.getColumnVersion();
+    }
+
     public long getDataAppendPageSize() {
         return dataAppendPageSize;
     }
@@ -2518,6 +2522,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getMinTimestamp() {
         return txWriter.getMinTimestamp();
+    }
+
+    public long getNativePartitionSeqTxn(int partitionIndexRaw) {
+        return txWriter.getNativePartitionSeqTxn(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public long getO3RowCount() {
@@ -9107,8 +9115,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         final boolean parquetBase = txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
+        final boolean hasDelta = txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw);
         deltaWriter.writeCommit(
                 this,
+                !hasDelta,
+                partitionIndexRaw,
                 partitionTimestamp,
                 partitionNameTxn,
                 parquetBase,
@@ -9121,7 +9132,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 walApplySeqTxn,
                 walApplyCommitTimestamp
         );
-        if (!txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw)) {
+        if (!hasDelta) {
             txWriter.setPartitionHasDeltaByRawIndex(partitionIndexRaw, true);
             // Readers with the partition already open must re-resolve it: a bare
             // base read past this commit would miss the run just sealed.
