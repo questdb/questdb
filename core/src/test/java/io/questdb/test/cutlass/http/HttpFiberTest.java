@@ -1011,7 +1011,7 @@ public class HttpFiberTest extends AbstractTest {
     public void testWorkerPoolModeControlsFiberExecution() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, true);
+            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
             assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
             assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
         });

@@ -72,6 +72,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -495,12 +496,11 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     public void testCloseUnregistersRuntimeListeners() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+            try (PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                     engine,
                     engine.getMessageBus(),
                     runtime
-            );
-            try {
+            )) {
                 Assert.assertEquals(1, runtime.getConfigurationListenerCountForTesting());
                 Assert.assertEquals(1, runtime.getQuiesceListenerCountForTesting());
 
@@ -508,9 +508,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
                 Assert.assertEquals(0, runtime.getConfigurationListenerCountForTesting());
                 Assert.assertEquals(0, runtime.getQuiesceListenerCountForTesting());
-                dispatcher.close();
             } finally {
-                dispatcher.close();
                 close(runtime);
             }
         });
@@ -2298,15 +2296,13 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                         runtime,
                         dispatcher,
                         "SELECT * FROM tab WHERE x > 0",
-                        AsyncFilteredRecordCursorFactory.class,
-                        1_000
+                        AsyncFilteredRecordCursorFactory.class
                 );
                 assertSameRuntimeQueryReducesLocally(
                         runtime,
                         dispatcher,
                         "SELECT k, count() FROM tab GROUP BY k",
-                        AsyncGroupByRecordCursorFactory.class,
-                        1_000
+                        AsyncGroupByRecordCursorFactory.class
                 );
                 for (int shard = 0; shard < shardCount; shard++) {
                     Assert.assertEquals(
@@ -2738,6 +2734,95 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnorderedDirectStealRebindsWorkStealBreakerToOwnQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE unordered_steal_rebind AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final AtomicBooleanCircuitBreaker foreignBreaker = new AtomicBooleanCircuitBreaker(engine);
+            foreignBreaker.cancel();
+            final UnorderedPageFrameSequence<StatefulAtom> foreignSequence = new UnorderedPageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _, _) -> {
+                    },
+                    1
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return foreignBreaker;
+                }
+            };
+            final AtomicInteger localReduceCount = new AtomicInteger();
+            final UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _, _) -> localReduceCount.incrementAndGet(),
+                    1
+            );
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+            final RingQueue<UnorderedPageFrameReduceTask> queue = engine.getMessageBus().getUnorderedPageFrameReduceQueue();
+            final MPSequence pubSeq = engine.getMessageBus().getUnorderedPageFrameReducePubSeq();
+            final MCSequence subSeq = engine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
+            final LongList claimedCursors = new LongList();
+            try (RecordCursorFactory factory = select("SELECT * FROM unordered_steal_rebind")) {
+                // Saturate the global queue with foreign tasks so the owner's publish attempt
+                // fails, then leave exactly one task available: the owner's first direct steal
+                // succeeds (rebinding the work-steal breaker), the second finds nothing and
+                // consults the breaker before falling back to a local reduce.
+                final int capacity = queue.getCycle();
+                for (int i = 0; i < capacity; i++) {
+                    final long cursor = pubSeq.next();
+                    Assert.assertTrue(cursor > -1);
+                    queue.get(cursor).of(foreignSequence, 0);
+                    pubSeq.done(cursor);
+                }
+                for (int i = 0; i < capacity - 1; i++) {
+                    final long cursor = subSeq.next();
+                    Assert.assertTrue(cursor > -1);
+                    claimedCursors.add(cursor);
+                }
+
+                frameSequence.of(factory, sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                Assert.assertEquals(2, frameSequence.getFrameCount());
+                frameSequence.dispatchAndAwait();
+
+                Assert.assertTrue(frameSequence.isActive());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, frameSequence.getCancelReason());
+                Assert.assertEquals(2, localReduceCount.get());
+                Assert.assertFalse(foreignSequence.isActive());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, foreignSequence.getCancelReason());
+            } finally {
+                for (int i = 0, n = claimedCursors.size(); i < n; i++) {
+                    final long cursor = claimedCursors.getQuick(i);
+                    queue.get(cursor).clear();
+                    subSeq.done(cursor);
+                }
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+                Misc.free(foreignSequence);
+            }
+        });
+    }
+
+    @Test
     public void testUnorderedLaunchFailureTransfersFiberAndTaskOwnership() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
@@ -2927,17 +3012,17 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             };
             final FactoryProvider countingStrategyProvider = new DefaultFactoryProvider() {
                 @Override
-                public WorkStealingStrategy getWorkStealingStrategy(
-                        CairoConfiguration configuration,
+                public @NotNull WorkStealingStrategy getWorkStealingStrategy(
+                        @NotNull CairoConfiguration configuration,
                         int workerCount,
-                        StatefulAtom atom
+                        @NotNull StatefulAtom atom
                 ) {
                     return countingStrategy;
                 }
             };
             final CairoConfiguration sequenceConfiguration = new CairoConfigurationWrapper(configuration) {
                 @Override
-                public FactoryProvider getFactoryProvider() {
+                public @NotNull FactoryProvider getFactoryProvider() {
                     return countingStrategyProvider;
                 }
             };
@@ -3163,8 +3248,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             FiberRuntime runtime,
             PageFrameReduceDispatcher dispatcher,
             String sql,
-            Class<?> expectedFactoryClass,
-            int expectedRowCount
+            Class<?> expectedFactoryClass
     ) throws Exception {
         final AtomicReference<Throwable> failure = new AtomicReference<>();
         final AtomicInteger rowCount = new AtomicInteger();
@@ -3200,7 +3284,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
             Assert.assertTrue(ownerTask.isDone());
             Assert.assertNull(failure.get());
-            Assert.assertEquals(expectedRowCount, rowCount.get());
+            Assert.assertEquals(1000, rowCount.get());
             Assert.assertEquals(0, runtime.getOutstandingTaskCount());
             Assert.assertEquals(0, runtime.getParkedFiberCount());
             Assert.assertEquals(0, dispatcher.getCreatedTaskCount());

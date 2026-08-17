@@ -743,6 +743,41 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalToBinaryFloat() throws Exception {
+        // DECIMAL <-> DOUBLE and DECIMAL <-> FLOAT have no Rust decoder arm; ConvertOperatorImpl
+        // rewrites the parquet partition to native before converting, so both tables here take the
+        // same native path.
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "DOUBLE");
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "FLOAT");
+            String values = """
+                    (12345.6789m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99.9999m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(18, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(38, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(76, 4)", "DOUBLE", values);
+
+            String narrow = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0m, '2024-01-01T00:00:02.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(2, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(4, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(9, 1)", "DOUBLE", narrow);
+
+            assertConversion("DECIMAL(18, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(38, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(76, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(2, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(4, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(9, 1)", "FLOAT", narrow);
+        });
+    }
+
+    @Test
     public void testDecimalToDecimal() throws Exception {
         assertMemoryLeak(() -> {
             // Decimal64 -> Decimal128: cross-physical widening (Int64 -> FLBA(16)),

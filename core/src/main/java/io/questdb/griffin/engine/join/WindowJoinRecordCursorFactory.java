@@ -89,6 +89,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final long windowHi;
     private final long windowLo;
     private WindowJoinRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
     private Function joinFilter;
     private JoinRecordMetadata joinMetadata;
     private RecordCursorFactory masterFactory;
@@ -126,6 +127,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            this.groupByFunctions = groupByFunctions;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
             this.windowLoFunc = windowLoFunc;
@@ -262,6 +264,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordMetadata metadata = detachMetadata();
         final WindowJoinRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
         final Function joinFilter = this.joinFilter;
         this.joinFilter = null;
         final JoinRecordMetadata joinMetadata = this.joinMetadata;
@@ -283,6 +287,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             failure = Misc.freeBestEffort(failure, slaveFactory);
         }
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
         failure = Misc.freeBestEffort(failure, joinFilter);
         if (joinMetadata != metadata) {
             failure = Misc.freeBestEffort(failure, joinMetadata);

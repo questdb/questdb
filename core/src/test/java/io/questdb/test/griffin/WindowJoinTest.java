@@ -3716,6 +3716,56 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonParallelAggregateWindowJoinDowngradesToSerial() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            // These aggregates report supportsParallelism() == false: their per-worker clones
+            // keep private state that the parallel window join cannot merge, so the planner
+            // must pick the serial factory.
+            final String query = """
+                    SELECT t.sym, t.ts, %s
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    %s
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    """;
+            final String[] aggregates = {
+                    "string_agg(p.sym::string, ',')",
+                    "string_distinct_agg(p.sym::string, ',')",
+                    "approx_percentile(p.price, 0.5)",
+                    "count_distinct(p.sym::string)"
+            };
+            for (String aggregate : aggregates) {
+                for (String onClause : new String[]{"", "ON (t.sym = p.sym)"}) {
+                    try (RecordCursorFactory factory = select(query.formatted(aggregate, onClause))) {
+                        Assert.assertFalse(
+                                aggregate,
+                                containsFactory(factory, AsyncWindowJoinFastRecordCursorFactory.class)
+                                        || containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class)
+                        );
+                    }
+                }
+            }
+            assertQuery("""
+                    SELECT t.sym, string_agg(p.sym::string, ',') agg, count_distinct(p.sym::string) cd
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    ON (t.sym = p.sym)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE t.sym = 'NFLX'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tagg\tcd
+                            NFLX\tNFLX\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testNonParallelWindowJoinFilterStaysAsync() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();

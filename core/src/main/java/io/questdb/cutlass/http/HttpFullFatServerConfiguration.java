@@ -143,14 +143,6 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return isFiberEnabled() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
     }
 
-    /**
-     * Enables fiber execution for full-fat HTTP when its resolved worker pool also
-     * uses {@link WorkerPoolMode#FIBER_HOST}.
-     */
-    default boolean isFiberEnabled() {
-        return true;
-    }
-
     boolean isQueryCacheEnabled();
 
     boolean isSettingsReadOnly();

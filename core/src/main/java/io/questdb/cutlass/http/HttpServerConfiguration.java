@@ -57,6 +57,14 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
 
     WaitProcessorConfiguration getWaitProcessorConfiguration();
 
+    /**
+     * Enables fiber execution for this HTTP server when its resolved worker pool also
+     * uses {@link io.questdb.mp.WorkerPoolMode#FIBER_HOST}.
+     */
+    default boolean isFiberEnabled() {
+        return true;
+    }
+
     boolean isPessimisticHealthCheckEnabled();
 
     boolean preAllocateBuffers();

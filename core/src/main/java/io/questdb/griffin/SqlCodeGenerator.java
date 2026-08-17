@@ -6429,6 +6429,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 joinFilter,
                                                 allVectorized
                                         );
+                                        // Factory now owns these functions.
+                                        groupByFunctions = null;
                                     } else {
                                         master = new WindowJoinRecordCursorFactory(
                                                 asm,
@@ -6455,6 +6457,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // Factory now owns these functions.
                                         windowLoFunc = null;
                                         windowHiFunc = null;
+                                        groupByFunctions = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {

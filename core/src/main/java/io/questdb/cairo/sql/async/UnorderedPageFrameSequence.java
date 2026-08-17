@@ -247,7 +247,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                                 hasPublication = false;
                                 workStealingStrategy.onBeforeDirectSteal();
                                 if (!stealWork()) {
-                                    if (hasCircuitBreakerInterruptionBeenSuperseded(
+                                    if (!isUninterruptible
+                                            && hasCircuitBreakerInterruptionBeenSuperseded(
                                             workStealCircuitBreaker,
                                             false
                                     )) {
@@ -266,6 +267,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                                     localCount++;
                                     break;
                                 }
+                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
                                 continue;
                             }
                             if (workStealingStrategy.shouldSteal(localCount)) {
