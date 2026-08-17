@@ -38,37 +38,69 @@ Three defects from one design assumption, each found separately, each patched se
 exit would be found the same way. **This sub-project removes the assumption rather than adding a
 fourth patch.**
 
-## 3. Design — per-cell cursors, merged
+## 3. Design — day-run walk, cell-major
 
-Give each cell of a day its own interval cursor; merge their output by timestamp.
+**Revised 2026-08-17, before implementation.** The original design gave each cell its own interval
+cursor and merged their frames. The revision keeps the semantics exactly and drops the machinery,
+after checking a fact the first draft did not: **a day's cells are contiguous in partition-index
+order.** Both cursors already depend on this — `hasSameDaySiblingAhead`/`Below` only ever look at
+`±1`. So a day is a *run* `[runLo, runHi)` of partitions sharing one timestamp, and the fix is to
+walk that run cell-major:
 
-This is not a new architecture: composite reads already merge per-cell streams through
-`CompositeMergePartitionRecordCursor`. The change extends that shape down to interval scanning
-instead of asking one cursor to interleave cells and intervals simultaneously.
+```
+for each day-run [runLo, runHi):
+    runIntervalLo = intervalsLo
+    minResume = intervalsHi
+    for cell in runLo..runHi:          # PLAIN: exactly one cell, body runs once
+        i = runIntervalLo              # each cell sees EVERY interval
+        while i < intervalsHi and cell not exhausted:
+            emit frames for (cell, interval i)
+        minResume = min(minResume, i)  # an interval spanning into the next day survives
+    intervalsLo = minResume
+```
 
 Consequences, in order of importance:
 
-1. **The monotonic-walk constraint disappears.** Each cell sees every interval, so gate 1 is *deleted*,
-   not relaxed. The `multipleSubDayIntervalsOverMultiCellDayUnsupported` throw and its four call sites
-   go with it.
-2. **Plain tables keep the existing cursor untouched.** No surgery on a loop shared with plain, so
-   invariant 1 (plain byte-identity) is not at risk, and plain's frame emission order is unchanged.
-3. **The defect class ends.** There is no "exit that retires an interval" to get wrong, because
-   intervals are no longer retired on behalf of other cells.
+1. **The monotonic-walk constraint disappears.** Each cell restarts at the run's first interval, so
+   gate 1 is *deleted*, not relaxed — along with all **nine** of its throw sites (five forward, four
+   backward, across `next()` and `calculateSize()`; the first draft said four, which was wrong).
+2. **Plain byte-identity becomes structural, not tested-for.** A plain day-run holds exactly one
+   cell, so the inner loop runs once and the walk reduces to today's. There is no composite-detection
+   branch to get wrong and no bypass to maintain.
+3. **No per-cell cursor objects and no cap.** The 64-open-cell bound the first draft committed to
+   enforcing and testing does not apply: run state is `runLo`, `runHi`, `runIntervalLo`, `minResume`.
+4. **The defect class ends.** Intervals are no longer retired on behalf of other cells, so there is
+   no "exit that retires an interval" left to get wrong.
 
-**Cost, stated up front:** one cursor per open cell. Bounded by the existing open-cell cap
-(`cairo.wal.composite.fastappend.max.open.cells`, default 64) — the spec commits to that bound rather
-than discovering it under a high-cardinality table. Memory per cursor is small (bounds and indices, no
-row buffers), but the bound must be enforced and tested at the cap, not merely assumed.
+**`minResume` is the one subtle part.** The global resume point after a run is the MINIMUM interval
+index any cell reached, not the last cell's. An interval reaching past the day's end must stay live
+for the next day; taking the last cell's index would retire it early and silently drop rows — the
+same class of defect this sub-project exists to end.
+
+**Implementation constraint:** `next()` returns ONE frame per call and resumes mid-walk, so this
+cannot be written as literal nested loops. The run state must be explicit fields carried across
+calls, and `toTop()` must reset them. Every early `return frame` is a resumption point that has to
+leave the state consistent — that is where the risk in this rewrite actually lives, not in the loop
+shape.
+
+**Cost:** frame emission order for composite changes from interval-major to cell-major. The merge
+cursor requires frames "contiguous per cell"; cell-major delivers maximal per-cell contiguity, so
+this strengthens what the merge relies on rather than weakening it.
 
 ### Alternatives considered and rejected
 
 - **Reset `partitionLo` to the cell-run start when retiring an interval.** Keeps the per-(cell,
   interval) residual-limit bookkeeping that produced all three defects, and needs it to become *more*
   complex. Rejected: it preserves the cause.
-- **Invert the loop to cell-major (for each cell, walk all intervals).** Natural for composite, but the
-  loop is shared with plain tables and inversion changes plain's frame emission order. Rejected on
-  invariant 1.
+- **Invert the loop to cell-major globally (for each cell, walk all intervals).** Rejected in the
+  first draft on invariant 1 — inverting the whole loop changes plain's frame emission order. The
+  adopted design inverts *within a day-run only*, which leaves plain untouched because a plain run
+  has one cell. The original objection was right about the global inversion and did not apply to the
+  bounded one.
+- **Per-cell cursor objects, merged** (the first draft's choice). Reuses the existing single-cell
+  walk verbatim, but costs one cursor per open cell, a new frame-level merge layer, an enforced and
+  tested 64-cell bound, and an explicit plain bypass. Rejected once run-contiguity made all four
+  unnecessary.
 
 ### 9B/9C — index factories
 
