@@ -1275,7 +1275,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // open new column files
             if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                setStateForTimestamp(path, partitionTimestamp);
+                // getColumnTop, which setColumnAppendPosition calls below, reads lastOpenPartitionTs. A
+                // composite last partition never runs openPartition - its writes go through
+                // processCompositePartition instead - so nothing else in this method sets it.
+                lastOpenPartitionTxnName = setStateForTimestamp(path, partitionTimestamp);
+                lastOpenPartitionTs = partitionTimestamp;
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(pathSize);
@@ -9007,7 +9011,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("ADDED column '").$safe(name)
                     .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
                     .$(" to ").$substr(pathRootSize, path)
-                    .$(" with columnTop ").$(txWriter.getTransientRowCount())
+                    .$(" with columnTop ").$(columnTop)
                     .$();
         } finally {
             path.trimTo(pathSize);

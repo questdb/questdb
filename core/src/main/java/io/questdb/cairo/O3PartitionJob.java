@@ -180,9 +180,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
             boundsOut.clear();
             final int pieceCount = geometry.getPieceCount(partitionIndex);
+            // A partition with no chain yet reports its single implicit piece's tsLo as the partition's
+            // own NOMINAL (directory) timestamp - PartitionGeometry.getPieceTimestampLo's fallback, safe
+            // as a routing floor since it is never above the piece's true first row, but not necessarily a
+            // row this partition actually holds. Read from the data below, exactly as tsHi is, or that
+            // nominal value gets published as this piece's permanent tsLo and reported as the table's own
+            // minTimestamp.
+            final boolean hadNoChain = !txReader.hasGeometryChain(partitionIndex);
             for (int p = 0; p < pieceCount; p++) {
                 final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
                 final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+                long tsLo = geometry.getPieceTimestampLo(partitionIndex, p);
+                if (p == 0 && hadNoChain && rowCount > 0) {
+                    tsLo = Unsafe.getLong(tsAddr + rowOffset * Long.BYTES);
+                }
                 long tsHi = geometry.getPieceTimestampHi(partitionIndex, p);
                 if (tsHi == Numbers.LONG_NULL && rowCount > 0) {
                     // A partition that has never been written as a composite records no upper bound - _txn
@@ -194,7 +205,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 O3CompositeMergeStrategy.addPieceBounds(
                         boundsOut,
-                        geometry.getPieceTimestampLo(partitionIndex, p),
+                        tsLo,
                         tsHi,
                         rowOffset,
                         rowCount

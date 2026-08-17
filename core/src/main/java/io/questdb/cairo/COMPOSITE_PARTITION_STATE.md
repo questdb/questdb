@@ -482,6 +482,52 @@ makes what gets REPORTED about that untouched partition honest, so the table sto
 `minTimestamp` and suspending itself over data it was silently keeping - not asking a bug found by chance
 to also fix an unrelated documented gap.
 
+### 22. A partition's FIRST composite transition published its nominal floor, not its true one - FIXED
+
+`processCompositePartition`'s step 1 builds `boundsOut` from the partition's current pieces before
+planning anything, and corrects an unbounded `tsHi` by reading the piece's actual last row from the
+mapped timestamp column - the comment at that site explains why: `_txn` records no timestamps for a
+partition that has never gone composite, so an ungeometried piece's `tsHi` is `Numbers.LONG_NULL` and has
+to come from the data. `tsLo` got no such treatment. `PartitionGeometry.getPieceTimestampLo` falls back to
+`txReader.getPartitionTimestampByIndex` - the partition's own NOMINAL (directory) timestamp - for the same
+ungeometried case, and that fallback is safe everywhere it was designed for: routing (`findPiece`,
+`findPieceContaining`, `computeActions`) only needs a floor that is never ABOVE the piece's true first row,
+and the nominal timestamp always is one, since every row a partition holds is `>=` it by construction.
+
+The step 1 loop took that routing-safe approximation and fed it straight into `addPieceBounds` as if it
+were the piece's real bound. For a `KEEP` action - the common case, since this is the piece nothing touches
+- that value passes through unchanged into `addNewPiece` and gets published as the new piece's PERMANENT
+`tsLo` in `_geometry`, and separately becomes `ctx.pieces.getQuick(0)`, which section 21 reports as the
+table's `minTimestamp`. A partition whose first real row lands after its nominal floor - the ordinary case
+whenever a day's first insert isn't backdated to exactly midnight - published a floor no row it holds
+actually carries. `TxReader.getMinTimestamp()` and `_geometry`'s piece 0 agreed with each other from then on
+(every later commit that keeps piece 0 just carries the same value forward unchanged), so nothing caught it
+internally; only a query reading the real data - `SELECT ts FROM t ORDER BY ts LIMIT 1`, which the planner
+lets pass through as a bare forward scan whenever it is already sorted by the designated timestamp (see
+`SqlCodeGenerator.generateOrderBy`) - returned the true first row instead of the phantom one, and disagreed
+with the table's own reported minimum.
+
+The fix mirrors the existing `tsHi` correction: when piece 0 comes from a partition with no `_geometry`
+chain yet (`!txReader.hasGeometryChain(partitionIndex)`), its `tsLo` is read from the mapped timestamp
+column at file row 0 (`getPieceRowOffset` for that fallback is always 0 - "rooted at file row 0", per
+`PartitionGeometry`'s class doc) instead of trusted from the nominal-timestamp fallback. Every later commit
+over the same partition reads a real persisted `tsLo` from `_geometry` regardless of which action touches
+which piece, so the correction is needed, and is only correct, at this one transition.
+
+Reproduced deterministically with `WalWriterFuzzTest#testSimpleDataTransaction` (seeds
+`551064292996583L, 1786966434808L` and `551064301684083L, 1786966434816L` - the first is
+`AbstractFuzzTest`'s field-initializer `setUpRnd`, the second the test's own `rnd`; both have to be pinned
+to reproduce, since `setUpRnd` picks the default symbol index type). `describePieces`-style inspection of
+the failing partition showed piece 0 recording `tsLo` at exactly the partition's midnight floor while the
+real minimum row, confirmed independently by `SELECT ts ... LIMIT 5`, sat about 11 hours into the day.
+
+**Found alongside, NOT fixed, and unrelated to this bug**: bypassing the min-timestamp assertion to let the
+same fuzz run continue reaches a pre-existing crash - `BitmapIndexFwdReader$Cursor.hasNext` faults on an
+unsafe memory access reading the `sym_top` index during `assertRandomIndexes`. Confirmed independent of this
+fix: it reproduces identically with the ORIGINAL (unfixed) `tsLo` handling once the earlier assertion is
+made non-fatal, so it was always reachable on this seed and was simply masked by the failure this section
+fixes. Needs its own investigation.
+
 ## Known gaps
 
 - **Replace-range commits over a composite-eligible partition perform no deletion.** A commit that declares
