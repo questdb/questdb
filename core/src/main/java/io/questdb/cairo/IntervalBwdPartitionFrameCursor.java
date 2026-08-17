@@ -70,7 +70,27 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         long partitionLimit1 = this.partitionLimit;
         long size = this.sizeSoFar;
 
-        while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
+        // 9A: local copies of the run state -- this method must not mutate cursor state.
+        int runLo1 = Integer.MAX_VALUE;
+        int runIntervalLo1 = 0;
+        int runResume1 = 0;
+
+        while (partitionLo1 < partitionHi1 && (intervalsLo1 < intervalsHi1 || partitionHi1 > runLo1)) {
+            if (partitionHi1 <= runLo1) {
+                runLo1 = backwardRunStart(partitionHi1 - 1, partitionLo1);
+                runIntervalLo1 = intervalsHi1;
+                runResume1 = intervalsLo1;
+            }
+            // this cell has consumed every interval -- hand the run on to the next cell down
+            if (intervalsLo1 >= intervalsHi1) {
+                if (intervalsHi1 > runResume1) {
+                    runResume1 = intervalsHi1;
+                }
+                partitionLimit1 = -1;
+                partitionHi1--;
+                intervalsHi1 = partitionHi1 <= runLo1 ? runResume1 : runIntervalLo1;
+                continue;
+            }
             final int currentInterval = intervalsHi1 - 1;
             final int currentPartition = partitionHi1 - 1;
             // Task 5b: a cell excluded by a composite dimension predicate is skipped WITHOUT consuming
@@ -80,8 +100,12 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // its own chance against this interval on the next iteration. isCellAllowed() short-circuits
             // true (zero cost) when no pruning is in effect.
             if (!isCellAllowed(currentPartition)) {
+                if (intervalsHi1 > runResume1) {
+                    runResume1 = intervalsHi1;
+                }
                 partitionHi1 = currentPartition;
                 partitionLimit1 = -1;
+                intervalsHi1 = partitionHi1 <= runLo1 ? runResume1 : runIntervalLo1;
                 continue;
             }
             // We don't need to worry about column tops and null column because we
@@ -96,17 +120,21 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long limitHi = partitionLimit1 == -1 ? rowCount - 1 : partitionLimit1 - 1;
 
                 final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip partition
+                // Interval wholly above partition -- the CELL is exhausted (see next()'s twin).
                 if (partitionTimestampLoApprox > intervalHi) {
+                    if (intervalsHi1 > runResume1) {
+                        runResume1 = intervalsHi1;
+                    }
                     partitionHi1 = currentPartition;
                     partitionLimit1 = -1;
+                    intervalsHi1 = partitionHi1 <= runLo1 ? runResume1 : runIntervalLo1;
                     continue;
                 }
 
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
                 // interval is wholly below partition, skip interval -- unless a same-day sibling cell
                 // follows, in which case fall through to the exact checks (see next()'s twin comment).
-                if (partitionTimestampHiApprox < intervalLo && !hasSameDaySiblingBelow(currentPartition, partitionLo1)) {
+                if (partitionTimestampHiApprox < intervalLo) {
                     partitionLimit1 = limitHi + 1;
                     intervalsHi1 = currentInterval;
                     continue;
@@ -120,15 +148,6 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
                 // interval is wholly below partition, skip interval
                 if (partitionTimestampHiExact < intervalLo) {
-                    if (hasSameDaySiblingBelow(currentPartition, partitionLo1)) {
-                        if (currentInterval - 1 >= intervalsLo1
-                                && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
-                            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
-                        }
-                        partitionHi1 = currentPartition;
-                        partitionLimit1 = -1;
-                        continue;
-                    }
                     partitionLimit1 = limitHi + 1;
                     intervalsHi1 = currentInterval;
                     continue;
@@ -151,25 +170,17 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 if (lo == 0) {
-                    // whole partition, skip to next one
-                    partitionHi1 = currentPartition;
-                    partitionLimit1 = -1;
-                } else if (currentPartition - 1 >= partitionLo1
-                        && reader.getPartitionTimestampByIndex(currentPartition - 1) == reader.getPartitionTimestampByIndex(currentPartition)) {
-                    // Fragment, but a sibling cell of the same day (composite table) still needs its
-                    // own chance to be checked against this SAME interval -- mirrors next()'s own fix
-                    // (Task 6c finding), see this class's javadoc.
-                    // Task 6c review Part A: symmetric with next() -- gate the unsupported
-                    // multiple-sub-day-intervals-over-one-multi-cell-day shape so count() agrees with the
-                    // backward row scan (both throw) rather than silently miscounting the dropped rows.
-                    if (currentInterval - 1 >= intervalsLo1
-                            && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
-                        throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                    // Whole partition consumed, so the CELL is exhausted -- the INTERVAL survives via
+                    // runResume1 because it may reach below this day.
+                    if (intervalsHi1 > runResume1) {
+                        runResume1 = intervalsHi1;
                     }
                     partitionHi1 = currentPartition;
                     partitionLimit1 = -1;
+                    intervalsHi1 = partitionHi1 <= runLo1 ? runResume1 : runIntervalLo1;
                 } else {
-                    // only fragment, skip to next interval
+                    // Fragment: the interval's low bound fell inside this cell, so it is finished FOR
+                    // THIS CELL. 9A deleted the sibling special-case and its gate.
                     partitionLimit1 = lo;
                     intervalsHi1 = currentInterval;
                 }
@@ -179,8 +190,12 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
             } else {
                 // partition was empty, just skip to next
+                if (intervalsHi1 > runResume1) {
+                    runResume1 = intervalsHi1;
+                }
                 partitionLimit1 = -1;
                 partitionHi1 = currentPartition;
+                intervalsHi1 = partitionHi1 <= runLo1 ? runResume1 : runIntervalLo1;
             }
         }
 
@@ -191,7 +206,23 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     public PartitionFrame next(long skipTarget) {
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
-        while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
+        // 9A: "partitionHi > runLo" is the disjunct that keeps the loop alive for a cell that has
+        // consumed every interval, so it can reach retreatBackwardCell() and hand the run on to the next
+        // cell DOWN. Without it the walk would stop at the first cell of a day that finished its
+        // intervals, dropping every lower-cellKey sibling. runLo's "no run open" sentinel is
+        // Integer.MAX_VALUE here (see toTop()), the mirror of the forward cursor's -1 for runHi.
+        while (partitionLo < partitionHi && (intervalsLo < intervalsHi || partitionHi > runLo)) {
+            // 9A: open a day-run on entry and whenever the previous one completed. The run is entered at
+            // its TOP and every cell of it is walked from runIntervalLo downward, so each cell sees EVERY
+            // interval. A PLAIN table's run is a single partition, so this collapses to a no-op there.
+            if (partitionHi <= runLo) {
+                beginBackwardRun();
+            }
+            // this cell has consumed every interval -- hand the run on to the next cell down
+            if (intervalsLo >= intervalsHi) {
+                retreatBackwardCell(partitionHi - 1);
+                continue;
+            }
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final int currentInterval = intervalsHi - 1;
@@ -201,7 +232,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // retreats, partitionLimit resets to -1), so an earlier sibling cell of the same day still
             // gets its own chance against this interval, and the interval itself is not consumed.
             if (!isCellAllowed(currentPartition)) {
-                skipPartition(currentPartition);
+                retreatBackwardCell(currentPartition);
                 continue;
             }
             long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
@@ -228,18 +259,19 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         .I$();
 
                 final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip partition
+                // Interval is wholly above partition: this cell's min ts is above the current interval's
+                // hi, therefore above every LATER (lower-index) interval's hi too -- the CELL is
+                // exhausted, not merely this interval.
                 if (partitionTimestampLoApprox > intervalHi) {
-                    skipPartition(currentPartition);
+                    retreatBackwardCell(currentPartition);
                     continue;
                 }
 
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // Interval is wholly below partition, skip interval -- UNLESS a sibling cell of the same
-                // day follows in this backward walk (see retireIntervalOrVisitSibling). Falling through
-                // to the exact checks handles that case uniformly; the extra partition open is paid only
-                // by a composite multi-cell day, and this is unreachable for a plain table.
-                if (partitionTimestampHiApprox < intervalLo && !hasSameDaySiblingBelow(currentPartition, partitionLo)) {
+                // Interval is wholly below partition, retire the interval FOR THIS CELL. 9A dropped the
+                // sibling fall-through that used to guard this: siblings walk intervals from
+                // runIntervalLo themselves, so retiring it here abandons nothing.
+                if (partitionTimestampHiApprox < intervalLo) {
                     skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
@@ -252,9 +284,6 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
                 // interval is wholly below partition, skip interval
                 if (partitionTimestampHiExact < intervalLo) {
-                    if (retireIntervalOrVisitSibling(currentPartition, currentInterval, partitionTimestampLoExact)) {
-                        continue;
-                    }
                     skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
@@ -276,36 +305,15 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 if (lo == 0) {
-                    // interval yielded empty partition frame, skip partition
-                    skipPartition(currentPartition);
-                } else if (currentPartition - 1 >= partitionLo
-                        && reader.getPartitionTimestampByIndex(currentPartition - 1) == reader.getPartitionTimestampByIndex(currentPartition)) {
-                    // Fragment (interval's LOW bound reached mid-partition), but a SIBLING cell of the
-                    // SAME day (composite table, lower cellKey, not yet visited in this backward scan)
-                    // still needs its own chance to be checked against this SAME interval -- do NOT
-                    // retire the interval yet. Task 6c (read-side differential capstone) finding:
-                    // symmetric counterpart of IntervalFwdPartitionFrameCursor#next()'s own fix -- see
-                    // that class's javadoc for the full mechanism (here it is the LOW bound / lower
-                    // cellKey side of the same underlying defect, since backward scan visits a day's
-                    // cells highest-cellKey-first). Provably byte-identical to the prior behaviour for a
-                    // plain table (currentPartition - 1 is always the PREVIOUS DAY there, never a
-                    // same-timestamp sibling) -- kept unconditional, mirroring 233532984f's own
-                    // precedent.
-                    //
-                    // Task 6c review Part A (symmetric with the forward cursor): 2+ intervals over this
-                    // SAME multi-cell day are not yet supported. Skipping to the sibling ABANDONS this
-                    // fragmented cell's leftover rows (those BELOW lo, i.e. below intervalLo), and the
-                    // monotonic backward walk can never revisit it for a LOWER (later-in-scan) interval.
-                    // If that lower interval reaches into this cell's own span (its hi >= this cell's exact
-                    // MIN ts) those leftover rows would be SILENTLY dropped -- gate loudly instead.
-                    if (currentInterval - 1 >= intervalsLo
-                            && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
-                        throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
-                    }
-                    skipPartition(currentPartition);
+                    // Whole partition consumed down to row 0, so the CELL is exhausted -- but the
+                    // INTERVAL is not. It may reach below this day, so it survives via runResume rather
+                    // than being retired here.
+                    retreatBackwardCell(currentPartition);
                 } else {
-                    // only fragment, no sibling cell left to check -- this interval is now fully
-                    // satisfied, exactly as before this fix.
+                    // Fragment: the interval's LOW bound fell inside this cell, so this interval is
+                    // finished FOR THIS CELL. 9A deleted the sibling special-case that used to sit here,
+                    // along with the gate it carried: a sibling no longer depends on this cell declining
+                    // to retire the interval, because it walks intervals from runIntervalLo itself.
                     skipInterval(currentInterval, lo);
                 }
 
@@ -329,8 +337,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
             } else {
                 // partition was empty, just skip to next
-                partitionLimit = -1;
-                partitionHi = currentPartition;
+                retreatBackwardCell(currentPartition);
             }
         }
         return null;
@@ -340,46 +347,31 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     public void toTop() {
         super.toTop();
         partitionLimit = -1;
+        // 9A: the backward walk tests "partitionHi <= runLo" for "open a new run", so its no-run-open
+        // sentinel must be ABOVE every partition index -- the mirror of the forward cursor's runHi = -1.
+        runLo = Integer.MAX_VALUE;
     }
 
     /**
-     * Whether the partition BELOW {@code partitionIndex} — the next one this backward walk will visit —
-     * is a SIBLING CELL of the same day rather than the previous day, i.e. whether the two share a
-     * partition timestamp. Only a composite table's multi-cell day produces this; for a plain table it is
-     * always {@code false}, which is what keeps every caller byte-identical for plain tables.
+     * Ends the current cell and moves to the next one DOWN, folding this cell's reached interval bound
+     * into the run's resume point.
+     * <p>
+     * {@code runResume} is the MAXIMUM bound any cell of the run reached, and becomes the global
+     * {@code intervalsHi} once the run completes. The maximum, because walking downward an interval that
+     * reaches BELOW this day must stay live for the next (earlier) day; taking the last cell's bound
+     * would retire it early and silently drop its rows.
      */
-    private boolean hasSameDaySiblingBelow(int partitionIndex, int partitionLoBound) {
-        return partitionIndex - 1 >= partitionLoBound
-                && reader.getPartitionTimestampByIndex(partitionIndex - 1)
-                == reader.getPartitionTimestampByIndex(partitionIndex);
+    private void retreatBackwardCell(int currentPartition) {
+        if (intervalsHi > runResume) {
+            runResume = intervalsHi;
+        }
+        partitionLimit = -1;
+        partitionHi = currentPartition;
+        // run complete -> publish the resume point; otherwise the next cell of the SAME day restarts at
+        // this run's first interval bound
+        intervalsHi = partitionHi <= runLo ? runResume : runIntervalLo;
     }
 
-    /**
-     * Shared tail for {@link #next(long)}'s "cell wholly below the interval" exit. Returns {@code true}
-     * when the caller should {@code continue} at the next same-day sibling cell instead of retiring the
-     * interval.
-     * <p>
-     * Retiring the interval there is correct for a plain table, where {@code currentPartition - 1} is
-     * always the PREVIOUS DAY. It is wrong for a composite multi-cell day, where it can be a SIBLING
-     * CELL — a separate cell whose rows may fall inside the interval this one sits entirely below.
-     * Retiring the interval drops them silently: a backward scan (any {@code ORDER BY ts DESC} with a
-     * timestamp filter) returned NO rows where the forward scan of the same data returned one.
-     * <p>
-     * This mirrors the forward cursor's fix. It carries the same trade and the same guard: advancing
-     * abandons this cell for any LOWER interval the backward walk visits next, so if such an interval
-     * reaches into this cell's own span, fail loudly rather than drop rows.
-     */
-    private boolean retireIntervalOrVisitSibling(int currentPartition, int currentInterval, long partitionTimestampLoExact) {
-        if (!hasSameDaySiblingBelow(currentPartition, partitionLo)) {
-            return false;
-        }
-        if (currentInterval - 1 >= intervalsLo
-                && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
-            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
-        }
-        skipPartition(currentPartition);
-        return true;
-    }
 
     private void skipInterval(int intervalIndex, long limit) {
         LOG.debug().$("next skips interval [partitionLimit=").$(limit).$(", intervalsHi=").$(intervalIndex).$(']').$();

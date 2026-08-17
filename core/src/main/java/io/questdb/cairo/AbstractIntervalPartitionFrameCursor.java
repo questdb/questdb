@@ -119,32 +119,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         return reader;
     }
 
-    /**
-     * Composite-partitioning (Task 6c review, Part A) LOUD scope boundary for the one interval-scan shape
-     * these cursors cannot yet serve correctly: 2+ time intervals that each fall within (or reach into)
-     * the SAME multi-cell day. Both concrete cursors walk partitions (cells) and intervals strictly
-     * MONOTONICALLY, so once an earlier interval consumes a multi-cell day's cells a later interval can
-     * never revisit that day's earlier cells -- their matching rows would be SILENTLY dropped. Commit
-     * {@code d31aa88716} fixed the SINGLE-interval sibling visit; multiple sub-day intervals over one
-     * multi-cell day remained broken. A real fix would have to iterate cells and intervals as a 2D grid
-     * (per-cell interval reset) while still emitting frames in the day-contiguous, per-cell-contiguous
-     * order the downstream {@code CompositeMergePartitionRecordCursor} requires -- too invasive to do
-     * safely within this review without risking a subtly-wrong scan, so this shape is LOUD-GATED instead.
-     * Each cursor throws this at the EXACT point it detects the drop is imminent: a fragmented cell of a
-     * multi-cell day about to be abandoned for a sibling while a LATER interval still reaches into that
-     * cell's own timestamp span (proven to fire on every actual drop, and never on a correct multi-DAY
-     * date-list, single-interval, or non-interleaving scan). Never reachable for a plain table (its
-     * neighbour partition is always a distinct day, so the same-timestamp sibling precondition is never
-     * met) -- plain interval scans stay byte-identical. Workaround: issue one interval per query, or widen
-     * the predicate to whole days.
-     */
-    protected CairoException multipleSubDayIntervalsOverMultiCellDayUnsupported() {
-        return CairoException.critical(0)
-                .put("composite partitioning does not yet support multiple sub-day time intervals over a single multi-cell day; ")
-                .put("issue one interval per query, or widen the range to whole days [table=")
-                .put(reader.getTableToken().getTableName())
-                .put(']');
-    }
 
     public int getTimestampIndex() {
         return timestampIndex;

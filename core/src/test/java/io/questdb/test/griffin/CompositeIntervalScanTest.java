@@ -27,7 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -470,46 +472,56 @@ public class CompositeIntervalScanTest extends AbstractCairoTest {
     }
 
     /**
-     * Task 6c review Part A -- the MULTI-INTERVAL sibling-drop shape, now LOUD-GATED. Commit
-     * {@code d31aa88716} fixed SINGLE-interval sibling visiting, but a query with 2+ intervals hitting the
-     * SAME multi-cell day still SILENTLY dropped rows: {@code partitionLo}/{@code partitionHi} advance
-     * monotonically, so once the first interval consumed a day's cells the later interval could not
-     * revisit them. Here day1 has two genuinely interleaved cells X and Y, each with a row in BOTH sub-day
-     * intervals ({@code [01:00,02:00)} and {@code [03:00,04:00)}); pre-gate the forward scan dropped X's
-     * 03:00 row (it advanced past X to Y for the first interval and never returned), and the backward scan
-     * + {@code calculateSize} (count) dropped the symmetric row.
+     * The MULTI-INTERVAL sibling-drop shape -- SUPPORTED as of sub-project 9A, and LOUD-GATED before it.
      * <p>
-     * A correct real fix would require the interval cursor to iterate cells and intervals as a 2D grid
-     * (per-cell interval reset) while STILL emitting frames in the day-contiguous, per-cell-contiguous
-     * order the downstream {@code CompositeMergePartitionRecordCursor} requires -- too invasive to do
-     * safely here without risking a subtly-wrong scan in the hottest query path. So this shape is
-     * LOUD-GATED (a clear {@code CairoException}) at the exact point the drop becomes imminent, in all
-     * four cursor paths (forward/backward {@code next()} and {@code calculateSize()}); the plain twin,
-     * which never has a same-day sibling, still answers the identical query correctly.
+     * Commit {@code d31aa88716} fixed SINGLE-interval sibling visiting, but a query with 2+ intervals
+     * hitting the SAME multi-cell day still SILENTLY dropped rows: {@code partitionLo}/{@code partitionHi}
+     * advanced monotonically, so once the first interval consumed a day's cells the later interval could
+     * not revisit them. Here day1 has two genuinely interleaved cells X and Y, each with a row in BOTH
+     * sub-day intervals ({@code [01:00,02:00)} and {@code [03:00,04:00)}); the forward scan dropped X's
+     * 03:00 row (it advanced past X to Y for the first interval and never returned), and the backward
+     * scan + {@code calculateSize} (count) dropped the symmetric row.
+     * <p>
+     * 9A replaced the monotonic walk with a day-run, cell-major one: a day is a contiguous run of
+     * same-timestamp partitions, and every cell of the run restarts at the run's first interval, so every
+     * cell sees every interval. The gate and all nine of its throw sites went with the walk that needed
+     * them. This test is therefore the same shape with the opposite contract -- it now asserts the rows
+     * the gate used to protect, against the plain twin.
      */
     @Test
-    public void testTwoSubDayIntervalsOverOneMultiCellDayIsLoudGated() throws Exception {
+    public void testTwoSubDayIntervalsOverOneMultiCellDayMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedTwins();
             engine.releaseInactive();
 
-            // Sanity: a SINGLE sub-day interval over the multi-cell day IS correct (commit d31aa88716) --
-            // not gated, matches the plain twin.
+            // Sanity: a SINGLE sub-day interval over the multi-cell day is correct (commit d31aa88716).
             final String single = " where ts in '2020-06-01T01:00:00.000000Z;1h'";
             assertSqlCursors("select ts, exch, px from pi" + single + " order by ts, exch",
                     "select ts, exch, px from ci" + single + " order by ts, exch");
 
-            // The gated shape: TWO sub-day intervals over the SAME multi-cell day -- forward scan,
-            // backward scan, and count() (calculateSize) all throw the same clear error.
-            final String msg = "composite partitioning does not yet support multiple sub-day time intervals over a single multi-cell day";
+            // The formerly-gated shape: TWO sub-day intervals over the SAME multi-cell day. Forward scan,
+            // backward scan and count() must now all agree with the plain twin.
             final String twoIntervals =
                     " where ts in '2020-06-01T01:00:00.000000Z;1h' or ts in '2020-06-01T03:00:00.000000Z;1h'";
-            assertQuery("select ts, exch, px from ci" + twoIntervals + " order by ts").noLeakCheck().failsWith(msg);
-            assertQuery("select ts, exch, px from ci" + twoIntervals + " order by ts desc").noLeakCheck().failsWith(msg);
-            assertQuery("select count() from ci" + twoIntervals).noLeakCheck().failsWith(msg);
+            assertSqlCursors("select ts, exch, px from pi" + twoIntervals + " order by ts, exch",
+                    "select ts, exch, px from ci" + twoIntervals + " order by ts, exch");
+            // Backward: single sort key, projects only ts, and the plan is asserted below -- a multi-key
+            // ORDER BY ts DESC plans as a sort over a FORWARD scan and would test nothing.
+            assertSqlCursors("select ts from pi" + twoIntervals + " order by ts desc",
+                    "select ts from ci" + twoIntervals + " order by ts desc");
+            // Plan asserted via explain rather than the fluent battery: this query has a DESCENDING
+            // designated timestamp, and .timestamp("ts") demands ascending. Without the plan check a
+            // multi-key ORDER BY ts DESC would silently plan as a sort over a FORWARD scan, and the
+            // backward cursor -- the one that still threw after the forward fix landed -- would go
+            // untested.
+            final StringSink plan = new StringSink();
+            printSql("explain select ts from ci" + twoIntervals + " order by ts desc", plan);
+            TestUtils.assertContains(plan, "Interval backward scan");
+            assertSqlCursors("select count() from pi" + twoIntervals, "select count() from ci" + twoIntervals);
 
-            // The plain twin is composite-agnostic: the identical query still returns all 4 matching rows.
-            assertQuery("select count() from pi" + twoIntervals).noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+            // Anti-vacuity: all four matching rows are actually there. A shape that returned nothing from
+            // BOTH twins would satisfy every comparison above without testing anything.
+            assertQuery("select count() from ci" + twoIntervals).noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
         });
     }
 
