@@ -114,7 +114,6 @@ public class PartitionGeometry implements Closeable, Mutable {
     private FilesFacade ff;
     private PartitionGeometryFile geometryFile;
     private int partitionBy;
-    private Path path;
     /**
      * Longs of {@link #pieces} no resolved directory points at any more. A directory update writes its
      * new array at the tail rather than in place, because the array can change length; the holes are
@@ -135,7 +134,6 @@ public class PartitionGeometry implements Closeable, Mutable {
     public void close() {
         discard();
         geometryFile = Misc.free(geometryFile);
-        path = Misc.free(path);
     }
 
     /**
@@ -362,6 +360,16 @@ public class PartitionGeometry implements Closeable, Mutable {
         pendingRec = partitionIndex;
     }
 
+    /**
+     * Drops what {@link #beginUpdate} opened without installing it. For a partition whose planned shape
+     * turns out to be the ordinary one - a single piece over the whole of its files - which needs no
+     * geometry record at all.
+     */
+    public void abandonUpdate() {
+        pending.clear();
+        pendingRec = NO_PARTITION;
+    }
+
     public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount) {
         assert pendingRec != NO_PARTITION : "addPiece outside beginUpdate/commitUpdate";
         assert pending.size() == 0 || tsLo > pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO)
@@ -432,9 +440,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         if (geometryFile == null) {
             geometryFile = new PartitionGeometryFile();
         }
-        if (path == null) {
-            path = new Path();
-        }
         final int count = (int) resolved.getQuick(slot + RES_PIECE_COUNT);
         final int lo = (int) resolved.getQuick(slot + RES_PIECE_LO);
         long liveRows = 0;
@@ -466,7 +471,7 @@ public class PartitionGeometry implements Closeable, Mutable {
                     .put(", offset=").put(offset)
                     .put("]; generation rotation is not implemented");
         }
-        path.of(tableRoot);
+        final Path path = Path.getThreadLocal(tableRoot);
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long size = geometryFile.append(ff, path, generation, offset, commitMode);
 
@@ -571,10 +576,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         if (geometryFile == null) {
             geometryFile = new PartitionGeometryFile();
         }
-        if (path == null) {
-            path = new Path();
-        }
-        path.of(tableRoot);
+        final Path path = Path.getThreadLocal(tableRoot);
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         geometryFile.read(ff, path, TxReader.geometryGeneration(ref), TxReader.geometryOffset(ref));
         final int count = geometryFile.getPieceCount();

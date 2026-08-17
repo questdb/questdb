@@ -25,14 +25,19 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * End-to-end tests for writing a partition as a COMPOSITE - several pieces over one set of column files,
@@ -437,6 +442,54 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             assertSameRows();
+        });
+    }
+
+    /**
+     * A REPLACE RANGE commit whose lower bound falls inside a partition this table has already committed,
+     * but that carries no O3 rows of its own for that partition - the one row this transaction inserts
+     * lands entirely in the day above. The composite path has no replace-range deletion logic at all, so
+     * the partition is left exactly as it was; that omission is a documented gap, not what this test
+     * checks.
+     * <p>
+     * What it checks is what gets REPORTED: the sink used to carry the caller's raw incoming timestamp,
+     * which under a replace commit is the replace range's own lower bound rather than any timestamp this
+     * partition holds. Since the partition is the table's first, {@code o3ConsumePartitionUpdateSink} took
+     * that value as the table's new floor outright, moving it to a timestamp that is neither the
+     * partition's true floor nor the incoming transaction's own minimum - which is exactly what {@code
+     * TableWriter.processWalCommit}'s post-replace assertion checks for.
+     */
+    @Test
+    public void testReplaceRangeWithNoOwnRowsDoesNotMoveThePartitionFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT timestamp_sequence('2022-02-24T00:00:00', 3600L*1000000L) ts, x v" +
+                    " FROM long_sequence(10)");
+            // A later day, so 2022-02-24 is no longer the active partition when the replace commit lands.
+            execute("INSERT INTO x SELECT timestamp_sequence('2022-02-26T00:00:00', 3600L*1000000L) ts, x + 100 v" +
+                    " FROM long_sequence(10)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+
+            // The range's lower bound (05:00) falls inside 2022-02-24's already-committed data and its
+            // upper bound falls inside 2022-02-25 - but the row this transaction inserts lands in
+            // 2022-02-25, so 2022-02-24 gets no O3 rows of its own from this commit.
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T05:00:00.000000Z");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-25T01:00:00.000000Z");
+            try (WalWriter ww = engine.getWalWriter(xt)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-25T00:30:00.000000Z"));
+                row.putLong(1, 999L);
+                row.append();
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("the replace commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            assertQuery("SELECT min(ts) mn FROM x").expectSize().timestamp("mn")
+                    .returns("mn\n2022-02-24T00:00:00.000000Z\n");
         });
     }
 

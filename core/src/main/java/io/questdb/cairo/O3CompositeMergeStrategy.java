@@ -181,7 +181,10 @@ public class O3CompositeMergeStrategy {
             }
         }
 
-        // Everything above the last piece's data becomes a new piece at the shared tail.
+        // Everything above the last piece's data becomes a new piece at the shared tail. When that batch
+        // is a plain append the two pieces end up tiling the files with no hole between them, and the
+        // caller drops the geometry rather than record a boundary that says nothing - see needsGeometry in
+        // O3PartitionJob. Nothing has to be decided here.
         if (o3 <= srcOooHi) {
             actionAt(actions, actionCount++).setNewPiece(o3, srcOooHi);
         }

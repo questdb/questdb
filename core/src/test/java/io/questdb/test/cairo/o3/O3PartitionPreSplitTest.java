@@ -38,8 +38,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -151,6 +154,138 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("ALTER TABLE x SQUASH PARTITIONS");
             drainWalQueue();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * Same shape as {@link #testAddColumnAfterMergeAppendRelocatedAPiece}, with the new column BINARY
+     * instead of STRING - the type whose NULL below a column top costs a non-zero minimum entry
+     * ({@code getDataVectorMinEntrySize()}), unlike VARCHAR/ARRAY. Reproduces a fuzz-found defect where a
+     * BINARY value written ABOVE a column top, merged with rows BELOW it, reads back empty instead of its
+     * real bytes.
+     */
+    @Test
+    public void testAddColumnBinaryAfterMergeAppendRelocatedAPiece() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            execute(
+                    "CREATE TABLE z AS (SELECT x::INT + 1000000 i, -x - 1000000L AS j," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+            assertPieceRelocatedAboveLastPiece("x");
+
+            execute("ALTER TABLE x ADD COLUMN b BINARY");
+            drainWalQueue();
+            assertQuery("SELECT count() cnt FROM x WHERE b IS NOT NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
+
+            engine.releaseAllWriters();
+            //noinspection EmptyTryBlock
+            try (TableWriter ignore = getWriter("x")) {
+                // opening is enough: the constructor maps the last piece and sets its append position
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // A backdated stride inside the RELOCATED piece: the merge reads the BINARY column at the top
+            // ADD COLUMN recorded, over files that hold none of those rows - real values above the top,
+            // NULL below it.
+            execute(
+                    "CREATE TABLE w AS (SELECT x::INT + 2000000 i, -x - 2000000L AS j," +
+                            " timestamp_sequence('2020-02-03T02:00:07', 5*1000000L) ts," +
+                            " from_base64(lpad(x::string, (4 * ((x % 3) + 1))::INT, '0')) b FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM w");
+            drainWalQueue();
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            final String expected = "(SELECT i, j, ts, NULL::BINARY b FROM x0" +
+                    " UNION ALL SELECT i, j, ts, NULL::BINARY b FROM z" +
+                    " UNION ALL SELECT * FROM w) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+            assertQuery("SELECT count() cnt FROM x WHERE i >= 2000000 AND b IS NULL")
+                    .noRandomAccess().expectSize().returns("cnt\n0\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+            execute("ALTER TABLE x SQUASH PARTITIONS");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * Two partitions of ONE commit, both needing merge-append, are dispatched as separate O3PartitionTask
+     * entries that run on different O3 worker threads at once. Before it was fixed, both threads read and
+     * mutated the SAME TableWriter's PartitionGeometry with no synchronization - the class doc's own "a
+     * resolve never runs on a worker thread" - and this reproduced the corruption directly: the table
+     * suspended on a partition path built from two directory names spliced together by the race,
+     * {@code .../2020-02-0304/_geometry.0}, the same underlying fault WalWriterFuzzTest's SIGBUS traced
+     * back to. A real worker pool is required - the default single-threaded drainWalQueue helper never
+     * runs two O3 partition tasks concurrently, so it cannot exercise this at all.
+     */
+    @Test
+    public void testConcurrentMergeAppendOfTwoPartitionsRacesGeometry() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute(
+                    "INSERT INTO x SELECT x::INT + 10000 i, -x - 10000L j," +
+                            " timestamp_sequence('2020-02-04', 15*1000000L) ts FROM long_sequence(5760)"
+            );
+            drainWalQueue();
+
+            final WorkerPool pool = new TestWorkerPool(4, node1.getMetrics());
+            WorkerPoolUtils.setupWriterJobs(pool, engine);
+            pool.start(LOG);
+            try {
+                // One INSERT, backdated into BOTH days, so the one commit it produces touches two
+                // partitions and forces a MERGE in each - two O3PartitionTask entries, dispatched together.
+                execute(
+                        "INSERT INTO x SELECT x::INT + 20000 i, -x - 20000L j, ts FROM (" +
+                                " SELECT x, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200)" +
+                                " UNION ALL" +
+                                " SELECT x, timestamp_sequence('2020-02-04T04:00:07', 5*1000000L) ts FROM long_sequence(200)" +
+                                ")"
+                );
+                drainWalQueue();
+            } finally {
+                pool.halt();
+            }
+
+            Assert.assertFalse(
+                    "table suspended",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+            assertQuery("SELECT count() cnt FROM x").noLeakCheck().noRandomAccess().expectSize().returns("cnt\n11920\n");
         });
     }
 
@@ -960,6 +1095,67 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
             execute("ALTER TABLE x SQUASH PARTITIONS");
             drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * Same shape as {@link #testDedupTablePreSplitsAndStillDeduplicates}, with a BINARY column added to the
+     * payload. A duplicate row's DEDUP merge has to carry every payload column's value from the WINNING
+     * side, not just the timestamp key - reproduces a fuzz-found defect where a deduped BINARY value reads
+     * back empty instead of the value from the row that survived.
+     */
+    @Test
+    public void testDedupTablePreSplitsAndStillDeduplicatesBinaryPayload() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
+
+            final String binExpr = "from_base64(lpad(x::string, (4 * ((x % 3) + 1))::INT, '0'))";
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j, " + binExpr + " b, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)"
+            );
+            execute("INSERT INTO x SELECT x::INT i, -x j, " + binExpr + " b," +
+                    " timestamp_sequence('2020-02-04', 60*1000000L) ts FROM long_sequence(100)");
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            // A clustered O3 batch into the mid partition, on a 5s stride offset off the table's own 15s
+            // grid so none of its rows is a duplicate yet.
+            execute(
+                    "CREATE TABLE z AS (" +
+                            "SELECT x::INT + 1000000 i, -x - 1000000L j, " + binExpr + " b," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext,
+                    "(SELECT * FROM x0 UNION ALL SELECT * FROM z) ORDER BY ts", "x", LOG
+            );
+
+            // Same timestamps, different payload: every row is a duplicate, and every one of them lands in
+            // a piece the cut above created. z2's BINARY value must win, not z's and not an empty value.
+            execute(
+                    "CREATE TABLE z2 AS (" +
+                            "SELECT x::INT + 2000000 i, -x - 2000000L j, " + binExpr + " b," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z2");
+            drainWalQueue();
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM z2) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+            assertQuery("SELECT count() cnt FROM x WHERE ts IN '2020-02-03T04' AND b IS NULL")
+                    .noRandomAccess().expectSize().returns("cnt\n0\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
         });
     }

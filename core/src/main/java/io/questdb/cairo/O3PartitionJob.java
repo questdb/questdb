@@ -91,7 +91,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             new CarrierLocal<>(O3CompositeContext::new);
     private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
             new CarrierLocal<>(O3ParquetMergeContext::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
+    public static final Closeable THREAD_LOCAL_CLEANER = () -> {
+        PARQUET_MERGE_CONTEXT.removeAndFree();
+        COMPOSITE_CONTEXT.removeAndFree();
+    };
     // High bit set on the column type signals the Rust parquet encoder that the
     // symbol column contains no nulls, so it can emit an all-ones RLE run for
     // definition levels instead of checking each row.  This is a write-time hint
@@ -151,13 +154,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooHi,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
+            PartitionGeometry geometry,
             @Nullable WalTxnClusterer clusterer,
             LongList boundsOut,
             LongList cutsOut,
             ObjList<O3CompositeMergeStrategy.Action> actionsOut
     ) {
         final TxReader txReader = tableWriter.getTxReader();
-        final PartitionGeometry geometry = tableWriter.getGeometry();
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
         final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
@@ -274,16 +277,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
-            long o3TimestampMin,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             long partitionUpdateSinkAddr,
+            long dedupColSinkAddr,
             long oldPartitionSize
     ) {
         final O3CompositeContext ctx = COMPOSITE_CONTEXT.get();
         ctx.clear();
         final TxReader txReader = tableWriter.getTxReader();
-        final PartitionGeometry geometry = tableWriter.getGeometry();
+        // Several partitions of one commit run on different O3 worker threads. tableWriter.getGeometry()
+        // is ONE instance per table, shared by all of them, and PartitionGeometry is not thread safe - see
+        // its class doc. ctx.geometry is this WORKER's own, never touched by another thread, so it is safe
+        // to point at this partition and reuse call after call, table after table, instead of opening a
+        // fresh _geometry file handle for every composite commit.
+        final PartitionGeometry geometry = ctx.geometry.of(
+                tableWriter.getFilesFacade(),
+                txReader,
+                pathToTable.toString(),
+                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getPartitionBy()
+        );
 
         final int actionCount = processCompositePartition(
                 pathToTable,
@@ -292,26 +306,66 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcOooHi,
                 sortedTimestampsAddr,
                 tableWriter,
+                geometry,
                 ctx.clusterer,
                 ctx.bounds,
                 ctx.cuts,
                 ctx.actions
         );
 
+        final long piecesBefore = ctx.bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
+        final long eBefore = geometry.getE(partitionIndex);
+        int keepCount = 0, mergeCount = 0, newPieceCount = 0;
+        for (int i = 0; i < actionCount; i++) {
+            switch (ctx.actions.getQuick(i).type) {
+                case KEEP -> keepCount++;
+                case MERGE -> mergeCount++;
+                case NEW_PIECE -> newPieceCount++;
+            }
+        }
+
         final long e = executeCompositePlan(
                 pathToTable,
                 partitionTimestamp,
                 srcNameTxn,
-                tableWriter.getPartitionPhysicalRowCount(partitionIndex),
+                eBefore,
                 oooColumns,
                 srcOooMax,
                 sortedTimestampsAddr,
                 tableWriter,
+                dedupColSinkAddr,
                 ctx.bounds,
                 ctx.actions,
                 actionCount,
                 ctx.pieces
         );
+
+        // Does this partition need a geometry AT ALL? Pieces that TILE [0, physicalRows) with no holes are
+        // described exactly by a single piece, so their boundaries carry nothing: the row count says
+        // everything a record could. Publishing a geometry for that shape would cost a file, a routing
+        // entry and a frame per read to describe the default.
+        //
+        // Pieces only tile when NOTHING was relocated. A merge writes its image at the tail, which leaves
+        // the region it vacated behind as a hole and stops the tiling, so a partition that genuinely needs
+        // a geometry always keeps one. A plain append tiles every time - the rows land directly after the
+        // last piece's own - which is what stops an appending table from turning composite for nothing. It
+        // also drops the pre-split's cuts when the commit merged nothing, and that is right: those cuts
+        // bought this commit nothing, and cutting again is free.
+        //
+        // A partition that is ALREADY composite keeps its geometry regardless. Dropping the pointer would
+        // strand the record a pinned reader is still resolving.
+        boolean needsGeometry = txReader.hasGeometryChain(partitionIndex);
+        if (!needsGeometry) {
+            long tiledTo = 0;
+            for (int i = 0, n = ctx.pieces.size(); i < n; i += 4) {
+                if (ctx.pieces.getQuick(i + 2) != tiledTo) {
+                    needsGeometry = true;
+                    break;
+                }
+                tiledTo += ctx.pieces.getQuick(i + 3);
+            }
+            needsGeometry |= tiledTo != e;
+        }
 
         // The geometry that gets published describes what was WRITTEN. Pieces are recorded by the executor
         // in timestamp order, which is the order addPiece requires.
@@ -326,16 +380,42 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
             liveRows += ctx.pieces.getQuick(i + 3);
         }
-        geometry.commitUpdate(partitionIndex, e);
-        final long geometryRef = geometry.publish(
+        if (needsGeometry) {
+            geometry.commitUpdate(partitionIndex, e);
+        } else {
+            geometry.abandonUpdate();
+        }
+
+        // The whole plan in ONE message, because the numbers only mean anything against each other: kept
+        // pieces are what the design exists to leave alone, and the physical row count growing by far less
+        // than the partition holds is the win it claims. Reading that off several lines, interleaved with
+        // other partitions' and other tables', is what a per-action log costs.
+        LOG.info().$("merge-append composite partition [table=").$(tableWriter.getTableToken())
+                .$(", ts=").$ts(ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType()), partitionTimestamp)
+                // What the partition ENDS UP with, not what the plan produced: a plan whose pieces tile
+                // the files publishes no geometry, and such a partition holds one piece by definition.
+                .$(", pieces=").$(piecesBefore).$("->").$(needsGeometry ? ctx.pieces.size() / 4 : 1)
+                .$(", keep=").$(keepCount)
+                .$(", merge=").$(mergeCount)
+                .$(", newPieces=").$(newPieceCount)
+                .$(", newRows=").$(liveRows)
+                .$(", newPhysicalRows=").$(e)
+                .$(", deadRows=").$(e > 0 ? (e - liveRows) * 100.0 / e : 0).$('%')
+                .I$();
+
+        final long geometryRef = !needsGeometry ? TableWriter.NO_GEOMETRY_REF : geometry.publish(
                 partitionIndex,
                 tableWriter.getTxn() + 1,
                 tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
                 tableWriter.getConfiguration().getCommitMode()
         );
 
+        // The reported floor is the partition's OWN first piece, not the incoming o3TimestampMin: under a
+        // replace-range commit that lands on this partition with no rows of its own (srcOooLo > srcOooHi),
+        // the caller's o3TimestampMin is the replace range's lower bound, which is not a timestamp this
+        // partition holds. Pieces are recorded in ascending order, so the first one is always the true floor.
         Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, ctx.pieces.getQuick(0));
         Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, liveRows);
         Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
         // The partition keeps its directory and its name txn - the rows went into the files it already has
@@ -376,6 +456,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooMax,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
+            long dedupColSinkAddr,
             LongList bounds,
             ObjList<O3CompositeMergeStrategy.Action> actions,
             int actionCount,
@@ -447,9 +528,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
                         final long pieceHi = pieceLo + pieceRows;
                         final long at = e;
-                        final long mergeRows = pieceRows + o3Rows;
-                        final long indexSize = mergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                        // Both sides added together, which is what the merge yields when nothing is
+                        // deduplicated and the ceiling when something is. The index is allocated for it and
+                        // mergeRows is replaced below by what the build actually emitted.
+                        final long maxMergeRows = pieceRows + o3Rows;
+                        long mergeRows = maxMergeRows;
+                        final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                         final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                        boolean isNoop = false;
                         // A frame of its OWN, read-only, reaching no further than the piece it reads. Only
                         // the target writes, and it writes at E - above every row any source reads - so the
                         // same files carry one writer and any number of readers. Sizing it to the piece
@@ -465,29 +551,88 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // that is a use-after-free the merge index walks straight into.
                             try (FrameColumn timestampColumn = source.createColumn(metadata.getTimestampIndex())) {
                                 final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
-                                Vect.mergeTwoLongIndexesAsc(
-                                    pieceTimestampAddr,
-                                    pieceLo,
-                                    pieceRows,
-                                    sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
-                                    o3Rows,
-                                        mergeIndexAddr
-                                );
-                                FrameAlgebra.merge(
-                                        target,
-                                        source,
-                                        pieceLo,
-                                        pieceHi,
-                                        o3,
-                                        action.o3Lo,
-                                        action.o3Hi + 1,
-                                        mergeIndexAddr,
-                                        upcomingTableTxn,
-                                        commitMode
-                                );
+                                if (tableWriter.isCommitDedupMode()) {
+                                    // The piece's rows are addressed by FILE row, which is the frame the
+                                    // key columns and their tops are already in, so the piece's own range
+                                    // goes straight in as the data side.
+                                    mergeRows = getDedupRows(
+                                            partitionTimestamp,
+                                            srcNameTxn,
+                                            pieceTimestampAddr,
+                                            pieceLo,
+                                            pieceHi - 1,
+                                            sortedTimestampsAddr,
+                                            action.o3Lo,
+                                            action.o3Hi,
+                                            oooColumns,
+                                            tableWriter.getDedupCommitAddresses(),
+                                            dedupColSinkAddr,
+                                            tableWriter,
+                                            Path.getThreadLocal2(pathToTable),
+                                            mergeIndexAddr
+                                    );
+                                    final long duplicates = maxMergeRows - mergeRows;
+                                    if (duplicates > 0) {
+                                        tableWriter.addDedupRowsRemoved(duplicates);
+                                    }
+                                    // Every incoming row collided with one the piece already holds, so the
+                                    // merge would reproduce the piece unless a non-key value differs. The
+                                    // check reads the piece at its OWN file base - a composite piece's
+                                    // logical row 0 sits at its row offset - and when it agrees the whole
+                                    // action becomes a KEEP: nothing is read, written, or relocated.
+                                    isNoop = mergeRows == pieceRows
+                                            && tableWriter.checkDedupCommitIdenticalToPartition(
+                                            partitionTimestamp,
+                                            srcNameTxn,
+                                            pieceHi,
+                                            pieceLo,
+                                            pieceHi - 1,
+                                            action.o3Lo,
+                                            action.o3Hi,
+                                            mergeIndexAddr,
+                                            mergeRows
+                                    );
+                                } else {
+                                    Vect.mergeTwoLongIndexesAsc(
+                                            pieceTimestampAddr,
+                                            pieceLo,
+                                            pieceRows,
+                                            sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
+                                            o3Rows,
+                                            mergeIndexAddr
+                                    );
+                                }
+                                if (!isNoop) {
+                                    FrameAlgebra.merge(
+                                            target,
+                                            source,
+                                            pieceLo,
+                                            pieceHi,
+                                            o3,
+                                            action.o3Lo,
+                                            action.o3Hi + 1,
+                                            mergeIndexAddr,
+                                            mergeRows,
+                                            upcomingTableTxn,
+                                            commitMode
+                                    );
+                                }
                             }
                         } finally {
                             Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
+                        }
+                        if (isNoop) {
+                            // The action degrades to KEEP: the piece stays at the file rows it already had
+                            // and the files do not grow. Its timestamp bounds cannot have moved either -
+                            // every incoming row matched one the piece already holds.
+                            addNewPiece(
+                                    piecesOut,
+                                    O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                    O3CompositeMergeStrategy.getTsHi(bounds, action.pieceIndex),
+                                    pieceLo,
+                                    pieceRows
+                            );
+                            continue;
                         }
                         tableWriter.addPhysicallyWrittenRows(mergeRows);
                         e += mergeRows;
@@ -1318,9 +1463,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Parquet is excluded because it keeps no piece geometry at all - slot 3 is its file size - and it
         // is materialized whole by definition.
         final int compositeIndex = tableWriter.getTxReader().getPartitionIndex(partitionTimestamp);
+        // A NON-WAL table does not found composite partitions. The pre-split that makes the structure worth
+        // having hangs off the WAL transaction block, so a non-WAL table would take merge-append's costs -
+        // dead space, a geometry record, the whole class of piece-aware paths - and none of its benefit.
+        // It must still take this path for a partition that IS already composite, though: such a partition
+        // exists once a WAL table has been converted, and only this path can read and rewrite one correctly.
+        final boolean isCompositeOrWal = tableWriter.getMetadata().isWalEnabled()
+                || (compositeIndex > -1 && tableWriter.getTxReader().hasGeometryChain(compositeIndex));
         if (!isParquet
                 && srcDataMax > 0
                 && compositeIndex > -1
+                && isCompositeOrWal
                 && tableWriter.getConfiguration().isO3PartitionMergeAppendEnabled()) {
             try {
                 processCompositePartition(
@@ -1332,10 +1485,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         srcOooLo,
                         srcOooHi,
                         srcOooMax,
-                        o3TimestampMin,
                         sortedTimestampsAddr,
                         tableWriter,
                         partitionUpdateSinkAddr,
+                        dedupColSinkAddr,
                         oldPartitionSize
                 );
             } catch (Throwable e) {
@@ -4515,11 +4668,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * The composite plan's scratch, reused across partitions on one worker.
      */
-    private static class O3CompositeContext implements Mutable {
+    private static class O3CompositeContext implements Mutable, Closeable {
         private final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
         private final LongList bounds = new LongList();
         private final WalTxnClusterer clusterer = new WalTxnClusterer();
         private final LongList cuts = new LongList();
+        // One instance, reused across every partition and every table this worker ever plans. Never
+        // shared with another carrier thread - CarrierLocal already guarantees that, the same way it
+        // does for the Path buffers this file reuses elsewhere - so it needs no lock of its own, only
+        // an of() call before each use to point it at the partition about to be planned and drop
+        // whatever the previous call resolved. Reusing it, rather than opening one per call, is what
+        // spares a merge-append table the file open/close its _geometry read and write would otherwise
+        // cost on every single composite commit. Freed by close(), which THREAD_LOCAL_CLEANER runs on
+        // worker halt - the same path O3ParquetMergeContext's own native state already takes.
+        private final PartitionGeometry geometry = new PartitionGeometry();
         // Flat quads describing what the executor actually wrote: tsLo, tsHi, rowOffset, rowCount.
         private final LongList pieces = new LongList();
 
@@ -4528,6 +4690,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             bounds.clear();
             cuts.clear();
             pieces.clear();
+        }
+
+        @Override
+        public void close() {
+            geometry.close();
         }
     }
 }

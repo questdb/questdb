@@ -155,6 +155,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionSquashCounterOverflow() throws Exception {
+        // This asserts the SQUASH bookkeeping - a .squash_ts file left behind once the counter overflows -
+        // which merge-append does not maintain: a composite partition is folded by its own path and never
+        // reaches the counter this test drives. Squash over composite partitions is a known gap; until it
+        // closes, pin the production default so the test keeps covering what it was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             final String tableName = "backup_squash_test";
             long start = MicrosTimestampDriver.floor("2020-02-03");

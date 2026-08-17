@@ -452,7 +452,42 @@ backwards stride carries no signal.
 **Any "a partition's rows are physically in timestamp order" assumption is false for a composite
 directory.** This assert and section 16's interval scan are the two that had been written down.
 
+### 21. A replace-range commit's own lower bound leaked into the table's min timestamp - FIXED
+
+`processCompositePartition` reported the caller's raw `o3TimestampMin` as the partition's new floor in the
+sink it hands back to `TableWriter`. That is right for an ordinary append or merge, where `o3TimestampMin`
+IS the incoming batch's own minimum. It is wrong under a REPLACE RANGE commit: `commitWalInsertTransactions`
+widens `o3TimestampMin`/`o3TimestampMax` to the declared replace range so the O3 fan-out can walk existing
+partitions that hold no incoming rows at all (see `TableWriter.java:9459` on), and hands that widened value
+straight to the composite path with no per-partition adjustment - unlike the ordinary O3 merge path, which
+computes a real `calculateMinDataTimestampAfterReplacement` for exactly this reason.
+
+So a replace range whose lower bound falls inside a partition, but that contributes no O3 rows to it
+(`srcOooLo > srcOooHi`), reported that BOUND - not a timestamp the partition holds - as its floor. When that
+partition is the table's first, `o3ConsumePartitionUpdateSink`'s `isFirstPartitionReplaced` branch takes the
+sink's value as the table's new `minTimestamp` outright. `TableWriter.processWalCommit`'s post-replace
+assert checks that the new min timestamp is either outside the replace range or equal to the transaction's
+own min - and a bare replace-range bound is neither, so it fired and suspended the table.
+
+The fix reports the partition's own first piece (`ctx.pieces.getQuick(0)`, the first `tsLo` in ascending
+order) instead of the caller's `o3TimestampMin`. Pieces describe the rows a partition actually holds
+regardless of why the write happened, so this is correct for every path through this method, not only the
+replace-range one - and unlike `calculateMinDataTimestampAfterReplacement`, it costs nothing extra, since
+`ctx.pieces` is already built by the time the sink is written.
+
+**This does not implement replace-range deletion over a composite partition** - that stays the known gap
+below. A partition already composite, or promoted in flight, whose data falls inside a replace range with no
+O3 rows of its own is left untouched (`keep`, no merge, no new piece) rather than trimmed. The fix only
+makes what gets REPORTED about that untouched partition honest, so the table stops corrupting its own
+`minTimestamp` and suspending itself over data it was silently keeping - not asking a bug found by chance
+to also fix an unrelated documented gap.
+
 ## Known gaps
+
+- **Replace-range commits over a composite-eligible partition perform no deletion.** A commit that declares
+  a replace range but contributes no rows of its own to a partition inside that range takes `KEEP` for every
+  existing piece, leaving the "replaced" data in place. Section 21 fixed the resulting min-timestamp
+  corruption and table suspension; the missing deletion itself is still open.
 
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.

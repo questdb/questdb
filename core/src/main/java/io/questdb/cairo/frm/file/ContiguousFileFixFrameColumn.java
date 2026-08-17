@@ -175,7 +175,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         appendOffsetRowCount -= columnTop;
 
         assert appendOffsetRowCount >= 0;
-        assert (source1Hi - source1Lo) + (source2Hi - source2Lo) == mergeIndexRows;
+        // Not an equality: a deduplicating commit drops rows, so the index is SHORTER than both sides
+        // added together. Its own length is what governs, and the shuffle reads exactly that many entries.
+        assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
 
         final long size = mergeIndexRows << shl;
         TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);

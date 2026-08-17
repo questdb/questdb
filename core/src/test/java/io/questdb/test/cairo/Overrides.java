@@ -148,6 +148,11 @@ public class Overrides {
         isHiddenTelemetryTable = false;
         qwpServerInfoProvider = null;
         properties.clear();
+        // Composite partitions are OFF in production and reachable only behind this flag, so with the
+        // production default the whole feature - the pre-split, merge-append, and every read and write
+        // path that has to cope with a partition made of several pieces - would never run under test.
+        // TESTS ONLY: production keeps its default. A test that needs master's behaviour sets it false.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, true);
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
         freeLeakedReaders = false;
