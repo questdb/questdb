@@ -256,6 +256,14 @@ public final class TableUtils {
     static final int META_FLAG_BIT_POSTING_VARIANT_HI = 1 << 5;
     static final int META_FLAG_BIT_COVERING = 1 << 6;
     static final int META_FLAG_POSTING_VARIANT_MASK = META_FLAG_BIT_POSTING_VARIANT_LO | META_FLAG_BIT_POSTING_VARIANT_HI;
+    /**
+     * A DROP INDEX has committed and the covering-index token retirement that
+     * follows it has not been confirmed. Payload at offset 48 is the dropped
+     * column's WRITER index. Recovery re-runs the retirement, which is
+     * idempotent: a partition whose _pm no longer names the column yields
+     * nothing to retire.
+     */
+    static final byte TODO_RETIRE_COVERING_TOKEN = 3;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);

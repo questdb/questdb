@@ -372,6 +372,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int timestampType;
     private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
+    private int pendingRetireCoveringTokenWriterIndex = -1;
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final StringSink utf16Sink = new StringSink();
@@ -621,6 +622,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case TODO_TRUNCATE:
                     repairTruncate();
                     break;
+                case TODO_RETIRE_COVERING_TOKEN:
+                    // Recorded here, ACTED ON at the end of the constructor.
+                    // The retirement reads the partition's _pm and stages a
+                    // purge, which needs writer state this point does not have
+                    // yet -- running it here dies on a null symbolCountProviders
+                    // and the todo is then cleared having done nothing.
+                    pendingRetireCoveringTokenWriterIndex = todoMem.size() >= TODO_META_INDEX_OFFSET + Long.BYTES
+                            ? (int) todoMem.getLong(TODO_META_INDEX_OFFSET)
+                            : -1;
+                    break;
                 case TODO_RESTORE_META:
                 case -1:
                     break;
@@ -680,6 +691,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table-local file because it could not reach the purge queue or the
             // shared purge-log writer. This is best-effort and never fails open.
             recoverSpilledPostingSealPurges();
+
+            // Finishes a covering-index token retirement a crash interrupted.
+            // Last, because it needs the fully built writer.
+            if (pendingRetireCoveringTokenWriterIndex > -1) {
+                recoverRetireCoveringToken(pendingRetireCoveringTokenWriterIndex);
+                pendingRetireCoveringTokenWriterIndex = -1;
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -2324,8 +2342,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // publish made during an ADD INDEX runs while metadata still reports
             // the column as not indexed. Any such rule needs a signal that is
             // not the live metadata flag.
-            if (hadPostingIndex && retireParquetIndexTokens(postingWriterIndex)) {
-                commitTxWriter();
+            if (hadPostingIndex) {
+                // Durable intent first: a crash between here and the clear
+                // leaves the drop committed and the token un-retired, and
+                // nothing would ever revisit it. Recovery on the next open
+                // re-runs this, idempotently.
+                writeRetireCoveringTokenTodo(postingWriterIndex);
+                if (retireParquetIndexTokens(postingWriterIndex)) {
+                    commitTxWriter();
+                }
+                clearTodoLog();
             }
 
             // remove indexer - skip seal since the index is being dropped
@@ -13954,6 +13980,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return timestamp;
     }
 
+    /**
+     * Finishes a covering-index token retirement that a crash interrupted.
+     * Reads the dropped column's writer index from the todo payload, re-runs
+     * the retirement and clears the record.
+     * <p>
+     * Failures are logged rather than thrown: the table is otherwise sound --
+     * the drop committed, the data is intact, and the only casualty is a stale
+     * token and its artifacts -- so refusing to open the writer would turn a
+     * leak into an outage.
+     */
+    private void recoverRetireCoveringToken(int writerIndex) {
+        try {
+            if (writerIndex < 0) {
+                LOG.error().$("covering token retirement todo is too short to recover [table=")
+                        .$(tableToken).I$();
+                clearTodoLog();
+                return;
+            }
+            LOG.info().$("finishing an interrupted covering index token retirement [table=")
+                    .$(tableToken).$(", writerIndex=").$(writerIndex).I$();
+            if (retireParquetIndexTokens(writerIndex)) {
+                commitTxWriter();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not finish a covering index token retirement [table=")
+                    .$(tableToken).$(", error=").$(th.getMessage()).I$();
+        } finally {
+            clearTodoLog();
+        }
+    }
+
     private void repairMetaRename(MemoryMARW todoMem) {
         try {
             if (todoMem.size() < TODO_META_INDEX_OFFSET + Long.BYTES) {
@@ -16462,6 +16519,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         clearTodoAndCommitMeta();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    /**
+     * Records that a covering-index token retirement is outstanding for
+     * {@code writerIndex}, before the retirement is attempted.
+     * <p>
+     * The retirement runs AFTER the drop commits -- deliberately, because the
+     * other order leaves a crash window in which the column is still indexed
+     * with its token already gone, which reads as a silent empty result. The
+     * cost of that order is a window where the drop is durable and the token is
+     * not yet retired, and nothing else would ever revisit it: no seal runs for
+     * a column that is no longer indexed, so the publish that owns the merge
+     * never runs for it again. This makes the intent durable so the next writer
+     * open finishes the job.
+     */
+    private void writeRetireCoveringTokenTodo(int writerIndex) {
+        try {
+            todoMem.putLong(0, txWriter.txn);
+            Unsafe.storeFence();
+            todoMem.putLong(8, configuration.getDatabaseIdLo());
+            todoMem.putLong(16, configuration.getDatabaseIdHi());
+            Unsafe.storeFence();
+            todoMem.putLong(32, 1);
+            todoMem.putLong(40, TODO_RETIRE_COVERING_TOKEN);
+            todoMem.putLong(TODO_META_INDEX_OFFSET, writerIndex);
+            Unsafe.storeFence();
+            todoMem.putLong(24, txWriter.txn);
+            todoMem.jumpTo(56);
+            todoMem.sync(false);
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
         }
     }
 

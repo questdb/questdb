@@ -759,41 +759,35 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 );
             }
 
+            // The next WRITER open replays the _todo_ the drop left and
+            // retires the residual token. The ADD INDEX below opens one, so the
+            // reseal no longer finds anything to supersede -- which is the
+            // point: the residue is healed by recovery rather than surviving
+            // until some later reseal happens to notice it.
             execute("ALTER TABLE " + RESIDUE_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
             engine.releaseInactive();
+            runPostingSealPurgeJob();
 
-            final long resealTxn = committedTxn(RESIDUE_TABLE_NAME);
             try (Path path = new Path()) {
-                final String secondMeta = newestFileNamed(
-                        partitionPath(path, RESIDUE_TABLE_NAME), "sym.pidx.", "._im", firstMeta);
-                final long secondIndexTxn = Numbers.parseLong(
-                        secondMeta.substring("sym.pidx.".length(), secondMeta.length() - "._im".length()));
+                // The first pair is gone: recovery retired its token and the
+                // scoreboard-gated purge unlinked the artifacts.
+                Assert.assertFalse(
+                        "the residual _im must have been reclaimed",
+                        new java.io.File(partitionPath(path, RESIDUE_TABLE_NAME).toString(), firstMeta).exists()
+                );
+                Assert.assertFalse(
+                        "the residual pidx parquet must have been reclaimed",
+                        new java.io.File(partitionPath(path, RESIDUE_TABLE_NAME).toString(), firstParquet).exists()
+                );
+                // And the reseal's own pair is published and intact.
+                final String secondMeta = onlyFileNamed(
+                        partitionPath(path, RESIDUE_TABLE_NAME), "sym.pidx.", "._im");
                 Assert.assertNotEquals(
-                        "premise: the reseal must carry a different index txn, or the branch never fires",
-                        firstIndexTxn,
-                        secondIndexTxn
-                );
-                assertCoveringIndexToken(
-                        path,
-                        RESIDUE_TABLE_NAME,
-                        SYM_COLUMN_ID,
-                        secondIndexTxn,
-                        imFileSizeField(partitionPath(path, RESIDUE_TABLE_NAME).concat(secondMeta).$())
-                );
-                Assert.assertTrue(
-                        "the superseded pair must still be on disk until its readers drain",
-                        configuration.getFilesFacade().exists(
-                                partitionPath(path, RESIDUE_TABLE_NAME).concat(firstParquet).$())
+                        "the reseal must carry a different index txn",
+                        firstMeta,
+                        secondMeta
                 );
             }
-
-            runPostingSealPurgeJob();
-            Assert.assertEquals(
-                    "the reseal must hand the superseded pair to the reader-gated purge with a window"
-                            + " reaching the txn the reseal commits at",
-                    resealTxn,
-                    persistedPurgeWindowUpperBound(firstIndexTxn)
-            );
         });
     }
 
@@ -3560,20 +3554,19 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
      * The injection fails the {@code _pm} header patch rather than crashing
      * after it, so the retirement genuinely does not land.
      * <p>
-     * <b>Ignored because it reproduces an open defect.</b> Nothing reclaims the
-     * residue. A merge-loop rule keyed on "the metadata says this column is not
-     * indexed" cannot fire, because the merge runs only inside
-     * {@code publishParquetIndexTokens}, which a partition reaches only when a
-     * seal ran for it -- and with the column dropped no seal ever runs again.
-     * Extending the guard to publish when the table indexes nothing does not
-     * help either: the enclosing seal path is itself skipped. Reclaiming this
-     * needs a path that runs for a parquet partition independently of sealing,
-     * or a durable record that a retirement is outstanding, which is a design
-     * change rather than a fix. Kept as the reproduction so the recipe is not
-     * lost: it fires the injection, proves the drop committed, and shows the
-     * two artifacts surviving the next publish.
+     * Reclaimed by durable intent rather than by a merge-loop rule. A rule
+     * keyed on "the metadata says this column is not indexed" cannot fire: the
+     * merge runs only inside {@code publishParquetIndexTokens}, which a
+     * partition reaches only when a seal ran for it, and with the column
+     * dropped no seal ever runs again -- extending the guard to publish when
+     * the table indexes nothing does not help either, because the enclosing
+     * seal path is itself skipped. So the DROP writes a {@code _todo_} record
+     * before attempting the retirement and clears it after, and the next
+     * writer open finishes the job.
+     * <p>
+     * The reader is opened AFTER the injection is disarmed, which is what
+     * triggers the recovery: it is a writer open that replays the todo.
      */
-    @Ignore("reproduces an OPEN defect: nothing reclaims this residue yet -- see the javadoc")
     @Test
     public void testATokenLeftByAFailedDropIndexRetirementIsReclaimed() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
@@ -3635,10 +3628,28 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 );
             }
 
-            // A publish for the partition: an out-of-order insert is enough.
-            execute("INSERT INTO " + TABLE_NAME
-                    + " VALUES ('" + INDEXED_PARTITION + "T00:00:00.000005Z', 's7', 1.5, 9)");
-            drainWalQueue();
+            // Observe the durable intent directly before relying on it: the
+            // todo is only honoured when its recorded txn matches the table txn
+            // at open, so a mismatch here would make the recovery silently
+            // no-op and read exactly like "the fix does not work".
+            try (Path p2 = new Path()) {
+                p2.of(configuration.getDbRoot()).concat(engine.verifyTableName(TABLE_NAME)).concat("_todo_");
+                final java.io.File todo = new java.io.File(p2.toString());
+                Assert.assertTrue("the DROP must have left a durable retirement record", todo.exists());
+                final byte[] bytes = java.nio.file.Files.readAllBytes(todo.toPath());
+                final java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                Assert.assertEquals("todo code", 3L, bb.getLong(40));
+                Assert.assertEquals("todo must name the dropped column's writer index", 1L, bb.getLong(48));
+            }
+
+            // The recovery runs on WRITER OPEN, so opening one is the whole
+            // trigger. Going through SQL would not reach it: the failed ALTER
+            // suspends the WAL table, so nothing applies until an operator
+            // resumes it, and the resume path is not what is under test here.
+            engine.releaseInactive();
+            try (TableWriter ignore = engine.getWriter(engine.verifyTableName(TABLE_NAME), "todo recovery")) {
+                Assert.assertNotNull(ignore);
+            }
             runPostingSealPurgeJob();
 
             Assert.assertEquals(
