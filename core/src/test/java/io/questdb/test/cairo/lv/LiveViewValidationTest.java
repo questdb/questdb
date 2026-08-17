@@ -804,10 +804,11 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertUnanchoredRankingRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 1 ORDER BY ts DESC", "row_number");
 
             // ORDER BY on a non-timestamp column keeps its Sort factory over the window, so the
-            // root is no longer a window factory and the generic shape reject fires.
+            // root is no longer a window factory and the shape reject fires - naming the sort,
+            // since the query does contain a window function.
             assertLiveViewShapeRejected(
                     "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY x DESC",
-                    "live view select must contain at least one window function"
+                    "ORDER BY over a window function is not supported yet"
             );
             // ORDER BY the timestamp under an alias, descending: the eligible window's inner
             // ORDER BY ts can no longer elide under the descending scan, so it needs a cached plan

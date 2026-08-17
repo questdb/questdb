@@ -28,14 +28,13 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -123,24 +122,20 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
-     * Walks the view's compiled factory down to its {@link WindowRecordCursorFactory} and returns
-     * that factory's window function list. Mirrors the unwrap {@code LiveViewRefreshJob} does, and
-     * is how a test reaches a non-anchored window - {@code LiveViewInstance.getAnchorWindow()} does
-     * not surface one.
+     * Returns the view's window function list, which is how a test reaches a non-anchored
+     * window - {@code LiveViewInstance.getAnchorWindow()} does not surface one.
+     * <p>
+     * Reads the decomposed plan rather than walking the factory tree here. A SELECT that
+     * wraps its window function in an expression puts a projection above the window
+     * factory, so a hand-rolled walk that peels only {@code QueryProgress} stops one node
+     * short and reports the view has no window at all.
      */
     protected static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
-        RecordCursorFactory factory = instance.getCompiledFactory();
-        while (factory != null) {
-            if (factory instanceof WindowRecordCursorFactory windowFactory) {
-                return windowFactory.getWindowFunctions();
-            }
-            if (factory instanceof QueryProgress) {
-                factory = factory.getBaseFactory();
-                continue;
-            }
-            break;
+        final LiveViewCompiledPlan plan = instance.getCompiledPlan();
+        if (plan == null) {
+            throw new IllegalStateException("live view has no compiled plan; refresh it first");
         }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+        return plan.getWindowFactory().getWindowFunctions();
     }
 
     @Before

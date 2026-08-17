@@ -21532,9 +21532,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRejectLimitInSelect() throws Exception {
-        // A LIMIT clause wraps the window factory so the live-view validation no
-        // longer sees a bare windowed scan; the LV select must be a simple scan
-        // of the base, so LIMIT is rejected.
+        // A LIMIT clause wraps the window factory, and unlike a projection the refresh
+        // path cannot rebuild it: a limit is a property of the whole result set, not of
+        // the row in hand. The reject names LIMIT rather than claiming the query has no
+        // window function - it plainly has one, and pointing at the wrong thing sends the
+        // author hunting for a missing OVER clause.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
@@ -21544,7 +21546,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         "wrong message [msg=" + e.getFlyweightMessage() + ']',
-                        Chars.contains(e.getFlyweightMessage(), "live view select must contain at least one window function")
+                        Chars.contains(e.getFlyweightMessage(), "LIMIT over a window function is not supported yet")
                 );
             }
         });

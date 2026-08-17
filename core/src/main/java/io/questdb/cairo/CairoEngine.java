@@ -34,6 +34,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
@@ -134,13 +135,9 @@ import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.Operation;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
-import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
-import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1420,7 +1417,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
             }
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                final PageFrameRecordCursorFactory pfrcf = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
+                final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                 validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
 
@@ -1428,7 +1425,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // against the base table here also catches the rare case of an LV
                 // SELECT that names a column the base no longer has — better to fail
                 // CREATE early than to land an LV that's invalid on first refresh.
-                final RecordMetadata baseProjMeta = pfrcf.getMetadata();
+                final RecordMetadata baseProjMeta = plan.getBaseScanMetadata();
                 try (MetadataCacheReader metaRO = getMetadataCache().readLock()) {
                     final CairoTable baseTable = metaRO.getTable(baseTableToken);
                     if (baseTable == null) {
@@ -1452,14 +1449,23 @@ public class CairoEngine implements Closeable, WriterSource {
                     // back on through its view. The projection does not carry
                     // the flag
                     // (SqlCodeGenerator mints a fresh TableColumnMetadata for a
-                    // SYMBOL output column), so resolve it here by name. That is
-                    // exact rather than heuristic: a live view admits no projection
-                    // between the window and the base scan, so a plain column
-                    // cannot be aliased, and no window function returns SYMBOL.
+                    // SYMBOL output column), so resolve it here.
+                    //
+                    // Traced through the plan's nodes rather than matched by name:
+                    // a live view now admits an alias and a projection on either
+                    // side of the window, and `sym AS s` leaves an output column
+                    // whose name no base column carries. A name match answers "not
+                    // found" there and falls back to the server default, which is
+                    // the direction that turns caching back on for a base that
+                    // asked for NOCACHE. The trace follows the column functions and
+                    // the mapping's cross index instead, so it survives the rename.
                     for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                         boolean isCached = configuration.getDefaultSymbolCacheFlag();
                         if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                            final CairoColumn baseColumn = baseTable.getColumnQuiet(metadata.getColumnName(i));
+                            final int scanIndex = plan.traceOutputColumnToBaseScan(i);
+                            final CairoColumn baseColumn = scanIndex < 0
+                                    ? null
+                                    : baseTable.getColumnQuiet(baseProjMeta.getColumnName(scanIndex));
                             if (baseColumn != null && ColumnType.isSymbol(baseColumn.getType())) {
                                 isCached = baseColumn.isSymbolCached();
                             }
@@ -3793,78 +3799,30 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Validates the compiled SELECT shape against the live-view contract and returns
-     * the leaf {@code PageFrameRecordCursorFactory} so the caller can resolve its
-     * column dependencies against the base table.
+     * Validates the compiled SELECT shape against the live-view contract and returns the
+     * decomposed plan, so the caller can resolve the base scan's column dependencies and
+     * the refresh path can rebuild the same chain over WAL segment rows.
+     * <p>
+     * The shape grammar itself lives in {@link LiveViewCompiledPlan}, which both this
+     * validator and {@code LiveViewRefreshJob} walk; what stays here is everything that
+     * needs more than the tree's shape - the per-window-function contract, and the leaf
+     * scan's own properties.
      */
-    private static PageFrameRecordCursorFactory validateLiveViewFactory(
+    private static LiveViewCompiledPlan validateLiveViewFactory(
             RecordCursorFactory factory,
             TableToken baseTableToken,
             int position
     ) throws SqlException {
-        // SqlCompiler wraps every compiled query in a QueryProgress factory for registry tracking;
-        // unwrap it (and any other transparent wrappers that expose getBaseFactory()) so we can
-        // reason about the actual query shape.
-        RecordCursorFactory root = factory;
-        while (root instanceof QueryProgress) {
-            root = root.getBaseFactory();
-        }
-        // The planner picks a cached factory whenever any window function needs
-        // multi-pass evaluation (e.g. lead, percentile, etc.). The LIGHT variant is
-        // chosen for encoded-sort-eligible, fixed-width outputs; the regular one
-        // otherwise. Both mean caching/multi-pass the incremental refresh cannot drive.
-        final ObjList<WindowFunction> cachedWindowFunctions;
-        if (root instanceof CachedWindowRecordCursorFactory cwf) {
-            cachedWindowFunctions = cwf.getAllWindowFunctions();
-        } else if (root instanceof CachedWindowLightRecordCursorFactory cwlf) {
-            cachedWindowFunctions = cwlf.getAllWindowFunctions();
-        } else {
-            cachedWindowFunctions = null;
-        }
-        if (cachedWindowFunctions != null) {
-            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
-                    "this query requires caching or multi-pass evaluation");
-        }
-        if (!(root instanceof WindowRecordCursorFactory wf)) {
-            throw SqlException.$(position, "live view select must contain at least one window function");
-        }
+        final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, position);
+
         // incremental refresh only handles window functions that emit a value per input row
         // without looking ahead or buffering state across multiple passes
-        ObjList<WindowFunction> fns = wf.getWindowFunctions();
+        ObjList<WindowFunction> fns = plan.getWindowFactory().getWindowFunctions();
         for (int i = 0, n = fns.size(); i < n; i++) {
             validateLiveViewWindowFunction(fns.getQuick(i), position);
         }
 
-        // Incremental refresh drives window functions manually over rows read directly
-        // from WAL segments, so the factory tree must be exactly:
-        //     WindowRecordCursorFactory -> [FilteredRecordCursorFactory?] -> PageFrameRecordCursorFactory
-        // with no join, projection or grouping in between. See LiveViewRefreshJob.
-        //
-        // A single filter factory (FilteredRecordCursorFactory / AsyncFilteredRecordCursorFactory /
-        // AsyncJitFilteredRecordCursorFactory) may sit between the window and the page frame factory;
-        // the refresh job applies its Function filter row-by-row to WAL segment rows during
-        // incremental refresh. Indexed-symbol key extraction is suppressed during live view
-        // compilation (see SqlExecutionContext.isLiveViewCompile and WhereClauseParser), so the
-        // planner never pushes the filter into the row cursor factory.
-        RecordCursorFactory base = wf.getBaseFactory();
-        if (base.getFilter() != null) {
-            base = base.getBaseFactory();
-            // unreachable in practice: a filter factory always wraps a base cursor
-            // factory; a filter with no base would be a planner invariant break. Kept
-            // as a defensive backstop.
-            if (base == null) {
-                throw SqlException.$(position, "live view select has a malformed filter factory");
-            }
-        }
-        for (RecordCursorFactory f = base.getBaseFactory(); f != null; f = f.getBaseFactory()) {
-            if (f.getFilter() != null) {
-                throw SqlException.$(position, "live view select cannot use nested filter factories yet");
-            }
-        }
-        if (!(base instanceof PageFrameRecordCursorFactory pfrcf) || base.getBaseFactory() != null) {
-            throw SqlException.$(position, "live view select must be a simple scan of a single WAL base table; " +
-                    "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
-        }
+        final PageFrameRecordCursorFactory pfrcf = plan.getPageFrameFactory();
         if (pfrcf.hasFilter() || pfrcf.usesIndex()) {
             // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
             // extraction for live view compiles, so the planner shouldn't produce an indexed
@@ -3887,13 +3845,13 @@ public class CairoEngine implements Closeable, WriterSource {
             // would compute in the opposite order and silently persist.
             throw SqlException.$(position, "live view select cannot ORDER BY the designated timestamp in descending order");
         }
-        TableToken scannedToken = base.getTableToken();
+        TableToken scannedToken = pfrcf.getTableToken();
         // unreachable in practice: the SELECT is compiled against the declared base
         // table, so the scanned token always matches it. Kept as a defensive backstop.
         if (scannedToken == null || !scannedToken.equals(baseTableToken)) {
             throw SqlException.$(position, "live view select must read from the declared base table");
         }
-        return pfrcf;
+        return plan;
     }
 
     /**

@@ -41,13 +41,14 @@ import org.junit.Test;
  * than against one that grew.
  * {@link #testSymbolCapacityIsNotInherited} pins that decision.
  * <p>
- * The engine resolves the base column by name, which is exact rather than
- * heuristic here: a live view's factory tree must be
- * {@code WindowRecordCursorFactory -> [filter?] -> PageFrameRecordCursorFactory}
- * with no projection in between, so a plain column cannot be aliased, and no
- * window function returns SYMBOL. Every output SYMBOL column therefore carries
- * its base column's own name. {@link #testAliasedSymbolProjectionIsRejected}
- * pins that premise.
+ * The engine resolves the base column by tracing the output column back through the
+ * compiled plan's nodes, not by matching its name. A live view admits an alias and a
+ * scalar projection on either side of the window, so {@code g AS acct} leaves an output
+ * SYMBOL column that no base column is named after; a name match answers "not found"
+ * there and falls back to the server default, which is the direction that turns caching
+ * back on for a base that asked for NOCACHE. {@link #testAliasedSymbolPropagatesCacheFlag}
+ * and {@link #testSymbolThroughOutputProjectionPropagatesCacheFlag} pin the two shapes
+ * the trace has to survive.
  */
 public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
 
@@ -57,18 +58,27 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAliasedSymbolProjectionIsRejected() throws Exception {
-        // Pins the premise the name-based resolution rests on. If live views ever
-        // admit a projection layer, an aliased SYMBOL column stops naming its base
-        // column and this test is where that shows up: the resolution then needs
-        // the query model, the way CreateMatViewOperationImpl does it.
+    public void testAliasedSymbolPropagatesCacheFlag() throws Exception {
+        // The alias compiles to a mapping node between the base scan and the window, so
+        // the view's column is named `acct` and no base column is. A name match finds
+        // nothing and silently hands back the server default - CACHE - for a column the
+        // base explicitly declared NOCACHE. The trace follows the mapping's cross index
+        // instead and keeps the flag.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 65536 NOCACHE, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertQuery("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, g AS acct, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR DAILY '00:00')")
-                    .failsWith("live view select must be a simple scan of a single WAL base table");
+                    "WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR DAILY '00:00')");
+
+            assertQuery("SELECT \"column\", symbolCached, symbolCapacity FROM (SHOW COLUMNS FROM lv)")
+                    .noRandomAccess()
+                    .returns("""
+                            column\tsymbolCached\tsymbolCapacity
+                            ts\tfalse\t0
+                            acct\tfalse\t128
+                            s\tfalse\t0
+                            """);
         });
     }
 
@@ -163,6 +173,30 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
                     .returns("""
                             count
                             2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSymbolThroughOutputProjectionPropagatesCacheFlag() throws Exception {
+        // The other side of the window: wrapping the window function in an expression
+        // puts a projection above the window, so every output column - the pass-through
+        // SYMBOL included - is reached through that projection's functions rather than
+        // straight off the window factory. The trace has to cross it too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 65536 NOCACHE, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, g, x - sum(x) OVER w AS dev FROM base " +
+                    "WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR DAILY '00:00')");
+
+            assertQuery("SELECT \"column\", symbolCached, symbolCapacity FROM (SHOW COLUMNS FROM lv)")
+                    .noRandomAccess()
+                    .returns("""
+                            column\tsymbolCached\tsymbolCapacity
+                            ts\tfalse\t0
+                            g\tfalse\t128
+                            dev\tfalse\t0
                             """);
         });
     }
