@@ -3,8 +3,18 @@
 **Purpose:** the audit artifact for "every gate is owned by exactly one spec". If a gate exists in
 the code and is not in this table, the roadmap has a hole.
 
-Generated and verified 2026-08-11 against the gate messages in `TableWriter` and the create-time
-validation sites.
+Generated 2026-08-11 against the gate messages in `TableWriter` and the create-time validation sites.
+**Re-audited 2026-08-17 across the WHOLE of `core/src/main`** — the original sweep's scope was itself
+the defect: it missed nine gates, including every read-side restriction. The audit is now
+reproducible, and any future one must use this command:
+
+```bash
+grep -rn -oE '"[^"]*composite[^"]*"' core/src/main/java/ \
+  | grep -viE "renderCellSegment|resolveCellKey|must not be called"
+```
+
+Every refusal it prints must appear in the ownership table below, or in "deferred by decision".
+There is no third category.
 
 ## Build order
 
@@ -12,12 +22,18 @@ Sub-project 8 is built **first** — it is the differential test harness every o
 graded against. Sub-project 1 is next, because its addressing decision propagates into 3, 6 and 7.
 
 ```
-8 (verify)  →  1 (lifecycle)  →  2 (column DDL)  →  4 (row-level)  →  5 (create-time)
-                    ↓                                                        ↓
-                    └──────────→  3 (parquet)  ─────→  6 (Enterprise)  ←─────┘
-                                       ↓
-                                  7 (mat views)      [gate lands in 8, removed in 7]
+Wave 0 (earliest-refusal + O3-purge proof)
+  → 8 (verify) → 9A (per-cell interval cursors) → 1 (lifecycle) → 2 (column DDL)
+  → 9B/9C (index cell-awareness) → 4 (row-level + commit shapes) → 5 (create-time)
+  → 3 (parquet) → 9D (native-only cursor gates) → 6 (Enterprise) / 7 (mat views)
 ```
+
+**Wave 0** fixes refusals that fire later than the statement that caused them, plus the one silent
+skip that violates invariant 2. It lifts no capability; it makes the current behaviour honest.
+
+**9A precedes 1 and 2 deliberately.** Composite reads already ship, and that cursor design has
+produced three defects (two silently wrong answers, one returning no rows). Fixing what is broken
+outranks adding capability.
 
 3 depends on 1 (a parquet cell must still be addressable). 6 depends on 3 (tiering moves parquet
 cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition removal).
@@ -56,6 +72,14 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 | 28 | Enterprise checkpoint / backup manifest | 6 — enterprise |
 | 29 | Enterprise replication (no gate — **unverified**) | 6 — enterprise |
 | 30 | Materialized views over a composite base (no gate today; 8 adds one) | 7 — matview |
+| 31 | Multiple sub-day time intervals over a single multi-cell day | 9 — read-surface (9A) |
+| 32 | Indexed `WHERE` predicate | 9 — read-surface (9B) |
+| 33 | `ORDER BY` on an indexed symbol column | 9 — read-surface (9C) |
+| 34 | Cross-cell merge supports native partitions only | 9 — read-surface (9D, needs 3) |
+| 35 | Time-frame permutation supports native partitions only | 9 — read-surface (9D, needs 3) |
+| 36 | `FORMAT PARQUET` (write-path: DDL accepted, next commit suspends) | 3 — parquet-format (refusal moved to DDL in wave 0) |
+| 37 | Interleaved multi-cell commit with a var-size column | 4 — row-level ops **and commit shapes** |
+| 38 | Checkpoint/snapshot restore of an indexed column | 2 — column-ddl |
 
 Silent skips, which are not gates but must become real behaviour or provably-harmless skips:
 
@@ -63,6 +87,7 @@ Silent skips, which are not gates but must become real behaviour or provably-har
 |---|---|
 | split-fragment squash ("cell-blind merge, cell-aware squash deferred") | 1 — lifecycle (behaviour), 8 (proof it is harmless meanwhile) |
 | symbol-capacity autoscale ("cell-blind reopen") | 8 — proof it is harmless; no behaviour change planned |
+| **O3 partition purge** ("day-blind walk, cell-aware purge deferred", `O3PartitionPurgeJob:224`) | 1 — lifecycle (behaviour); wave 0 writes the harmlessness test FIRST. Expected to fail: a day-blind walk over cell directories has no evident reason to reclaim anything, which makes this a silent disk leak rather than a harmless skip. |
 
 ## Deferred by decision — recorded, not forgotten
 
@@ -80,6 +105,7 @@ These are choices, not oversights. Each is deliberately excluded from the eight 
 | Symbol-aware incremental mat-view refresh (recompute touched cells only) | 7 §7 | performance work that presupposes correctness |
 | Composite-partitioned mat-view storage | 7 §D3 | a view's storage table is plain by construction |
 | Dimension/cluster column mutability | 2 §D3 | partition-spec evolution = Phase 4 of the original design |
+| EXPRESSION dimensions (4 code sites: evaluation, compilation, column reference, writer-side symbol table) | 9 §1 | an unbuilt Phase-4 FEATURE, not a restriction on an action a user can perform today. Plan 4e exists; it is not a gate to lift |
 | **Windows-illegal characters in dimension values** | 1 §8 | `putPathSafe` lets `* ? : \| " < >` reach directory names; illegal on Windows. Free to fix while unreleased, an on-disk format break afterwards — **decide before release** |
 
 ## Cross-cutting invariants
@@ -94,7 +120,15 @@ Every sub-project must preserve these; each spec restates them in its testing se
 4. **Values, not ordinals.** `cellKey` is table-local; anything crossing a table boundary (ATTACH,
    backup/restore, replication) re-resolves dimension values through the local registry.
 5. **Acceptance is differential.** A sub-project is done when its operations flip from `GATED` to
-   `SUPPORTED` in sub-project 8's classification table and pass the twin comparison.
+   `SUPPORTED` in sub-project 8's classification table and pass the twin comparison. Flipping that
+   classification enrols the operation in the differential fuzz automatically, so a lifted gate gains
+   coverage by construction.
+6. **A refusal fires at the statement that caused it**, never at a later one. A gate that surfaces
+   during an unrelated operation misattributes the failure.
+7. **Every new test is shown to FAIL with its fix reverted**, and the result is recorded in the commit
+   message. Added 2026-08-17: three tests written that day passed against a defective build.
+8. **Performance is measured and recorded per operation, never gating** (decision 2026-08-17).
+   Correctness first; a slower composite does not block a gate being lifted.
 
 ## Spec files
 
@@ -108,3 +142,76 @@ Every sub-project must preserve these; each spec restates them in its testing se
 | 5 | `2026-08-11-composite-create-time-design.md` |
 | 6 | `2026-08-11-composite-enterprise-design.md` |
 | 7 | `2026-08-11-composite-matview-design.md` |
+| 9 | `2026-08-17-composite-read-surface-design.md` |
+
+
+## Appendix — audit keys (machine-checkable)
+
+The ownership table above is prose; this block is the exact set of refusal strings present in
+`core/src/main` at the last audit. It exists because the audit must be a **string-set difference**, not
+a fuzzy match: a first attempt at automating it reported five false orphans purely from backticks and
+camelCase in the prose table.
+
+The finish line for the whole effort is that this block becomes empty — every line either deleted from
+the code or moved to "deferred by decision" with a reason.
+
+```
+ADD COLUMN of type SYMBOL is not yet supported on composite-partitioned tables
+ALTER COLUMN TYPE SYMBOL is not yet supported on composite-partitioned tables
+composite cross-cell merge supports native partitions only
+composite partitioning does not support pending parquet-to-native conversions
+composite partitioning does not yet support ADD INDEX
+composite partitioning does not yet support ALTER COLUMN TYPE
+composite partitioning does not yet support ATTACH PARTITION
+composite partitioning does not yet support CONVERT PARTITION TO NATIVE
+composite partitioning does not yet support CONVERT PARTITION TO PARQUET
+composite partitioning does not yet support DEDUP UPSERT KEYS
+composite partitioning does not yet support DETACH PARTITION
+composite partitioning does not yet support DROP COLUMN
+composite partitioning does not yet support DROP INDEX
+composite partitioning does not yet support DROP PARTITION
+composite partitioning does not yet support FORCE DROP PARTITION
+composite partitioning does not yet support FORMAT PARQUET
+composite partitioning does not yet support ORDER BY on an indexed symbol column
+composite partitioning does not yet support REINDEX TABLE
+composite partitioning does not yet support RENAME COLUMN
+composite partitioning does not yet support SQUASH PARTITIONS
+composite partitioning does not yet support TTL-based partition eviction
+composite partitioning does not yet support UPDATE
+composite partitioning does not yet support a POSTING index seal on this partition
+composite partitioning does not yet support a covering POSTING index reseal on a PARQUET partition
+composite partitioning does not yet support an EXPRESSION dimension referencing column '
+composite partitioning does not yet support an indexed WHERE predicate
+composite partitioning does not yet support checkpoint/snapshot restore of an indexed column
+composite partitioning does not yet support multiple sub-day time intervals over a single multi-cell day
+composite partitioning does not yet support switching a native partition to parquet
+composite partitioning does not yet support the REPLACE commit mode
+composite partitioning is not yet supported with CREATE TABLE AS SELECT
+composite partitioning requires a WAL table
+composite partitioning: an interleaved multi-cell commit is not yet supported for a table with a var-size column
+composite table, skipping O3 partition purge (day-blind walk, cell-aware purge deferred)
+composite table, skipping split-fragment squash (cell-blind merge, cell-aware squash deferred)
+composite table, skipping symbol capacity autoscale (cell-blind reopen, cell-aware autoscale deferred)
+composite time-frame permutation supports native partitions only
+materialized views are not yet supported over a composite-partitioned base table
+```
+
+Re-generate with:
+
+```bash
+grep -rhoE '"[^"]*composite[^"]*"' core/src/main/java/ \
+  | grep -viE "renderCellSegment|resolveCellKey|must not be called" \
+  | grep -iE "does not (yet )?support|not yet supported|supports native|requires a WAL|skipping" \
+  | sed 's/"//g; s/ \[.*//; s/;.*//' | sort -u
+```
+
+Compare as a set (the block is the FIRST fenced block in this appendix):
+
+```bash
+awk '/^## Appendix/{a=1} a&&/^```$/{n++; next} a&&n==1{print}' \
+  docs/superpowers/specs/2026-08-11-composite-scope-closure-index.md | grep -v '^$' | sort -u > /tmp/spec.keys
+diff /tmp/code.keys /tmp/spec.keys
+```
+
+Any line in the code set that is not in the spec set is a NEW gate, and the roadmap has a new hole.
+Verified clean 2026-08-17: 38 refusals in code, 38 known keys, empty diff.
