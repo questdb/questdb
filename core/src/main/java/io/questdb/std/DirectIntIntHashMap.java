@@ -42,11 +42,16 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     // Per-workload native memory tracker bound by the owning cursor at workload start.
     // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
     // degrade to the global-only overloads in that case.
-    private @Nullable MemoryTracker memoryTracker;
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
     public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag) {
+        this(initialCapacity, loadFactor, noEntryKey, noEntryValue, memoryTag, true);
+    }
+
+    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag, boolean openOnInit) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -58,8 +63,12 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         this.size = 0;
         this.free = (int) (capacity * loadFactor);
         this.mask = capacity - 1;
-        this.ptr = Unsafe.malloc(8L * capacity, memoryTag);
-        zero();
+        if (openOnInit) {
+            this.ptr = Unsafe.malloc(8L * capacity, memoryTag, memoryTracker);
+            zero();
+        }
+        // else: ptr stays 0; the first reopen() allocates the directory under
+        // whatever MemoryTracker is bound at that time.
     }
 
     public int capacity() {
@@ -79,6 +88,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             ptr = Unsafe.free(ptr, 8L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
+            mask = 0;
             size = 0;
         }
         // The block is gone, so the tracker that charged it carries no debt for this map any more.
@@ -94,6 +104,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     public int get(int key) {
         return valueAt(keyIndex(key));
+    }
+
+    public boolean isOpen() {
+        return ptr != 0;
     }
 
     public int keyAt(long index) {
@@ -237,7 +251,8 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     private void zero() {
         if (ptr == 0) {
-            // Closed: clear() still runs its bookkeeping, but there is no block to wipe.
+            // Lazy-open (openOnInit == false) leaves capacity sized while ptr is still 0.
+            // reopen() zeroes the directory it allocates, so there is nothing to do here.
             return;
         }
         if (noEntryKey == 0) {

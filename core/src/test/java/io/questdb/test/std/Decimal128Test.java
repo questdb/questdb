@@ -36,6 +36,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
@@ -83,6 +84,37 @@ public class Decimal128Test {
         }
     }
 
+    @Test
+    public void testAdditionZeroOperandKeepsMaxScale() {
+        // Result scale must be max(leftScale, rightScale) even when an operand is zero.
+        Decimal128 a = Decimal128.fromBigDecimal(new BigDecimal("1.5"));
+        a.add(Decimal128.fromBigDecimal(new BigDecimal("0.000")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Negative zero carries a scale too
+        a = Decimal128.fromBigDecimal(new BigDecimal("1.5"));
+        a.add(Decimal128.fromBigDecimal(new BigDecimal("-0.00000")));
+        Assert.assertEquals(5, a.getScale());
+        Assert.assertEquals("1.50000", a.toString());
+
+        // Zero operand with the lower scale leaves the accumulator's scale untouched
+        a = Decimal128.fromBigDecimal(new BigDecimal("1.500"));
+        a.add(Decimal128.fromBigDecimal(new BigDecimal("0.0")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Zero accumulator
+        a = Decimal128.fromBigDecimal(new BigDecimal("0.0"));
+        a.add(Decimal128.fromBigDecimal(new BigDecimal("0.00000")));
+        Assert.assertEquals(5, a.getScale());
+        Assert.assertEquals("0.00000", a.toString());
+
+        // Widening past the range still raises
+        final Decimal128 max = new Decimal128(Decimal128.MAX_VALUE.getHigh(), Decimal128.MAX_VALUE.getLow(), 0);
+        Assert.assertThrows(NumericException.class, () -> max.add(new Decimal128(0, 0, 1)));
+    }
+
     @Test(expected = NumericException.class)
     public void testBigDecimalOverflow() {
         BigDecimal bd = new BigDecimal("1e100");
@@ -126,13 +158,10 @@ public class Decimal128Test {
             BigDecimal bdA = a.toBigDecimal();
             BigDecimal bdB = b.toBigDecimal();
 
-            // The comparison may overflow during rescaling
-            try {
-                int actual = a.compareTo(b);
-                int expected = bdA.compareTo(bdB);
-                Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
-            } catch (NumericException ignore) {
-            }
+            // aligning the scales must never overflow, whatever the operands
+            int actual = a.compareTo(b);
+            int expected = bdA.compareTo(bdB);
+            Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
         }
     }
 
@@ -157,6 +186,67 @@ public class Decimal128Test {
         larger.of(200, 0, 2);
         Assert.assertTrue(smaller.compareTo(larger) < 0);
         Assert.assertTrue(larger.compareTo(smaller) > 0);
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentAtRangeLimit() {
+        // 10^38-1 vs (10^38-1)/10: aligning the scales needs 39 digits
+        final long maxHigh = Decimal128.MAX_VALUE.getHigh();
+        final long maxLow = Decimal128.MAX_VALUE.getLow();
+        final Decimal128 a = new Decimal128(maxHigh, maxLow, 0);
+        final Decimal128 b = new Decimal128(maxHigh, maxLow, 1);
+        Assert.assertEquals(1, a.compareTo(b));
+        Assert.assertEquals(-1, b.compareTo(a));
+        Assert.assertEquals(a.toBigDecimal().compareTo(b.toBigDecimal()), a.compareTo(b));
+
+        final long minHigh = Decimal128.MIN_VALUE.getHigh();
+        final long minLow = Decimal128.MIN_VALUE.getLow();
+        final Decimal128 negA = new Decimal128(minHigh, minLow, 0);
+        final Decimal128 negB = new Decimal128(minHigh, minLow, 1);
+        Assert.assertEquals(-1, negA.compareTo(negB));
+        Assert.assertEquals(1, negB.compareTo(negA));
+
+        // mixed signs
+        Assert.assertEquals(1, a.compareTo(negB));
+        Assert.assertEquals(-1, negA.compareTo(b));
+
+        // equal values expressed at different scales
+        Assert.assertEquals(0, new Decimal128(0, 1, 0).compareTo(new Decimal128(0, 10, 1)));
+
+        // zero always aligns
+        Assert.assertEquals(0, new Decimal128(0, 0, 0).compareTo(new Decimal128(0, 0, 38)));
+        Assert.assertEquals(-1, new Decimal128(0, 0, 0).compareTo(new Decimal128(0, 1, 38)));
+        Assert.assertEquals(1, new Decimal128(0, 1, 0).compareTo(new Decimal128(0, 1, 38)));
+
+        // null on either side
+        final Decimal128 nullValue = new Decimal128();
+        nullValue.ofNull();
+        Assert.assertEquals(-1, nullValue.compareTo(a));
+        Assert.assertEquals(1, a.compareTo(nullValue));
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentNearTies() {
+        // Operands that land one unit apart once aligned: a lost carry in the scale-up
+        // multiply flips the comparison.
+        final BigInteger max = Decimal128.MAX_VALUE.toBigDecimal().toBigInteger();
+        for (int scaleDiff = 1; scaleDiff <= Decimal128.MAX_SCALE; scaleDiff++) {
+            final BigInteger pow = BigInteger.TEN.pow(scaleDiff);
+            final BigInteger unscaled = max.divide(pow);
+            final BigInteger aligned = unscaled.multiply(pow);
+            for (int delta = -1; delta <= 1; delta++) {
+                for (int sign = -1; sign <= 1; sign += 2) {
+                    final BigInteger s = BigInteger.valueOf(sign);
+                    final BigDecimal a = new BigDecimal(unscaled.multiply(s), 0);
+                    final BigDecimal b = new BigDecimal(aligned.add(BigInteger.valueOf(delta)).multiply(s), scaleDiff);
+                    final Decimal128 da = Decimal128.fromBigDecimal(a);
+                    final Decimal128 db = Decimal128.fromBigDecimal(b);
+                    final String msg = "scaleDiff=" + scaleDiff + " delta=" + delta + " sign=" + sign;
+                    Assert.assertEquals(msg, a.compareTo(b), da.compareTo(db));
+                    Assert.assertEquals(msg, b.compareTo(a), db.compareTo(da));
+                }
+            }
+        }
     }
 
     @Test
@@ -1601,6 +1691,43 @@ public class Decimal128Test {
             // Test subtraction accuracy
             testSubtractionAccuracy(a, b, i);
         }
+    }
+
+    @Test
+    public void testSubtractionZeroOperandKeepsMaxScale() {
+        // Result scale must be max(leftScale, rightScale) even when an operand is zero.
+        Decimal128 a = Decimal128.fromBigDecimal(new BigDecimal("1.5"));
+        a.subtract(Decimal128.fromBigDecimal(new BigDecimal("0.000")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Negative zero carries a scale too
+        a = Decimal128.fromBigDecimal(new BigDecimal("1.5"));
+        a.subtract(Decimal128.fromBigDecimal(new BigDecimal("-0.000")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Zero minuend
+        a = Decimal128.fromBigDecimal(new BigDecimal("0.00"));
+        a.subtract(Decimal128.fromBigDecimal(new BigDecimal("1.5")));
+        Assert.assertEquals(2, a.getScale());
+        Assert.assertEquals("-1.50", a.toString());
+
+        // Both zero
+        a = Decimal128.fromBigDecimal(new BigDecimal("0.0"));
+        a.subtract(Decimal128.fromBigDecimal(new BigDecimal("0.00000")));
+        Assert.assertEquals(5, a.getScale());
+        Assert.assertEquals("0.00000", a.toString());
+
+        // Zero subtrahend with the lower scale leaves the minuend's scale untouched
+        a = Decimal128.fromBigDecimal(new BigDecimal("1.500"));
+        a.subtract(Decimal128.fromBigDecimal(new BigDecimal("0.0")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Widening past the range still raises
+        final Decimal128 max = new Decimal128(Decimal128.MAX_VALUE.getHigh(), Decimal128.MAX_VALUE.getLow(), 0);
+        Assert.assertThrows(NumericException.class, () -> max.subtract(new Decimal128(0, 0, 1)));
     }
 
     @Test

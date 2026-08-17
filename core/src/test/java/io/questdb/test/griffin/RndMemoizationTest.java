@@ -167,6 +167,31 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndDecimal() throws Exception {
+        allowFunctionMemoization();
+        // Each alias is re-read once, so the projection wraps every storage width in a
+        // DecimalFunctionMemoizer. Pinning the drawn value per row catches both a memoizer that
+        // re-draws (the pair disagrees) and one that never invalidates (every row repeats row 1).
+        assertQuery("""
+                SELECT rnd_decimal(2, 1, 2) a, a a2,
+                       rnd_decimal(4, 2, 2) b, b b2,
+                       rnd_decimal(9, 4, 2) c, c c2,
+                       rnd_decimal(18, 4, 2) e, e e2,
+                       rnd_decimal(38, 18, 2) f, f f2,
+                       rnd_decimal(76, 38, 2) g, g g2
+                FROM long_sequence(5)""")
+                .noLeakCheck()
+                .returnsOnce("""
+                        a\ta2\tb\tb2\tc\tc2\te\te2\tf\tf2\tg\tg2
+                        3.9\t3.9\t\t\t7357.5701\t7357.5701\t61184357814108.3005\t61184357814108.3005\t\t\t42410546395300151836226305523655526752.83660960515174370725563638714558246094\t42410546395300151836226305523655526752.83660960515174370725563638714558246094
+                        2.2\t2.2\t70.80\t70.80\t\t\t40863994239165.1703\t40863994239165.1703\t\t\t14832310603661962183009007960465462563.27016421860803228938933079881231167112\t14832310603661962183009007960465462563.27016421860803228938933079881231167112
+                        0.4\t0.4\t82.74\t82.74\t52087.2172\t52087.2172\t10033904595397.3667\t10033904595397.3667\t17088581293595190926.688371824814671897\t17088581293595190926.688371824814671897\t26161279898442918804852603416216986418.87250503716905202176730509926109011283\t26161279898442918804852603416216986418.87250503716905202176730509926109011283
+                        7.0\t7.0\t\t\t25389.0364\t25389.0364\t16664082490389.7958\t16664082490389.7958\t16416323169670502455.153885733440205453\t16416323169670502455.153885733440205453\t25363665748183740765358025251209280730.08614983121005465418009508944407191097\t25363665748183740765358025251209280730.08614983121005465418009508944407191097
+                        3.5\t3.5\t20.57\t20.57\t\t\t20559518411576.0695\t20559518411576.0695\t6012475275117814766.927126811373876190\t6012475275117814766.927126811373876190\t\t
+                        """);
+    }
+
+    @Test
     public void testRndDouble() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql

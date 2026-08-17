@@ -83,6 +83,23 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     @Nullable
     ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions();
 
+    /**
+     * Fail-safe determinism contract mirroring {@code RecordCursorFactory#isNonDeterministic()}:
+     * returns {@code true} unless the factory can prove that two cursor opens see the same
+     * partition frames (for example an interval factory whose interval model is stable).
+     */
+    default boolean isNonDeterministic() {
+        return true;
+    }
+
+    /**
+     * Returns {@code true} if repeated cursor opens within one query execution produce the same
+     * partition frames. Unknown implementations inherit the fail-safe determinism-derived default.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     TableToken getTableToken();
 
     /**
@@ -96,6 +113,17 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
      * {@code TxReader} at compile time.
      */
     boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
+
+    /**
+     * Returns {@code true} when the factory restricts the scan to a set of
+     * designated-timestamp intervals (i.e. an {@code IntervalPartitionFrameCursorFactory}).
+     * The interval predicate lives in the frame cursor and never surfaces as a residual
+     * {@code Function}, so the live view refresh path cannot see it. Live view
+     * validation relies on this to reject such factories.
+     */
+    default boolean isIntervalScan() {
+        return false;
+    }
 
     void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions);
 

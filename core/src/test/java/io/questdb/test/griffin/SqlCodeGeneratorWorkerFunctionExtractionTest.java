@@ -49,11 +49,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.util.Collections;
 
 /**
@@ -108,62 +107,57 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
 
     @Test
     public void testAllThreadSafeWideProjectionAllocatesNoIndexList() throws Exception {
-        assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
-            final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
-            final int columnCount = 1_000_000;
-            final CountingFunctionParser parser = new CountingFunctionParser();
-            final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 4);
-            final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
-            final CountingFunction safeOwner = new CountingFunction(true);
-            final ObjList<Function> ownerFunctions = new ObjList<>(columnCount);
-            final ObjList<QueryColumn> queryColumns = new ObjList<>(columnCount);
-            final IntList flags = new IntList(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                ownerFunctions.add(safeOwner);
-                queryColumns.add(null);
-                flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
-            }
-            final ObjList<Function> warmUpFunctions = new ObjList<>();
-            warmUpFunctions.add(safeOwner);
-            final ObjList<QueryColumn> warmUpQueryColumns = new ObjList<>();
-            warmUpQueryColumns.add(null);
-            final IntList warmUpFlags = new IntList();
-            warmUpFlags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
-            try (SqlCodeGenerator codeGenerator = new SqlCodeGenerator(
-                    configuration,
-                    parser,
-                    new PostOrderTreeTraversalAlgo(),
-                    queryColumnPool,
-                    expressionNodePool
-            )) {
-                // Warm up class loading and the allocation counter so the measured call
-                // sees steady-state allocation behavior.
-                for (int i = 0; i < 64; i++) {
-                    Assert.assertNull(compilePerWorkerFunctions(codeGenerator, warmUpQueryColumns, warmUpFunctions, 3, warmUpFlags));
-                    threadMXBean.getCurrentThreadAllocatedBytes();
+        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final ThreadMXBean threadMXBean = scope.getBean();
+            assertMemoryLeak(() -> {
+                final int columnCount = 1_000_000;
+                final CountingFunctionParser parser = new CountingFunctionParser();
+                final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 4);
+                final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+                final CountingFunction safeOwner = new CountingFunction(true);
+                final ObjList<Function> ownerFunctions = new ObjList<>(columnCount);
+                final ObjList<QueryColumn> queryColumns = new ObjList<>(columnCount);
+                final IntList flags = new IntList(columnCount);
+                for (int i = 0; i < columnCount; i++) {
+                    ownerFunctions.add(safeOwner);
+                    queryColumns.add(null);
+                    flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
                 }
-                final long maxAllowedBytes = 1_048_576;
-                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
-                Assert.assertNull(compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 3, flags));
-                final long allocatedBytes = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
-                // The all-thread-safe verdict must use constant auxiliary space: an
-                // O(columnCount) index list for a 1_000_000-slot projection would allocate
-                // at least a 4 MiB int array, while the allocation-free scan stays within
-                // measurement noise.
-                Assert.assertTrue(
-                        "all-thread-safe scan allocated " + allocatedBytes + " bytes",
-                        allocatedBytes < maxAllowedBytes
-                );
-                Assert.assertEquals(0, parser.parseCount);
-            }
-        });
+                final ObjList<Function> warmUpFunctions = new ObjList<>();
+                warmUpFunctions.add(safeOwner);
+                final ObjList<QueryColumn> warmUpQueryColumns = new ObjList<>();
+                warmUpQueryColumns.add(null);
+                final IntList warmUpFlags = new IntList();
+                warmUpFlags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
+                try (SqlCodeGenerator codeGenerator = new SqlCodeGenerator(
+                        configuration,
+                        parser,
+                        new PostOrderTreeTraversalAlgo(),
+                        queryColumnPool,
+                        expressionNodePool
+                )) {
+                    // Warm up class loading and the allocation counter so the measured call
+                    // sees steady-state allocation behavior.
+                    for (int i = 0; i < 64; i++) {
+                        Assert.assertNull(compilePerWorkerFunctions(codeGenerator, warmUpQueryColumns, warmUpFunctions, 3, warmUpFlags));
+                        threadMXBean.getCurrentThreadAllocatedBytes();
+                    }
+                    final long maxAllowedBytes = 1_048_576;
+                    final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                    Assert.assertNull(compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 3, flags));
+                    final long allocatedBytes = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+                    // The all-thread-safe verdict must use constant auxiliary space: an
+                    // O(columnCount) index list for a 1_000_000-slot projection would allocate
+                    // at least a 4 MiB int array, while the allocation-free scan stays within
+                    // measurement noise.
+                    Assert.assertTrue(
+                            "all-thread-safe scan allocated " + allocatedBytes + " bytes",
+                            allocatedBytes < maxAllowedBytes
+                    );
+                    Assert.assertEquals(0, parser.parseCount);
+                }
+            });
+        }
     }
 
     @Test

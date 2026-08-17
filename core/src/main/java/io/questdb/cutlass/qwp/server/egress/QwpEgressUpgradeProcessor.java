@@ -910,6 +910,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             case CompiledQuery.CREATE_TABLE:
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
             case CompiledQuery.CREATE_MAT_VIEW:
+            case CompiledQuery.CREATE_LIVE_VIEW:
             case CompiledQuery.CREATE_VIEW: {
                 try (
                         Operation op = cq.getOperation();

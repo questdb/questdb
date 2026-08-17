@@ -118,6 +118,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralCountTemplate(QueryColumn template) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -413,8 +418,8 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public ObjList<CharSequence> getLateralCountColumns() {
-        return delegate.getLateralCountColumns();
+    public ObjList<QueryColumn> getLateralCountTemplates() {
+        return delegate.getLateralCountTemplates();
     }
 
     @Override
@@ -843,6 +848,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getLateralCountCoalesceGuard() {
+        return delegate.getLateralCountCoalesceGuard();
+    }
+
+    @Override
+    public boolean isLateralCountCoalesceRequired() {
+        return delegate.isLateralCountCoalesceRequired();
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return delegate.isNestedModelIsSubQuery();
     }
@@ -855,6 +870,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return delegate.isOrderDescendingByDesignatedTimestampOnly();
+    }
+
+    @Override
+    public boolean isOuterRefWildcardExcluded() {
+        return delegate.isOuterRefWildcardExcluded();
     }
 
     @Override
@@ -1113,6 +1133,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setLateralCountCoalesceGuard(ExpressionNode guard) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setLatestByType(int latestByType) {
         throw new UnsupportedOperationException();
     }
@@ -1184,6 +1214,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded) {
         throw new UnsupportedOperationException();
     }
 

@@ -37,11 +37,12 @@
 #include <bitset>
 #include <iostream>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
-#else
-#include <windows.h>
 #endif
 
 #include "cmdline.h"
@@ -243,6 +244,111 @@ int TestApp::run()
 }
 
 ////
+class Test_StringHeaderGuardPage : public TestCase
+{
+public:
+    Test_StringHeaderGuardPage() : TestCase("StringHeaderGuardPage") {}
+
+    static void add(TestApp &app)
+    {
+        app.add(new Test_StringHeaderGuardPage());
+    }
+
+    void compile(BaseCompiler &c) override
+    {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        auto *func = cc.add_func(FuncSignature::build<int32_t, int64_t *, int64_t *, int64_t>(CallConvId::kCDecl));
+
+        x86::Gp data_ptr = cc.new_gp64("data_ptr");
+        func->set_arg(0, data_ptr);
+        x86::Gp aux_ptr = cc.new_gp64("aux_ptr");
+        func->set_arg(1, aux_ptr);
+        x86::Gp row = cc.new_gp64("row");
+        func->set_arg(2, row);
+
+        jit_value_t value = questdb::x86::read_mem_varsize(
+                cc,
+                sizeof(int32_t),
+                0,
+                data_ptr,
+                aux_ptr,
+                row
+        );
+        cc.ret(value.gp());
+        cc.end_func();
+    }
+
+    bool run(void *_func, String &result, String &expect) override
+    {
+        typedef int32_t (*Func)(int64_t *, int64_t *, int64_t);
+        Func func = ptr_as_func<Func>(_func);
+
+#ifdef _WIN32
+        SYSTEM_INFO system_info;
+        GetSystemInfo(&system_info);
+        const size_t page_size = system_info.dwPageSize;
+        void *pages = VirtualAlloc(nullptr, 2 * page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        DWORD old_protection;
+        const bool guard_page_set = pages != nullptr && VirtualProtect(
+                static_cast<char *>(pages) + page_size,
+                page_size,
+                PAGE_NOACCESS,
+                &old_protection
+        ) != 0;
+#else
+        const long configured_page_size = sysconf(_SC_PAGESIZE);
+        const size_t page_size = configured_page_size > 0 ? static_cast<size_t>(configured_page_size) : 0;
+        void *pages = page_size > 0
+                ? mmap(nullptr, 2 * page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+                : MAP_FAILED;
+        const bool guard_page_set = pages != MAP_FAILED && mprotect(
+                static_cast<char *>(pages) + page_size,
+                page_size,
+                PROT_NONE
+        ) == 0;
+#endif
+
+        if (!guard_page_set)
+        {
+#ifdef _WIN32
+            if (pages != nullptr)
+                VirtualFree(pages, 0, MEM_RELEASE);
+#else
+            if (pages != MAP_FAILED)
+                munmap(pages, 2 * page_size);
+#endif
+            result.assign("guard page allocation failed");
+            expect.assign("guard page allocation succeeded");
+            return false;
+        }
+
+        // Place the 4-byte STRING header at the end of the readable page. An 8-byte load
+        // crosses into the guard page, while the required 4-byte load remains valid.
+        auto *header = reinterpret_cast<int32_t *>(static_cast<char *>(pages) + page_size - sizeof(int32_t));
+        int64_t offsets[2] = {
+                static_cast<int64_t>(page_size - sizeof(int32_t)),
+                static_cast<int64_t>(page_size)
+        };
+        int64_t data_columns[1] = {reinterpret_cast<int64_t>(pages)};
+        int64_t aux_columns[1] = {reinterpret_cast<int64_t>(offsets)};
+
+        *header = -1;
+        const int32_t null_result = func(data_columns, aux_columns, 0);
+        *header = 0;
+        const int32_t empty_result = func(data_columns, aux_columns, 0);
+
+#ifdef _WIN32
+        VirtualFree(pages, 0, MEM_RELEASE);
+#else
+        munmap(pages, 2 * page_size);
+#endif
+
+        result.assign_format("null={%d}, empty={%d}", null_result, empty_result);
+        expect.assign("null={-1}, empty={0}");
+        return null_result == -1 && empty_result == 0;
+    }
+};
+
 // int32_not is the scalar backend's boolean NOT (bin_not), not a bitwise complement. Every operand it
 // can receive is a truth value in {0, 1}: a comparison zeroes its destination and writes it with
 // setcc, and a BOOLEAN column holds one byte of 0 or 1. The row gate drops a row whose final value is
@@ -251,6 +357,7 @@ int TestApp::run()
 // still true, and a NOT filter would select every row. This test used to assert ~x - a contract the
 // function never had and the backend cannot use - so it failed on master; and had the implementation
 // been the complement it asserted, it would have passed while the filter returned wrong rows.
+
 class Test_Int32Not : public TestCase
 {
 public:
@@ -2346,6 +2453,7 @@ public:
 
 void compiler_add_x86_tests(TestApp &app)
 {
+    app.addT<Test_StringHeaderGuardPage>();
     app.addT<Test_Int32Not>();
     app.addT<Test_Int32And>();
     app.addT<Test_Int32Or>();

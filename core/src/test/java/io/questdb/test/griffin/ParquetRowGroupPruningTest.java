@@ -33,6 +33,10 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -95,6 +99,112 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+        });
+    }
+
+    @Test
+    public void testCalculateSizeAndSkipRowsOnPushdownPrunedPageFrameCursor() throws Exception {
+        // Pushdown pruning drops whole non-matching row groups at the page-frame
+        // level, but the metadata-only size/skip fast paths account at the
+        // PARTITION-frame level, which is blind to that pruning: they would count
+        // physical rows the cursor never yields. All three of PageFrameRecordCursorImpl
+        // .calculateSize(), .skipRows() and .size() therefore gate on
+        // hasActivePushdownFilter().
+        //
+        // No gate is reachable through a plain SELECT: a residual filter factory
+        // always wraps the pushdown-carrying page-frame factory, and the wrapper's own
+        // calculateSize()/skipRows() walk rows. The live view refresh job unwraps it -
+        // filterFactory.getBaseFactory(), re-applying the WHERE above - and drives the
+        // raw cursor, whose own filter is therefore null while pushdown is active. That
+        // job calls skipRows() (covered end-to-end by LiveViewParquetBaseTest); it does
+        // not call calculateSize(), so the calculateSize() gate is a contract-level
+        // sibling with no production caller yet. This test builds that same raw-cursor
+        // shape and pins BOTH gates, so neither can be dropped unnoticed.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("""
+                    INSERT INTO x VALUES
+                    (8000, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            try (RecordCursorFactory filterFactory = select("SELECT * FROM x WHERE val = 42")) {
+                // The residual filter lives in the wrapper; the pushdown conditions sit
+                // on the page-frame factory beneath it. Do not close the base separately -
+                // the wrapper owns it.
+                // Strip the QueryProgress wrapper that engine.select() adds; the refresh
+                // job compiles its own factory and never sees it.
+                RecordCursorFactory residualFilterFactory = filterFactory;
+                if (residualFilterFactory instanceof QueryProgress) {
+                    residualFilterFactory = residualFilterFactory.getBaseFactory();
+                }
+                // The residual WHERE lives in the wrapper, so unwrapping it once lands on
+                // the page-frame factory whose cursor carries no filter of its own while
+                // pushdown pruning is active. (Only the wrapper's getFilter() is load
+                // bearing here: PageFrameRecordCursorFactory does not override getFilter(),
+                // so asserting null on the base would prove nothing.)
+                Assert.assertNotNull(residualFilterFactory.getFilter());
+                final RecordCursorFactory pageFrameFactory = residualFilterFactory.getBaseFactory();
+                Assert.assertNotNull(pageFrameFactory);
+
+                // Walk the raw cursor to establish what it actually yields.
+                long walked = 0;
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        walked++;
+                    }
+                }
+                // Pruning really dropped row groups, so the scan yields far fewer than the
+                // 5001 physical rows. Without this the size assertion below would be vacuous.
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+                Assert.assertTrue("pruned scan must yield a strict subset [walked=" + walked + ']', walked > 0 && walked < 5_001);
+
+                // calculateSize() must agree with the walk. Without the pushdown gate the
+                // metadata-only path reports every physical row, including the pruned ones.
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                }
+                Assert.assertEquals(walked, counter.get());
+
+                // The same gate in skipRows(). The skip target must exceed the parquet
+                // partition's PHYSICAL row count (5000), because the pruning-blind
+                // accounting only kicks in when FullFwdPartitionFrameCursor.next(skipTarget)
+                // takes its whole-partition skeleton branch (hi <= skipTarget), which
+                // reports the physical count without decoding or pruning. A smaller target
+                // would decode and prune on the way past, making both paths agree and the
+                // assertion vacuous.
+                counter.set(5_001);
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                    // Gated: the walk skips only the rows the cursor yields, leaving the
+                    // rest of the request unspent. Un-gated: the skeleton branch charges
+                    // all 5001 physical rows and the counter lands on 0.
+                    Assert.assertEquals(5_001 - walked, counter.get());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                // size() is the third member of the family. It is an entity cursor here, so
+                // un-gated it would hand back the partition-frame physical count (5001) -
+                // the same pruning-blind number the two gates above reject. A size() must
+                // either be exact or -1 (unknown); the pruned scan cannot know it up front,
+                // so -1 is the only sound answer.
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    final long size = cursor.size();
+                    Assert.assertTrue(
+                            "size() must be exact or unknown, never the pruning-blind physical count [size=" + size + ", walked=" + walked + ']',
+                            size == -1 || size == walked
+                    );
+                }
+            }
         });
     }
 
@@ -2096,6 +2206,95 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsNotNullOverBooleanColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            createColumnTopParquetTable("BOOLEAN", "true");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n501\t1\t8000\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testIsNotNullOverByteColumnTop() throws Exception {
+        // BYTE, SHORT and BOOLEAN carry no null sentinel: EqByteFunctionFactory and its two
+        // siblings fold a null constant to BooleanConstant.FALSE, so "c2 IS NOT NULL" holds
+        // for every stored row, column-top rows included - the native twin returns all 501.
+        //
+        // The parquet writer still marks column-top rows with definition level 0, so a row
+        // group built entirely from them reports null_count == num_values. Row-group pruning
+        // reads that as "no row can match" and discards the group, dropping 500 rows.
+        //
+        // Parquet nulls encode column tops for these types, not SQL NULLs, so
+        // PushdownFilterExtractor must not push a null op for them at all. The CHAR sibling
+        // below is the control: CHAR has a real sentinel, its column-top rows genuinely are
+        // NULL, and its pruning must survive the gate.
+        assertMemoryLeak(() -> {
+            createColumnTopParquetTable("BYTE", "7");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n501\t1\t8000\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testIsNotNullOverCharColumnTop() throws Exception {
+        // Control for the three tests above. CHAR's null is Numbers.CHAR_NULL, so a
+        // column-top row reads back as a genuine SQL NULL and the parquet null bit means
+        // exactly what the predicate asks about. Pruning stays correct and must keep firing.
+        assertMemoryLeak(() -> {
+            createColumnTopParquetTable("CHAR", "'a'");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n1\t8000\t8000\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testIsNotNullOverDoubleColumnTop() throws Exception {
+        // Over-broad-gate control for the FLOAT/DOUBLE arm, the counterpart of the CHAR one.
+        // Only IS NULL is unsound for these types; a column-top row reads back as a genuine
+        // DOUBLE null, so IS NOT NULL still prunes exactly and must keep doing so. Widening the
+        // arm to refuse both ops would cost pruning on a very common predicate, silently.
+        assertMemoryLeak(() -> {
+            createColumnTopParquetTable("DOUBLE", "1.5");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n1\t8000\t8000\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testIsNotNullOverShortColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            createColumnTopParquetTable("SHORT", "7");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n501\t1\t8000\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
     public void testIsNullFilter() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -2139,6 +2338,200 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("cnt\n50\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testIsNullOverStoredCharNull() throws Exception {
+        // The mirror of the IS NOT NULL column-top hole, in the opposite direction. CHAR's SQL
+        // null is Numbers.CHAR_NULL, but the parquet writer's Nullable impl for u16 returns
+        // false unconditionally (core/rust/qdbr/src/parquet_write/mod.rs:92-97), so a stored
+        // char 0 goes to the file as a NON-null value. A row group full of them reports
+        // null_count == 0, which pruning reads as "no row can be null" and discards for
+        // IS NULL - dropping the very rows that match.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, c2 CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT x::INT, NULL::CHAR, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(500)
+                    """);
+            execute("INSERT INTO x VALUES (8000, 'a', '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n500\t1\t500\n");
+        });
+    }
+
+    @Test
+    public void testIsNullOverStoredDoubleInfinity() throws Exception {
+        // FLOAT and DOUBLE have CHAR's shape too, and it is easy to miss because the usual NULL,
+        // NaN, behaves. Numbers.isNull(double) masks EXP_BIT_MASK and Numbers.isNull(float)
+        // tests isInfinite, so +/-Infinity is SQL NULL - but the writer's Nullable impls for
+        // f32/f64 test only is_nan(), and simd.rs compares strictly greater than the infinity
+        // bits, so an infinity is stored as an ordinary value. A row group of them reports
+        // null_count == 0 and IS NULL pruning discards it, dropping every matching row.
+        //
+        // The infinity must come from a runtime expression: written as a literal, 'Infinity'
+        // and 1e308 * 10 constant-fold to a NULL DoubleConstant and store NaN, which the writer
+        // does mark null - so the folded form cannot reproduce this.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (a DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO src
+                    SELECT 1e308, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(500)
+                    """);
+            execute("CREATE TABLE x (val INT, c2 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT 1, a * a, ts FROM src");
+            execute("INSERT INTO x VALUES (8000, 1.5, '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE c2 IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n500\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testIsNullOverStoredFloatInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (a FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO src
+                    SELECT 1e38::FLOAT, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(500)
+                    """);
+            execute("CREATE TABLE x (val INT, c2 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT 1, a * a, ts FROM src");
+            execute("INSERT INTO x VALUES (8000, 1.5, '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE c2 IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n500\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testIsNullOverStoredIPv4Null() throws Exception {
+        // IPv4's null is 0, an in-band value like CHAR's. This pins the writer mapping that 0
+        // to a parquet null, which is what keeps IPv4 out of the gate: if the writer regressed
+        // to storing it as an ordinary value, IS NULL pruning would gain CHAR's hole and this
+        // goes red. It is not a control against over-broad gating - blocking IPv4 only costs
+        // pruning, so the answer would stay 500 either way.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, c2 IPV4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT x::INT, NULL::IPV4, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(500)
+                    """);
+            execute("INSERT INTO x VALUES (8000, '10.0.0.1', '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt, min(val) AS lo, max(val) AS hi FROM x WHERE c2 IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\tlo\thi\n500\t1\t500\n");
+        });
+    }
+
+    @Test
+    public void testLimitOverConstantFoldedByteNullFilter() throws Exception {
+        // The query QueryFuzzTest found for aa809bb54f ("Fix LIMIT under-count on
+        // pushdown-pruned skip"), kept as a correctness pin.
+        //
+        // BYTE carries no null sentinel, so EqByteFunctionFactory folds "val IS NOT NULL" to
+        // constant TRUE and the code generator drops the filter, leaving the page-frame factory
+        // unwrapped. That used to pair with active pushdown, because PushdownFilterExtractor
+        // read the expression node before the compiler folded it. filter == null together with
+        // active pushdown is the single state that reaches PageFrameRecordCursorImpl
+        // .skipRows()'s slow path with the decode clamp armed, and it under-counted the nested
+        // LIMIT: the walk charged its own rows against a clamp of 0, so the skip skipped
+        // nothing and calculateSize() reported 0 for a cursor yielding 16.
+        //
+        // PushdownFilterExtractor.isNullOpPushable() now refuses to push a null op for BYTE,
+        // because a parquet null bit denotes a column top there rather than a SQL NULL. That
+        // closes the route: pushdown stays inactive, so size() reports the real row count and
+        // the outer LIMIT never has to size itself through skipRows(). The skipRows() guard
+        // stays and still matters - active pushdown coexists with canClamp for an ordinary
+        // non-constant predicate, which is what testSkipRowsWithFiniteBoundUnderActivePushdown
+        // drives directly; no query shape was found that reaches it through a LIMIT any more,
+        // but that is an absence of evidence rather than a proof.
+        //
+        // So this pins two things: the folded BYTE predicate leaves pushdown inactive, and the
+        // fuzz query still yields its 16 rows with calculateSize() agreeing.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT (x % 100)::BYTE, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(500)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("INSERT INTO x VALUES (99, '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Landing on the page-frame factory rather than a filter wrapper still proves the
+            // WHERE folded away, and a real size() on that entity cursor proves the null op no
+            // longer activates pushdown - which is what keeps the outer LIMIT off skipRows().
+            try (RecordCursorFactory factory = select("SELECT * FROM x WHERE val IS NOT NULL")) {
+                RecordCursorFactory scanFactory = factory;
+                if (scanFactory instanceof QueryProgress) {
+                    scanFactory = scanFactory.getBaseFactory();
+                }
+                Assert.assertTrue(
+                        "the folded WHERE must leave the page-frame factory unwrapped [factory="
+                                + scanFactory.getClass().getSimpleName() + ']',
+                        scanFactory instanceof PageFrameRecordCursorFactory
+                );
+                try (RecordCursor cursor = scanFactory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(501, cursor.size());
+                }
+            }
+
+            // The base scan now reports a real size, so the outer LIMIT knows its size up front
+            // instead of deriving it through skipRows(); .expectSize() pins that.
+            assertQuery("WITH cte0 AS (SELECT * FROM x WHERE val IS NOT NULL LIMIT 16) SELECT * FROM cte0 LIMIT 40")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            val\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T00:01:00.000000Z
+                            3\t2024-01-01T00:02:00.000000Z
+                            4\t2024-01-01T00:03:00.000000Z
+                            5\t2024-01-01T00:04:00.000000Z
+                            6\t2024-01-01T00:05:00.000000Z
+                            7\t2024-01-01T00:06:00.000000Z
+                            8\t2024-01-01T00:07:00.000000Z
+                            9\t2024-01-01T00:08:00.000000Z
+                            10\t2024-01-01T00:09:00.000000Z
+                            11\t2024-01-01T00:10:00.000000Z
+                            12\t2024-01-01T00:11:00.000000Z
+                            13\t2024-01-01T00:12:00.000000Z
+                            14\t2024-01-01T00:13:00.000000Z
+                            15\t2024-01-01T00:14:00.000000Z
+                            16\t2024-01-01T00:15:00.000000Z
+                            """);
         });
     }
 
@@ -5707,10 +6100,63 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     ParquetRowGroupFilter.resetRowGroupsSkipped();
                     assertNativeMatchesPartialParquet("c6 " + op + ' ' + bound, "c6\n");
                     Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
                 }
             }
         });
     }
+
+    @Test
+    public void testSkipRowsWithFiniteBoundUnderActivePushdown() throws Exception {
+        // Direct coverage for aa809bb54f ("Fix LIMIT under-count on pushdown-pruned skip").
+        // Under active pushdown skipRows() walks row by row, and that walk must run unclamped:
+        // hasNext() charges every row it yields against maxRowsAfterSkip, so a clamp of 0 - the
+        // value LimitRecordCursor.calculateSize() passes to size a cursor it will not read - let
+        // the first hasNext() report exhaustion, and the skip then skipped nothing.
+        //
+        // The route that originally reached this state, a BYTE "IS NOT NULL" that folds to TRUE
+        // while leaving pushdown active, is gone now that PushdownFilterExtractor refuses null
+        // ops on BYTE. So drive the cursor directly instead of through a LIMIT. A non-constant
+        // "val >= 0" is extracted as OP_GE and keeps pushdown active on the scan, while
+        // SqlCodeGenerator still hands that scan filter == null because the filter lives in the
+        // wrapper above it. That reproduces the same filter == null + entity + forward scan +
+        // active pushdown state without depending on constant folding.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT x::INT, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(500)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("INSERT INTO x VALUES (501, '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            try (RecordCursorFactory factory = select("SELECT * FROM x WHERE val >= 0")) {
+                RecordCursorFactory scan = factory;
+                for (int i = 0; i < 8 && scan != null && !(scan instanceof PageFrameRecordCursorFactory); i++) {
+                    scan = scan.getBaseFactory();
+                }
+                Assert.assertTrue(
+                        "expected to reach the page-frame scan under the filter wrapper [factory="
+                                + (scan == null ? "null" : scan.getClass().getSimpleName()) + ']',
+                        scan instanceof PageFrameRecordCursorFactory
+                );
+                try (RecordCursor cursor = scan.getCursor(sqlExecutionContext)) {
+                    // size() == -1 proves pushdown is active, which is what routes skipRows()
+                    // into the walk rather than the metadata-only fast path.
+                    Assert.assertEquals(-1, cursor.size());
+                    RecordCursor.Counter counter = new RecordCursor.Counter();
+                    counter.set(16);
+                    cursor.skipRows(counter, 0);
+                    Assert.assertEquals(0, counter.get());
+
+                }
+            }
+        });
+    }
+
 
     @Test
     public void testLongConstantOutsideIntRangePushdownNotFalsePruned() throws Exception {
@@ -5970,6 +6416,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+
     private void assertHasParquetPartitions(String tableName, boolean expected) {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (MetadataCacheReader reader = engine.getMetadataCache().readLock()) {
@@ -5977,6 +6424,22 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             Assert.assertNotNull(table);
             Assert.assertEquals(expected, table.hasParquetPartitions());
         }
+    }
+
+    // Builds a parquet table where 'c2' carries a column top: the 500 rows on 2024-01-01 predate
+    // the ADD COLUMN and hold no stored value, so the parquet writer marks them with definition
+    // level 0 and the row group reports null_count == num_values. The single 2024-01-02 row keeps
+    // that partition active so only 2024-01-01 converts.
+    private void createColumnTopParquetTable(String columnType, String lastValue) throws Exception {
+        execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x
+                SELECT x::INT, timestamp_sequence('2024-01-01', 100_000)
+                FROM long_sequence(500)
+                """);
+        execute("ALTER TABLE x ADD COLUMN c2 " + columnType);
+        execute("INSERT INTO x VALUES (8000, '2024-01-02T02:00:00.000000Z', " + lastValue + ")");
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
     }
 
     // Builds a parquet table whose live column 'b' is the original low-range column 'a', while

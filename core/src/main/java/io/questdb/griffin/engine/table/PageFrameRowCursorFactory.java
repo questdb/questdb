@@ -65,6 +65,13 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
         return baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY;
     }
 
+    // A plain entity scan returns every frame row and evaluates no selecting value, so it introduces
+    // no per-open instability; frame-set stability is proven separately by the partition-frame factory.
+    @Override
+    public boolean isStableWithinExecution() {
+        return true;
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();

@@ -176,15 +176,44 @@ public class Decimal64Test {
             BigDecimal bdA = a.toBigDecimal();
             BigDecimal bdB = b.toBigDecimal();
 
-            // The comparison may overflow during rescaling
-            try {
-                int actual = a.compareTo(b);
-                int expected = bdA.compareTo(bdB);
-                Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
-            } catch (NumericException ignore) {
-                // Overflow is acceptable during scaling operations
-            }
+            // aligning the scales must never overflow, whatever the operands
+            int actual = a.compareTo(b);
+            int expected = bdA.compareTo(bdB);
+            Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
         }
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentAtRangeLimit() {
+        // 999999999999999999 vs 99999999999999999.9: aligning the scales needs 19 digits
+        final Decimal64 a = new Decimal64(999999999999999999L, 0);
+        final Decimal64 b = new Decimal64(999999999999999999L, 1);
+        Assert.assertEquals(1, a.compareTo(b));
+        Assert.assertEquals(-1, b.compareTo(a));
+        Assert.assertEquals(a.toBigDecimal().compareTo(b.toBigDecimal()), a.compareTo(b));
+
+        final Decimal64 negA = new Decimal64(-999999999999999999L, 0);
+        final Decimal64 negB = new Decimal64(-999999999999999999L, 1);
+        Assert.assertEquals(-1, negA.compareTo(negB));
+        Assert.assertEquals(1, negB.compareTo(negA));
+
+        // mixed signs
+        Assert.assertEquals(1, a.compareTo(negB));
+        Assert.assertEquals(-1, negA.compareTo(b));
+
+        // equal values expressed at different scales
+        Assert.assertEquals(0, new Decimal64(1, 0).compareTo(new Decimal64(10, 1)));
+
+        // zero always aligns
+        Assert.assertEquals(0, new Decimal64(0, 0).compareTo(new Decimal64(0, 18)));
+        Assert.assertEquals(-1, new Decimal64(0, 0).compareTo(new Decimal64(1, 18)));
+        Assert.assertEquals(1, new Decimal64(1, 0).compareTo(new Decimal64(1, 18)));
+
+        // null on either side
+        final Decimal64 nullValue = new Decimal64();
+        nullValue.ofNull();
+        Assert.assertEquals(-1, nullValue.compareTo(a));
+        Assert.assertEquals(1, a.compareTo(nullValue));
     }
 
     @Test

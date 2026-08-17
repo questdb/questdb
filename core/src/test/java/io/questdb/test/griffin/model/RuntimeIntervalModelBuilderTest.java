@@ -248,6 +248,67 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBetweenSharedDynamicEndpointClosesExactlyOnce() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction shared = new CloseCountingFunction();
+        builder.setBetweenBoundary(shared, 11);
+        builder.setBetweenBoundary(shared, 22);
+        Assert.assertEquals(1, builder.dynamicRangeSize());
+        try (RuntimeIntrinsicIntervalModel model = builder.build()) {
+            builder.clear();
+            Assert.assertEquals(0, shared.closeCount);
+            final LongList intervals = model.calculateIntervals(sqlExecutionContext);
+            Assert.assertEquals(2, intervals.size());
+            Assert.assertEquals(0, intervals.getQuick(0));
+            Assert.assertEquals(0, intervals.getQuick(1));
+        }
+        Assert.assertEquals(1, shared.closeCount);
+
+        builder = newFailingBuilder();
+        builder.setBetweenNegated(true);
+        shared = new CloseCountingFunction();
+        builder.setBetweenBoundary(shared, 11);
+        builder.setBetweenBoundary(shared, 22);
+        Assert.assertEquals(1, builder.dynamicRangeSize());
+        try (RuntimeIntrinsicIntervalModel model = builder.build()) {
+            builder.clear();
+            Assert.assertEquals(0, shared.closeCount);
+            final LongList intervals = model.calculateIntervals(sqlExecutionContext);
+            Assert.assertEquals(4, intervals.size());
+            Assert.assertEquals(Numbers.LONG_NULL, intervals.getQuick(0));
+            Assert.assertEquals(-1, intervals.getQuick(1));
+            Assert.assertEquals(1, intervals.getQuick(2));
+            Assert.assertEquals(Long.MAX_VALUE, intervals.getQuick(3));
+        }
+        Assert.assertEquals(1, shared.closeCount);
+
+        builder = newFailingBuilder();
+        shared = new CloseCountingFunction();
+        builder.intersectEmpty();
+        builder.setBetweenBoundary(shared, 11);
+        builder.setBetweenBoundary(shared, 22);
+        Assert.assertTrue(builder.isBetweenBoundaryFunctionConsumed());
+        Assert.assertEquals(1, shared.closeCount);
+        builder.clear();
+        Assert.assertEquals(1, shared.closeCount);
+
+        builder = newFailingBuilder();
+        shared = new CloseCountingFunction();
+        builder.setBetweenBoundary(shared, 11);
+        builder.failNextReservation = true;
+        try {
+            builder.setBetweenBoundary(shared, 22);
+            Assert.fail("injected failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertTrue(builder.isBetweenBoundaryFunctionConsumed());
+        }
+        builder.clearBetweenParsing();
+        Assert.assertEquals(1, shared.closeCount);
+        builder.clear();
+        Assert.assertEquals(1, shared.closeCount);
+    }
+
+    @Test
     public void testBetweenSemiDynamicIncomingAdoptionIsAtomicUnderAllocationFailure() {
         // Constant first endpoint, dynamic second endpoint: an allocation failure in the
         // capacity reservation must leave the incoming function owned by the caller
@@ -771,7 +832,6 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         CloseCountingFunction hi = new CloseCountingFunction();
         builder.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
                 head,
-                new ObjList<>(),
                 lo,
                 (short) 0,
                 0L,
@@ -866,6 +926,67 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 Assert.assertEquals(0, model.calculateIntervals(sqlExecutionContext).size());
             }
         });
+    }
+
+    @Test
+    public void testMonotonicInverterCloseContinuesAfterHeadCloseFailure() {
+        // The inverter's close() owns the head and bound functions, which the outer best-effort
+        // dynamic-range list cleanup cannot reach. A close() failure on the head must not abandon
+        // the still-open bound functions: every distinct owner must see a close attempt and the
+        // original failure must be rethrown.
+        ThrowingCloseFunction head = new ThrowingCloseFunction("head");
+        CloseCountingFunction lo = new CloseCountingFunction();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
+                head,
+                lo,
+                (short) 0,
+                0L,
+                hi,
+                (short) 0,
+                0L,
+                true,
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
+        );
+        try {
+            inverter.close();
+            Assert.fail("head close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(head.failure, e);
+        }
+        Assert.assertEquals(1, head.closeCount);
+        Assert.assertEquals("head close failure must not abandon the lo bound", 1, lo.closeCount);
+        Assert.assertEquals("head close failure must not abandon the hi bound", 1, hi.closeCount);
+    }
+
+    @Test
+    public void testMonotonicInverterCloseSuppressesLaterFailuresOntoFirst() {
+        // When several distinct owners throw on close(), the first failure is rethrown and the rest
+        // attach as suppressed, and every owner is still closed exactly once.
+        ThrowingCloseFunction head = new ThrowingCloseFunction("head");
+        ThrowingCloseFunction lo = new ThrowingCloseFunction("lo");
+        CloseCountingFunction hi = new CloseCountingFunction();
+        TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
+                head,
+                lo,
+                (short) 0,
+                0L,
+                hi,
+                (short) 0,
+                0L,
+                true,
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
+        );
+        try {
+            inverter.close();
+            Assert.fail("head close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(head.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{lo.failure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, head.closeCount);
+        Assert.assertEquals(1, lo.closeCount);
+        Assert.assertEquals(1, hi.closeCount);
     }
 
     @Test

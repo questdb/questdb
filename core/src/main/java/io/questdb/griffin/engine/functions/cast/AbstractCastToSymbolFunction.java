@@ -102,6 +102,16 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     }
 
     @Override
+    public boolean supportsKeyValueAccess() {
+        // getInt() mints a key with one probe on the already-decoded scalar (see getInt0), never by
+        // hashing the row's text, and valueOf() resolves it by indexing symbols. A key consumer such
+        // as QWP egress should therefore take the key path and encode each distinct value once
+        // rather than re-encoding it per row. Contrast CastStrToSymbolFunctionFactory.Func, whose
+        // getInt() has to hash the row's text to produce a key at all: there the key buys nothing.
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(arg).val("::symbol");
     }
@@ -126,9 +136,7 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         }
 
         symbolTableShortcut.putAt(keyIndex, value, next);
-        sink.clear();
-        sink.put(value);
-        symbols.add(Chars.toString(sink));
+        symbols.add(symbolOf(value));
         return next++ - 1;
     }
 
@@ -143,10 +151,20 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         }
 
         symbolTableShortcut.putAt(keyIndex, value, next++);
-        sink.clear();
-        sink.put(value);
-        final String str = Chars.toString(sink);
+        final String str = symbolOf(value);
         symbols.add(str);
         return str;
+    }
+
+    /**
+     * Renders the dictionary text for a shortcut key. The key is the value itself only for the
+     * integral casts; CHAR keys on the code point and FLOAT on the raw bits, so a subclass whose
+     * key is an encoding must decode it here. Both getInt0() and getSymbol0() mint through this,
+     * so the key a row hands out always resolves to the same text the row reads directly.
+     */
+    protected String symbolOf(int key) {
+        sink.clear();
+        sink.put(key);
+        return Chars.toString(sink);
     }
 }

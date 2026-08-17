@@ -116,6 +116,14 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(baseFactory);
     }
 
+    // Wraps a single input without exposing it through getBaseFactory(), so the external-source
+    // property is propagated explicitly. Guards against a null base during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory baseFactory = this.baseFactory;
+        return baseFactory != null && baseFactory.usesExternalDataSource();
+    }
+
     @Override
     protected void _close() {
         final RecordMetadata metadata = detachMetadata();

@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -208,7 +209,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 } else {
                     sink.val(", ");
                 }
-                sink.putBaseColumnName(i);
+                sink.putBaseColumnName(queryToFrameColumnMapping[i]);
             }
         }
         sink.val(']');
@@ -223,7 +224,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sink.val(", ");
                 }
                 sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? "last" : "first").val('(');
-                sink.putBaseColumnName(i);
+                sink.putBaseColumnName(queryToFrameColumnMapping[i]);
                 sink.val(')');
             }
         }
@@ -804,6 +805,26 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             @Override
+            public short getDecimal16(int col) {
+                return currentRecord.getDecimal16(col);
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                return currentRecord.getDecimal32(col);
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                return currentRecord.getDecimal64(col);
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                return currentRecord.getDecimal8(col);
+            }
+
+            @Override
             public double getDouble(int col) {
                 return currentRecord.getDouble(col);
             }
@@ -879,6 +900,26 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 @Override
                 public char getChar(int col) {
                     return (char) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public short getDecimal16(int col) {
+                    return (short) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public int getDecimal32(int col) {
+                    return (int) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public long getDecimal64(int col) {
+                    return crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public byte getDecimal8(int col) {
+                    return (byte) crossFrameRow.getQuick(col);
                 }
 
                 @Override
@@ -959,6 +1000,46 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         return Unsafe.getChar(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
                     } else {
                         return 0;
+                    }
+                }
+
+                @Override
+                public short getDecimal16(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
+                    } else {
+                        return Decimals.DECIMAL16_NULL;
+                    }
+                }
+
+                @Override
+                public int getDecimal32(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
+                    } else {
+                        return Decimals.DECIMAL32_NULL;
+                    }
+                }
+
+                @Override
+                public long getDecimal64(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                    } else {
+                        return Decimals.DECIMAL64_NULL;
+                    }
+                }
+
+                @Override
+                public byte getDecimal8(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
+                    } else {
+                        return Decimals.DECIMAL8_NULL;
                     }
                 }
 

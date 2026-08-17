@@ -37,6 +37,9 @@ package io.questdb.std;
  * <li>Leading zeros: "00123.45" → 123.45</li>
  * <li>Leading/trailing whitespace</li>
  * </ul>
+ * <p>
+ * This class is stateless: all methods are static and hold no mutable state, so it is safe
+ * to use concurrently from multiple threads.
  *
  * @see Decimal
  * @see Decimal64
@@ -165,17 +168,20 @@ public final class DecimalParser {
         // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
         // measure the given precision/scale.
         int dot = -1;
+        int leadingZeroes = 0;
         boolean digitFound = false;
-        // Position of the first non-zero digit, or -1 if the mantissa is all zeros. Tracked in this
-        // same validation pass so the zero check below needs no separate scan over the digits.
-        int firstNonZeroDigit = -1;
+        boolean hasSignificantDigit = false;
         int digitLo = lo;
         for (; lo < hi; lo++) {
             char c = cs.charAt(lo);
             if (isDigit(c)) {
                 digitFound = true;
-                if (firstNonZeroDigit == -1 && c != '0') {
-                    firstNonZeroDigit = lo;
+                if (!hasSignificantDigit) {
+                    if (c == '0') {
+                        leadingZeroes++;
+                    } else {
+                        hasSignificantDigit = true;
+                    }
                 }
                 continue;
             } else if (c == '.' && dot == -1) {
@@ -186,7 +192,9 @@ public final class DecimalParser {
         }
         if (!digitFound) {
             if (skippedZeroes) {
+                // the stripper only walks over zeroes, so the digit it gives back is a zero
                 digitLo--;
+                leadingZeroes = 1;
             } else {
                 throw NumericException.instance()
                         .put("invalid decimal: '").put(cs)
@@ -265,22 +273,11 @@ public final class DecimalParser {
         // Note that contrary to the scale, it's alright to have a precision that is different than the user provided
         // precision, as long as it's lower.
 
-        // Compute the final precision of the decimal. A purely fractional value (no integer
-        // digits, e.g. 0.3574) needs exactly `scale` digits, so the floor is `scale`, not
-        // `scale + 1`; flooring at `scale + 1` would make every literal uncastable to a
-        // DECIMAL(p, p) type. A zero value carries no significant digits at all, so its precision
-        // is just max(scale, 1) regardless of how the literal is written ("0", "-0", "0e3"): the
-        // leading integer zero that the strip loop keeps (it never empties the mantissa) must not
-        // inflate the precision, or 0 would be uncastable to DECIMAL(p, p) either. The floor of 1
-        // keeps a single digit for a zero with no scale.
+        // Compute the final precision of the decimal. Leading zeroes are not significant digits, so a value
+        // below one needs no more digits than its scale, and zero needs a single digit.
         int pow = literalDigits + exp;
-        // The value is zero when it has no non-zero digit within the final digit range. The first
-        // non-zero digit was located during the validation pass; the value is zero when there was
-        // none, or when a trailing-zero or lossy scale reduction moved digitHi to or before it (so it
-        // no longer contributes). This must use the final digitHi, hence it is computed here rather
-        // than during the validation pass.
-        boolean isZero = firstNonZeroDigit == -1 || firstNonZeroDigit >= digitHi;
-        final int finalPrecision = isZero ? Math.max(scale, 1) : Math.max(pow, scale);
+        final int unscaledDigits = literalDigits > leadingZeroes ? pow - leadingZeroes : 0;
+        final int finalPrecision = Math.max(Math.max(unscaledDigits, scale), 1);
         if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)

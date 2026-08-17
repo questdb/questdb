@@ -157,6 +157,9 @@ public class IntrinsicModel implements Mutable {
 
     public void mergeIntervalModel(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     /**
@@ -189,7 +192,20 @@ public class IntrinsicModel implements Mutable {
             intersectEmpty();
             return true;
         }
-        return runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset, isInjective, maxTimestamp);
+        final boolean isConsumed = runtimeIntervalBuilder.mergeWithAddMethod(
+                other.runtimeIntervalBuilder,
+                addMethod,
+                offset,
+                isInjective,
+                maxTimestamp
+        );
+        // The builder can reach an empty set inside the merge (an empty source interval list shifts
+        // to empty). The builder cannot see intrinsicValue, so mirror the emptiness onto the model
+        // here - otherwise the caller reads an unconstrained model and returns every row.
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+        return isConsumed;
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
@@ -198,10 +214,16 @@ public class IntrinsicModel implements Mutable {
 
     public void setBetweenBoundary(long timestamp) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenBoundary(Function timestamp, int functionPosition) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp, functionPosition);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenNegated(boolean isNegated) {

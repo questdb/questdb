@@ -73,6 +73,14 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int precedence;
     public IQueryModel queryModel;
     public ExpressionNode rhs;
+    // Compile-time link (like intrinsicValue): set on a scalar sub-query QUERY node used as a
+    // designated-timestamp pruning bound, so the residual filter re-compiled from this same node
+    // reads the pruning bound's single frozen value instead of opening the sub-query again.
+    public ScalarTimestampBoundHolder scalarBoundHolder;
+    // Compile-time link (like scalarBoundHolder): set on a scalar sub-query QUERY node whose
+    // speculative pruning-bound compile was declined, so the residual filter re-compiled from this
+    // same node reuses that already-generated sub-query instead of generating it a second time.
+    public ScalarSubQueryCompileCache scalarBoundCompileCache;
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
@@ -209,6 +217,13 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.type = node.type;
         copy.paramCount = node.paramCount;
         copy.intrinsicValue = node.intrinsicValue;
+        // shared by reference on purpose: every re-compile of this sub-query node - including ones
+        // fed a cloned filter expression - must read the same frozen pruning-bound value
+        copy.scalarBoundHolder = node.scalarBoundHolder;
+        // shared by reference like scalarBoundHolder: whichever clone is compiled first claims the
+        // parked compile, and later clones (per-worker filters) find the slot empty and generate
+        // their own copy, which they need anyway - a sub-query factory is not thread-safe
+        copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
         copy.isConstantExpression = node.isConstantExpression;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
@@ -306,6 +321,8 @@ public class ExpressionNode implements Mutable, Sinkable {
         constFoldLongValue = 0;
         isConstFoldLongValid = false;
         isConstFoldWidening = false;
+        scalarBoundHolder = null;
+        scalarBoundCompileCache = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -322,6 +339,8 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.type = other.type;
         this.paramCount = other.paramCount;
         this.intrinsicValue = other.intrinsicValue;
+        this.scalarBoundHolder = other.scalarBoundHolder;
+        this.scalarBoundCompileCache = other.scalarBoundCompileCache;
         this.isConstantExpression = other.isConstantExpression;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
