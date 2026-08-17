@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: `reader.getPartitionTimestampByIndex(int)`, `partitionLo`, `partitionHi`, `intervalsLo`, `intervalsHi` (existing protected fields).
-- Produces: protected fields `runLo`, `runHi`, `runIntervalLo`, `runResume`; methods `beginForwardRun()`, `beginBackwardRun()`, `forwardRunEnd(int)`, `backwardRunStart(int)`. Tasks 2–4 rely on exactly these names.
+- Produces: protected fields `runLo`, `runHi`, `runIntervalLo`, `runResume`; methods `beginForwardRun()`, `beginBackwardRun()`, `forwardRunEnd(int hiBound)`, `backwardRunStart(int loBound)` — both run helpers take the bound as a second `int` argument (`forwardRunEnd(int partitionIndex, int hiBound)`, `backwardRunStart(int partitionIndex, int loBound)`) so `calculateSize()` can call them with its local copies. Tasks 2–4 rely on exactly these names and that two-argument form.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -210,65 +210,14 @@ Extend `toTop()` — every resumption point depends on this being reset:
     }
 ```
 
-- [ ] **Step 4: Extend the test to exercise the helpers directly**
+> **No separate unit test for the helpers, deliberately.** `forwardRunEnd`/`backwardRunStart` are
+> `protected` on an abstract class whose constructor needs a `CairoConfiguration` and an interval
+> model, so testing them directly means a test-only subclass built purely to reach two five-line pure
+> functions. Step 1 already pins the ordering assumption they encode, and Tasks 2-4 exercise them on
+> every query path. Building the scaffolding would be YAGNI, and the review rubric would be right to
+> flag it. Do not widen production visibility to make a unit test convenient.
 
-Append to `CompositeDayRunUnitTest`:
-
-```java
-    @Test
-    public void testHelpersAgreeWithInlineScan() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table c (ts timestamp, exch symbol, px double)"
-                    + " timestamp(ts) partition by day, exch layout plain wal");
-            execute("insert into c values"
-                    + " ('2023-01-01T01:00:00.000000Z','E0',1.0),"
-                    + " ('2023-01-02T01:00:00.000000Z','E0',2.0),"
-                    + " ('2023-01-02T02:00:00.000000Z','E1',3.0),"
-                    + " ('2023-01-02T03:00:00.000000Z','E2',4.0)");
-            drainWalQueue();
-            try (TableReader reader = getReader("c")) {
-                TestDayRunProbe probe = new TestDayRunProbe(reader);
-                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-                    int expectedEnd = i + 1;
-                    while (expectedEnd < n
-                            && reader.getPartitionTimestampByIndex(expectedEnd)
-                            == reader.getPartitionTimestampByIndex(i)) {
-                        expectedEnd++;
-                    }
-                    Assert.assertEquals("forwardRunEnd(" + i + ")", expectedEnd, probe.forwardEnd(i, n));
-                }
-            }
-        });
-    }
-```
-
-Add `TestDayRunProbe` as a package-private class in the same file's package that extends
-`AbstractIntervalPartitionFrameCursor` only far enough to expose the two helpers:
-
-```java
-package io.questdb.test.cairo;
-
-import io.questdb.cairo.TableReader;
-
-/**
- * Exposes AbstractIntervalPartitionFrameCursor's protected run helpers to the unit test. Exists
- * because the helpers are pure functions of the reader's partition ordering and deserve a direct
- * test, not only the indirect coverage they get through the two concrete cursors.
- */
-final class TestDayRunProbe {
-    // See task brief: the implementer decides between a test-only subclass and making the two
-    // helpers package-visible for test. Prefer whichever needs no production visibility widening.
-}
-```
-
-> **Implementer decision, stated so it is not discovered mid-task:** `forwardRunEnd`/`backwardRunStart`
-> are `protected` on an abstract class whose constructor needs a `CairoConfiguration` and an interval
-> model. If a test-only subclass turns out to need more scaffolding than the test is worth, delete
-> `testHelpersAgreeWithInlineScan` and `TestDayRunProbe` and rely on `testRunBoundsOverMixedCellCounts`
-> plus the end-to-end coverage in Tasks 2–4. Do not widen production visibility to make a unit test
-> convenient. Record which you chose in the report.
-
-- [ ] **Step 5: Compile and run**
+- [ ] **Step 4: Compile and run**
 
 ```bash
 mvn -o -pl core test -Dtest=CompositeDayRunUnitTest
@@ -276,7 +225,7 @@ mvn -o -pl core test -Dtest=CompositeDayRunUnitTest
 
 Expected: PASS. Nothing else in the tree uses the new fields yet, so no other suite can move.
 
-- [ ] **Step 6: Confirm nothing regressed**
+- [ ] **Step 5: Confirm nothing regressed**
 
 ```bash
 mvn -o -pl core test -Dtest='Composite*'
@@ -285,7 +234,7 @@ mvn -o -pl core test -Dtest='Composite*'
 Expected: 429/429 pass, 0 failures, 0 errors. This is the pre-9A baseline — record the exact number
 in the report, because Tasks 2–4 are judged against it.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add core/src/main/java/io/questdb/cairo/AbstractIntervalPartitionFrameCursor.java \
@@ -622,21 +571,94 @@ Add to `CompositeIntervalCursorUnitTest` a direct comparison — this is the onl
 ```java
     /**
      * next() and calculateSize() are two hand-maintained copies of one walk. Nothing in production
-     * reaches calculateSize() for a composite table today, so only a direct comparison can catch them
-     * drifting -- and drift is exactly how a future count() optimisation would reintroduce dropped rows.
+     * reaches calculateSize() for a composite table today (measured -- composite count() does not go
+     * through it), so only a direct comparison can catch them drifting. Drift is exactly how a future
+     * count() optimisation would silently reintroduce the dropped-rows defect 9A exists to end.
      */
     @Test
     public void testCalculateSizeAgreesWithNextOverMultiCellDays() throws Exception {
-        // Drive both over the same cursor state for a table with 3 cells on one day and two
-        // sub-day intervals; sum next()'s frame sizes and compare with calculateSize()'s counter.
+        assertMemoryLeak(() -> {
+            createAndFillTwoSubDayIntervalShape();
+            assertForwardSizeAgrees(twoSubDayIntervals());
+            assertForwardSizeAgrees(pointInterval("2023-01-02T02:00:00.000000Z"));
+            assertForwardSizeAgrees(dayStraddlingInterval());
+        });
+    }
+
+    /**
+     * Runs next() to exhaustion and calculateSize() from a fresh toTop() over the SAME cursor, and
+     * requires the row totals to match.
+     */
+    private void assertForwardSizeAgrees(LongList intervals) throws Exception {
+        final TableReader reader = engine.getReader("c");
+        try (IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                configuration,
+                new RuntimeIntervalModel(
+                        ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                        reader.getPartitionedBy(),
+                        intervals),
+                reader.getMetadata().getTimestampIndex())
+        ) {
+            cursor.of(reader, sqlExecutionContext);
+            final long fromNext = countRows(cursor);
+            cursor.toTop();
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(counter);
+            Assert.assertEquals("next() and calculateSize() disagree", fromNext, counter.get());
+            // anti-vacuity: a shape where BOTH return zero would pass without testing anything
+            Assert.assertTrue("shape matched no rows -- test is vacuous", fromNext > 0);
+        }
+    }
+
+    /**
+     * Three cells on one day, each holding rows in BOTH of the two sub-day intervals -- the shape a
+     * monotonic walk cannot serve and the one 9A unlocks.
+     */
+    private void createAndFillTwoSubDayIntervalShape() throws Exception {
+        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
+                + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+        execute("INSERT INTO c VALUES ('2023-01-02T01:00:00.000000Z','E0',1.0),"
+                + "('2023-01-02T02:00:00.000000Z','E1',2.0),"
+                + "('2023-01-02T03:00:00.000000Z','E2',3.0),"
+                + "('2023-01-02T07:00:00.000000Z','E0',4.0),"
+                + "('2023-01-02T08:00:00.000000Z','E1',5.0),"
+                + "('2023-01-02T09:00:00.000000Z','E2',6.0),"
+                + "('2023-01-03T01:00:00.000000Z','E0',7.0),"
+                + "('2023-01-03T02:00:00.000000Z','E1',8.0)");
+        drainWalQueue();
+    }
+
+    /**
+     * Two disjoint sub-day intervals over the multi-cell day: [00:30, 03:30] and [06:30, 09:30].
+     */
+    private LongList twoSubDayIntervals() {
+        final LongList intervals = new LongList();
+        addInterval(intervals, "2023-01-02T00:30:00.000000Z", "2023-01-02T03:30:00.000000Z");
+        addInterval(intervals, "2023-01-02T06:30:00.000000Z", "2023-01-02T09:30:00.000000Z");
+        return intervals;
+    }
+
+    /**
+     * One interval reaching from the multi-cell day into the NEXT day -- the case runResume's minimum
+     * exists for. A last-cell resume point would retire this interval at the day edge and drop
+     * 2023-01-03's rows.
+     */
+    private LongList dayStraddlingInterval() {
+        final LongList intervals = new LongList();
+        addInterval(intervals, "2023-01-02T08:30:00.000000Z", "2023-01-03T01:30:00.000000Z");
+        return intervals;
+    }
+
+    private static void addInterval(LongList intervals, String lo, String hi) {
+        intervals.add(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorLiteral(lo));
+        intervals.add(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorLiteral(hi));
     }
 ```
 
-> **Implementer:** fill this in against the existing helpers in `CompositeIntervalCursorUnitTest`,
-> which already constructs cursors directly. The assertion is `sum of (rowHi - rowLo) over all frames
-> from next()` equals `counter` from `calculateSize()` on a freshly `toTop()`'d cursor. Include at
-> least: one multi-cell day with two sub-day intervals, one interval spanning a day boundary, and one
-> excluded cell via `setAllowedCellKeys`.
+> **Cell exclusion is covered separately, not here.** `setAllowedCellKeys` is a `PartitionFrameCursor`
+> concern the factory drives, and `CompositeIntervalCellPruningTest` already owns it end-to-end.
+> Adding a fourth shape to this method would duplicate that coverage; if the pruning path and the run
+> walk interact badly, that suite is where it shows.
 
 - [ ] **Step 6: Commit**
 
@@ -887,11 +909,13 @@ Gates 2-5 are explicitly out of scope for 9A (they are 9B/9C/9D, scheduled after
 harness gaps. Those belong to 9B/9C and 9D respectively; adding them here would be building for a
 tranche that is two sub-projects away.
 
-**Placeholder scan.** Two steps hand judgment to the implementer rather than giving code: Task 1
-Step 4 (`TestDayRunProbe` — whether a test-only subclass is worth its scaffolding) and Task 3 Step 5
-(the next-vs-calculateSize comparison body). Both are marked as decisions with the criterion stated
-and the fallback named. Both are genuine judgment calls about test construction against helpers I
-cannot see from here, not missing content — but they are the two places a reviewer should look hardest.
+**Placeholder scan.** The first draft of this plan handed the implementer two stubs: a test-only
+subclass with an empty body, and a test method whose body was a comment describing what to assert.
+Both were rewritten as complete code before the plan was executed — the second against the real
+helpers in `CompositeIntervalCursorUnitTest` (`countRows`, `pointInterval`, the cursor-construction
+pattern), the first deleted outright as YAGNI with the reasoning recorded in Task 1. This project's
+own record is that every Critical finding in a prior wave originated in plan text; a stub in a plan
+becomes a defect in a commit. No step now describes code without showing it.
 
 **Type consistency.** `beginForwardRun()`/`beginBackwardRun()` take no arguments and read the cursor's
 fields; `forwardRunEnd(int,int)`/`backwardRunStart(int,int)` take explicit bounds so `calculateSize()`
