@@ -12740,6 +12740,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // the second half is a lead for whoever can read them, not a claim this
         // repository establishes. Do not treat its absence from the tests as
         // evidence that it does not happen.
+        //
+        // Three OSS-side facts narrow it, all verified here, so whoever owns
+        // the enterprise half does not have to re-derive them:
+        //
+        //   1. On a PARQUET partition this stamp is the ONLY thing that moves
+        //      the counter. squashSplitPartitions hard-refuses a parquet target
+        //      ("cannot squash into parquet partition"), so the ordinary source
+        //      of counter movement cannot apply. A consumer reading the counter
+        //      on a parquet partition is therefore reading "a covering token was
+        //      published", never "the partition was squashed" -- this code is
+        //      overloading a field whose parquet-side meaning was otherwise
+        //      "never moves".
+        //   2. The embedded tracker CANNOT be brought back into agreement from
+        //      here. It lives in the _pm header, and every footer's CRC covers
+        //      [HEADER_CRC_AREA_OFF, its own crc field) -- rewriting the header
+        //      would invalidate the checksum of every footer already in the
+        //      file, including the ones pinned readers resolve.
+        //   3. No other per-partition field can carry the signal instead. For a
+        //      parquet partition the offset-3 value word IS the data.parquet
+        //      size, which a token publish deliberately leaves alone; the row
+        //      count and name txn do not move either. That absence is why the
+        //      squash counter was chosen, and it is why the fix cannot simply
+        //      move elsewhere.
+        //
+        // So this is a cross-repo design question, not an OSS bug with an OSS
+        // fix: either cold storage tolerates a moved squash counter on a parquet
+        // partition, or QuestDB grows a per-partition "metadata changed" counter
+        // distinct from the squash one. Dropping the stamp is not a third
+        // option -- it trades this hazard for the one I8 records, where a
+        // per-partition consumer cannot see that the directory gained a pidx
+        // pair at all.
         if (!partitionRecordAlreadyMoved) {
             stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
         }
