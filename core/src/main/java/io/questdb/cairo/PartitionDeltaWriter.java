@@ -36,6 +36,8 @@ public interface PartitionDeltaWriter extends QuietCloseable {
 
     void writeCommit(
             TableWriter writer,
+            boolean firstDeltaWrite,
+            int partitionIndexRaw,
             long partitionTimestamp,
             long partitionNameTxn,
             boolean parquetBase,
