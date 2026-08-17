@@ -113,6 +113,8 @@ public class ColumnTypeConverter {
             return true;
         } else if (ColumnType.isFixedSize(ColumnType.tagOf(srcColumnType)) && ColumnType.isDecimal(dstColumnType)) {
             return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
+        } else if (ColumnType.isDecimal(srcColumnType) && (dstColumnType == ColumnType.DOUBLE || dstColumnType == ColumnType.FLOAT)) {
+            return convertDecimalToBinaryFloat(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isDecimal(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
             return switch (dstColumnType) {
                 case ColumnType.STRING ->
@@ -1181,6 +1183,63 @@ public class ColumnTypeConverter {
             return true;
         }
         return false;
+    }
+
+    private static boolean convertDecimalToBinaryFloat(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            int dstColumnType,
+            FilesFacade ff,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long skipBytes = skipRows * srcColumnTypeSize;
+        final long mapBytes = rowCount * srcColumnTypeSize;
+        final boolean isDstDouble = dstColumnType == ColumnType.DOUBLE;
+        final long dstMapBytes = rowCount * (isDstDouble ? Double.BYTES : Float.BYTES);
+        long srcMapAddress = 0;
+
+        final MemoryCMARW dstFixMem = dstFixMemTL.get();
+        final StringSink sink = sinkUtf16TL.get();
+        try {
+            final DecimalColumnTypeConverter.Loader loader = DecimalColumnTypeConverter.getLoader(srcColumnType);
+            if (loader == null) {
+                return false;
+            }
+            srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            if (!ff.truncate(dstFixFd, dstMapBytes)) {
+                throw CairoException.critical(ff.errno()).put("Cannot allocate fd: ").put(dstFixFd).put(", size: ").put(dstMapBytes);
+            }
+
+            columnSizesSink.setDestSizes(dstMapBytes, -1);
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, dstMapBytes, memoryTag);
+            dstFixMem.jumpTo(0);
+
+            final int scale = ColumnType.getDecimalScale(srcColumnType);
+            final int precision = ColumnType.getDecimalPrecision(srcColumnType);
+            final Decimal256 decimal = Misc.getThreadLocalDecimal256();
+            final long hi = srcMapAddress + srcColumnTypeSize * rowCount;
+            for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
+                loader.load(decimal, addr);
+                if (isDstDouble) {
+                    dstFixMem.putDouble(decimal.isNull() ? Double.NaN : DecimalUtil.toDouble(sink, decimal, scale, precision));
+                } else {
+                    dstFixMem.putFloat(decimal.isNull() ? Float.NaN : DecimalUtil.toFloat(sink, decimal, scale, precision));
+                }
+            }
+        } finally {
+            sink.clear();
+            if (srcMapAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+            }
+            dstFixMem.detachFdClose();
+        }
+        return true;
     }
 
     private static boolean convertDecimalToString(

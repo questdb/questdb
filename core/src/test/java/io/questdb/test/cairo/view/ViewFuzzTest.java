@@ -118,29 +118,28 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         final ObjList<Thread> viewCompilerJobs = new ObjList<>();
         final int viewCompilerJobCount = 1 + rnd.nextInt(4);
 
-        for (int i = 0; i < viewCompilerJobCount; i++) {
-            viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd));
-        }
-
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
 
-        for (int i = 0; i < tableCount; i++) {
-            String tableName = tableNameBase + "_" + i;
-            String viewName = tableName + "_v";
-            String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
-            ObjList<FuzzTransaction> transactions = createTransactionsAndView(rnd, tableName, viewName, viewSql);
-            fuzzTransactions.add(transactions);
-            viewSqls.add(viewSql);
-        }
+        try {
+            for (int i = 0; i < viewCompilerJobCount; i++) {
+                viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd));
+            }
 
-        // Can help to reduce memory consumption.
-        engine.releaseInactive();
-        fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+            for (int i = 0; i < tableCount; i++) {
+                String tableName = tableNameBase + "_" + i;
+                String viewName = tableName + "_v";
+                String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
+                ObjList<FuzzTransaction> transactions = createTransactionsAndView(rnd, tableName, viewName, viewSql);
+                fuzzTransactions.add(transactions);
+                viewSqls.add(viewSql);
+            }
 
-        stop.set(true);
-        for (int i = 0; i < viewCompilerJobCount; i++) {
-            viewCompilerJobs.getQuick(i).join();
+            // Can help to reduce memory consumption.
+            engine.releaseInactive();
+            fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
+        } finally {
+            stopAndJoinJobs(stop, viewCompilerJobs);
         }
 
         drainWalQueue();
@@ -266,23 +265,27 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             }
 
             AtomicBoolean stop = new AtomicBoolean();
-            Thread viewCompilerJob = startViewCompilerJob(0, stop, rnd);
+            ObjList<Thread> viewCompilerJobs = new ObjList<>();
 
-            setFuzzParams(rnd);
+            try {
+                viewCompilerJobs.add(startViewCompilerJob(0, stop, rnd));
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd, start);
-            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-            fuzzTransactions.add(transactions);
-            fuzzer.applyManyWalParallel(
-                    fuzzTransactions,
-                    rnd,
-                    tableName,
-                    false,
-                    true
-            );
+                setFuzzParams(rnd);
 
-            stop.set(true);
-            viewCompilerJob.join();
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd, start);
+                ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+                fuzzTransactions.add(transactions);
+                fuzzer.applyManyWalParallel(
+                        fuzzTransactions,
+                        rnd,
+                        tableName,
+                        false,
+                        true
+                );
+            } finally {
+                stopAndJoinJobs(stop, viewCompilerJobs);
+            }
+
             drainWalQueue();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

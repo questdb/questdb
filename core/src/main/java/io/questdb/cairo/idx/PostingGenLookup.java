@@ -292,17 +292,43 @@ public class PostingGenLookup implements Closeable {
      * Caller must validate the seqlock and then call {@link #commitSnapshot}
      * to make the snapshot observable. Until the swap, the previous active
      * snapshot is unchanged — torn reads here cannot corrupt anything.
+     * <p>
+     * A gen-dir slot's {@code TXN_AT_SEAL} is the slot's publish-completion
+     * marker: {@link PostingIndexWriter#publishToChain} writes it LAST, after a
+     * {@code storeFence} that orders it behind the slot's payload fields, and
+     * only then does {@code extendHead} bump the entry's {@code GEN_COUNT}.
+     * Because the writer only ever tags slots with a non-decreasing table txn,
+     * the validly-published gens are exactly the longest non-decreasing prefix
+     * of the gen-dir. Anything after the first drop never completed its publish
+     * (a stale tail slot left behind by an entry whose GEN_COUNT shrank, or a
+     * slot observed mid-write), so this method STOPS at that point and reports
+     * the truncated count rather than surfacing an unpublished gen.
+     * <p>
+     * Note this deliberately does NOT assert: this method runs inside the
+     * window the caller is allowed to read torn (it re-validates the chain
+     * header seqlock afterwards and retries), so a non-monotonic read here is
+     * a legal transient. The caller compares the returned count against the
+     * {@code genCount} it passed in and acts on the shortfall once the seqlock
+     * has proven the snapshot self-consistent.
      *
      * @param entryOffset byte offset of the chain entry in {@code keyMem};
      *                    the gen-dir starts at
      *                    {@code entryOffset + V2_ENTRY_HEADER_SIZE}.
+     * @return the number of gens actually snapshotted; less than {@code genCount}
+     * when the gen-dir's TXN_AT_SEAL sequence dropped part-way.
      */
-    public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset, int coveringFormat, int coverCount) {
+    public int snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset, int coveringFormat, int coverCount) {
         Snapshot s = staging;
         s.clear();
         long prevTxnAtSeal = Long.MIN_VALUE;
         for (int i = 0; i < genCount; i++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i, coveringFormat, coverCount);
+            long txnAtSeal = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (txnAtSeal < prevTxnAtSeal) {
+                // Slot i was never validly published -- and neither was anything
+                // beyond it, since the writer appends gens in order. Truncate.
+                return i;
+            }
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
             s.genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
             int kc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
@@ -313,11 +339,10 @@ public class PostingGenLookup implements Closeable {
             s.genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
             s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
             s.genMaxValues.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
-            long txnAtSeal = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-            assert txnAtSeal >= prevTxnAtSeal;
             prevTxnAtSeal = txnAtSeal;
             s.genTxnAtSeals.add(txnAtSeal);
         }
+        return genCount;
     }
 
     private static int readSbbfNumBlocks(MemoryMR valueMem, long genFileOffset, long genDataSize) {

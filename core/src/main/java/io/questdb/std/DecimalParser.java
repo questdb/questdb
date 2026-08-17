@@ -37,6 +37,9 @@ package io.questdb.std;
  * <li>Leading zeros: "00123.45" → 123.45</li>
  * <li>Leading/trailing whitespace</li>
  * </ul>
+ * <p>
+ * This class is stateless: all methods are static and hold no mutable state, so it is safe
+ * to use concurrently from multiple threads.
  *
  * @see Decimal
  * @see Decimal64
@@ -165,12 +168,21 @@ public final class DecimalParser {
         // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
         // measure the given precision/scale.
         int dot = -1;
+        int leadingZeroes = 0;
         boolean digitFound = false;
+        boolean hasSignificantDigit = false;
         int digitLo = lo;
         for (; lo < hi; lo++) {
             char c = cs.charAt(lo);
             if (isDigit(c)) {
                 digitFound = true;
+                if (!hasSignificantDigit) {
+                    if (c == '0') {
+                        leadingZeroes++;
+                    } else {
+                        hasSignificantDigit = true;
+                    }
+                }
                 continue;
             } else if (c == '.' && dot == -1) {
                 dot = lo;
@@ -180,7 +192,9 @@ public final class DecimalParser {
         }
         if (!digitFound) {
             if (skippedZeroes) {
+                // the stripper only walks over zeroes, so the digit it gives back is a zero
                 digitLo--;
+                leadingZeroes = 1;
             } else {
                 throw NumericException.instance()
                         .put("invalid decimal: '").put(cs)
@@ -259,9 +273,11 @@ public final class DecimalParser {
         // Note that contrary to the scale, it's alright to have a precision that is different than the user provided
         // precision, as long as it's lower.
 
-        // Compute the final precision of the decimal
+        // Compute the final precision of the decimal. Leading zeroes are not significant digits, so a value
+        // below one needs no more digits than its scale, and zero needs a single digit.
         int pow = literalDigits + exp;
-        final int finalPrecision = Math.max(pow, scale + 1);
+        final int unscaledDigits = literalDigits > leadingZeroes ? pow - leadingZeroes : 0;
+        final int finalPrecision = Math.max(Math.max(unscaledDigits, scale), 1);
         if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)

@@ -174,7 +174,7 @@ steps:
         and(
           startsWith(variables['testset'], 'coverage'),
           eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-          eq(variables['System.PullRequest.IsFork'], 'false')
+          ne(variables['System.PullRequest.IsFork'], 'true')
         )
 
   - task: Maven@3
@@ -222,7 +222,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
   - task: Maven@3
     displayName: "Pre-build for Coverage"
@@ -239,7 +239,7 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['System.PullRequest.IsFork'], 'false'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
@@ -266,7 +266,7 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['System.PullRequest.IsFork'], 'false'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
@@ -342,7 +342,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
   - task: PublishBuildArtifacts@1
     displayName: "Upload partial JaCoCo report"
@@ -350,7 +350,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/$(testset).exec
@@ -382,7 +382,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
   - task: PublishBuildArtifacts@1
     displayName: "Upload partial Rust coverage report (LCOV)"
@@ -390,7 +390,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/$(testset).lcov
