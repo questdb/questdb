@@ -81,6 +81,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
+    private final PartitionChecksumSidecar checksumSidecar = new PartitionChecksumSidecar();
     private final int dbRootSize;
     private final FilesFacade ff;
     private final int id;
@@ -268,6 +269,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
+            Misc.free(checksumSidecar);
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
@@ -1434,6 +1436,52 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Structural verification when a native partition opens: the sidecar's own trailer, then each
+     * covered file's actual length against the recorded one.
+     * <p>
+     * Deliberately does NOT hash blocks. Column files are mmap'd, so there is no read hook to piggyback
+     * on, and hashing here would make partition open cost O(bytes) on the query path. This is
+     * O(#files) -- a length call each plus one small mapping -- and still catches truncation, which is
+     * the shape a torn write at the tail of a file takes. Block hashes are the scrub's job.
+     * <p>
+     * A file LONGER than recorded is normal: the partition has been appended to since the last
+     * generation, and those blocks are simply uncovered. A file that is ABSENT is also normal -- a
+     * dropped or purged column -- and must not fail the read.
+     */
+    private void verifyPartitionStructure(Path partitionPath) {
+        if (!configuration.isPartitionChecksumEnabled()) {
+            return;
+        }
+        final int plen = partitionPath.size();
+        try {
+            partitionPath.concat(PartitionChecksumSidecar.FILE_NAME);
+            checksumSidecar.of(ff, partitionPath, configuration.getPartitionChecksumBlockSize());
+            partitionPath.trimTo(plen);
+            if (checksumSidecar.coverage() != ChecksumTrailer.PRESENT_OK) {
+                return; // uncovered: upgrade-on-write, read it unverified
+            }
+            for (int i = 0, n = checksumSidecar.fileCount(); i < n; i++) {
+                partitionPath.trimTo(plen).concat(checksumSidecar.fileName(i));
+                final long actual = ff.length(partitionPath.$());
+                if (actual < 0) {
+                    continue; // gone: dropped or purged column, not a fault
+                }
+                final long recorded = checksumSidecar.fileLength(i);
+                if (actual < recorded) {
+                    throw CairoException.critical(0)
+                            .put("covered file is shorter than recorded [path=").put(partitionPath)
+                            .put(", recorded=").put(recorded)
+                            .put(", actual=").put(actual)
+                            .put(']');
+                }
+            }
+        } finally {
+            partitionPath.trimTo(plen);
+            checksumSidecar.close();
+        }
+    }
+
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
@@ -1544,6 +1592,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
+                        verifyPartitionStructure(path);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);

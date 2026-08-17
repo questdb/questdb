@@ -1164,6 +1164,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
+                // An attached partition arrives from another table, or another era of this one, so any
+                // checksum sidecar it carries describes the SOURCE's files rather than the destination's
+                // -- a column deleted on one side alone makes it wrong, and it then reports corruption on
+                // a healthy partition. Drop it here: absent coverage, never wrong coverage. The next seal
+                // re-covers the partition against its real contents.
+                dropPartitionChecksums(path);
+
                 // pin column versions
                 // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
                 // of the attached partition
@@ -15494,6 +15501,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * durability claim and is fully re-derivable from the data it describes, so a failure must cost
      * DETECTION, never ingestion -- unless strict mode says otherwise.
      */
+    /** Removes a partition's checksum sidecar, leaving it uncovered until the next seal. */
+    private void dropPartitionChecksums(Path partitionPath) {
+        final int plen = partitionPath.size();
+        try {
+            partitionPath.concat(PartitionChecksumSidecar.FILE_NAME);
+            if (ff.exists(partitionPath.$()) && !ff.removeQuiet(partitionPath.$())) {
+                LOG.error().$("could not remove stale partition checksum sidecar [path=").$(partitionPath)
+                        .$(", errno=").$(ff.errno()).I$();
+            }
+        } finally {
+            partitionPath.trimTo(plen);
+        }
+    }
+
     private void armChecksumSeal(long partitionTimestamp) {
         if (configuration.isPartitionChecksumEnabled() && pendingChecksumSeals.indexOf(partitionTimestamp) < 0) {
             pendingChecksumSeals.add(partitionTimestamp);

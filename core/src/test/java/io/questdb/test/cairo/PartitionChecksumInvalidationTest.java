@@ -63,6 +63,48 @@ public class PartitionChecksumInvalidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAttachPartitionFromAnotherTable() throws Exception {
+        // The path the original matrix MISSED, and the reason it is worth writing matrices rather than
+        // lists: attach moves a partition directory wholesale, so the sidecar it carries describes the
+        // SOURCE's files. A column deleted on one side alone makes that coverage wrong, and CI caught it
+        // as "covered file is shorter than recorded" on a perfectly healthy partition.
+        assertMemoryLeak(() -> {
+            execute("create table att_src (ts timestamp, v long, s symbol) timestamp(ts) partition by day wal");
+            execute("insert into att_src values ('2024-03-01T00:00:00.000000Z', 1, 'a')");
+            execute("insert into att_src values ('2024-03-02T00:00:00.000000Z', 2, 'b')");
+            drainWalQueue();
+            Assert.assertEquals(
+                    "precondition: the source partition must be covered",
+                    ChecksumTrailer.PRESENT_OK,
+                    coverageOf("att_src", "2024-03-01")
+            );
+
+            execute("create table att_dst (ts timestamp, v long, s symbol) timestamp(ts) partition by day wal");
+            execute("insert into att_dst values ('2024-04-01T00:00:00.000000Z', 5, 'z')");
+            drainWalQueue();
+
+            execute("alter table att_src detach partition list '2024-03-01'");
+            drainWalQueue();
+            final File srcDetached = new File(
+                    new File(configuration.getDbRoot().toString(),
+                            engine.verifyTableName("att_src").getDirName()),
+                    "2024-03-01.detached");
+            final File dstAttachable = new File(
+                    new File(configuration.getDbRoot().toString(),
+                            engine.verifyTableName("att_dst").getDirName()),
+                    "2024-03-01.attachable");
+            Assert.assertTrue("detached dir not found: " + srcDetached, srcDetached.exists());
+            Assert.assertTrue(srcDetached.renameTo(dstAttachable));
+
+            execute("alter table att_dst attach partition list '2024-03-01'");
+            drainWalQueue();
+
+            assertNoStaleCoverage("att_dst", "2024-03-01");
+            assertSqlReturnsRows("att_dst");
+        });
+    }
+
+    @Test
     public void testBackfillIntoSealedPartition() throws Exception {
         // O3 into an already-sealed partition: the classic in-place-looking mutation.
         assertMutationNeverLeavesStaleCoverage("backfill", t ->
