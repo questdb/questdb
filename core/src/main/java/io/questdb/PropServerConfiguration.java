@@ -436,6 +436,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
+    private final int partitionChecksumBlockSize;
+    private final boolean partitionChecksumEnabled;
+    private final long partitionChecksumScrubBytesPerSecond;
+    private final boolean partitionChecksumStrict;
     private final int o3CopyQueueCapacity;
     private final int o3LagCalculationWindowsSize;
     private final int o3LastPartitionMaxSplits;
@@ -1905,6 +1909,18 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.o3ColumnMemorySize = debugO3MemSize;
             } else {
                 this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
+            }
+            this.partitionChecksumEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_ENABLED, true);
+            this.partitionChecksumStrict = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_STRICT, false);
+            this.partitionChecksumScrubBytesPerSecond = getLong(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND, 50 * Numbers.SIZE_1MB);
+            this.partitionChecksumBlockSize = getIntSize(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE, Numbers.SIZE_1MB);
+            if (partitionChecksumBlockSize <= 0 || Integer.bitCount(partitionChecksumBlockSize) != 1) {
+                // The block index is derived by division. A non-power-of-two silently changes which
+                // bytes a block covers between two binaries reading the same vector.
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE.getPropertyPath()
+                                + " must be a positive power of two, was " + partitionChecksumBlockSize
+                );
             }
             this.systemO3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE, 256 * 1024));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
@@ -4508,6 +4524,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3ColumnMemorySize() {
             return o3ColumnMemorySize;
+        }
+
+        @Override
+        public int getPartitionChecksumBlockSize() {
+            return partitionChecksumBlockSize;
+        }
+
+        @Override
+        public long getPartitionChecksumScrubBytesPerSecond() {
+            return partitionChecksumScrubBytesPerSecond;
+        }
+
+        @Override
+        public boolean isPartitionChecksumEnabled() {
+            return partitionChecksumEnabled;
+        }
+
+        @Override
+        public boolean isPartitionChecksumStrict() {
+            return partitionChecksumStrict;
         }
 
         @Override

@@ -668,6 +668,38 @@ public interface CairoConfiguration {
 
     int getO3ColumnMemorySize();
 
+    /**
+     * Block size, in bytes, of the per-partition checksum vector. Power of two. A sidecar that
+     * already exists is always read with ITS recorded block size, never reinterpreted at this one.
+     */
+    default int getPartitionChecksumBlockSize() {
+        return 1024 * 1024;
+    }
+
+    /**
+     * Bytes per second the background checksum scrub may hash. 0 disables the scrub.
+     */
+    default long getPartitionChecksumScrubBytesPerSecond() {
+        return 50 * 1024 * 1024L;
+    }
+
+    /**
+     * When true, per-partition data checksums are maintained on the write path and verified
+     * structurally when a partition opens.
+     */
+    default boolean isPartitionChecksumEnabled() {
+        return true;
+    }
+
+    /**
+     * When true, a failure to write or sync a checksum sidecar is fatal, restoring budget-3
+     * fail-stop. The default is false: the sidecar carries no durability claim and is fully
+     * re-derivable, so losing it must cost DETECTION, not ingestion.
+     */
+    default boolean isPartitionChecksumStrict() {
+        return false;
+    }
+
     int getO3CopyQueueCapacity();
 
     int getO3LagCalculationWindowsSize();
