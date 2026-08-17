@@ -1856,6 +1856,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (tableToken.isMatView()) {
                 throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
             }
+            // Wave 0 -- a refusal must fire at the statement that caused it. Without this, SET FORMAT
+            // PARQUET is accepted on a composite table and the NEXT commit suspends it via
+            // TableWriter's own FORMAT PARQUET guard, so an unrelated insert takes the blame for this
+            // statement. That writer-side guard STAYS: it protects non-SQL paths, and gates move
+            // rather than vanish. Removed by sub-project 3, which makes a parquet cell addressable.
+            //
+            // A TableReader is opened because TableRecordMetadata does not expose PartitionSpec --
+            // the same idiom as the DEDUP gate in this file and the mat-view gate in
+            // executeCreateMatView. alterTableSetFormat has no SqlExecutionContext parameter, so the
+            // engine field is used, exactly as the mat-view gate does.
+            try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
+                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                    throw SqlException.$(formatPos, "composite partitioning does not yet support FORMAT PARQUET [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
+            }
         }
         final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetTableFormat(
                 tableNamePosition,
