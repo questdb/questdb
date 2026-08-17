@@ -27,6 +27,7 @@ package io.questdb.cutlass.qwp.server.egress;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -358,8 +359,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 negotiatedCodec, effectiveLevel);
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
+        byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
+                acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
+                sessionCookieValueBytes);
         // The server appends a SERVER_INFO WebSocket frame right after the 101
         // response bytes, in the same send buffer. Reserve an upper-bound for the
         // frame so a tiny send buffer that would fit the 101 response alone but
@@ -398,7 +401,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
+                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
+                sessionCookieValueBytes);
         // Append an unsolicited SERVER_INFO WebSocket frame to the same send
         // buffer. The client reads it as the first frame after the upgrade
         // handshake completes, which lets it route reads to primary vs replica
@@ -465,6 +469,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // rest of the handshake bytes flush.
         rawSocket.send(state.getPendingHandshakeBytes());
         finalizeHandshake(context, state);
+    }
+
+    @Override
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return context.getCookieHandler().processServiceAccountCookie(context, securityContext);
     }
 
     @Override

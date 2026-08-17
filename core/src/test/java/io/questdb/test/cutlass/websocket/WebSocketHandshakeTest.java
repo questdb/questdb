@@ -247,6 +247,32 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testResponseWithRotatedSessionCookie() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            byte[] cookieValue = "qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000"
+                    .getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, false, null, null, cookieValue);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, null, cookieValue);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: qdb_session=qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
     public void testWriteResponseOmitsMaxBatchSizeWhenAbsent() throws Exception {
         assertMemoryLeak(() -> {
             byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);

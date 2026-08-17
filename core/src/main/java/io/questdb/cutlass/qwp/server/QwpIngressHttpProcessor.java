@@ -25,6 +25,8 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -123,6 +125,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_SESSION_COOKIE_PREFIX = ("\r\nSet-Cookie: " + HttpConstants.SESSION_COOKIE_NAME + "=").getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
     private static final CarrierLocal<byte[]> BASE64_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
@@ -213,6 +216,23 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      */
     public static Utf8Sequence getWebSocketKey(HttpRequestHeader header) {
         return header.getHeader(HEADER_SEC_WEBSOCKET_KEY);
+    }
+
+    /**
+     * Returns an ASCII copy of a newly-created or rotated HTTP session cookie
+     * for inclusion in a raw WebSocket 101 response, or {@code null} when the
+     * handshake did not change the session id.
+     */
+    public static byte[] getSessionCookieValueBytes(HttpConnectionContext context) {
+        CharSequence sessionId = context.getSessionIdSink();
+        if (sessionId.isEmpty()) {
+            return null;
+        }
+        CharSequence cookieValue = context.getCookieHandler().getSessionCookieValue(sessionId);
+        if (cookieValue == null || cookieValue.isEmpty()) {
+            return null;
+        }
+        return cookieValue.toString().getBytes(StandardCharsets.US_ASCII);
     }
 
     /**
@@ -334,11 +354,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * @return the total response size in bytes
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion) {
-        return responseSize(acceptKey, qwpVersion, null, false, null, null);
+        return responseSize(acceptKey, qwpVersion, null, false, null, null, null);
     }
 
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
-        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null, null);
     }
 
     /**
@@ -353,6 +373,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * than allocating per handshake.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, null);
+    }
+
+    /**
+     * Same as the other response-size overloads, with an optional formatted
+     * {@code qdb_session} cookie value for session creation or rotation. The
+     * value must include cookie attributes but not the cookie name.
+     */
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
@@ -367,6 +396,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         if (maxBatchSizeBytes != null) {
             size += RESPONSE_MAX_BATCH_SIZE_PREFIX.length + maxBatchSizeBytes.length;
+        }
+        if (sessionCookieValueBytes != null) {
+            size += RESPONSE_SESSION_COOKIE_PREFIX.length + sessionCookieValueBytes.length;
         }
         return size;
     }
@@ -468,11 +500,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * @return the number of bytes written
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion) {
-        return writeResponse(buf, acceptKey, qwpVersion, null, false, null, null);
+        return writeResponse(buf, acceptKey, qwpVersion, null, false, null, null, null);
     }
 
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
-        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null, null);
     }
 
     /**
@@ -489,6 +521,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * handshake.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, null);
+    }
+
+    /**
+     * Same as the other response-writing overloads, with an optional formatted
+     * {@code qdb_session} cookie value for session creation or rotation. The
+     * value must include cookie attributes but not the cookie name.
+     */
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -540,6 +581,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                 Unsafe.putByte(buf + offset++, b);
             }
             for (byte b : maxBatchSizeBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+
+        if (sessionCookieValueBytes != null) {
+            for (byte b : RESPONSE_SESSION_COOKIE_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            for (byte b : sessionCookieValueBytes) {
                 Unsafe.putByte(buf + offset++, b);
             }
         }
