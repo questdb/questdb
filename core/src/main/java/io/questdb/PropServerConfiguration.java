@@ -323,7 +323,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewInMemoryBufferGrowthBytes;
     private final long liveViewInMemoryBufferInitialBytes;
     private final long liveViewInMemoryMaxMicros;
-    private final int liveViewPartitionCompactStalePercent;
     private final int liveViewPartitionCompactThreshold;
     private final long liveViewRefreshMemoryLimitBytes;
     private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
@@ -1553,12 +1552,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             // failing the start. The minValue overload rejects zero and negatives at parse time.
             this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L, 1);
             this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
-            // The share of an anchored live view's partition map a frontier sweep must be able
-            // to reclaim before it fires. At the 50 default a sweep evicts at least half the
-            // map, which makes it rare and large; lowering it trades more frequent sweeps for a
-            // smaller eviction set each time, which is what bounds the checkpoint dirty set's
-            // peak. 0 turns this arm off and leaves the two count arms above to decide.
-            this.liveViewPartitionCompactStalePercent = getIntPercentage(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 50);
             this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
@@ -4258,11 +4251,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewInMemoryMaxMicros() {
             return liveViewInMemoryMaxMicros;
-        }
-
-        @Override
-        public int getLiveViewPartitionCompactStalePercent() {
-            return liveViewPartitionCompactStalePercent;
         }
 
         @Override

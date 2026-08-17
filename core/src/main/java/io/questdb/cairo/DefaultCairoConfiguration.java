@@ -567,11 +567,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getLiveViewPartitionCompactStalePercent() {
-        return 50;
-    }
-
-    @Override
     public int getLiveViewPartitionCompactThreshold() {
         return 100_000;
     }

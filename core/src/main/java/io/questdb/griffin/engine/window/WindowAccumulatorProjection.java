@@ -36,10 +36,10 @@ import org.jetbrains.annotations.NotNull;
  * the fused layout - and the component's own identity, not any projection, is what a
  * group is laid out by.
  * <p>
- * Slot indexes rather than byte offsets are what a runtime binding carries. The durable
- * counterpart - where a component's image starts in a persisted payload, and how long the
- * projecting function's own slice is - lives in {@code LiveViewAccumulatorProjection},
- * which wraps one of these.
+ * Slot indexes rather than byte offsets are what a binding carries, because nothing here is
+ * persisted: where a component's image would start in a stored payload, and how long the
+ * projecting function's own slice is, are facts about a durable encoding and no business of
+ * the hot path.
  *
  * <h2>Derived projections</h2>
  * A projection's component need not be the one its own function would have kept alone. A

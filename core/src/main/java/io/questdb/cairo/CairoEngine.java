@@ -500,18 +500,6 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
         }
-        final int fixedStateLength = f.checkpointStateFixedLength();
-        if (fixedStateLength != -1
-                && (fixedStateLength <= 0 || !f.supportsCheckpointState() || f.supportsCheckpointRingState())) {
-            // Defensive: a declared fixed width is what a leaf-inlined entry is sized by, so
-            // only a positive width on a whole-state function says anything. A ring-shaped
-            // function's root entry names chunk pages instead of a whole-state image, a
-            // stateless one freezes nothing to measure, and a zero width is the one shape an
-            // empty scalar cannot be told apart from.
-            throw SqlException.$(position, "live view window function ")
-                    .put(f.getName())
-                    .put("() declares an invalid fixed checkpoint state width");
-        }
     }
 
     /**

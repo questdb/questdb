@@ -2657,16 +2657,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return Decimal256.BYTES + Long.BYTES;
-        }
-
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -4381,16 +4371,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return 2 * Long.BYTES;
         }
 
         @Override
@@ -6353,16 +6333,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return Decimal256.BYTES + Long.BYTES;
-        }
-
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -8084,16 +8054,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return 2 * Long.BYTES;
         }
 
         @Override
@@ -9857,16 +9817,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return Decimal128.BYTES + Long.BYTES;
-        }
-
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
@@ -11570,16 +11520,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return 2 * Long.BYTES;
         }
 
         @Override

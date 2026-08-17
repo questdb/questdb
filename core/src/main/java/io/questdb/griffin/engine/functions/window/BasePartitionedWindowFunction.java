@@ -304,10 +304,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public void onCheckpointRestoreBegin() {
         // A fused function's map stays closed, for the reason reopen() leaves it closed:
-        // the window owns the group's one value layout, and the state a restore replaces is
-        // in that map rather than in this one. The legacy-checkpoint adapter is the single
-        // path that does restore into the private map, and it opens the map itself first -
-        // see LiveViewWindowStatePlan.reopenProjectionMaps - so the clear below is its.
+        // the group's owner holds the one value layout, and this function has no state of
+        // its own for a restore to replace. An owner that does hand the state back opens
+        // this map itself first, so the clear below is that path's.
         if (map != null && (!isWindowStateOwned() || map.isOpen())) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
@@ -346,19 +345,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             map.reopen();
         }
         tombstoneCount = 0;
-    }
-
-    /**
-     * Drops the baseline and the dirty set the next seal would have built on. The two go
-     * together: a full scan reads neither, and leaving the set standing would make the
-     * seal after that one freeze keys whose entries it already wrote.
-     */
-    @Override
-    public void requireCheckpointFullScan() {
-        checkpointBaselineGeneration = Numbers.LONG_NULL;
-        checkpointLogicalStateBytes = 0;
-        isCheckpointFullScanRequired = true;
-        clearCheckpointDirtyPartitions();
     }
 
     @Override

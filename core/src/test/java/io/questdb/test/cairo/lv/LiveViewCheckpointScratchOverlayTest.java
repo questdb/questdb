@@ -332,10 +332,6 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
                 // These tests never run a frontier sweep (the anchor is not monotone), so
                 // the anchor-key sink is never invoked.
                 KEY_SINK,
-                // No fused group: these functions keep the private maps the overlay reads.
-                null,
-                null,
-                null,
                 functions,
                 false,
                 null,

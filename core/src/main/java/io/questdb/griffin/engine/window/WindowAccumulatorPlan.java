@@ -34,11 +34,11 @@ import org.jetbrains.annotations.Nullable;
  * The compiled layout of one window Map group: the accumulator components its map value is
  * made of, where each sits in that value, and which SELECT-list outputs read them.
  * <p>
- * It is the runtime-neutral half of what {@code LiveViewWindowStatePlan} decides for a live
- * view - the same merge, the same fold, the same canonical order, the same contributor rule
- * - with the durable facts left out. There is no manifest here, no byte offset and no codec
+ * Everything here is runtime-only. There is no manifest, no byte offset and no codec
  * version, because an ordinary query persists nothing: a component's whole address is its
- * slot base in a map value that lives and dies with the cursor.
+ * slot base in a map value that lives and dies with the cursor. That is deliberate rather
+ * than incidental - it is what lets the same merge, fold, canonical order and contributor
+ * rule serve a durable owner later without any of them being a promise to a stored root.
  *
  * <h2>Value layout</h2>
  * <pre>

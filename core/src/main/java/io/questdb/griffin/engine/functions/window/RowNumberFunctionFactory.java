@@ -224,15 +224,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
 
-        /**
-         * The whole image is the one counter: the row number is the partition's row count
-         * so far, and nothing behind it is retained.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return Long.BYTES;
-        }
-
         @Override
         public LiveViewCheckpointDependency checkpointDependency() {
             return checkpointDependency;

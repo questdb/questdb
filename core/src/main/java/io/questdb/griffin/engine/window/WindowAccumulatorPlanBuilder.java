@@ -41,12 +41,10 @@ import java.util.Arrays;
  * left canonically and assigns the slot bases a {@link WindowAccumulatorPlan} is read
  * through.
  * <p>
- * It decides that layout for <b>both</b> owners. An ordinary query buckets its functions by
- * {@link WindowMapSpec} and reads the plan straight; {@code LiveViewWindowStatePlan.Builder}
- * composes one of these and renders the same components into a persisted layout on top of it.
+ * A query buckets its functions by {@link WindowMapSpec} and reads the plan straight.
  * Nothing durable is decided here: no manifest, no byte offsets, no codec version and no leaf
- * budget to truncate against. A live view's layout is a promise to a predecessor root; an
- * ordinary query's is a promise to nothing beyond its own cursor.
+ * budget to truncate against. A group's layout is a promise to nothing beyond its own cursor,
+ * which is what lets it be re-decided on every compile.
  * <p>
  * Every rejection is an ordinary answer rather than an error. A function the group does not
  * carry keeps the private map and the per-row update it has today, and a group that carries

@@ -65,11 +65,6 @@ import org.jetbrains.annotations.Nullable;
  * both, which is the whole of what it needs: the replay leaves it holding the last
  * row it read, and its next value is the next row's rather than that one's.
  * <p>
- * A function whose state the anchored window owns is skipped by both, and its
- * accumulator travels in the window's own payload instead: once the group is fused
- * there is one map holding the anchor value and every component, so the overlay
- * captures the window state once rather than the same numbers once per projection.
- * <p>
  * An anchored view's per-partition last-seen anchor value is runtime state on the
  * same terms, and it travels here through {@link LiveViewWindow}'s own snapshot
  * contract. The repair clears the anchor map before replaying - which is what makes
@@ -122,7 +117,7 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
         mem.setMemoryTracker(memoryTracker);
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction f = functions.getQuick(i);
-            if (!f.supportsCheckpointState() || f.isWindowStateOwned()) {
+            if (!f.supportsCheckpointState()) {
                 continue;
             }
             final long payloadStart = mem.getAppendOffset();
@@ -179,7 +174,7 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
         int frame = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction f = functions.getQuick(i);
-            if (!f.supportsCheckpointState() || f.isWindowStateOwned()) {
+            if (!f.supportsCheckpointState()) {
                 continue;
             }
             if (frame + 2 > frames.size()) {

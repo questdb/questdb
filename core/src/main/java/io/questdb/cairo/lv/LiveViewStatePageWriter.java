@@ -25,11 +25,8 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.engine.window.WindowFunction;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Append-only cursor for one live-view function-state page. Window functions
@@ -46,40 +43,6 @@ public final class LiveViewStatePageWriter {
     private long pageSize;
     private long pageStart;
     private MemoryA sink;
-
-    /**
-     * Freezes one partition's whole-state image through this page and returns its
-     * exact byte length.
-     * <p>
-     * Every whole-state freeze goes through here rather than calling the function
-     * directly, because the length a function declares and the length it emits are
-     * only the same thing if something checks. A leaf that inlines the image holds
-     * no length of its own, so a decoder sizes the slice from the declaration
-     * alone: an image one byte short of it silently reads a neighbouring field,
-     * and the restore that surfaces it happens after a restart, well away from the
-     * seal that wrote it. The check runs on every freeze, not only inline-eligible
-     * ones - it costs one comparison against a value already in hand, and a
-     * function that declares a width it does not keep is wrong whichever shape the
-     * seal picks for it.
-     *
-     * @param function the function whose state is being frozen
-     * @param value    the partition's map value, or {@code null} for a scalar
-     *                 (map-less) function
-     * @return the exact number of bytes the function appended
-     */
-    public long freeze(@NotNull WindowFunction function, @Nullable MapValue value) {
-        function.freezeCheckpointState(this, value);
-        final long size = size();
-        final int fixedLength = function.checkpointStateFixedLength();
-        if (fixedLength >= 0 && size != fixedLength) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint function state length does not match the declared fixed width")
-                    .put(" [function=").put(function.getName())
-                    .put(", declared=").put(fixedLength)
-                    .put(", emitted=").put(size).put(']');
-        }
-        return size;
-    }
 
     public long getPageStart() {
         ensureOpen();

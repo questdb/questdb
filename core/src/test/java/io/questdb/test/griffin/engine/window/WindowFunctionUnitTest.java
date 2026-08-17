@@ -658,10 +658,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         );
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnType(0));
 
-        // The live-view layout adds the tombstone byte and nothing else. The value slot ahead
-        // of it is the whole of the accumulator, which is what lets a fused live-view window
-        // carry this state in one slot of its own map value and persist it through the
-        // component codec - see LiveViewAccumulatorDescriptor.familyCodecVersion.
+        // The live-view layout adds the "initialized" byte and the tombstone byte and nothing
+        // else. The value slot ahead of them is the whole of the accumulator, which is what
+        // lets a fused group carry this state in one slot of its own map value.
         Assert.assertEquals(2, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.DOUBLE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));

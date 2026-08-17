@@ -47,10 +47,8 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Everything here is a runtime fact - which rows contribute, how many map value slots the
  * state occupies, which slot holds which field, whether one family's state contains
- * another's. The durable side of the same component - a codec version, a byte image, a
- * persisted manifest offset - lives in {@code LiveViewAccumulatorDescriptor}, which wraps
- * one of these. There is one family, contribution and containment table and it is this
- * one: two would drift.
+ * another's. There is one family, contribution and containment table and it is this one:
+ * two would drift.
  *
  * <h2>Two components are the same only when everything about their state is</h2>
  * The identity below is the whole of the sharing proof, and it deliberately carries more
@@ -787,11 +785,9 @@ public final class WindowAccumulatorDescriptor {
      * never in SELECT-list order, so reordering the outputs of one query cannot move a
      * component's slot base.
      * <p>
-     * The field order and the unsigned comparison are the ones the live-view durable
-     * encoding sorts by, so a plan ordered here and a manifest ordered by encoded bytes
-     * agree. The durable side additionally carries a codec version, which is a fact
-     * about the persisted image rather than about the state and is
-     * {@code LiveViewAccumulatorDescriptor}'s to compare.
+     * The field order and the unsigned comparison are chosen so that a plan ordered here
+     * and the same components ordered by their encoded identity bytes agree, which is what
+     * lets a durable owner sort by either.
      */
     public int compareIdentity(@NotNull WindowAccumulatorDescriptor other) {
         if (family != other.family) {

@@ -1643,18 +1643,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The compensated total, its compensation term and the counter, which is the whole
-         * of the state the {@link #windowAccumulatorFamily() family} declares. Declaring it
-         * is what offers the function to a live view's fused window state: the group carries
-         * the same three slots in the same order, and the component codec writes this very
-         * image out of them.
-         */
-        @Override
-        public int checkpointStateFixedLength() {
-            return 2 * Double.BYTES + Long.BYTES;
-        }
-
         @Override
         public int checkpointStateFormatVersion() {
             return 1;
