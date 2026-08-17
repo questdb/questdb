@@ -529,6 +529,16 @@ public class PostingIndexWriter implements IndexWriter {
                     // free the sibling indexers in unguarded loops, and O3CopyJob's
                     // finally { Misc.free(indexWriter); } would replace an in-flight
                     // O3 exception with this one.
+                    // CRITICAL, not ERROR: this catch fires only on an unexpected
+                    // throw -- a rejected chain header, or a failed mapping grow --
+                    // and that is the state the operator has to see. Level aside,
+                    // critical() is the only one of the two that GUARANTEES the
+                    // record: it routes through xCriticalW() -> nextWaiting() ->
+                    // Sequence.nextBully(), which waits for a slot, whereas error()
+                    // routes through Logger.next(), which returns
+                    // NullLogRecord.INSTANCE and DROPS the message when the ring is
+                    // full -- precisely what a saturated log under the ENOSPC / OOM
+                    // pressure this catch exists for looks like.
                     // The logging sits inside its own swallow: AsyncLogRecord
                     // .$(Throwable) releases the log ring slot and RETHROWS when
                     // formatting `e` fails, which an OutOfMemoryError can do in
@@ -540,7 +550,7 @@ public class PostingIndexWriter implements IndexWriter {
                     // isLogRecordInProgress, which $() clears on release, so it
                     // cannot double-release after a self-releasing segment.
                     try {
-                        LogRecord rec = LOG.error();
+                        LogRecord rec = LOG.critical();
                         try {
                             rec.$("could not size posting index key file on close, releasing untruncated [index=")
                                     .$safe(indexName)
