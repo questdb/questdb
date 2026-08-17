@@ -103,8 +103,8 @@ public class PartitionChecksumSidecar implements QuietCloseable {
     public static final int FILE_VERSION = 1;
     public static final int HEADER_SIZE = 64;
     public static final int SLOT_HEADER_SIZE = 24;
-    /** 256 KiB of hashes covers 32k blocks, i.e. a 32 GiB partition at the 1 MiB default. */
-    public static final int DEFAULT_SLOT_CAPACITY = 256 * 1024;
+    /** Smallest slot worth writing: enough for a handful of single-block files. */
+    public static final int MIN_SLOT_CAPACITY = 256;
 
     private static final Log LOG = LogFactory.getLog(PartitionChecksumSidecar.class);
     private static final int OFFSET_BLOCK_SIZE = 12;
@@ -247,8 +247,26 @@ public class PartitionChecksumSidecar implements QuietCloseable {
         return lastMismatchBlock;
     }
 
+    /**
+     * Opens for READING, or creates a minimal file. Writers must use the 4-arg form with a capacity
+     * sized to the partition -- see {@link #slotCapacityFor}.
+     */
     public void of(FilesFacade ff, Path path, int blockSize) {
-        of(ff, path, blockSize, DEFAULT_SLOT_CAPACITY);
+        of(ff, path, blockSize, MIN_SLOT_CAPACITY);
+    }
+
+    /**
+     * Slot size for a body of {@code neededBytes}, plus headroom for the partition growing before it
+     * is finally sealed.
+     * <p>
+     * This is sized per partition, NOT fixed. A fixed 256 KiB floor made a 150 KiB partition carry a
+     * 512 KiB sidecar -- more checksum than data -- which showed up as an exact-diskSize assertion
+     * failing and as a blown cursor RSS budget. At 8 bytes per 1 MiB block the vector is ~8 KiB per
+     * GiB of data, so the honest size is tiny and proportional.
+     */
+    public static int slotCapacityFor(long neededBytes) {
+        final long withHeadroom = neededBytes + (neededBytes >> 2) + ChecksumTrailer.TRAILER_SIZE;
+        return (int) Math.max(MIN_SLOT_CAPACITY, Math.min(Integer.MAX_VALUE >> 1, withHeadroom));
     }
 
     /**

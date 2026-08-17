@@ -82,6 +82,35 @@ public class PartitionChecksumWritePathTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testActivePartitionIsNeverSealed() throws Exception {
+        // The last partition is the live append target and its files are PRE-EXTENDED, so a length
+        // recorded now is contradicted by the truncate at close and the reader calls an intact file
+        // truncated. This broke once already: the O3 arming site tests against the
+        // lastPartitionTimestamp FIELD, captured before the commit, so the insert that creates a new
+        // final partition armed that brand-new active partition. Silent, and only visible as an
+        // unexpected file on disk -- hence this test.
+        assertMemoryLeak(() -> {
+            execute("create table lastp (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into lastp values ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("insert into lastp values ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("insert into lastp values ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "sealed partitions must be covered, or this test proves nothing",
+                    new File(partitionDir("lastp", "2024-01-01"), PartitionChecksumSidecar.FILE_NAME).exists()
+            );
+            Assert.assertTrue(
+                    new File(partitionDir("lastp", "2024-01-02"), PartitionChecksumSidecar.FILE_NAME).exists()
+            );
+            Assert.assertFalse(
+                    "the ACTIVE partition must not be sealed while it is still being appended to",
+                    new File(partitionDir("lastp", "2024-01-03"), PartitionChecksumSidecar.FILE_NAME).exists()
+            );
+        });
+    }
+
+    @Test
     public void testSealedPartitionGainsCoverageThatVerifies() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");

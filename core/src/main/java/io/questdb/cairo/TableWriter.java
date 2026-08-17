@@ -15509,6 +15509,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Parquet partitions are excluded by design: verify their own page CRCs instead.
             return;
         }
+        // AUTHORITATIVE last-partition guard, and it must live here rather than at the arming sites.
+        // The O3 site tests against the `lastPartitionTimestamp` FIELD, which is captured before the
+        // commit -- so the insert that creates a new final partition sees the field still naming the
+        // previous one and arms the brand-new ACTIVE partition. Sealing that one records a
+        // pre-extension length which the truncate at close then contradicts, and the reader calls an
+        // intact file truncated. txWriter reflects the post-commit state by the time this runs.
+        if (partitionTimestamp == txWriter.getLastPartitionTimestamp()) {
+            return;
+        }
         try {
             sealPartitionChecksums0(partitionTimestamp);
         } catch (Throwable th) {
@@ -15547,10 +15556,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 needed += 16 + ((nameLen + 7) & ~7)
                         + 8L * PartitionChecksumSidecar.blockCountFor(partitionChecksumLengths.getQuick(i), blockSizeHint);
             }
-            final int capacity = (int) Math.min(
-                    Integer.MAX_VALUE >> 1,
-                    Math.max(PartitionChecksumSidecar.DEFAULT_SLOT_CAPACITY, needed * 2)
-            );
+            final int capacity = PartitionChecksumSidecar.slotCapacityFor(needed);
 
             path.trimTo(plen).concat(PartitionChecksumSidecar.FILE_NAME);
             partitionChecksumSidecar.of(ff, path, blockSizeHint, capacity);

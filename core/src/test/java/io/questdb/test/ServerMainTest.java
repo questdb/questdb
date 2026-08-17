@@ -1263,6 +1263,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.suspended.write.denied\tQDB_CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED\tfalse\tdefault\tfalse\ttrue\n" +
                                     "cairo.wal.apply.suspended.tables\tQDB_CAIRO_WAL_APPLY_SUSPENDED_TABLES\t\tdefault\tfalse\ttrue\n" +
+                                    "cairo.partition.checksum.enabled\tQDB_CAIRO_PARTITION_CHECKSUM_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.checksum.block.size\tQDB_CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.checksum.strict\tQDB_CAIRO_PARTITION_CHECKSUM_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.checksum.scrub.bytes.per.second\tQDB_CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND\t52428800\tdefault\tfalse\tfalse\n" +
                                     "griffin.query.continuation.wake.interval\tQDB_GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL\t1000\tdefault\tfalse\tfalse"
                     )
                             .split("\n");
