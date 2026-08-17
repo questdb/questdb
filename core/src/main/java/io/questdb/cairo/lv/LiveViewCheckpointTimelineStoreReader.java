@@ -814,13 +814,13 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             restoreFunctions(functions, anchorWindow, baselineGeneration);
             return;
         }
-        final boolean hoistLegacyComponents = anchorWindow != null
+        final boolean isHoistingLegacyComponents = anchorWindow != null
                 && anchorWindow.beginLegacyComponentRestore();
         try {
             restoreFunctions(functions, anchorWindow, baselineGeneration);
             restoreState(anchorWindow, baselineGeneration);
         } finally {
-            if (hoistLegacyComponents) {
+            if (isHoistingLegacyComponents) {
                 anchorWindow.endLegacyComponentRestore();
             }
         }

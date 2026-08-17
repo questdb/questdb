@@ -55,7 +55,9 @@ import java.util.Arrays;
  */
 public final class WindowAccumulatorPlanBuilder {
     /**
-     * Smallest component slot table. A group with fewer components than this never grows one.
+     * The slot table's floor, and the size it is first allocated at. Growth is driven by the
+     * half-full test below rather than by this constant, so a table of this size grows at the
+     * ninth component, not the seventeenth.
      */
     private static final int MIN_COMPONENT_SLOTS = 16;
     /**

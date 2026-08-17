@@ -372,14 +372,14 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     public void retainPartitions(
             Map survivingKeys,
             RecordSink survivingKeySink,
-            boolean checkpointRemovalsRecorded
+            boolean hasRecordedCheckpointRemovals
     ) {
         if (isWindowStateOwned()) {
             // The sweep rebuilt the window's fused map, and this function's accumulator
             // rode across inside the entries it kept. There is no second map to prune.
             return;
         }
-        if (!checkpointRemovalsRecorded) {
+        if (!hasRecordedCheckpointRemovals) {
             // The removals are nowhere the seal can read them, so only a complete freeze
             // finds the keys the root still holds and this map no longer does.
             checkpointBaselineGeneration = Numbers.LONG_NULL;

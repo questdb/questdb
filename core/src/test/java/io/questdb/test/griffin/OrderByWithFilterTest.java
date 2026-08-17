@@ -329,8 +329,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
             for (String cacheClause : new String[]{"cache", "nocache"}) {
                 execute("CREATE TABLE a (s SYMBOL " + cacheClause + " INDEX)");
                 execute("INSERT INTO a VALUES ('a'), ('w'), ('b'), ('a'), (NULL)");
+                // The plan assertion pins the branch the comparator lives on: toPlan prints
+                // symbolOrder only when heapCursorUsed is false, which is the only branch
+                // that sorts the per-symbol factories at all. Without it an optimiser change
+                // routing the query through the heap factory would leave the data assertion
+                // green with the comparator never invoked.
                 assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s")
                         .noLeakCheck()
+                        .withPlanContaining("FilterOnExcludedValues symbolOrder: asc")
                         .returns("""
                                 s
                                 
@@ -339,6 +345,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                 """);
                 assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s DESC")
                         .noLeakCheck()
+                        .withPlanContaining("FilterOnExcludedValues symbolOrder: desc")
                         .returns("""
                                 s
                                 w

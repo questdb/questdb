@@ -217,7 +217,7 @@ public final class WindowMapSpec {
         final IntList partitionColumnIndexes = new IntList(partitionCount);
         final IntList keyColumnTypes = new IntList(partitionCount);
         final StringSink identity = new StringSink();
-        boolean expressionKey = false;
+        boolean hasExpressionKey = false;
         for (int i = 0; i < partitionCount; i++) {
             final Function term = partitionByFunctions.getQuick(i);
             final int columnIndex = WindowAccumulatorDescriptor.directColumnIndex(term, recordTypes);
@@ -241,7 +241,7 @@ public final class WindowMapSpec {
                 if (!WindowKeyExpressionIdentity.render(partitionBy.getQuick(i), term, baseMetadata, identity)) {
                     return null;
                 }
-                expressionKey = true;
+                hasExpressionKey = true;
             }
             partitionColumnIndexes.add(columnIndex);
             keyColumnTypes.add(contextKeyTypes.getColumnType(i));
@@ -266,7 +266,7 @@ public final class WindowMapSpec {
                 identity.toString(),
                 // Kept only where the key cannot be written off the record's own columns. The
                 // reference is the compiling function's and is never freed here.
-                expressionKey ? partitionByFunctions : null,
+                hasExpressionKey ? partitionByFunctions : null,
                 keyColumnTypes,
                 orderColumnIndexes,
                 orderDirections,
@@ -315,10 +315,6 @@ public final class WindowMapSpec {
 
     public int getOrderColumnIndex(int index) {
         return orderColumnIndexes.getQuick(index);
-    }
-
-    public int getOrderDirection(int index) {
-        return orderDirections.getQuick(index);
     }
 
     public WindowFunction.Pass1ScanDirection getPass1ScanDirection() {
@@ -428,14 +424,6 @@ public final class WindowMapSpec {
 
     public int getTimestampType() {
         return timestampType;
-    }
-
-    /**
-     * Whether the compiler proved the base cursor already produces this window's order, so
-     * the functions read it without a sort in between.
-     */
-    public boolean isOrderDismissed() {
-        return isOrderDismissed;
     }
 
     /**

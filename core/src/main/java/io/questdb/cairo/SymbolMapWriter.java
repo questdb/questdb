@@ -584,20 +584,23 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, int hashCode, SymbolValueCountCollector countCollector) {
-        if (!cache.hasKeyCapacity(symbol)) {
-            // The map uses 32-bit word offsets for key storage. Once those are
-            // exhausted, discard this optional accelerator and use the on-disk
-            // index for this and subsequent lookups, until truncate() empties the
-            // column or rebuildCapacity() re-establishes the cache.
-            cache = Misc.free(cache);
-            return lookupAndPut(symbol, hashCode, countCollector);
-        }
         final int result = lookupAndPut(symbol, hashCode, countCollector);
         // Copies the chars into the map's own off-heap key buffer, so unlike the
         // on-heap predecessor this retains no String and leaves nothing for the
         // collector to trace. lookupAndPut runs first: if it throws, the slot the
         // caller probed is simply never filled.
-        cache.putAt(index, symbol, result, hashCode);
+        //
+        // tryPutAt reports the key buffer's exhaustion rather than a separate
+        // capacity call ahead of it, so the miss path measures the key once.
+        // lookupAndPut reads no cache state, so resolving before the insert
+        // attempt leaves what this returns unchanged.
+        if (!cache.tryPutAt(index, symbol, result, hashCode)) {
+            // The map uses 32-bit word offsets for key storage. Once those are
+            // exhausted, discard this optional accelerator and use the on-disk
+            // index for subsequent lookups, until truncate() empties the column
+            // or rebuildCapacity() re-establishes the cache.
+            cache = Misc.free(cache);
+        }
         return result;
     }
 

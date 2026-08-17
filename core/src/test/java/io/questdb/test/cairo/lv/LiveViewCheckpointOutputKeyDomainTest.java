@@ -26,11 +26,9 @@ package io.questdb.test.cairo.lv;
 
 import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
-
-import java.lang.management.ManagementFactory;
 
 /**
  * Coverage for {@code Q}, the output key domain a localized repair publishes against.
@@ -101,45 +99,47 @@ public class LiveViewCheckpointOutputKeyDomainTest {
 
     @Test
     public void testProbingTheDomainAllocatesNothing() {
-        final ThreadMXBean threadMXBean = enableThreadAllocationProfiling();
-        final LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain();
-        for (int i = 0; i < DOMAIN_SIZE; i++) {
-            domain.add(key(i));
-        }
-        // Half hits, half misses, so neither the found nor the not-found probe path can
-        // escape the measurement.
-        final byte[][] probes = new byte[256][];
-        for (int i = 0; i < probes.length; i++) {
-            probes[i] = key(i % 2 == 0 ? i : DOMAIN_SIZE + i);
-        }
-
-        // Warm up so the measured window sees steady-state behaviour rather than class
-        // loading and first-call resolution.
-        int warmUpHits = 0;
-        for (int i = 0; i < 20_000; i++) {
-            if (domain.contains(probes[i & (probes.length - 1)])) {
-                warmUpHits++;
+        try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final ThreadMXBean threadMXBean = scope.getBean();
+            final LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain();
+            for (int i = 0; i < DOMAIN_SIZE; i++) {
+                domain.add(key(i));
             }
-        }
-        Assert.assertTrue("the warm-up must actually hit the domain", warmUpHits > 0);
-
-        final long threadId = Thread.currentThread().threadId();
-        final long before = threadMXBean.getThreadAllocatedBytes(threadId);
-        int hits = 0;
-        for (int i = 0; i < PROBE_COUNT; i++) {
-            if (domain.contains(probes[i & (probes.length - 1)])) {
-                hits++;
+            // Half hits, half misses, so neither the found nor the not-found probe path can
+            // escape the measurement.
+            final byte[][] probes = new byte[256][];
+            for (int i = 0; i < probes.length; i++) {
+                probes[i] = key(i % 2 == 0 ? i : DOMAIN_SIZE + i);
             }
-        }
-        final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
 
-        Assert.assertEquals("half the probes are hits by construction", PROBE_COUNT / 2, hits);
-        Assert.assertTrue(
-                "probing the output key domain allocated " + allocated + " bytes over "
-                        + PROBE_COUNT + " probes; the seal probes it once per key per function"
-                        + " root, so a per-probe wrapper is charged to every publication",
-                allocated < PROBE_ALLOCATION_LIMIT_BYTES
-        );
+            // Warm up so the measured window sees steady-state behaviour rather than class
+            // loading and first-call resolution.
+            int warmUpHits = 0;
+            for (int i = 0; i < 20_000; i++) {
+                if (domain.contains(probes[i & (probes.length - 1)])) {
+                    warmUpHits++;
+                }
+            }
+            Assert.assertTrue("the warm-up must actually hit the domain", warmUpHits > 0);
+
+            final long threadId = Thread.currentThread().threadId();
+            final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+            int hits = 0;
+            for (int i = 0; i < PROBE_COUNT; i++) {
+                if (domain.contains(probes[i & (probes.length - 1)])) {
+                    hits++;
+                }
+            }
+            final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+
+            Assert.assertEquals("half the probes are hits by construction", PROBE_COUNT / 2, hits);
+            Assert.assertTrue(
+                    "probing the output key domain allocated " + allocated + " bytes over "
+                            + PROBE_COUNT + " probes; the seal probes it once per key per function"
+                            + " root, so a per-probe wrapper is charged to every publication",
+                    allocated < PROBE_ALLOCATION_LIMIT_BYTES
+            );
+        }
     }
 
     @Test
@@ -170,21 +170,6 @@ public class LiveViewCheckpointOutputKeyDomainTest {
         domain.add(key(0));
         Assert.assertEquals(1, domain.size());
         Assert.assertTrue(domain.contains(key(0)));
-    }
-
-    /**
-     * Turns on per-thread allocation accounting, or skips the calling test when the JVM
-     * does not offer it.
-     */
-    private static ThreadMXBean enableThreadAllocationProfiling() {
-        final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-        Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
-        final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
-        Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-        if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-            threadMXBean.setThreadAllocatedMemoryEnabled(true);
-        }
-        return threadMXBean;
     }
 
     /**

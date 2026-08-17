@@ -937,7 +937,7 @@ public interface WindowFunction extends Function {
      * this sweep dropped.
      * <p>
      * A function that keeps an incremental checkpoint baseline may keep it across the sweep
-     * only when {@code checkpointRemovalsRecorded} is true: the seal then freezes the
+     * only when {@code hasRecordedCheckpointRemovals} is true: the seal then freezes the
      * recorded removals, and the root stops naming the evicted keys. False means the
      * removals are not in the dirty set, so the implementation must go back to the complete
      * freeze - only a full scan finds a key the root still holds and the runtime no longer
@@ -952,9 +952,9 @@ public interface WindowFunction extends Function {
     default void retainPartitions(
             Map survivingKeys,
             RecordSink survivingKeySink,
-            boolean checkpointRemovalsRecorded
+            boolean hasRecordedCheckpointRemovals
     ) {
-        if (!checkpointRemovalsRecorded && !isCheckpointFullScanRequired()) {
+        if (!hasRecordedCheckpointRemovals && !isCheckpointFullScanRequired()) {
             throw CairoException.critical(0)
                     .put("window function cannot retain partitions without checkpoint removal tracking");
         }

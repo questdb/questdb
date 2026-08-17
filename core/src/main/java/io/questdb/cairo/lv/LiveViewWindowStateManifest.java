@@ -81,8 +81,10 @@ public final class LiveViewWindowStateManifest {
     public static final int STORAGE_KIND_INLINE = 1;
     /**
      * Reserved for the combined overflow state page a later format may add for a group
-     * that cannot fit the inline budget. Never written today; named so a decoder that
-     * meets it reports an unsupported storage kind rather than an unknown integer.
+     * that cannot fit the inline budget. {@link #encode} writes a storage kind per
+     * component, so this reserves the value 2 in that field against a later writer
+     * reusing it for something else. Nothing reads it back today: the manifest is
+     * produced and byte-compared, never decoded.
      */
     public static final int STORAGE_KIND_PAGE = 2;
     private static final int MAGIC = 0x4c56574d; // LVWM
@@ -124,14 +126,6 @@ public final class LiveViewWindowStateManifest {
         LiveViewCheckpointMetadata.validateByteArrayLength(encoded.length, "window state manifest");
     }
 
-    public int getAnchorStateLength() {
-        return anchorStateLength;
-    }
-
-    public int getAnchorStateOffset() {
-        return anchorStateOffset;
-    }
-
     public int getComponentCount() {
         return componentCount;
     }
@@ -151,10 +145,6 @@ public final class LiveViewWindowStateManifest {
      */
     public byte[] getEncoded() {
         return Arrays.copyOf(encoded, encoded.length);
-    }
-
-    public int getEncodedLength() {
-        return encoded.length;
     }
 
     /**

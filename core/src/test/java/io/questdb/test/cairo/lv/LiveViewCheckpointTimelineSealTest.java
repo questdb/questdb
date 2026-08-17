@@ -936,10 +936,11 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     /**
-     * An anchored view whose one window function keeps a page-backed root of its own:
-     * ksum declares no fixed checkpoint width, so it is neither inlined into the leaf nor
-     * fused into the window state, and the seal writes the legacy anchor-root plus
-     * function-root plus data-segment shape.
+     * An anchored view whose one window function keeps a page-backed root of its own: the
+     * exponential moving average declares no accumulator family and no fixed checkpoint
+     * width, so it is neither inlined into the leaf nor fused into the window state, and
+     * the seal writes the legacy anchor-root plus function-root plus data-segment shape.
+     * It replaced ksum here when the compensated total joined the group.
      */
     private void createPageBackedAnchoredView() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");

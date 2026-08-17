@@ -10523,9 +10523,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Not for a live-view compile, for the same reason the streaming path skips it: a
             // compatible live-view function is already owned by LiveViewWindow, and one
             // accumulator may have one owner.
-            final boolean groupCachedWindows = !executionContext.isLiveViewCompile();
-            final ObjList<WindowFunction> cachedWindowSpecFunctions = groupCachedWindows ? new ObjList<>() : null;
-            final ObjList<WindowMapSpec> cachedWindowMapSpecs = groupCachedWindows ? new ObjList<>() : null;
+            final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
+            final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
+            final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;
             deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);

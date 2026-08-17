@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapState;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -448,7 +449,14 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     + "range between 3000000 microseconds preceding and current row), "
                     + "u as (order by ts range between 3000000 microseconds preceding and current row)";
             final String outputs = "sum(x) over w, avg(x) over w, sum(x) over u, avg(x) over u";
-            final String streaming = render("select ts, " + outputs + " from t" + window);
+            final String streamingSql = "select ts, " + outputs + " from t" + window;
+            // The two arms are a reference for each other only while they land on different
+            // cursors, and nothing about the readings themselves says they did. Were a change to
+            // what declines the streaming fast path to move this arm onto a cached cursor, the
+            // comparison below would hold a cached reading against another cached reading and
+            // pass with the cross-cursor property it exists to check no longer under it.
+            assertIsStreamingCursor(streamingSql);
+            final String streaming = render(streamingSql);
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
                 for (int fusion = 0; fusion < 2; fusion++) {
@@ -459,9 +467,9 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     // FORCING_CALL is what moves the same SELECT list onto a cached cursor; its
                     // own column is dropped from the comparison by taking the streaming reference
                     // without it and the cached one with it in front.
-                    final String cached = render(
-                            "select ts, " + FORCING_CALL + " forced, " + outputs + " from t" + window
-                    );
+                    final String cachedSql = "select ts, " + FORCING_CALL + " forced, " + outputs + " from t" + window;
+                    assertCachedFactoryKind(cachedSql, light == 1);
+                    final String cached = render(cachedSql);
                     Assert.assertEquals(
                             "light=" + light + " fusion=" + fusion,
                             body(streaming),
@@ -905,6 +913,17 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         Assert.assertEquals(expected, groups.getStates().size());
     }
 
+    /**
+     * Compiles {@code sql} and requires it to have taken the cached cursor the light setting
+     * calls for.
+     */
+    private static void assertCachedFactoryKind(String sql, boolean light) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+            assertFactoryKind(factory, light);
+        }
+    }
+
     private static void assertFactoryKind(RecordCursorFactory factory, boolean light) {
         final RecordCursorFactory root = cachedFactory(factory);
         Assert.assertEquals(
@@ -954,6 +973,31 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
              RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
             final CachedWindowMapGroups groups = groups(factory);
             Assert.assertEquals(sql, bound, groups != null && groups.getStates().size() > 0);
+        }
+    }
+
+    /**
+     * Compiles {@code sql} and requires it to have taken the streaming cursor, which is the one
+     * that runs no {@code pass1} and so is the only reference a bug shared by both cached
+     * factories can be caught against.
+     */
+    private static void assertIsStreamingCursor(String sql) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+            // Unlike cachedFactory this stops on any of the three kinds, so the failure names
+            // the cursor the query actually took instead of asserting one is absent.
+            RecordCursorFactory root = factory;
+            while (root != null
+                    && !(root instanceof CachedWindowRecordCursorFactory)
+                    && !(root instanceof CachedWindowLightRecordCursorFactory)
+                    && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull("no window factory in the tree: " + sql, root);
+            Assert.assertTrue(
+                    "expected the streaming window cursor, took " + root.getClass().getSimpleName() + ": " + sql,
+                    root instanceof WindowRecordCursorFactory
+            );
         }
     }
 
