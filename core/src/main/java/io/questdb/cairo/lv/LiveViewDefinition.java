@@ -325,8 +325,8 @@ public class LiveViewDefinition {
 
     private static int endOfDigits(CharSequence tok, int len, int position) throws SqlException {
         // Advance over the numeric run, admitting '_' thousands separators (e.g.
-        // "3_600s") so FLUSH EVERY / IN MEMORY stay consistent with mat-view strides
-        // and the CLAUDE.md underscore convention. Placement of the separators is not
+        // "3_600s") so FLUSH EVERY / IN MEMORY stay consistent with mat-view
+        // strides. Placement of the separators is not
         // checked here; parseDurationValue's Numbers.parseLong over [0, k) rejects a
         // leading, trailing, or doubled '_', so a malformed value still fails closed.
         int k = 0;

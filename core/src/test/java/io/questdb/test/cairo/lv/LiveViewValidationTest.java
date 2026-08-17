@@ -701,7 +701,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     @Test
     public void testDurationUnderscoreSeparators() throws Exception {
         // FLUSH EVERY / IN MEMORY durations accept '_' thousands separators, matching
-        // mat-view strides, Numbers.parseLong, and the CLAUDE.md convention. The parsed
+        // mat-view strides and Numbers.parseLong. The parsed
         // value is the underscore-free number; placement of the separators is validated
         // by parseLong, so leading / trailing / doubled '_' still fail closed.
         assertMemoryLeak(() -> {
