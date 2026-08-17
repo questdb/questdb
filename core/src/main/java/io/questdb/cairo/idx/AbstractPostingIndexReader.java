@@ -1302,7 +1302,7 @@ public abstract class AbstractPostingIndexReader implements PostingIndexReader {
                 // Fill staging gen-dir snapshot from the picked entry's payload.
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
-                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
+                final int snapshotGenCount = genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
                 // Re-validate the chain header seqlock. extendHead mutates the
                 // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
                 // aligned stores and republishes the header. Without this
@@ -1317,6 +1317,51 @@ public abstract class AbstractPostingIndexReader implements PostingIndexReader {
                     }
                     Os.pause();
                     continue;
+                }
+                // Close the ENTRY-level seqlock. PostingIndexChainEntry.read()
+                // latches GEN_COUNT first behind a loadFence, which rules out
+                // "new GEN_COUNT with old payload". It does NOT rule out the
+                // reverse: an entry rewritten in place with a SMALLER GEN_COUNT
+                // (a seal/recreate reusing the same chain offset) leaves our
+                // latched GEN_COUNT too large, so the gen-dir we just walked
+                // mixes the new incarnation's leading slots with the previous
+                // one's stale tail. extendHead mutates the entry BEFORE the
+                // publish() that bumps the chain header, so the outer seqlock
+                // above cannot see it either. Re-read GEN_COUNT and retry on any
+                // change -- this is the release half of the entry protocol.
+                Unsafe.loadFence();
+                if (keyMem.getInt(entryScratch.offset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT) != entryScratch.genCount) {
+                    if (clock.getTicks() > deadline) {
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
+                        return;
+                    }
+                    Os.pause();
+                    continue;
+                }
+                // Both seqlocks held across snapshotMetadata, so the gen-dir we
+                // walked is a single self-consistent entry version. A drop in
+                // the TXN_AT_SEAL sequence is therefore not a torn read but
+                // corruption at rest: a GEN_COUNT covering a gen-dir slot that
+                // was never validly written (historically, a .pk truncated below
+                // its published regionLimit -- see PostingIndexWriter.close()).
+                //
+                // Fail the read rather than serving the monotonic prefix. The
+                // unpublished slot reads as TXN_AT_SEAL=0 / SIZE=0 /
+                // KEY_COUNT=0, so silently truncating to the prefix returns a
+                // partial index scan -- wrong rows, no signal.
+                if (snapshotGenCount < entryScratch.genCount) {
+                    LOG.critical().$(INDEX_CORRUPT)
+                            .$(" [reason=gen-dir TXN_AT_SEAL not monotonic, entryOffset=").$(entryScratch.offset)
+                            .$(", genCount=").$(entryScratch.genCount)
+                            .$(", publishedGenCount=").$(snapshotGenCount)
+                            .$(", sealTxn=").$(entryScratch.sealTxn)
+                            .$(']').$();
+                    throw CairoException.critical(0)
+                            .put(INDEX_CORRUPT)
+                            .put(" [reason=gen-dir TXN_AT_SEAL not monotonic, entryOffset=").put(entryScratch.offset)
+                            .put(", genCount=").put(entryScratch.genCount)
+                            .put(", publishedGenCount=").put(snapshotGenCount)
+                            .put(']');
                 }
                 genLookup.commitSnapshot();
                 genLookup.invalidateCache();

@@ -1,5 +1,10 @@
-# On-demand macOS/Windows test pipeline.
-trigger: none
+# macOS/Windows test pipeline.
+# On demand on a PR via `/azp run macwin`, and automatically in the GitHub merge
+# queue via the CI trigger on the ephemeral merge-queue branches.
+trigger:
+  branches:
+    include:
+      - gh-readonly-queue/*
 
 pr:
   branches:

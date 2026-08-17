@@ -10,9 +10,9 @@
 //!   * negative      -- zstd error code, negated for transport across JNI
 //!
 //! Every extern is wrapped in [`catch_unwind`] before returning to the JVM.
-//! A panic that escaped across the FFI boundary is UB on the default unwind
-//! strategy, so even "should never panic" sites are guarded as defence in
-//! depth. Caught panics are surfaced via stderr (which the JVM captures into
+//! A panic that reaches a non-unwinding FFI boundary aborts the process, so
+//! even "should never panic" sites are guarded as defence in depth. Caught
+//! panics are surfaced via stderr (which the JVM captures into
 //! the QuestDB log) and translated into the failure sentinel each entry point
 //! already documents (0 for create*, -1 for compress/decompress).
 
@@ -38,8 +38,8 @@ pub extern "system" fn Java_io_questdb_std_Zstd_createCCtx(
         let clamped = level.clamp(-131072, 22);
         // try_create() returns None when ZSTD_createCCtx returns NULL (allocator
         // failure under memory pressure). The non-fallible CCtx::create() would
-        // panic in that case, and a panic across this extern is UB, so the
-        // try_ variant is mandatory here -- not just defensive.
+        // panic in that case, and a panic reaching this non-unwinding extern
+        // aborts the process, so the try_ variant is mandatory here.
         let mut cctx: CCtx<'static> = match CCtx::try_create() {
             Some(c) => c,
             None => return 0,

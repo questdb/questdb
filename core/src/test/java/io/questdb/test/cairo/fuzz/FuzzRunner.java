@@ -66,6 +66,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
@@ -83,6 +84,8 @@ import org.junit.Before;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -92,6 +95,7 @@ public class FuzzRunner {
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
+    private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
@@ -220,25 +224,27 @@ public class FuzzRunner {
                 applyThreads.add(purgePartitionThread);
             }
         } finally {
-            for (int i = 0; i < threads.size(); i++) {
-                int k = i;
-                TestUtils.unchecked(() -> threads.get(k).join());
+            try {
+                for (int i = 0; i < threads.size(); i++) {
+                    int k = i;
+                    TestUtils.unchecked(() -> threads.get(k).join());
+                }
+            } finally {
+                done.incrementAndGet();
+                Misc.freeObjList(writers);
+                // Join the apply/purge workers before reading errors: a worker that fails after the
+                // writers finished must still surface, and none of them may outlive this call.
+                for (int i = 0; i < applyThreads.size(); i++) {
+                    int k = i;
+                    TestUtils.unchecked(() -> applyThreads.get(k).join());
+                }
             }
-
-            done.incrementAndGet();
-            Misc.freeObjList(writers);
         }
 
         for (Throwable e : errors) {
             throw new RuntimeException(e);
         }
 
-        if (waitApply) {
-            for (int i = 0; i < applyThreads.size(); i++) {
-                int k = i;
-                TestUtils.unchecked(() -> applyThreads.get(k).join());
-            }
-        }
         engine.releaseInactive();
     }
 
@@ -538,8 +544,10 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
+        // getTableMetadata reloads the table _meta and hits the same transient read timeout as a reader
+        // open; getLegacyMetadata reads the sequencer from memory and cannot, so it stays bare.
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
-             TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
+             TableMetadata tableMetadata = openWithRetries(() -> engine.getTableMetadata(tableToken), false)
         ) {
             return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
         }
@@ -1291,8 +1299,8 @@ public class FuzzRunner {
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
-             TableReader rdr1 = getReaderHandleTableDropped(tableName);
-             TableReader rdr2 = getReaderHandleTableDropped(tableName)
+             TableReader rdr1 = getReaderWithRetries(tableName, null);
+             TableReader rdr2 = getReaderWithRetries(tableName, null)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
@@ -1325,28 +1333,11 @@ public class FuzzRunner {
         return engine.getReader(engine.verifyTableName(tableName));
     }
 
-    private TableReader getReaderHandleTableDropped(String tableNameWal) {
-        int metadataTimeoutRetries = 10;
-        while (true) {
-            try {
-                return getReader(tableNameWal);
-            } catch (CairoException e) {
-                if (Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                        || Chars.contains(e.getFlyweightMessage(), "table name is reserved")
-                        || e instanceof EntryLockedException) {
-                    LOG.error().$((Throwable) e).$();
-                    Os.sleep(10);
-                } else if (Chars.contains(e.getFlyweightMessage(), "Metadata read timeout")) {
-                    if (--metadataTimeoutRetries < 0) {
-                        throw e;
-                    }
-                    LOG.error().$("metadata read timeout, retrying [remainingRetries=").$(metadataTimeoutRetries).$("]").$((Throwable) e).$();
-                    Os.sleep(100);
-                } else {
-                    throw e;
-                }
-            }
-        }
+    // Concurrent-read reader open: on top of the read-timeout retry, also waits out the table being
+    // concurrently dropped and recreated (dropped / name reserved / entry locked). Returns null when
+    // isCancelled reports that the run is over while the open still waits for the recreate.
+    private @Nullable TableReader getReaderWithRetries(String tableName, @Nullable BooleanSupplier isCancelled) {
+        return openWithRetries(() -> getReader(tableName), true, isCancelled, OPEN_RETRY_TIMEOUT_MILLIS);
     }
 
     /**
@@ -1406,13 +1397,21 @@ public class FuzzRunner {
 
     private void runPurgePartitionJob(AtomicInteger done, AtomicInteger forceReaderReload, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
         ObjList<TableReader> readers = new ObjList<>();
+        // A reader open waits out a concurrent drop-and-recreate, which never lands if the run ends or
+        // another worker fails first; this lets the open give up instead of stranding the thread.
+        BooleanSupplier isRunOver = () -> done.get() != 0 || !errors.isEmpty();
         try {
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
-                    readers.add(getReaderHandleTableDropped(tableNameWal));
-                    readers.add(getReaderHandleTableDropped(tableNameWal));
+                    for (int j = 0; j < 2; j++) {
+                        TableReader reader = getReaderWithRetries(tableNameWal, isRunOver);
+                        if (reader == null) {
+                            return;
+                        }
+                        readers.add(reader);
+                    }
                 }
 
                 while (done.get() == 0 && errors.isEmpty()) {
@@ -1420,8 +1419,12 @@ public class FuzzRunner {
                         forceReloadNum = forceReaderReload.get();
                         for (int i = 0; i < readers.size(); i++) {
                             String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i / 2) : tableNameBase;
-                            readers.get(i).close();
-                            readers.setQuick(i, getReaderHandleTableDropped(tableNameWal));
+                            readers.setQuick(i, Misc.free(readers.getQuick(i)));
+                            TableReader reader = getReaderWithRetries(tableNameWal, isRunOver);
+                            if (reader == null) {
+                                return;
+                            }
+                            readers.setQuick(i, reader);
                         }
                     }
                     int reader = runRnd.nextInt(tableCount);
@@ -1478,8 +1481,64 @@ public class FuzzRunner {
         }
     }
 
+    <T> T openWithRetries(Supplier<T> open, boolean isTableRecreateTolerated) {
+        return openWithRetries(open, isTableRecreateTolerated, null, OPEN_RETRY_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Retries a table-resource open past the transients a fuzz run produces.
+     * <p>
+     * A read timeout (metadata / transaction / column version) means the open sampled the table while a
+     * structural change was mid-apply. Retries run against a single deadline, {@code retryTimeoutMillis}
+     * from the first attempt, so the budget does not scale with the spin-lock timeout each attempt
+     * already spends. With {@code isTableRecreateTolerated} the open also waits out a table that a
+     * concurrent thread drops and recreates; the setup and verify callers leave it off, so a dropped /
+     * name-reserved / entry-locked table there surfaces as the genuine failure it is.
+     *
+     * @return the open resource, or null when isCancelled reported the run over while the open waited
+     */
+    <T> @Nullable T openWithRetries(
+            Supplier<T> open,
+            boolean isTableRecreateTolerated,
+            @Nullable BooleanSupplier isCancelled,
+            long retryTimeoutMillis
+    ) {
+        final long deadlineNanos = System.nanoTime() + retryTimeoutMillis * Nanos.MILLI_NANOS;
+        while (true) {
+            try {
+                return open.get();
+            } catch (CairoException e) {
+                final CharSequence message = e.getFlyweightMessage();
+                final boolean isReadTimeout = Chars.contains(message, "read timeout");
+                final boolean isTableRecreate = isTableRecreateTolerated
+                        && (Chars.contains(message, "table does not exist")
+                        || Chars.contains(message, "table name is reserved")
+                        || e instanceof EntryLockedException);
+                if (!isReadTimeout && !isTableRecreate) {
+                    throw e;
+                }
+                if (isCancelled != null && isCancelled.getAsBoolean()) {
+                    return null;
+                }
+                if (isReadTimeout) {
+                    final long remainingNanos = deadlineNanos - System.nanoTime();
+                    if (remainingNanos <= 0) {
+                        throw e;
+                    }
+                    final long backoffMillis = Math.max(1, Math.min(100, remainingNanos / Nanos.MILLI_NANOS));
+                    LOG.error().$("read timeout opening table resource, retrying [backoffMillis=").$(backoffMillis)
+                            .$(", error=").$(message).I$();
+                    Os.sleep(backoffMillis);
+                } else {
+                    LOG.error().$("table is being recreated, retrying open [error=").$(message).I$();
+                    Os.sleep(10);
+                }
+            }
+        }
+    }
+
     protected void assertStringColDensity(String tableNameWal) {
-        try (TableReader reader = getReader(tableNameWal)) {
+        try (TableReader reader = openWithRetries(() -> getReader(tableNameWal), false)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
@@ -1509,7 +1568,7 @@ public class FuzzRunner {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
 
-        try (TableReader reader = getReader(baseSymbolTableName)) {
+        try (TableReader reader = openWithRetries(() -> getReader(baseSymbolTableName), false)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
