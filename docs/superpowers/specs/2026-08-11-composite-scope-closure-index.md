@@ -87,7 +87,7 @@ Silent skips, which are not gates but must become real behaviour or provably-har
 |---|---|
 | split-fragment squash ("cell-blind merge, cell-aware squash deferred") | 1 — lifecycle (behaviour), 8 (proof it is harmless meanwhile) |
 | symbol-capacity autoscale ("cell-blind reopen") | 8 — proof it is harmless; no behaviour change planned |
-| **O3 partition purge** ("day-blind walk, cell-aware purge deferred", `O3PartitionPurgeJob:224`) | 1 — lifecycle (behaviour); wave 0 writes the harmlessness test FIRST. Expected to fail: a day-blind walk over cell directories has no evident reason to reclaim anything, which makes this a silent disk leak rather than a harmless skip. |
+| **O3 partition purge** (`O3PartitionPurgeJob:224`) | 1 — lifecycle. **MEASURED 2026-08-17: NOT harmless.** 20 O3 rounds of out-of-order writes into an already-written day left composite at 4 partition-version directories vs plain at 1 (before: both at 1) — obsolete versions are never reclaimed. This is a silent disk leak, and it is sub-project 1's first task. Acceptance test: `CompositeO3PurgeSkipTest` (currently `@Ignore`d). |
 
 ## Deferred by decision — recorded, not forgotten
 
