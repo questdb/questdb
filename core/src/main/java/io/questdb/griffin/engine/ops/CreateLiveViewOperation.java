@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperation implements Operation {
@@ -44,6 +45,7 @@ public class CreateLiveViewOperation implements Operation {
     private final char inMemoryIntervalUnit;
     private final int partitionBy;
     private final String selectSql;
+    private final String sqlText;
     private final byte startFromKind;
     // Unquoted START FROM '<timestamp>' text, null for NOW and BEGINNING. Parsed against the
     // base table's designated timestamp driver in CairoEngine.createLiveView, which is the
@@ -59,6 +61,7 @@ public class CreateLiveViewOperation implements Operation {
             String baseTableName,
             int baseTableNamePosition,
             String selectSql,
+            @NotNull String sqlText,
             long flushEveryInterval,
             char flushEveryIntervalUnit,
             long inMemoryInterval,
@@ -75,6 +78,7 @@ public class CreateLiveViewOperation implements Operation {
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.selectSql = selectSql;
+        this.sqlText = sqlText;
         this.flushEveryInterval = flushEveryInterval;
         this.flushEveryIntervalUnit = flushEveryIntervalUnit;
         this.inMemoryInterval = inMemoryInterval;
@@ -144,6 +148,10 @@ public class CreateLiveViewOperation implements Operation {
 
     public String getSelectSql() {
         return selectSql;
+    }
+
+    public String getSqlText() {
+        return sqlText;
     }
 
     public byte getStartFromKind() {
