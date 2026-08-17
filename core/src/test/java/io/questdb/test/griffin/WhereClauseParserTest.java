@@ -3226,12 +3226,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAndOffsetDescendsIntoTokenlessSubQueryConjunct() throws Exception {
+        // analyzeAndOffset recurses into its predicate argument, and removeAndIntrinsics dispatches
+        // on the token it finds there; a sub-query conjunct carries a null token and must not be
+        // treated as an intrinsic (used to throw NPE). The predicate references the designated
+        // timestamp, so it clears the referencesTimestamp guard and the walk actually descends -
+        // and_offset over a predicate that does NOT reference it is rejected before recursing, see
+        // testAndOffsetWithTokenlessSubQueryPredicate.
+        IntrinsicModel m = modelOf("and_offset(timestamp > '2015-02-23' and (select * from x), 'h', 1)");
+        Assert.assertNotNull(m);
+    }
+
+    @Test
     public void testAndOffsetWithTokenlessSubQueryPredicate() throws Exception {
-        // and_offset recurses into its predicate argument; a sub-query predicate
-        // has a null token and must not be treated as an intrinsic (used to throw NPE)
-        IntrinsicModel m = modelOf("and_offset((select * from x), 'h', 1)");
-        Assert.assertNotNull(m.filter);
-        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        // and_offset is an internal pseudo-function with no FunctionFactory, so only SqlOptimiser
+        // may insert it - and it only ever wraps a predicate over the designated timestamp. A
+        // sub-query predicate references no timestamp, which makes this a hand-written call, and
+        // analyzeAndOffset rejects it rather than consuming the conjunct or rebuilding it as a
+        // dateadd over a sub-query.
+        try {
+            modelOf("and_offset((select * from x), 'h', 1)");
+            Assert.fail("expected SqlException");
+        } catch (SqlException e) {
+            Assert.assertEquals("[0] unknown function name: and_offset", e.getMessage());
+        }
     }
 
     @Test
