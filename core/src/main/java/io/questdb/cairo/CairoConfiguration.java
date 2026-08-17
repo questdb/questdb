@@ -1321,8 +1321,17 @@ public interface CairoConfiguration {
      * The switch changes no answer - a group co-locates state that stays each member's own - so
      * it is an operational escape hatch for a shape whose Map implementation or key distribution
      * regresses in the field, and the control the differential tests compare against. It gates
-     * the runtime binding only; the group is compiled either way, and nothing user-visible,
-     * {@code EXPLAIN} included, differs between the two settings.
+     * the runtime binding only; the group is compiled either way, and for a plain SQL query
+     * nothing user-visible, {@code EXPLAIN} included, differs between the two settings.
+     * <p>
+     * An anchored live view is the exception, because it persists the shape this switch selects.
+     * {@code LiveViewWindow} reads the flag when it decides whether to adopt the compiled state
+     * plan, so a view sealed with the switch on and restarted with it off meets a fused window
+     * root it has no plan to restore into. The restore rejects that root as recoverable
+     * corruption and walks back through predecessors, which were sealed fused as well, so the
+     * view rebuilds from the base table. The answers stay correct either way, but turning the
+     * switch off across a restart costs every anchored live view a replay. Turning it back on
+     * is the cheaper direction: a legacy root upgrades into the fused shape in place.
      */
     boolean isSqlWindowMapFusionEnabled();
 

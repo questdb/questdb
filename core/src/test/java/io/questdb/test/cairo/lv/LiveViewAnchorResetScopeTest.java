@@ -25,16 +25,34 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.window.BasePartitionedBivariateWindowFunction;
+import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
@@ -67,6 +85,37 @@ import org.junit.Test;
  * CURRENT ROW.
  */
 public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
+    // Reads the single partition key off a sweep stub's own partitionByRecord, which is a
+    // VirtualRecord over one LongColumn and so carries the key at column 0.
+    private static final RecordSink PARTITION_BY_SINK = new RecordSink() {
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putLong(r.getLong(0));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+        }
+    };
+    // Reads the same key off the survivor MAP's record, where it sits behind the value
+    // columns: a map record lays values out first and keys after them, so one BYTE value
+    // puts the key at column 1. This is the shape LiveViewWindow.compact passes as
+    // activeKeySink.
+    private static final RecordSink SURVIVOR_KEY_SINK = new RecordSink() {
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putLong(r.getLong(1));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+        }
+    };
+    private static final ArrayColumnTypes SWEEP_KEY_TYPES = new ArrayColumnTypes().add(ColumnType.LONG);
+    // Roomy enough that seeding and the retried sweep never come near it, so the only
+    // breach a case sees is the one it asks for.
+    private static final long SWEEP_ROOMY_LIMIT_BYTES = 64 * 1024 * 1024L;
+    private static final ArrayColumnTypes SWEEP_VALUE_TYPES = new ArrayColumnTypes().add(ColumnType.BYTE);
 
     @After
     public void resetClock() {
@@ -939,6 +988,44 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The same rebind on {@code BasePartitionedBivariateWindowFunction}, which carries its
+     * own copy of the two-step (create, then rebind onto the tracker) and so its own copy
+     * of the hazard. {@code covar_samp} and {@code corr} take it: their unbounded-rows
+     * shape overrides {@code newCompactionScratch()}, so the sweep does allocate a scratch
+     * for them.
+     */
+    @Test
+    public void testFrontierSweepScratchRebindBreachLeavesNoClosedBivariateScratch() throws Exception {
+        assertMemoryLeak(() -> assertScratchRebindBreachLeavesNoClosedScratch(new BivariateSweepStub()));
+    }
+
+    /**
+     * A frontier sweep whose scratch map cannot be charged to the per-view budget.
+     * <p>
+     * The sweep's scratch is created untracked and open, then re-homed onto the per-view
+     * {@code MemoryTracker} by closing it, binding the tracker and reopening - and that
+     * reopen is the first allocation the tracker sees, so it is where a view already at
+     * {@code cairo.live.view.refresh.memory.limit.bytes} raises. Publishing the field
+     * before the reopen leaves it naming a CLOSED map, and the next sweep takes the reuse
+     * arm on the strength of the non-null field alone: {@code clear()} and then a rebuild
+     * that writes keys and values through a zero heap address. That write is not an
+     * assertion and not a {@code CairoException} - {@code OrderedMap} probes
+     * {@code offsetsAddr + (index << 3)} and {@code Unordered8Map} probes
+     * {@code memStart + entrySize * index}, both from a base of {@code 0}, so it is a raw
+     * near-null native access that takes the process down.
+     * <p>
+     * A second sweep really does follow the first: a mid-drain refresh failure recovers
+     * through {@code LiveViewRefreshJob.clearWindowState}, which rewinds each function with
+     * {@code toTop()} precisely so the instances stay live, and {@code toTop()} does not
+     * touch the scratch. The invariant is asserted before the retry below reaches a write,
+     * so a regression fails on the assertion rather than on the fault.
+     */
+    @Test
+    public void testFrontierSweepScratchRebindBreachLeavesNoClosedScratch() throws Exception {
+        assertMemoryLeak(() -> assertScratchRebindBreachLeavesNoClosedScratch(new PartitionedSweepStub()));
+    }
+
+    /**
      * Documents why {@code EXCLUDE CURRENT ROW} is the spelling that reaches the subset
      * unanchored, and pins the neighbouring route closed. An accumulator over a plain
      * {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW} is refused at CREATE by the
@@ -1070,6 +1157,72 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Drives one sweep whose scratch rebind exhausts the per-view budget, then holds the
+     * function to the one thing that keeps the next sweep safe: the scratch field never
+     * names a map the rebind closed and could not reopen.
+     * <p>
+     * Two seeded partitions and one survivor, so the retried sweep has an entry to copy and
+     * an entry to drop - a rebuild that never writes would prove nothing about the map it
+     * writes into.
+     */
+    private static void assertScratchRebindBreachLeavesNoClosedScratch(SweepScratchStub stub) {
+        final LimitedMemoryTracker tracker = new LimitedMemoryTracker(SWEEP_ROOMY_LIMIT_BYTES);
+        try {
+            Map survivors = null;
+            try {
+                stub.bindTracker(tracker);
+                stub.openState();
+                seedSweepKeys(stub.partitionMap(), 1L, 2L);
+                survivors = newSweepMap();
+                seedSweepKeys(survivors, 1L);
+
+                // Squeeze the budget to nothing. newCompactionScratch() allocates under no
+                // tracker and still succeeds, so the rebind's reopen() is the first
+                // allocation the tracker sees - which is exactly where the sweep charges
+                // the scratch to cairo.live.view.refresh.memory.limit.bytes.
+                tracker.setLimit(1);
+                try {
+                    stub.retain(survivors, SURVIVOR_KEY_SINK);
+                    Assert.fail("the scratch rebind must raise once the refresh memory budget is exhausted");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            "expected an out-of-memory CairoException, got: " + e.getFlyweightMessage(),
+                            e.isOutOfMemory()
+                    );
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+
+                // Asserted before the retry below reaches a write: the next sweep takes the
+                // reuse arm on the strength of a non-null field alone, and a closed map
+                // there means clear() and rebuild both address a zero heap.
+                final Map scratch = stub.scratchMap();
+                Assert.assertTrue(
+                        "a rebind that raised must leave the scratch field null rather than naming a closed map",
+                        scratch == null || scratch.isOpen()
+                );
+
+                // And the retry has to complete on this instance: the mid-drain recovery
+                // rewinds each function with toTop() precisely to keep it live.
+                tracker.setLimit(SWEEP_ROOMY_LIMIT_BYTES);
+                stub.retain(survivors, SURVIVOR_KEY_SINK);
+                Assert.assertEquals(
+                        "the retried sweep must keep exactly the survivor",
+                        1L,
+                        stub.partitionMap().size()
+                );
+            } finally {
+                stub.closeStub();
+                Misc.free(survivors);
+            }
+            // The rebind exists to keep the scratch's malloc and its free on the same
+            // counter across the ping-pong swap; a freed function must hand it all back.
+            Assert.assertEquals("the sweep's maps must come back off the tracker", 0L, tracker.getUsed());
+        } finally {
+            tracker.close();
+        }
+    }
+
+    /**
      * Asserts every anchorable call folded to a ring and is holding one slab per seeded
      * partition, and returns each one's arena extent for the post-sweep shrink to be
      * measured against.
@@ -1118,6 +1271,15 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * A partition-state map with the sweep stubs' layout: one LONG key, one BYTE value.
+     * Open and charged to no tracker, which is what {@code newCompactionScratch()} hands
+     * the sweep and what the rebind then re-homes.
+     */
+    private static Map newSweepMap() {
+        return MapFactory.createUnorderedMap(configuration, SWEEP_KEY_TYPES, SWEEP_VALUE_TYPES);
+    }
+
+    /**
      * One row carrying the same magnitude in every type {@code first_value},
      * {@code last_value}, {@code nth_value} and {@code max}/{@code min} each have their own
      * RANGE implementation for. The DATE column takes the row's own timestamp at millisecond
@@ -1139,6 +1301,20 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         return extents;
     }
 
+    private static void seedSweepKeys(Map map, long... keys) {
+        for (long k : keys) {
+            final MapKey key = map.withKey();
+            key.putLong(k);
+            key.createValue().putByte(0, (byte) 0);
+        }
+    }
+
+    private static ObjList<Function> sweepKeyFunctions() {
+        final ObjList<Function> functions = new ObjList<>();
+        functions.add(LongColumn.newInstance(0));
+        return functions;
+    }
+
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
         execute("INSERT INTO base (ts, sym, y) VALUES " + values);
         drainWalQueue();
@@ -1155,5 +1331,205 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         execute("INSERT INTO base (ts, sym, y, n, dt, d8, d16, d32, d64, d128, d256) VALUES " + row);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * What the two scratch-rebind cases drive, so one helper can hold both partitioned base
+     * classes to the same invariant. Each stub reads its own {@code compactionScratch},
+     * which neither base class exposes.
+     */
+    private interface SweepScratchStub {
+
+        void bindTracker(MemoryTracker tracker);
+
+        void closeStub();
+
+        void openState();
+
+        Map partitionMap();
+
+        void retain(Map survivingKeys, RecordSink survivingKeySink);
+
+        Map scratchMap();
+    }
+
+    /**
+     * A bivariate partitioned window function carrying nothing but what the frontier sweep
+     * reads: a partition map and a scratch factory. The shape {@code covar_samp} and
+     * {@code corr} reach the sweep in - their unbounded-rows implementation is the one
+     * bivariate shape that overrides {@code newCompactionScratch()}.
+     */
+    private static final class BivariateSweepStub extends BasePartitionedBivariateWindowFunction implements SweepScratchStub {
+
+        private BivariateSweepStub() {
+            super(newSweepMap(), new VirtualRecord(sweepKeyFunctions()), PARTITION_BY_SINK, null, null);
+        }
+
+        @Override
+        public void bindTracker(MemoryTracker tracker) {
+            setMemoryTracker(tracker);
+        }
+
+        @Override
+        public void closeStub() {
+            close();
+        }
+
+        @Override
+        public String getName() {
+            return "bivariate_sweep_stub";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void openState() {
+            reopen();
+        }
+
+        @Override
+        public Map partitionMap() {
+            return map;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void retain(Map survivingKeys, RecordSink survivingKeySink) {
+            retainPartitions(survivingKeys, survivingKeySink);
+        }
+
+        @Override
+        public Map scratchMap() {
+            return compactionScratch;
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return newSweepMap();
+        }
+    }
+
+    /**
+     * Minimal {@link MemoryTracker} with a settable limit, backed by its own native
+     * {@code {used, limit}} block. The production {@code Unsafe} allocation path reads and
+     * updates the block through {@link #nativeAddress()} exactly as it does for the pooled
+     * tracker a live view's refresh acquires, so moving the limit mid-test reproduces a
+     * view arriving at a sweep with its budget already spent.
+     */
+    private static final class LimitedMemoryTracker extends MemoryTracker {
+        private long nativeAddress;
+
+        private LimitedMemoryTracker(long limitBytes) {
+            nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
+            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
+        }
+
+        @Override
+        public void close() {
+            if (nativeAddress != 0) {
+                freeNativeAllocators();
+                nativeAddress = Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+            }
+        }
+
+        @Override
+        public long getLimit() {
+            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
+        }
+
+        @Override
+        public long getQueryId() {
+            return 1;
+        }
+
+        @Override
+        public long getUsed() {
+            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
+        }
+
+        @Override
+        public MemoryTrackerWorkload getWorkload() {
+            return MemoryTrackerWorkload.LIVE_VIEW_REFRESH;
+        }
+
+        @Override
+        public long nativeAddress() {
+            return nativeAddress;
+        }
+
+        private void setLimit(long limitBytes) {
+            Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
+        }
+    }
+
+    /**
+     * The univariate counterpart: a partitioned window function carrying the frontier
+     * sweep's contract and nothing else. The shape every anchored accumulator - avg, sum,
+     * count, the extremum and positional families - takes through
+     * {@code BasePartitionedWindowFunction.retainPartitions}.
+     */
+    private static final class PartitionedSweepStub extends BasePartitionedWindowFunction implements SweepScratchStub {
+
+        private PartitionedSweepStub() {
+            super(newSweepMap(), new VirtualRecord(sweepKeyFunctions()), PARTITION_BY_SINK, null);
+        }
+
+        @Override
+        public void bindTracker(MemoryTracker tracker) {
+            setMemoryTracker(tracker);
+        }
+
+        @Override
+        public void closeStub() {
+            close();
+        }
+
+        @Override
+        public String getName() {
+            return "partitioned_sweep_stub";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void openState() {
+            reopen();
+        }
+
+        @Override
+        public Map partitionMap() {
+            return map;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void retain(Map survivingKeys, RecordSink survivingKeySink) {
+            retainPartitions(survivingKeys, survivingKeySink);
+        }
+
+        @Override
+        public Map scratchMap() {
+            return compactionScratch;
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return newSweepMap();
+        }
     }
 }

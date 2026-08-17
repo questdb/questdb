@@ -390,11 +390,19 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             // result means the function opts out of frontier compaction; its map
             // keeps every partition (still correct -- a behind-frontier partition
             // that revives does so in a new bucket and resetPartition zeroes it).
-            compactionScratch = newCompactionScratch();
-            if (compactionScratch == null) {
+            // Into a local, and published only once bindScratchTracker has it open:
+            // that rebind reopens through the per-view tracker and throws on a breach
+            // of cairo.live.view.refresh.memory.limit.bytes, and assigning first would
+            // leave the field naming a closed map that the next sweep clears and
+            // rebuilds into. markCheckpointPartitionDirty and
+            // LiveViewWindow.createTrackedAnchorMap have the same shape for the same
+            // reason.
+            final Map scratch = newCompactionScratch();
+            if (scratch == null) {
                 return;
             }
-            bindScratchTracker();
+            bindScratchTracker(scratch);
+            compactionScratch = scratch;
         } else {
             // Discard the previous sweep's old map (held here as scratch) before
             // reuse. Clearing up front -- rather than after the swap -- keeps the
@@ -628,14 +636,27 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * reopen to reallocate under it. This keeps the scratch's malloc and free
      * symmetric on the per-query counter once the ping-pong swap promotes it to the
      * live map. A no-op when no tracker is bound.
+     * <p>
+     * Takes {@code scratch} as an argument rather than reading the field, because the
+     * caller has not published it yet: the reopen allocates through the tracker and
+     * raises on a breach of {@code cairo.live.view.refresh.memory.limit.bytes}, and a
+     * field already naming the map would then name a CLOSED one - which the next sweep
+     * takes the reuse arm for, clearing it and rebuilding into a zero heap address.
+     * Nothing else holds the map on the throwing path, so this frees it before
+     * rethrowing; {@link #close()} and {@link #reset()} would both walk past it.
      */
-    private void bindScratchTracker() {
-        if (memoryTracker == null || compactionScratch == null) {
+    private void bindScratchTracker(Map scratch) {
+        if (memoryTracker == null) {
             return;
         }
-        compactionScratch.close();
-        compactionScratch.setMemoryTracker(memoryTracker);
-        compactionScratch.reopen();
+        try {
+            scratch.close();
+            scratch.setMemoryTracker(memoryTracker);
+            scratch.reopen();
+        } catch (Throwable th) {
+            Misc.free(scratch);
+            throw th;
+        }
     }
 
     /**

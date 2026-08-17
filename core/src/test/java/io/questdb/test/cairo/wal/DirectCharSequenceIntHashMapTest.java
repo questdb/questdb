@@ -136,6 +136,72 @@ public class DirectCharSequenceIntHashMapTest {
         });
     }
 
+    @SuppressWarnings("resource")
+    @Test
+    public void testConstructorLeaksNothingWhenOffsetBufferAllocationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+            // No headroom at all, so the very first malloc breaches the limit and the
+            // constructor owns nothing when it unwinds.
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+            try {
+                new DirectCharSequenceIntHashMap(
+                        16,
+                        0.5,
+                        DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                        1,
+                        MemoryTag.NATIVE_TABLE_WRITER,
+                        DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY
+                );
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+
+            // The cleanup path must not free a pointer it never acquired, which would
+            // drive the tag counter negative.
+            Assert.assertEquals(usedBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER));
+        });
+    }
+
+    @SuppressWarnings("resource")
+    @Test
+    public void testConstructorReleasesOffsetBufferWhenKeyBufferAllocationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            // mapCapacity = 16 (MIN_INITIAL_CAPACITY), len = ceilPow2(16 / 0.5) = 32,
+            // so the offset buffer is 32 << 3 = 256 bytes and, with avgKeySize = 1, the
+            // key-value buffer is ceilPow2(16 * ((1 << 1) + 8)) = 256 bytes too.
+            final long offsetBufferSize = 256;
+            final long usedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+            // Exactly enough headroom for the offset buffer, so the key-value buffer is the
+            // first allocation to breach the limit.
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + offsetBufferSize);
+            try {
+                new DirectCharSequenceIntHashMap(
+                        16,
+                        0.5,
+                        DirectCharSequenceIntHashMap.NO_ENTRY_VALUE,
+                        1,
+                        MemoryTag.NATIVE_TABLE_WRITER,
+                        DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY
+                );
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+
+            // A constructor that throws leaves no reachable instance to close(), so the
+            // offset buffer it already acquired has to be released by the constructor
+            // itself. Otherwise those 256 bytes leak for the lifetime of the process and
+            // keep counting against RSS_MEM_LIMIT.
+            Assert.assertEquals(usedBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER));
+        });
+    }
+
     @Test
     public void testCopyToFiltersMinimumValue() throws Exception {
         assertMemoryLeak(() -> {

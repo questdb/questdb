@@ -674,12 +674,11 @@ public final class LiveViewWindowStatePlan {
          * reading a component past it becomes a runtime-only member - grouped in the map,
          * separate on disk.
          * <p>
-         * A group that overflows therefore degrades rather than falling off a cliff. It used
-         * to decline whole, and what that cost is measurable: over 1M retained keys a
-         * four-component group declining seals in 359 ms and publishes 8 metadata segments per
-         * seal, against 79 ms and 4 for the same group fused. Keeping the part that fits keeps
-         * most of that, and the components left out are exactly the ones that would have
-         * needed a storage kind the leaf does not have.
+         * A group that overflows therefore degrades rather than falling off a cliff: declining
+         * whole would put every function back on a root of its own, which costs a slower seal
+         * and twice the metadata segments per seal. Keeping the part that fits keeps most of
+         * the win, and the components left out are exactly the ones that would have needed a
+         * storage kind the leaf does not have.
          * <p>
          * The prefix is taken in canonical identity order, which is the order the layout is
          * assigned in, so the answer does not depend on the SELECT list. It is a prefix rather

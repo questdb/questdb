@@ -209,9 +209,12 @@ public class SymbolMapWriter implements Closeable, MapWriter {
      * No production path calls this. What it reaches is the transition in
      * {@link #lookupPutAndCache}: once the cache cannot hold another key it is freed
      * outright and every later symbol goes to the on-disk index instead. That is a
-     * behaviour change under load - the writer keeps working and stops being accelerated -
-     * and the only alternative way to reach it is to write eight gigabytes of distinct
-     * symbols into one column - the ceiling is four bytes per addressable 32-bit word.
+     * behaviour change under load - the writer keeps working and stops being accelerated,
+     * until {@link #truncate()} empties the column or
+     * {@link #rebuildCapacity(CairoConfiguration, Path, CharSequence, long, int, boolean)}
+     * gives the cache back - and the only alternative way to reach it is to write eight
+     * gigabytes of distinct symbols into one column - the ceiling is four bytes per
+     * addressable 32-bit word.
      */
     @TestOnly
     public static long setCacheKeyBufferLimit(long limit) {
@@ -222,17 +225,25 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     @Override
     public void close() {
-        Misc.free(indexWriter);
-        Misc.free(charMem);
-        // The value-to-key cache holds native buffers, so it dies here rather
-        // than with the writer's last reference.
-        cache = Misc.free(cache);
+        // The value-to-key cache holds native buffers, so it dies here rather than with
+        // the writer's last reference, and it goes first - ahead of every release that
+        // can raise. The rest of the sequence is best-effort for the same reason: the
+        // index writer and both mapped files truncate their files as they close, and a
+        // truncate failure that escaped mid-sequence would strand whatever the writer
+        // had not released yet. The first failure still reaches the caller, once the
+        // writer owns nothing.
+        Throwable failure = Misc.freeBestEffort(null, cache);
+        cache = null;
+        failure = Misc.freeBestEffort(failure, indexWriter);
+        failure = Misc.freeBestEffort(failure, charMem);
         if (offsetMem != null) {
-            long fd = offsetMem.getFd();
-            offsetMem = Misc.free(offsetMem);
+            final long fd = offsetMem.getFd();
+            failure = Misc.freeBestEffort(failure, offsetMem);
+            offsetMem = null;
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -264,13 +275,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return charMem;
     }
 
-    /**
-     * @return whether the value-to-key cache is still allocated. Not the same question as
-     * {@link #isCached()}, which reports what the column asked for: a column configured
-     * CACHE keeps that flag after the cache has exhausted its key buffer and been dropped,
-     * because the drop is an internal fallback rather than a change to the column
-     */
-    @TestOnly
+    @Override
     public boolean isCacheAllocated() {
         return cache != null;
     }
@@ -397,7 +402,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = calculateMaxHashFromCapacity();
 
-            if (newCacheFlag != cachedFlag) {
+            // The second arm catches the writer that dropped its cache on key-buffer
+            // exhaustion: that drop leaves the flag on, so a rebuild asked for the flag the
+            // column already carries would otherwise match and skip. A capacity rebuild is
+            // the only lever an operator has here that keeps the data - on a WAL table
+            // TRUNCATE keeps symbol maps, so it is the only lever at all. The new cache
+            // starts empty over a non-empty column, which is what the on-disk index is for.
+            if (newCacheFlag != cachedFlag || (newCacheFlag && cache == null)) {
                 setupCache(newCacheFlag);
             }
 
@@ -464,13 +475,44 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         indexWriter.truncate();
         if (cache != null) {
             cache.clear();
+        } else if (cachedFlag) {
+            // No cache under a column that still asks for one means this writer dropped it
+            // when the key buffer ran out. Emptying the column retires that exhaustion: the
+            // replacement starts over from an empty key buffer, so it cannot re-exhaust
+            // until the column interns as much again. Without this the writer would pay for
+            // the on-disk index on every lookup for as long as its table writer stays
+            // pooled. Runs last, so a failure to allocate leaves the files truncated and the
+            // writer merely uncached rather than half-truncated.
+            setupCache(true);
         }
     }
 
+    /**
+     * Makes this writer cache, or stop caching, as {@code flag} asks, and records the answer
+     * in the on-disk header so a later writer over the same files opens the same way. The
+     * flag on its own would not change what the writer does: {@link #put(CharSequence)}
+     * dispatches on the cache rather than on the flag, because a cache dropped on key-buffer
+     * exhaustion leaves the flag on. So NOCACHE has to hand the cache's native buffers back,
+     * and CACHE has to build one - the writer serving the column is live and pooled, and
+     * nothing else revisits either decision before it closes.
+     * <p>
+     * {@link #setupCache(boolean)} runs before the header write, and it frees the previous
+     * cache before allocating the replacement. An allocation failure on the CACHE direction
+     * therefore leaves an uncached writer under a header that still reads NOCACHE - what the
+     * caller had before it asked - rather than a header promising a cache the writer does not
+     * hold.
+     * <p>
+     * Unconditional: asking for the flag the writer already carries still replaces the cache
+     * with an empty one. {@link TableWriter#changeCacheFlag(int, boolean)} is the only caller,
+     * and the single unchanged-flag call it makes is for a column asking for a cache this
+     * writer no longer holds - the key buffer ran out and {@link #lookupPutAndCache} dropped
+     * it - so an unchanged flag never arrives here over a warm cache and the strong
+     * postcondition costs nothing.
+     */
     @Override
     public void updateCacheFlag(boolean flag) {
+        setupCache(flag);
         offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
-        cachedFlag = flag;
     }
 
     @Override
@@ -545,7 +587,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         if (!cache.hasKeyCapacity(symbol)) {
             // The map uses 32-bit word offsets for key storage. Once those are
             // exhausted, discard this optional accelerator and use the on-disk
-            // index for this and subsequent lookups.
+            // index for this and subsequent lookups, until truncate() empties the
+            // column or rebuildCapacity() re-establishes the cache.
             cache = Misc.free(cache);
             return lookupAndPut(symbol, hashCode, countCollector);
         }

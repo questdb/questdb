@@ -45,8 +45,11 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -54,7 +57,9 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.SymbolMapWriter.keyToOffset;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -266,6 +271,16 @@ public class SymbolMapTest extends AbstractCairoTest {
         } finally {
             SymbolMapWriter.setCacheKeyBufferLimit(previousLimit);
         }
+    }
+
+    @Test
+    public void testCloseReleasesCacheWhenCharFileReleaseFails() throws Exception {
+        assertCloseReleasesCacheWhenReleaseFails(".c");
+    }
+
+    @Test
+    public void testCloseReleasesCacheWhenIndexValueFileReleaseFails() throws Exception {
+        assertCloseReleasesCacheWhenReleaseFails(".v");
     }
 
     @Test
@@ -1166,6 +1181,61 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolCapacityRebuildRestoresTheDroppedCache() throws Exception {
+        // ALTER TABLE ... ALTER COLUMN ... SYMBOL CAPACITY re-opens the map's files and
+        // re-indexes every value it holds, so it is the one non-destructive lever an
+        // operator has over a writer that dropped its cache - and the only lever at all
+        // on a WAL table, whose TRUNCATE keeps symbol maps. The rebuild used to skip
+        // setupCache whenever the requested flag matched the one the writer already
+        // carried, and the drop leaves that flag on, so the request could never differ.
+        final long previousLimit = SymbolMapWriter.setCacheKeyBufferLimit(256);
+        try {
+            assertMemoryLeak(() -> {
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    create(path, "x", 128, true);
+                    try (
+                            SymbolMapWriter writer = new SymbolMapWriter(
+                                    configuration,
+                                    path,
+                                    "x",
+                                    COLUMN_NAME_TXN_NONE,
+                                    0,
+                                    -1,
+                                    NOOP_COLLECTOR,
+                                    -1
+                            )
+                    ) {
+                        final ObjList<String> exhausted = exhaustCache(writer);
+
+                        writer.rebuildCapacity(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1024, true);
+
+                        Assert.assertTrue(
+                                "a capacity rebuild that is still asked for a cache must hand one"
+                                        + " back rather than leave the writer on the on-disk index",
+                                writer.isCacheAllocated()
+                        );
+                        Assert.assertTrue(writer.isCached());
+                        Assert.assertEquals(1024, writer.getSymbolCapacity());
+
+                        // The rebuild re-indexed what the column already held, so the values
+                        // survive at their original keys, and the fresh cache - which starts
+                        // empty over a non-empty column - fills from the on-disk index rather
+                        // than handing out keys of its own.
+                        Assert.assertEquals(exhausted.size(), writer.getSymbolCount());
+                        for (int i = 0, n = exhausted.size(); i < n; i++) {
+                            Assert.assertEquals(i, writer.put(exhausted.getQuick(i)));
+                            Assert.assertEquals(i, writer.put(exhausted.getQuick(i)));
+                        }
+                        Assert.assertEquals(exhausted.size(), writer.getSymbolCount());
+                    }
+                }
+            });
+        } finally {
+            SymbolMapWriter.setCacheKeyBufferLimit(previousLimit);
+        }
+    }
+
+    @Test
     public void testTransactionalRead() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
@@ -1267,6 +1337,221 @@ public class SymbolMapTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTruncateRestoresTheDroppedCache() throws Exception {
+        // A column that runs its cache's key buffer out keeps working off the on-disk
+        // index, at roughly twice the cost per lookup when the column's declared
+        // capacity matches its population and far more when it does not. TRUNCATE
+        // empties the column, which retires the exhaustion outright, so a writer the
+        // column still tells to cache has to come back cached rather than stay degraded
+        // for as long as its table writer stays pooled.
+        final long previousLimit = SymbolMapWriter.setCacheKeyBufferLimit(256);
+        try {
+            assertMemoryLeak(() -> {
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    create(path, "x", 128, true);
+                    try (
+                            SymbolMapWriter writer = new SymbolMapWriter(
+                                    configuration,
+                                    path,
+                                    "x",
+                                    COLUMN_NAME_TXN_NONE,
+                                    0,
+                                    -1,
+                                    NOOP_COLLECTOR,
+                                    -1
+                            )
+                    ) {
+                        final ObjList<String> exhausted = exhaustCache(writer);
+
+                        writer.truncate();
+
+                        Assert.assertEquals(0, writer.getSymbolCount());
+                        Assert.assertTrue(
+                                "TRUNCATE empties the key buffer the cache ran out of, so a column"
+                                        + " that is still told to cache must get its cache back",
+                                writer.isCacheAllocated()
+                        );
+                        Assert.assertTrue(writer.isCached());
+
+                        // A working cache rather than an empty shell, and a bounded one:
+                        // the same run of values interns from zero again, hands out the same
+                        // keys, and runs the key buffer out a second time at the same point.
+                        // A restored cache that could not exhaust again would mean TRUNCATE
+                        // had handed out an unbounded one.
+                        final ObjList<String> second = exhaustCache(writer);
+                        Assert.assertEquals(exhausted.size(), second.size());
+                        for (int i = 0, n = exhausted.size(); i < n; i++) {
+                            Assert.assertEquals(exhausted.getQuick(i), second.getQuick(i));
+                        }
+                    }
+                }
+            });
+        } finally {
+            SymbolMapWriter.setCacheKeyBufferLimit(previousLimit);
+        }
+    }
+
+    @Test
+    public void testUpdateCacheFlagOffReleasesTheCache() throws Exception {
+        // ALTER TABLE ... ALTER COLUMN ... NOCACHE lands here, on the writer already
+        // serving the column - nothing re-opens it. put() dispatches on the cache rather
+        // than on the flag, because a cache dropped on key-buffer exhaustion leaves the
+        // flag on, so a NOCACHE that wrote only the flag would leave the writer caching
+        // and leave the cache's native buffers charged to NATIVE_TABLE_WRITER until the
+        // table writer leaves the pool - for a column the user just asked not to cache.
+        assertMemoryLeak(() -> {
+            final int values = 10_000;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 16, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    for (int i = 0; i < values; i++) {
+                        Assert.assertEquals(i, writer.put("key" + i));
+                    }
+                    Assert.assertTrue("the column asked for a cache and must have got one", writer.isCacheAllocated());
+
+                    final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+                    writer.updateCacheFlag(false);
+                    final long after = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+
+                    // The cache is the writer's only NATIVE_TABLE_WRITER allocation - its
+                    // mapped files are charged to MMAP_INDEX_WRITER - so the whole of this
+                    // difference is the cache going back to the allocator.
+                    Assert.assertTrue(
+                            "NOCACHE must hand the cache's native buffers back [before=" + before
+                                    + ", after=" + after + ']',
+                            after < before
+                    );
+                    Assert.assertFalse(writer.isCacheAllocated());
+                    Assert.assertFalse(writer.isCached());
+
+                    // Still a working map: every key interned while the cache was alive
+                    // resolves to the same key off the on-disk index, new values still
+                    // append sequentially, and neither re-establishes a cache.
+                    for (int i = 0; i < values; i++) {
+                        Assert.assertEquals(i, writer.put("key" + i));
+                    }
+                    for (int i = 0; i < 32; i++) {
+                        Assert.assertEquals(values + i, writer.put("later" + i));
+                    }
+                    Assert.assertFalse(writer.isCacheAllocated());
+                    Assert.assertEquals(values + 32, writer.getSymbolCount());
+
+                    // A capacity rebuild re-runs the cache decision, and its gate admits a
+                    // writer whose flag is on but whose cache is gone. A column turned
+                    // NOCACHE carries the flag off, so the rebuild must leave it uncached
+                    // rather than hand the cache back through that arm.
+                    writer.rebuildCapacity(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1024, false);
+                    Assert.assertFalse(
+                            "a capacity rebuild of a NOCACHE column must not re-establish its cache",
+                            writer.isCacheAllocated()
+                    );
+                    Assert.assertFalse(writer.isCached());
+                }
+
+                // ...and the header carries the answer, so the next writer over the same
+                // files opens uncached too.
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path.of(configuration.getDbRoot()),
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                values + 32,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertFalse(writer.isCached());
+                    Assert.assertFalse(writer.isCacheAllocated());
+                    Assert.assertEquals(0, writer.put("key0"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateCacheFlagOnEstablishesTheCache() throws Exception {
+        // The reverse direction, ALTER TABLE ... ALTER COLUMN ... CACHE. The writer
+        // serving a NOCACHE column holds no cache, so raising the flag alone would leave
+        // put() on the on-disk index and the column no faster than it was.
+        assertMemoryLeak(() -> {
+            final int values = 10_000;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 16, false);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    for (int i = 0; i < values; i++) {
+                        Assert.assertEquals(i, writer.put("key" + i));
+                    }
+                    Assert.assertFalse("the column asked for no cache", writer.isCacheAllocated());
+
+                    final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+                    writer.updateCacheFlag(true);
+                    final long after = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+
+                    Assert.assertTrue(
+                            "CACHE must build the cache the column now asks for [before=" + before
+                                    + ", after=" + after + ']',
+                            after > before
+                    );
+                    Assert.assertTrue(writer.isCacheAllocated());
+                    Assert.assertTrue(writer.isCached());
+
+                    // The new cache starts empty over a non-empty column, so the first
+                    // lookup of each value comes off the on-disk index and the second off
+                    // the cache. Both must give the key the value already had.
+                    for (int i = 0; i < values; i++) {
+                        Assert.assertEquals(i, writer.put("key" + i));
+                        Assert.assertEquals(i, writer.put("key" + i));
+                    }
+                    Assert.assertEquals(values, writer.put("later"));
+                    Assert.assertEquals(values, writer.put("later"));
+                    Assert.assertEquals(values + 1, writer.getSymbolCount());
+                }
+
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path.of(configuration.getDbRoot()),
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                values + 1,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertTrue(writer.isCached());
+                    Assert.assertTrue(writer.isCacheAllocated());
+                    Assert.assertEquals(0, writer.put("key0"));
+                }
+            }
+        });
+    }
+
     private int addRange(SymbolMapWriter w, int lo, int hi, Rnd rnd, ObjList<CharSequence> symbolList, IntList indexList, String prefix) {
         LOG.info().$("Resetting range [").$(lo).$(", ").$(hi).$("]").$();
 
@@ -1288,6 +1573,80 @@ public class SymbolMapTest extends AbstractCairoTest {
             symMax = Math.max(symMax, symi);
         }
         return symMax;
+    }
+
+    /**
+     * Closes a cached symbol map writer while the release of one of its mapped files
+     * fails, and asserts the off-heap value-to-key cache still went back to the
+     * allocator. {@code failingFileSuffix} picks which file's release raises: ".c"
+     * fails inside the char memory's own close, ".v" fails one level down, inside
+     * {@link io.questdb.cairo.idx.BitmapIndexWriter#close()}.
+     * <p>
+     * The failure lands on the file's truncate, which
+     * {@link io.questdb.cairo.vm.Vm#bestEffortClose} reaches after the mapping is gone
+     * and before the descriptor's own close in the enclosing finally. So the file the
+     * facade fails releases everything it owns and still raises, and every resource
+     * this test can leak belongs to the writer rather than to the injection.
+     */
+    private void assertCloseReleasesCacheWhenReleaseFails(String failingFileSuffix) throws Exception {
+        final AtomicLong failingFd = new AtomicLong(-1);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade failingFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (Utf8s.endsWithAscii(name, failingFileSuffix)) {
+                    failingFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (isArmed.get() && fd == failingFd.get()) {
+                    throw CairoException.critical(0).put("injected truncate failure");
+                }
+                return super.truncate(fd, size);
+            }
+        };
+
+        assertMemoryLeak(failingFf, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 64, true);
+                final SymbolMapWriter writer = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR,
+                        -1
+                );
+                for (int i = 0; i < 32; i++) {
+                    Assert.assertEquals(i, writer.put("symbol" + i));
+                }
+                Assert.assertTrue("the column asked for a cache and must have got one", writer.isCacheAllocated());
+
+                isArmed.set(true);
+                try {
+                    writer.close();
+                    Assert.fail("close() must surface the release failure the facade injected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "injected truncate failure");
+                } finally {
+                    isArmed.set(false);
+                }
+
+                // The cache is two native buffers. A release step that raises before the
+                // writer gets to them strands them for the life of the process, since
+                // nothing else references them once the writer is gone.
+                Assert.assertFalse(
+                        "close() must release the off-heap cache even when another release fails",
+                        writer.isCacheAllocated()
+                );
+            }
+        });
     }
 
     private void destroySymbolFilesOffsets(Path path, String name, int cleanCount, Rnd rnd) {
@@ -1323,6 +1682,39 @@ public class SymbolMapTest extends AbstractCairoTest {
             final int values = 10_000;
             Assert.assertTrue(taggedBytesForWriter("cached", true, values) > taggedBytesForWriter("plain", false, values));
         });
+    }
+
+    /**
+     * Interns distinct values into {@code writer} until its cache runs the key buffer out
+     * and the writer drops it, and returns every value interned along the way - the last of
+     * them is the one whose insert tripped the drop, so that one went in through the on-disk
+     * fallback. The caller has to have lowered
+     * {@link SymbolMapWriter#setCacheKeyBufferLimit(long)} first; at the production ceiling
+     * getting here takes eight gigabytes of distinct keys.
+     */
+    private static ObjList<String> exhaustCache(SymbolMapWriter writer) {
+        Assert.assertTrue("the column asked for a cache", writer.isCached());
+        Assert.assertTrue("...and got one", writer.isCacheAllocated());
+        final ObjList<String> symbols = new ObjList<>();
+        while (writer.isCacheAllocated() && symbols.size() < 64) {
+            final String symbol = "cached-symbol-" + symbols.size();
+            Assert.assertEquals(symbols.size(), writer.put(symbol));
+            symbols.add(symbol);
+        }
+        Assert.assertFalse(
+                "the cache must be dropped once its key buffer is exhausted, rather than"
+                        + " grown past what it can address",
+                writer.isCacheAllocated()
+        );
+        // The same floor the exhaustion case asserts: a sizing change that collapsed the
+        // cached run to a single insert would leave every caller of this exercising the
+        // fallback over almost nothing.
+        Assert.assertTrue(
+                "the cached run was " + symbols.size() + " symbols, too short to exercise"
+                        + " the cache before the drop",
+                symbols.size() >= 5
+        );
+        return symbols;
     }
 
     /**

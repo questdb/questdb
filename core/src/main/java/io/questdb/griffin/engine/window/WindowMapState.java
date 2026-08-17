@@ -115,22 +115,12 @@ import org.jetbrains.annotations.TestOnly;
  *
  * <h2>What declines</h2>
  * One thing stops a compiled plan from getting a runtime: {@code cairo.sql.window.map.fusion.enabled},
- * the operational escape hatch. Every plan the compiler produces binds otherwise.
- * <p>
- * This build shipped a second rule and then removed it, which is worth stating so it is not
- * written again. It declined a group whose fused value crossed
- * {@code cairo.sql.unordered.map.max.entry.size} while every member's own value stayed under it -
- * two counters over one INT key, {@code 4 + 8 = 12} each against {@code 4 + 16 = 20} fused - on
- * the premise that trading several {@link io.questdb.cairo.map.Unordered4Map} probes for one
- * {@link io.questdb.cairo.map.OrderedMap} probe is a bad trade. Measured over 2e6 rows, it is
- * not: that shape runs at 65.2 ns/row fused against 132.2 unfused over 1e6 keys and 33.2 against
- * 34.7 over 1e3, and {@code sum(x) + sum(y)} - the same trade at the limit a server defaults to -
- * runs at 75.5 against 209.1 and 39.4 against 44.7. A single {@code sum(x)}, no group in the
- * picture at all, says why: 55.5 ns/row on an {@code OrderedMap} against 77.5 on an
- * {@code Unordered4Map} over 1e6 keys, and 22.1 against 19.3 over 1e3. The unordered maps are the
- * faster ones only while the key domain is small, and a window map's cost is concentrated where
- * it is not, so the rule turned down its largest win to buy nothing at the cardinality it was
- * protecting. The same holds for a VARCHAR key and {@link io.questdb.cairo.map.UnorderedVarcharMap}.
+ * the operational escape hatch. Every plan the compiler produces binds otherwise. In particular a
+ * fused value that crosses {@code cairo.sql.unordered.map.max.entry.size} still binds: the wider
+ * value may move the group's map from {@link io.questdb.cairo.map.Unordered4Map} to
+ * {@link io.questdb.cairo.map.OrderedMap}, and measurement says that trade is worth taking,
+ * because the unordered maps lead only while the key domain is small and a window map's cost is
+ * concentrated where it is not.
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
     private final int componentCount;

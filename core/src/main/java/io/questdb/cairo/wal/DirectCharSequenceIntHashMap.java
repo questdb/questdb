@@ -170,17 +170,30 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         this.mapCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
         this.maxKeyBufferCapacity = maxKeyBufferCapacity;
+        this.noEntryValue = noEntryValue;
         final int len = Numbers.ceilPow2((int) (this.mapCapacity / loadFactor));
         mask = len - 1;
         this.capacity = (long) len << 3;
-        this.address = Unsafe.malloc(capacity, memoryTag);
-        this.kvCapacity = Math.min(
-                Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L)),
-                maxKeyBufferCapacity
-        );
-        this.kvAddress = Unsafe.malloc(this.kvCapacity, memoryTag);
-        this.noEntryValue = noEntryValue;
-        clear();
+        // Every allocating step lives inside this guard. Unsafe.malloc() and
+        // Unsafe.realloc() turn a native OOM - or a breach of RSS_MEM_LIMIT - into a
+        // thrown CairoException, and a constructor that throws leaves no reachable
+        // instance for the caller to close(). Without the guard the buffers this
+        // constructor already acquired leak for the lifetime of the process and keep
+        // counting against RSS_MEM_LIMIT, so every retry under memory pressure lowers
+        // the ceiling further. Catch Throwable, not CairoException: Unsafe asserts on
+        // the memory tag, so an AssertionError can unwind the same path.
+        try {
+            this.address = Unsafe.malloc(capacity, memoryTag);
+            this.kvCapacity = Math.min(
+                    Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L)),
+                    maxKeyBufferCapacity
+            );
+            this.kvAddress = Unsafe.malloc(this.kvCapacity, memoryTag);
+            clear();
+        } catch (Throwable th) {
+            freeBuffers();
+            throw th;
+        }
     }
 
     /**
@@ -205,16 +218,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * Releases the native buffers; the map must not be used afterwards.
      */
     public void close() {
-        if (this.address != 0) {
-            Unsafe.free(address, this.capacity, memoryTag);
-            this.address = 0;
-            this.capacity = 0;
-        }
-        if (this.kvAddress != 0) {
-            Unsafe.free(kvAddress, kvCapacity, memoryTag);
-            this.kvAddress = 0;
-            this.kvCapacity = 0;
-        }
+        freeBuffers();
     }
 
     /**
@@ -447,6 +451,24 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             }
         }
         return true;
+    }
+
+    /**
+     * Releases whichever native buffers this map currently owns and is safe to call
+     * on a half-built map, so both {@link #close()} and the constructor's failure path
+     * can share it. Private, so the constructor is not calling an overridable method.
+     */
+    private void freeBuffers() {
+        if (this.address != 0) {
+            Unsafe.free(address, this.capacity, memoryTag);
+            this.address = 0;
+            this.capacity = 0;
+        }
+        if (this.kvAddress != 0) {
+            Unsafe.free(kvAddress, kvCapacity, memoryTag);
+            this.kvAddress = 0;
+            this.kvCapacity = 0;
+        }
     }
 
     private int getHashCode(int index) {

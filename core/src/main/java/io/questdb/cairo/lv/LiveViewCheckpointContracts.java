@@ -174,29 +174,20 @@ public final class LiveViewCheckpointContracts {
 
     /**
      * Widest complete scalar payload one leaf entry may inline, anchor value
-     * included. A component group whose whole layout does not fit keeps its
-     * legacy page-backed roots.
+     * included. A component group whose whole layout does not fit inlines the
+     * longest prefix of its canonical component order that does, and every
+     * component past the budget keeps its legacy page-backed root.
      * <p>
      * The budget exists because the B-tree splits on entry count rather than
      * encoded byte size, so an unbounded "fixed width means inline" rule would
      * build very large 64-entry leaves and make every CRC and decode along the
-     * path more expensive. Its <b>value</b> was settled by measurement rather
-     * than argument, because the two sides of the trade are not comparable a
-     * priori. Over 1M retained keys with 100k dirty per seal, widening the fused
-     * entry from 24 to 152 bytes moved the seal from 69 ms to 102 ms, the
-     * metadata written per seal from 6.4 MB to 19.2 MB and the restore of 800k
-     * keys from 319 ms to 485 ms - linear in the width throughout, with no knee.
-     * Falling off the budget instead is a cliff: the same shape declined whole
-     * seals in 359 ms and publishes 8 metadata segments per seal rather than 4,
-     * because every function goes back to a root of its own. On a small dirty set,
-     * where the per-seal fixed cost dominates, the same fallback is 17.2 ms
-     * against 4.9 ms.
-     * <p>
-     * So the budget is set well clear of any shape a view plausibly compiles -
-     * 256 bytes admits fifteen 16-byte components beside the anchor - and its job
-     * is to bound a pathological leaf rather than to arbitrate the ordinary case.
-     * A full 64-entry leaf then holds at most 16 KB of scalar payload, four times
-     * what a leaf of RANGE ring entries already holds.
+     * path more expensive. Seal cost, metadata written per seal and restore cost
+     * all grow linearly in the entry width, with no knee, so the value is set
+     * well clear of any shape a view plausibly compiles - 256 bytes admits
+     * fifteen 16-byte components beside the anchor - and its job is to bound a
+     * pathological leaf rather than to arbitrate the ordinary case. A full
+     * 64-entry leaf then holds at most 16 KB of scalar payload, four times what a
+     * leaf of RANGE ring entries already holds.
      */
     public static final int MAX_INLINE_LEAF_STATE_BYTES = 256;
 

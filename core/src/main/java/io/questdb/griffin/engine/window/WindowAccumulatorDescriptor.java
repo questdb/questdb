@@ -895,33 +895,21 @@ public final class WindowAccumulatorDescriptor {
         if (family == FAMILY_DOUBLE_KAHAN_SUM_COUNT && other.family == FAMILY_NON_NULL_COUNT) {
             return getFieldSlot(FIELD_NON_NULL_COUNT);
         }
-        // The six max/min families appear in no pair, in either role, and the reason is not
-        // that nobody has looked. A running extremum keeps no counter, so nothing narrower
-        // sits inside it; and it is a single slot whose value is the arithmetic's whole
-        // answer, so it is not a run inside anything wider either - a sum's first slot is a
-        // running total and not the largest thing ever added to it.
+        // Three groups of families take part in no pair, in either role.
         //
-        // No ring-backed family appears either, and there the arithmetic would allow what the
-        // relation does not. A bounded count(x)'s answer really is the counter a bounded sum(x)
-        // over the same frame keeps beside its total, so a projection reading that slot would emit
-        // the right number. What this method licenses is wider than that: a non-negative answer
-        // says the guest's whole state is a run inside the host's, and the guest's state here
-        // continues outside the map value in a ring of its own shape - a flag or a timestamp where
-        // the host keeps a double or a (timestamp, value) pair. Admitting it would make containment
-        // a claim about two arenas, which is a different proof from the one every pair above rests
-        // on. It is also not a run in the slice either way: a RANGE counter's five slots and a
-        // RANGE (sum, count)'s six agree on the ring's geometry and disagree about where the
-        // counter sits, since the host keeps a total in front of it.
+        // The six max/min families: a running extremum keeps no counter, so nothing narrower
+        // sits inside it, and its single slot is the arithmetic's whole answer rather than a
+        // run inside anything wider.
         //
-        // None of the six capture families appears either, in either role, and the near miss is
-        // worth naming: a first_value(x) ignore nulls keeps one slot that a first_value(x) beside
-        // it appears to contain, both of them at slot 0 of a slice of the same width. They are
-        // not the same word. The respect-nulls slice holds whatever the first row carried and the
-        // IGNORE NULLS one the first row the predicate admitted, and those differ on every
-        // partition whose first row is absent - which is why the identity comparison has already
-        // refused the pair on its contribution kind before this method could be asked. Nothing
-        // wider holds a capture as a run either: what a total or a counter keeps is not one row's
-        // value.
+        // The ring-backed families: a guest's state there continues outside the map value in a
+        // ring of its own shape, so admitting the pair would make containment a claim about two
+        // arenas rather than about one slice. The slots do not line up either - a RANGE
+        // counter's five and a RANGE (sum, count)'s six disagree about where the counter sits.
+        //
+        // The six capture families: what a capture keeps is one row's value, which no total or
+        // counter holds as a run. The near miss is first_value(x) beside first_value(x) IGNORE
+        // NULLS, both at slot 0 of a slice of the same width; the two slots hold different
+        // words, and isSameIdentity has already refused the pair on its contribution kind.
         return -1;
     }
 
@@ -1364,41 +1352,28 @@ public final class WindowAccumulatorDescriptor {
      * as a direct column reference, contributing under
      * {@link #CONTRIBUTION_FINITE_DOUBLE} once it gets there.
      * <p>
-     * There is no {@code sum(L)} window factory and no {@code count(L)} either. An
-     * integral or FLOAT column matches {@code sum(D)}, {@code avg(D)}, {@code count(D)}
+     * An integral or FLOAT column matches {@code sum(D)}, {@code avg(D)}, {@code count(D)}
      * and the four dispersion signatures by numeric widening, and {@code FunctionParser}
-     * wraps none of those in a cast function - it inserts one only where a physical
-     * representation has to change, which widening into a double does not. The argument
-     * therefore arrives as a {@code ColumnFunction} of the column's own type, which is
-     * what {@link #directColumnIndex} requires and what the component identity keys by.
-     * <p>
-     * One predicate then serves all of them because every one of those factories reads
-     * its argument through {@code getDouble} and contributes on
-     * {@code Numbers.isFinite} of the result. The widening carries the null across:
-     * {@code LongFunction.getDouble} answers NaN for {@code Numbers.LONG_NULL} and
-     * {@code IntFunction.getDouble} answers NaN for {@code Numbers.INT_NULL}, while BYTE
-     * and SHORT have no null representation at all and so contribute on every row - to
-     * the sum and to the count alike, which is the only agreement that matters.
+     * wraps none of those in a cast function, so the argument arrives as a
+     * {@code ColumnFunction} of the column's own type - which is what
+     * {@link #directColumnIndex} requires and what the component identity keys by. One
+     * predicate serves all of them because every one of those factories reads its argument
+     * through {@code getDouble} and contributes on {@code Numbers.isFinite} of the result.
+     * The widening carries the null across ({@code getDouble} answers NaN for
+     * {@code Numbers.LONG_NULL} and {@code Numbers.INT_NULL}), while BYTE and SHORT have no
+     * null representation at all and so contribute on every row - to the sum and to the
+     * count alike, which is the agreement that matters.
      * <p>
      * The list is deliberately shorter than the set of types that widen into a DOUBLE,
-     * because widening is necessary and not sufficient. CHAR reaches {@code sum(D)} but
-     * its {@code count} resolves to the VARCHAR factory and a null test, so the two
-     * would count different rows; DATE and TIMESTAMP widen as well, but a timestamp
-     * carries its precision in its column type and neither family has been checked
-     * against them; STRING and VARCHAR reach {@code sum(D)} by parsing the text, which
-     * is a third predicate again beside the null test their {@code count} uses. Each of
-     * those declines here rather than being assumed, one argument type at a time.
-     * <p>
-     * DECIMAL is absent because it has factories of its own and so never widens into a
-     * double at all. Its {@code count} is nevertheless a fused component - see the
-     * {@link #CONTRIBUTION_TYPED_NOT_NULL} arm of {@link #contributionKindFor} - because
-     * a {@code count} over a DECIMAL column is the shared counting implementation under
-     * that width's null test, not a decimal accumulator; and its {@code max} and
-     * {@code min} are {@link #FAMILY_DECIMAL_MAX}, which keeps the argument's own payload.
-     * What has no family here is {@code sum} and {@code avg} over a DECIMAL: those
-     * accumulate into a {@code Decimal128} or {@code Decimal256} beside a flag or a counter,
-     * and the two implementations disagree about which of those it is, so one shared
-     * component would have to re-decide arithmetic rather than describe a state.
+     * because widening is necessary and not sufficient. CHAR, STRING and VARCHAR reach
+     * {@code sum(D)} but their {@code count} resolves to another factory under another
+     * predicate, so the two would count different rows; DATE and TIMESTAMP widen as well
+     * but carry precision in the column type and have been checked against neither family.
+     * DECIMAL is absent because it has factories of its own and never widens into a double
+     * at all; its {@code count} is nevertheless a fused component, under the
+     * {@link #CONTRIBUTION_TYPED_NOT_NULL} arm of {@link #contributionKindFor}, and its
+     * {@code max} and {@code min} are {@link #FAMILY_DECIMAL_MAX}. A DECIMAL {@code sum} or
+     * {@code avg} has no family here at all.
      */
     private static boolean isWidenedToDouble(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {

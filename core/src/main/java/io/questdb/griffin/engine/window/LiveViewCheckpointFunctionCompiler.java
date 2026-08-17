@@ -813,10 +813,11 @@ public final class LiveViewCheckpointFunctionCompiler {
             return DependencyKind.UNANCHORED_RANK;
         }
         // Long.MIN_VALUE is the encoding an unbounded look-behind uses, and
-        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound too - a literal
-        // Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its own
-        // start. Such a bound names no finite lag, so it is turned away here alongside the
-        // unbounded frame starts.
+        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound of a ROWS frame - a
+        // literal Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its
+        // own start. Such a bound names no finite lag, so it is turned away here alongside the
+        // unbounded frame starts. A RANGE frame end of the same width negates exactly instead,
+        // to Long.MIN_VALUE + 1, and reaches this as the finite lag it names.
         if (hasFiniteStateLookBehind(functionName, window, rowsHi)
                 && rowsHi != Long.MIN_VALUE && rowsHi <= 0
                 && hasSupportedExclusion(window)) {

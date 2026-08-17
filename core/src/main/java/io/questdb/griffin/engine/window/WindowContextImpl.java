@@ -72,7 +72,10 @@ public class WindowContextImpl implements WindowContext, Mutable {
      * The check is sign-symmetric, which matters because the two callers use opposite sign
      * conventions: a plain RANGE frame negates a PRECEDING bound, while {@code SqlOptimiser}
      * stores a WINDOW JOIN PRECEDING bound positive. The {@code Long.MIN_VALUE} special case
-     * below is reachable only from the negating caller.
+     * below is reachable only from the negating caller, and only on the frame's START bound: a
+     * bound reaches this method only when it carries a time unit, which the parser allows on
+     * RANGE frames alone, and on a RANGE frame {@code normalizeWindowFrame()} folds a literal
+     * {@code Long.MAX_VALUE PRECEDING} onto the sentinel at the start bound only.
      *
      * @param timestampType the designated timestamp type the frame is evaluated against
      * @param bound         the frame bound, negated for PRECEDING by the plain RANGE frame, in
@@ -93,9 +96,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         final long maxUnitValue = driver.getMaxUnitValue(unit);
         // Compare on the width, not the signed bound. normalizeWindowFrame() aliases a user-written
-        // Long.MAX_VALUE PRECEDING onto the Long.MIN_VALUE UNBOUNDED sentinel, and -maxUnitValue is
-        // Long.MIN_VALUE + 1 for units whose ceiling is Long.MAX_VALUE, so a signed comparison
-        // rejects a bound of exactly maxUnitValue - one that compiled before this guard existed.
+        // Long.MAX_VALUE PRECEDING onto the Long.MIN_VALUE UNBOUNDED sentinel at the frame's start,
+        // and -maxUnitValue is Long.MIN_VALUE + 1 for units whose ceiling is Long.MAX_VALUE - which
+        // is exactly what the frame's end negates to for the same width. A signed comparison would
+        // reject a bound of exactly maxUnitValue at either end, one that compiled before this guard
+        // existed.
         final long width = bound == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bound);
         if (width > maxUnitValue) {
             throw SqlException.$(position, "RANGE frame ").put(boundName)
