@@ -2010,6 +2010,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 try (MemoryCMARW mem2 = Vm.getCMARWInstance()) {
                     mem2.smallFile(configuration.getFilesFacade(), other.$(), MemoryTag.NATIVE_DEFAULT);
                     mem2.putInt(META_OFFSET_TABLE_ID, tableToken.getTableId());
+                    // Editing _meta in place invalidates its body checksum; re-stamp so attachPrepare
+                    // reaches the table-id check this test is about.
+                    TableUtils.refreshMetaBodyChecksum(mem2);
                 }
 
                 try (TableWriter writer = getWriter(tableName)) {

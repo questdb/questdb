@@ -1521,6 +1521,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             boolean catchAll,
             String... errorContains
     ) throws Exception {
+        // These tests arm a filesystem failure on the FIRST openRO/mmap of a column file. The partition
+        // checksum seal also opens and mmaps covered column files, so it consumes the injection first --
+        // and degrades by design -- leaving attach to succeed and the expected error never to surface.
+        // The subject here is attach failing on filesystem errors, not checksums.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_CHECKSUM_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
                     TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
                     TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY);

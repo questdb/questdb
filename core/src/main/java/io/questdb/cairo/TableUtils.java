@@ -758,6 +758,14 @@ public final class TableUtils {
      * No-op on a {@code _meta} that carries no checksum. Never throws for a file it cannot interpret:
      * losing the checksum costs detection, whereas failing here would fail the enrolment itself.
      */
+    /**
+     * Recomputes and stores the {@code _meta} body checksum after an IN-PLACE edit, through a raw fd.
+     * Every in-place {@code _meta} writer must call this before its fsync, or the stored checksum
+     * describes the previous contents and the next load rejects a healthy file.
+     *
+     * @param tempMem scratch buffer of at least {@link Long#BYTES} bytes -- the new checksum is written
+     *                through it, so a shorter allocation overruns the heap
+     */
     public static void refreshMetaBodyChecksumOnFd(FilesFacade ff, long fd, long tempMem, Utf8Sequence metaPath) {
         final long bodyLen = ff.readNonNegativeLong(fd, META_OFFSET_BODY_LEN_64);
         if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI) {
