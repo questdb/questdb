@@ -132,6 +132,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final StringSink deferredCloseReason = new StringSink();
     private final StringSink deferredErrorMessage = new StringSink();
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
+    // Per-table dir names for the current durable progress snapshot, keyed by
+    // table name. Kept in lock-step with durableProgressSnapshot so the wire
+    // durable-ack entries can carry the table dir name as an incarnation
+    // discriminator (drop/recreate under a stable table name changes the dir
+    // name; the client uses the change to reset its per-table watermark).
+    private final CharSequenceObjHashMap<String> durableProgressDirNames = new CharSequenceObjHashMap<>();
     private final CairoEngine engine;
     private final StringSink error = new StringSink();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
@@ -388,6 +394,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 long lastSent = lastDurableSeqTxns.get(tableName);
                 if (uploadedSeqTxn > lastSent) {
                     durableProgressSnapshot.put(tableName, uploadedSeqTxn);
+                    durableProgressDirNames.put(tableName, dirName);
                 }
             }
         }
@@ -432,7 +439,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         int size = 1 + 2;
         ObjList<CharSequence> keys = durableProgressSnapshot.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
+            CharSequence tableName = keys.getQuick(i);
+            CharSequence dirName = durableProgressDirNames.get(tableName);
+            size += 2 + Utf8s.utf8Bytes(tableName) + 2 + Utf8s.utf8Bytes(dirName) + 8;
         }
         return size;
     }
@@ -459,6 +468,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public CharSequenceLongHashMap getDurableProgressSnapshot() {
         return durableProgressSnapshot;
+    }
+
+    public CharSequenceObjHashMap<String> getDurableProgressDirNames() {
+        return durableProgressDirNames;
     }
 
     public String getErrorText() {
@@ -897,6 +910,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 if (ldsIdx < 0) {
                     lastDurableSeqTxns.removeAt(ldsIdx);
                 }
+                int dpdIdx = durableProgressDirNames.keyIndex(tableName);
+                if (dpdIdx < 0) {
+                    durableProgressDirNames.removeAt(dpdIdx);
+                }
             } else {
                 // Pending still ahead of durable watermark — remember
                 // what we reported so the next collectDurableProgress
@@ -942,6 +959,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
         durableProgressSnapshot.clear();
+        durableProgressDirNames.clear();
         isDurableProgressSnapshotFullyUploaded = false;
         tableDirNames.clear();
 
@@ -1372,6 +1390,38 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             Utf8s.strCpyUtf8(tableName, addr + offset, utf8Len);
             offset += utf8Len;
             Unsafe.putLong(addr + offset, entries.get(tableName));
+            offset += 8;
+        }
+        return offset;
+    }
+
+    /**
+     * Writes per-table seqTxn entries for a durable ACK frame, carrying the
+     * table dir name as an incarnation discriminator.
+     * Format: tableCount(2) + [nameLen(2) + nameUtf8(N) + dirLen(2) + dirUtf8(M) + seqTxn(8)] * count
+     *
+     * @return number of bytes written
+     */
+    public static int writeDurableAckEntries(long addr, CharSequenceLongHashMap seqTxns, CharSequenceObjHashMap<String> dirNames) {
+        int offset = 0;
+        ObjList<CharSequence> keys = seqTxns.keys();
+        int count = keys.size();
+        Unsafe.putShort(addr + offset, (short) count);
+        offset += 2;
+        for (int i = 0; i < count; i++) {
+            CharSequence tableName = keys.getQuick(i);
+            int nameUtf8Len = Utf8s.utf8Bytes(tableName);
+            Unsafe.putShort(addr + offset, (short) nameUtf8Len);
+            offset += 2;
+            Utf8s.strCpyUtf8(tableName, addr + offset, nameUtf8Len);
+            offset += nameUtf8Len;
+            CharSequence dirName = dirNames.get(tableName);
+            int dirUtf8Len = Utf8s.utf8Bytes(dirName);
+            Unsafe.putShort(addr + offset, (short) dirUtf8Len);
+            offset += 2;
+            Utf8s.strCpyUtf8(dirName, addr + offset, dirUtf8Len);
+            offset += dirUtf8Len;
+            Unsafe.putLong(addr + offset, seqTxns.get(tableName));
             offset += 8;
         }
         return offset;
