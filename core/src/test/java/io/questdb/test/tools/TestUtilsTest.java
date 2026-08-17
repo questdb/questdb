@@ -101,6 +101,22 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWorkerPoolModeOverrideParsing() {
+        Assert.assertNull(TestUtils.parseWorkerPoolMode(null));
+        Assert.assertNull(TestUtils.parseWorkerPoolMode(""));
+        Assert.assertNull(TestUtils.parseWorkerPoolMode("   "));
+        Assert.assertSame(WorkerPoolMode.FIBER_HOST, TestUtils.parseWorkerPoolMode("FIBER_HOST"));
+        Assert.assertSame(WorkerPoolMode.FIBER_HOST, TestUtils.parseWorkerPoolMode("fiber_host"));
+        Assert.assertSame(WorkerPoolMode.LEGACY, TestUtils.parseWorkerPoolMode(" legacy "));
+        try {
+            TestUtils.parseWorkerPoolMode("fiber");
+            Assert.fail("malformed mode must be rejected");
+        } catch (IllegalArgumentException e) {
+            TestUtils.assertContains(e.getMessage(), TestUtils.WORKER_POOL_MODE_PROPERTY);
+        }
+    }
+
+    @Test
     public void testWorkerPoolModePropertyOverridesBothSelectors() {
         final String override = System.getProperty(TestUtils.WORKER_POOL_MODE_PROPERTY);
         Assume.assumeTrue(override != null && !override.isEmpty());

@@ -1493,25 +1493,12 @@ public class ServerMain implements Closeable {
 
         @Override
         public void stop() {
-            Throwable stopFailure = null;
-            if (lineUdpReceiver != null) {
-                try {
-                    lineUdpReceiver = Misc.free(lineUdpReceiver);
-                } catch (Throwable th) {
-                    stopFailure = th;
-                }
-            }
-            if (lineTcpReceiver != null) {
-                try {
-                    lineTcpReceiver = Misc.free(lineTcpReceiver);
-                } catch (Throwable th) {
-                    if (stopFailure == null) {
-                        stopFailure = th;
-                    } else if (stopFailure != th) {
-                        stopFailure.addSuppressed(th);
-                    }
-                }
-            }
+            final AbstractLineProtoUdpReceiver udpReceiver = lineUdpReceiver;
+            lineUdpReceiver = null;
+            Throwable stopFailure = Misc.freeBestEffort(null, udpReceiver);
+            final LineTcpReceiver tcpReceiver = lineTcpReceiver;
+            lineTcpReceiver = null;
+            stopFailure = Misc.freeBestEffort(stopFailure, tcpReceiver);
             CairoException.rethrowCleanupFailure(stopFailure);
         }
     }
@@ -1619,7 +1606,9 @@ public class ServerMain implements Closeable {
                 pool.halt();
                 pool = null;
             }
-            server = Misc.free(server);
+            final HttpServer minHttpServer = server;
+            server = null;
+            Misc.free(minHttpServer);
         }
 
         @Override
@@ -1642,7 +1631,9 @@ public class ServerMain implements Closeable {
                 }
                 pool = null;
             }
-            server = Misc.free(server);
+            final HttpServer minHttpServer = server;
+            server = null;
+            Misc.free(minHttpServer);
             return true;
         }
     }
@@ -1818,8 +1809,9 @@ public class ServerMain implements Closeable {
 
         @Override
         public void stop() {
-            Misc.free(server);
+            final PGServer pgServer = server;
             server = null;
+            Misc.free(pgServer);
         }
     }
 
@@ -1941,7 +1933,9 @@ public class ServerMain implements Closeable {
 
         @Override
         public void stop() {
-            receiver = Misc.free(receiver);
+            final QwpUdpReceiver udpReceiver = receiver;
+            receiver = null;
+            Misc.free(udpReceiver);
         }
     }
 
@@ -2039,8 +2033,9 @@ public class ServerMain implements Closeable {
 
         @Override
         public void stop() {
-            Misc.free(server);
+            final HttpServer httpServer = server;
             server = null;
+            Misc.free(httpServer);
         }
     }
 

@@ -484,15 +484,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return Unsafe.cas(this, RETIREMENT_STATE_OFFSET, 1, 2);
     }
 
-    @Nullable
-    FiberTask getTaskAfterDriverFailure(Outcome mountedOutcome) {
-        return assignedTask != null
-                ? assignedTask
-                : outcomeTask != null
-                  ? outcomeTask
-                  : mountedOutcome.task;
-    }
-
     void finishProcessing() {
         while (true) {
             final int state = notificationState;
@@ -552,6 +543,15 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     SuspensionScope.RoleSwitchReadLockState getRoleSwitchReadLockState() {
         return roleSwitchReadLocks;
+    }
+
+    @Nullable
+    FiberTask getTaskAfterDriverFailure(Outcome mountedOutcome) {
+        return assignedTask != null
+                ? assignedTask
+                : outcomeTask != null
+                  ? outcomeTask
+                  : mountedOutcome.task;
     }
 
     int getYieldReason() {

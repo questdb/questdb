@@ -2138,6 +2138,28 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpIOWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD, 7_000);
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
+                if (lineTcpWriterWorkerCount < 1) {
+                    warnIgnoredLineTcpPoolProperties(
+                            properties,
+                            env,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_COUNT,
+                            PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD,
+                            PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD
+                    );
+                }
+                if (lineTcpIOWorkerCount < 1) {
+                    warnIgnoredLineTcpPoolProperties(
+                            properties,
+                            env,
+                            PropertyKey.LINE_TCP_IO_WORKER_COUNT,
+                            PropertyKey.LINE_TCP_IO_HALT_ON_ERROR,
+                            PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD,
+                            PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD,
+                            PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD
+                    );
+                }
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
                 this.lineTcpCommitIntervalDefault = getMillis(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT, COMMIT_INTERVAL_DEFAULT);
@@ -3029,6 +3051,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .$(" is below ").$(pageSizeKey.getPropertyPath()).$('=').$(pageSize)
                     .$("; effective cap will be floored at ").$(pageSize).$(" bytes (one page)")
                     .$();
+        }
+    }
+
+    private void warnIgnoredLineTcpPoolProperties(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            PropertyKey workerCountKey,
+            PropertyKey... poolKeys
+    ) {
+        for (PropertyKey key : poolKeys) {
+            if (isPropertyExplicitlySet(properties, env, key)) {
+                log.advisory().$("config: ").$(key.getPropertyPath())
+                        .$(" is ignored because ").$(workerCountKey.getPropertyPath())
+                        .$(" is 0 and ILP jobs run on a shared pool")
+                        .$();
+            }
         }
     }
 

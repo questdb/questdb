@@ -105,6 +105,78 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testServerCloseAbandonsParkedSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            // Composition guard: sleep() parks a fiber on a timer wait, then the server
+            // shuts down underneath it. Close must abandon the parked fiber and disconnect
+            // the client instead of waiting out the sleep. query.timeout sits far above
+            // the close bound so a timeout cannot fake a prompt close.
+            final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }});
+            boolean isServerClosed = false;
+            try {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+
+                final CountDownLatch clientDone = new CountDownLatch(1);
+                final AtomicReference<Throwable> clientOutcome = new AtomicReference<>();
+                final Thread sleeper = new Thread(() -> {
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement()
+                    ) {
+                        stmt.executeQuery(sleepSql);
+                    } catch (Throwable th) {
+                        clientOutcome.set(th);
+                    } finally {
+                        clientDone.countDown();
+                    }
+                }, "sleep-at-shutdown");
+                sleeper.setDaemon(true);
+                sleeper.start();
+
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                        10
+                );
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue("sleep continuation never parked",
+                                serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                        10
+                );
+
+                final long closeStartMs = System.currentTimeMillis();
+                serverMain.close();
+                isServerClosed = true;
+                final long closeMs = System.currentTimeMillis() - closeStartMs;
+                Assert.assertTrue(
+                        "server close blocked on a parked sleep(3600): took " + closeMs + " ms",
+                        closeMs < 30_000
+                );
+                Assert.assertTrue("sleeping client did not observe shutdown", clientDone.await(10, TimeUnit.SECONDS));
+                sleeper.join(5_000);
+                Assert.assertFalse("sleeper thread did not terminate", sleeper.isAlive());
+                Assert.assertNotNull("client completed sleep(3600) against a closed server", clientOutcome.get());
+            } finally {
+                if (!isServerClosed) {
+                    serverMain.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSleepAbortedWhenClientClosesConnection() throws Exception {
         assertMemoryLeak(() -> {
             // Regression guard for a runtime resource-pin bug: a parked sleep() did

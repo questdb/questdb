@@ -315,6 +315,69 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testServerCloseAbandonsParkedWaitWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Composition guard: wait_wal_table() parks a fiber on the WAL wait queue,
+            // then the server shuts down underneath it. Close must abandon the parked
+            // fiber and disconnect the client instead of waiting for WAL progress that
+            // never comes (apply is disabled). query.timeout sits far above the close
+            // bound so a timeout cannot fake a prompt close.
+            final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
+            }});
+            boolean isServerClosed = false;
+            try {
+                serverMain.start();
+
+                try (
+                        Connection setupConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = setupConn.createStatement()
+                ) {
+                    stmt.execute("CREATE TABLE foo (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    stmt.execute("INSERT INTO foo VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                }
+
+                final CountDownLatch clientDone = new CountDownLatch(1);
+                final AtomicReference<Throwable> clientOutcome = new AtomicReference<>();
+                final Thread waiter = new Thread(() -> {
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement()
+                    ) {
+                        stmt.executeQuery("SELECT wait_wal_table('foo')");
+                    } catch (Throwable th) {
+                        clientOutcome.set(th);
+                    } finally {
+                        clientDone.countDown();
+                    }
+                }, "wait-wal-table-at-shutdown");
+                waiter.setDaemon(true);
+                waiter.start();
+
+                awaitWaiterRegistered(serverMain);
+
+                final long closeStartMs = System.currentTimeMillis();
+                serverMain.close();
+                isServerClosed = true;
+                final long closeMs = System.currentTimeMillis() - closeStartMs;
+                Assert.assertTrue(
+                        "server close blocked on a parked wait_wal_table: took " + closeMs + " ms",
+                        closeMs < 30_000
+                );
+                Assert.assertTrue("waiting client did not observe shutdown", clientDone.await(10, TimeUnit.SECONDS));
+                waiter.join(5_000);
+                Assert.assertFalse("waiter thread did not terminate", waiter.isAlive());
+                Assert.assertNotNull("client completed wait_wal_table against a closed server", clientOutcome.get());
+            } finally {
+                if (!isServerClosed) {
+                    serverMain.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWaitWalTableErrorsOnDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             // WAL apply disabled, very long query timeout: the only way the wait can

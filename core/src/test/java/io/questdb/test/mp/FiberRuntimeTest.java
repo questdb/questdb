@@ -41,10 +41,8 @@ import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.lang.ref.WeakReference;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
@@ -1145,15 +1143,7 @@ public class FiberRuntimeTest {
 
     @Test
     public void testSteadyStateDeepWaitAndResumeAllocateNoJavaHeap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
-            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
+        assertMemoryLeakWithAllocationCounter(threadMXBean -> {
             final FiberRuntime runtime = new FiberRuntime(1);
             final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
             final PooledWaitTask shallowTask = new PooledWaitTask(waitQueue);
@@ -1191,15 +1181,7 @@ public class FiberRuntimeTest {
 
     @Test
     public void testSteadyStateLaunchAndDrainAllocateNoJavaHeap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
-            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
+        assertMemoryLeakWithAllocationCounter(threadMXBean -> {
             final FiberRuntime runtime = new FiberRuntime(1);
             final OneShotTask task = new OneShotTask();
             for (int i = 0; i < 10_000; i++) {
@@ -1225,15 +1207,7 @@ public class FiberRuntimeTest {
 
     @Test
     public void testSteadyStateReservedLaunchAndDrainAllocateNoJavaHeap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
-            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
+        assertMemoryLeakWithAllocationCounter(threadMXBean -> {
             final FiberRuntime runtime = new FiberRuntime(1);
             final OneShotTask task = new OneShotTask();
             for (int i = 0; i < 10_000; i++) {
@@ -1259,15 +1233,7 @@ public class FiberRuntimeTest {
 
     @Test
     public void testSteadyStateWaitAndResumeAllocateNoJavaHeap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
-            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
+        assertMemoryLeakWithAllocationCounter(threadMXBean -> {
             final FiberRuntime runtime = new FiberRuntime(1);
             final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
             final PooledWaitTask task = new PooledWaitTask(waitQueue);
@@ -1290,6 +1256,13 @@ public class FiberRuntimeTest {
             Assert.assertEquals(0, minAllocatedBytes);
             close(runtime);
         });
+    }
+
+    private static void assertMemoryLeakWithAllocationCounter(AllocationCounterTest test) throws Exception {
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            TestUtils.assertMemoryLeak(() -> test.run(threadMXBean));
+        }
     }
 
     private static void close(FiberRuntime runtime) {
@@ -1418,6 +1391,11 @@ public class FiberRuntimeTest {
         if (task.error != null) {
             throw new AssertionError(message, task.error);
         }
+    }
+
+    @FunctionalInterface
+    private interface AllocationCounterTest {
+        void run(com.sun.management.ThreadMXBean threadMXBean) throws Exception;
     }
 
     private abstract static class CallbackTask extends FiberTask {

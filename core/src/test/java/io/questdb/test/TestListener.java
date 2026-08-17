@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.runner.Description;
@@ -85,6 +86,7 @@ public class TestListener extends RunListener {
                 .$("***** Test Failed ***** ")
                 .$safe(description.getClassName()).$('.')
                 .$safe(description.getMethodName())
+                .$(" worker_pool_mode=").$(TestUtils.getWorkerPoolMode().name())
                 .$(" duration_ms=").$(getTestDuration())
                 .$(" : ")
                 .$(failure.getException()).$();
@@ -109,11 +111,13 @@ public class TestListener extends RunListener {
         boolean isStartComplete = false;
         try {
             testStartMs = System.currentTimeMillis();
+            final WorkerPoolMode workerPoolMode = TestUtils.getWorkerPoolMode();
             LOG.infoW().$(">>>> ")
                     .$safe(description.getClassName()).$('.')
                     .$safe(description.getMethodName())
+                    .$(" worker_pool_mode=").$(workerPoolMode.name())
                     .$();
-            System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
+            System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName() + " worker_pool_mode=" + workerPoolMode);
             isStartComplete = true;
         } finally {
             if (!isStartComplete) {

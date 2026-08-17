@@ -3034,6 +3034,20 @@ public final class TestUtils {
         return increment;
     }
 
+    static @Nullable WorkerPoolMode parseWorkerPoolMode(@Nullable String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        final String name = value.trim().toUpperCase(Locale.ROOT);
+        try {
+            return WorkerPoolMode.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "invalid " + WORKER_POOL_MODE_PROPERTY + " value [value=" + value + ", expected=FIBER_HOST|LEGACY]"
+            );
+        }
+    }
+
     private static char readAsChar(RecordMetadata metaR, Record rr, int col) {
         switch (metaR.getColumnType(col)) {
             case ColumnType.CHAR:
@@ -3070,13 +3084,11 @@ public final class TestUtils {
     }
 
     private static @Nullable WorkerPoolMode readWorkerPoolModeOverride() {
-        final String override = System.getProperty(WORKER_POOL_MODE_PROPERTY);
-        if (override != null && !override.isEmpty()) {
-            final WorkerPoolMode mode = WorkerPoolMode.valueOf(override.trim().toUpperCase(Locale.ROOT));
+        final WorkerPoolMode mode = parseWorkerPoolMode(System.getProperty(WORKER_POOL_MODE_PROPERTY));
+        if (mode != null) {
             LOG.info().$("worker pool mode pinned [").$(WORKER_POOL_MODE_PROPERTY).$('=').$(mode.name()).I$();
-            return mode;
         }
-        return null;
+        return mode;
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {

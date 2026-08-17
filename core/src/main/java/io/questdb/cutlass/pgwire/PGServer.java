@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.AcceptGatedJob;
 import io.questdb.cutlass.auth.SocketAuthenticator;
@@ -228,10 +229,11 @@ public class PGServer implements Closeable {
     @Override
     public void close() {
         acceptOpen.set(false);
-        Misc.free(dispatcher);
-        Misc.free(registry);
-        Misc.free(contextFactory);
-        Misc.free(typesAndSelectCache);
+        Throwable failure = Misc.freeBestEffort(null, dispatcher);
+        failure = Misc.freeBestEffort(failure, registry);
+        failure = Misc.freeBestEffort(failure, contextFactory);
+        failure = Misc.freeBestEffort(failure, typesAndSelectCache);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public int getPort() {

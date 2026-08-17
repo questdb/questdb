@@ -469,6 +469,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
+        // Drop the retained Throwable so a pooled sequence does not pin it while idle.
+        errorState.clear();
 
         Throwable cleanupFailure = null;
         try {

@@ -37,10 +37,8 @@ import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -265,33 +263,28 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
     @Test
     public void testEntryClearAllocatesNoJavaHeap() throws Exception {
-        assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
-            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
-            final QueryRegistry.Entry entry = new QueryRegistry.Entry();
-            for (int i = 0; i < 10_000; i++) {
-                entry.clear();
-            }
-
-            long minAllocatedBytes = Long.MAX_VALUE;
-            for (int round = 0; round < 5; round++) {
-                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
-                for (int i = 0; i < 100_000; i++) {
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            assertMemoryLeak(() -> {
+                final QueryRegistry.Entry entry = new QueryRegistry.Entry();
+                for (int i = 0; i < 10_000; i++) {
                     entry.clear();
                 }
-                minAllocatedBytes = Math.min(
-                        minAllocatedBytes,
-                        threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore
-                );
-            }
-            Assert.assertEquals(0, minAllocatedBytes);
-        });
+
+                long minAllocatedBytes = Long.MAX_VALUE;
+                for (int round = 0; round < 5; round++) {
+                    final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                    for (int i = 0; i < 100_000; i++) {
+                        entry.clear();
+                    }
+                    minAllocatedBytes = Math.min(
+                            minAllocatedBytes,
+                            threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore
+                    );
+                }
+                Assert.assertEquals(0, minAllocatedBytes);
+            });
+        }
     }
 
     @Test

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -89,7 +90,12 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     public void close() {
         acquireRunLock();
         try {
-            processInQueue();
+            Throwable failure = null;
+            try {
+                processInQueue();
+            } catch (Throwable th) {
+                failure = th;
+            }
             while (true) {
                 long cursor = outSubSequence.next();
                 if (cursor < -1) {
@@ -100,14 +106,24 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                     break;
                 }
                 RetryHolder retryHolder = outQueue.get(cursor);
-                freeRetry(retryHolder);
-                outSubSequence.done(cursor);
+                try {
+                    freeRetry(retryHolder);
+                } catch (Throwable th) {
+                    failure = aggregate(failure, th);
+                } finally {
+                    outSubSequence.done(cursor);
+                }
             }
             for (int i = 0, n = nextRerun.size(); i < n; i++) {
                 final RetryHolder retryHolder = nextRerun.poll();
-                freeRetry(retryHolder);
+                try {
+                    freeRetry(retryHolder);
+                } catch (Throwable th) {
+                    failure = aggregate(failure, th);
+                }
                 releaseRetryHolder(retryHolder);
             }
+            CairoException.rethrowCleanupFailure(failure);
         } finally {
             releaseRunLock();
         }
@@ -240,6 +256,16 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
 
     void publishReschedule(long cursor) {
         inPubSequence.done(cursor);
+    }
+
+    private static Throwable aggregate(Throwable primary, Throwable th) {
+        if (primary == null) {
+            return th;
+        }
+        if (primary != th) {
+            primary.addSuppressed(th);
+        }
+        return primary;
     }
 
     private static int compareRetriesInQueue(RetryHolder r1, RetryHolder r2) {

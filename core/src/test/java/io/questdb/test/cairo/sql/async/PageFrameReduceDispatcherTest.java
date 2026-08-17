@@ -74,10 +74,8 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -2415,14 +2413,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     @Test
     public void testSteadyStateOrderedDispatchAllocatesNoJavaHeap() throws Exception {
         assertMemoryLeak(() -> {
-            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-            Assume.assumeTrue(mxBean instanceof com.sun.management.ThreadMXBean);
-            final com.sun.management.ThreadMXBean threadMXBean = (com.sun.management.ThreadMXBean) mxBean;
-            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
-            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
-                threadMXBean.setThreadAllocatedMemoryEnabled(true);
-            }
-
             final FiberRuntime runtime = new FiberRuntime(1);
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
@@ -2453,7 +2443,8 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     engine.getMessageBus(),
                     runtime
             );
-            try {
+            try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
                 for (int i = 0; i < 10_000; i++) {
                     runOrdered(dispatcher, frameSequence, pubSeq, queue, subSeq);
                 }
