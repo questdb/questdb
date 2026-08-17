@@ -12,6 +12,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -90,6 +91,16 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // and writers never race the hashmap's rehash boundary.
     private final ConcurrentHashMap<String, Long> lastTransitionMicros = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ProgressEvent> latestProgress = new ConcurrentHashMap<>();
+    // Runs in close() after the executor drain and BEFORE the bounded boot-thread join, so a
+    // SIGTERM landing during a long-running boot start() (a PITR restore) spends the join budget
+    // unwinding the work instead of waiting it out: without this hook the join burns its full
+    // budget first, because the reverse-topo stop loop that reaches the component's
+    // stop() -> cancel signalling runs only AFTER the join. The enterprise overlay installs a
+    // restore-cancel signaller here. The hook MUST NOT BLOCK: it runs unbounded on the close
+    // thread AHEAD of the bounded join, so the boundedness of close() rests on the hook being a
+    // pure atomic flag write / signal. Resource teardown belongs in stop().
+    @Nullable
+    private volatile Runnable preJoinCancelHook;
     // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
     // a worker-pool halt here: the stop loop frees component resources (e.g. the http dispatcher's
     // native FDSet) dependents-first, and on a boot-failure rollback shared pool workers are still
@@ -169,6 +180,16 @@ public class LifecycleOrchestrator implements QuietCloseable {
                         .$("lifecycle executor did not drain within the close budget; proceeding to the "
                                 + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
                                 + "next closed boundary check)").I$();
+            }
+            // Signal cooperative cancellation to any in-flight boot work BEFORE the bounded join
+            // below, so the join is spent unwinding the work rather than waiting it out.
+            final Runnable cancelHook = preJoinCancelHook;
+            if (cancelHook != null) {
+                try {
+                    cancelHook.run();
+                } catch (Throwable t) {
+                    injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+                }
             }
             // Rendezvous with an in-flight BOOT walk before the stop loop frees engine resources. The
             // boot thread runs each component's start() serially (a PITR restore can hold it for the
@@ -268,6 +289,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return registryByName.get(name);
     }
 
+    /**
+     * Test-only view of the installed pre-join cancel hook; see {@link #setPreJoinCancelHook(Runnable)}.
+     */
+    @TestOnly
+    public Runnable getPreJoinCancelHookForTest() {
+        return preJoinCancelHook;
+    }
+
     public void register(Component component) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only register components before run");
@@ -322,6 +351,19 @@ public class LifecycleOrchestrator implements QuietCloseable {
             }
             throw new LifecycleStartupException("boot-essential component(s) failed");
         }
+    }
+
+    /**
+     * Installs a hook that {@link #close()} runs after the executor drain and BEFORE the bounded
+     * boot-thread join, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay
+     * installs a restore-cancel signaller so a SIGTERM landing during a long PITR restore spends
+     * the join budget unwinding the restore instead of waiting it out. The hook MUST NOT block:
+     * it runs unbounded on the close thread ahead of the bounded join, so the boundedness of
+     * close() rests on the hook being a pure atomic signal. It must not free resources either
+     * (that belongs in the component's stop()).
+     */
+    public void setPreJoinCancelHook(@Nullable Runnable hook) {
+        this.preJoinCancelHook = hook;
     }
 
     /**

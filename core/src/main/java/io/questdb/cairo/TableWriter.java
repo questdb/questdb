@@ -9138,6 +9138,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
+                // A replace commit that removed or trimmed the last partition moves maxTimestamp
+                // back to the new last partition. Re-sync partitionTimestampHi to that partition:
+                // finishO3Commit only re-opens (and thereby re-syncs) a NATIVE last partition, so a
+                // parquet last partition would otherwise leave partitionTimestampHi stale and trip
+                // the partition-timestamp consistency assert at the top of the next processWalCommit.
+                partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getMaxTimestamp());
                 assert partitionTimestampHi != Long.MIN_VALUE;
             } else {
                 LOG.info().$("replace commit truncated the table [table=").$(tableToken).$();

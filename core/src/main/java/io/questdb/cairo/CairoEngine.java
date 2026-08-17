@@ -186,6 +186,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
@@ -806,6 +807,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // already present in the graph keeps its existing state -- buildViewGraphs runs once
                     // at boot before the store has any state.
                     loadMatViewIntoStore(
+                            matViewStateStore,
                             tableToken,
                             path,
                             pathLen,
@@ -1143,18 +1145,52 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Repopulates the live mat-view state store from the view graph and the on-disk {@code _mv}
+     * Repopulates {@code matViewStateStore} from the view graph and the on-disk {@code _mv}
      * state, for every mat-view already present in {@code dependentViewGraph}. Unlike
      * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
      * forces {@code createViewState} for each graph view that has no state yet, so a freshly built
      * store on a role promote ends up populated rather than empty. Idempotent: a view that already
      * has state is re-initialized from disk, not duplicated.
      * <p>
-     * Used by the enterprise role switch: a promote builds a real {@link MatViewStateStore} and then
-     * calls this to hydrate it before writes open, so refresh resumes from the persisted baselines
-     * instead of triggering a full-refresh storm.
+     * Delegates to {@link #hydrateMatViewStateStore(MatViewStateStore)} with the engine field as
+     * target; see that overload for the enterprise role-switch contract.
      */
     public void hydrateMatViewStateStore() {
+        hydrateMatViewStateStore(matViewStateStore);
+    }
+
+    /**
+     * Repopulates {@code target} from the view graph and the on-disk {@code _mv} state, for every
+     * mat-view already present in {@code dependentViewGraph}. Unlike {@link #buildViewGraphs()} (which
+     * only creates state for views not yet in the graph), this forces {@code createViewState} for
+     * each graph view that has no state yet, so a freshly built store on a role promote ends up
+     * populated rather than empty. Idempotent: a view that already has state is re-initialized from
+     * disk, not duplicated.
+     * <p>
+     * Used by the enterprise role switch: a promote hydrates a PRIVATE, not-yet-installed
+     * {@link MatViewStateStore} and installs it into the engine only after hydration completes
+     * and a final closing check passes. Keeping the store private for the whole load means a
+     * close whose rendezvous budget expires mid-hydrate frees only the installed NoOp delegate,
+     * never the store this loop is writing into. The loader still reads engine-owned state
+     * (tableNameRegistry, sequencers), so the enterprise engine additionally quiesces an
+     * in-flight hydration, bounded, before teardown frees those. The per-token isClosing()
+     * poll below is the promptness half of that contract.
+     *
+     * @throws NullPointerException if {@code target} is null. Checked up front rather than left
+     *                              to fail implicitly: with zero views on disk nothing ever
+     *                              dereferences {@code target}, and with any view present the
+     *                              per-view {@code catch (Throwable)} further down would swallow
+     *                              the resulting NPE, so a null target could otherwise look like
+     *                              a silent no-op hydrate.
+     */
+    public void hydrateMatViewStateStore(MatViewStateStore target) {
+        Objects.requireNonNull(target, "target");
+        if (isClosing()) {
+            // Same abort as the per-token poll below, taken BEFORE the first engine-state read
+            // (getTableTokens walks the tableNameRegistry): a close that already won the race
+            // must not see this loader touch registry state at all.
+            throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
+        }
         final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         getTableTokens(tableTokenBucket, false);
         try (
@@ -1167,9 +1203,25 @@ public class CairoEngine implements Closeable, WriterSource {
             final int pathLen = path.size();
             final MatViewStateReader matViewStateReader = new MatViewStateReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                if (isClosing()) {
+                    // SIGTERM/close landed mid-promote hydrate. Abort so the caller can unwind its
+                    // private, not-yet-installed target store: the enterprise close waits, bounded,
+                    // for this loop to exit before freeing engine-owned state (tableNameRegistry,
+                    // sequencers), and on budget expiry it LEAKS its teardown to process exit
+                    // rather than freeing under a wedged loader. The enterprise caller runs this
+                    // loader inside a role-switch critical-section span with two-sided admission
+                    // (the span is counted before the closing flag is checked), so a close cannot
+                    // miss a loader that was already admitted; this poll is the cooperative abort
+                    // that lets close's bounded wait finish promptly instead of expiring.
+                    // signalClose() sets closing before freeOnExit reaches the engine, so it is
+                    // observable here. The poll stays in the loop body, not loadMatViewIntoStore,
+                    // because that method's catch(Throwable) would swallow the abort.
+                    throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
+                }
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     loadMatViewIntoStore(
+                            target,
                             tableToken,
                             path,
                             pathLen,
@@ -2921,7 +2973,18 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code ALTER TABLE ... RESUME WAL}.
      */
     public boolean isWalApplySuspended(TableToken tableToken) {
-        if (tableSequencerAPI.getTxnTracker(tableToken).isHardSuspended()) {
+        return isWalApplySuspended(tableToken, tableSequencerAPI.getTxnTracker(tableToken));
+    }
+
+    /**
+     * Same as {@link #isWalApplySuspended(TableToken)}, but takes an already-resolved tracker so a
+     * caller that has one in hand (e.g. from {@link TableSequencerAPI#getTxnTrackerIfExists}) does
+     * not pay for a second lookup. A {@code null} tracker means none has been installed yet, which
+     * cannot be hard-suspended (hard-suspension is tracked on the tracker itself), so only the
+     * config-list leg still applies.
+     */
+    public boolean isWalApplySuspended(TableToken tableToken, @Nullable SeqTxnTracker tracker) {
+        if (tracker != null && tracker.isHardSuspended()) {
             return true;
         }
         final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
@@ -4159,14 +4222,15 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Loads one mat-view's definition and persisted state into the live mat-view state store.
+     * Loads one mat-view's definition and persisted state into {@code target}.
      * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
-     * {@link #hydrateMatViewStateStore()} (role promote, {@code forceCreateState=true}). When
-     * {@code forceCreateState} is true, a view already present in the graph still has its state
+     * {@link #hydrateMatViewStateStore(MatViewStateStore)} (role promote, {@code forceCreateState=true}).
+     * When {@code forceCreateState} is true, a view already present in the graph still has its state
      * created so a freshly built store on promote is populated; when false, only a brand-new graph
      * entry gets its state created (the boot semantics).
      */
     private void loadMatViewIntoStore(
+            MatViewStateStore target,
             TableToken tableToken,
             Path path,
             int pathLen,
@@ -4189,16 +4253,16 @@ public class CairoEngine implements Closeable, WriterSource {
                         tableToken
                 );
                 if (dependentViewGraph.addView(viewDefinition)) {
-                    matViewStateStore.createViewState(viewDefinition);
+                    target.createViewState(viewDefinition);
                 }
-            } else if (forceCreateState && matViewStateStore.getViewState(tableToken) == null) {
+            } else if (forceCreateState && target.getViewState(tableToken) == null) {
                 // The graph already knows this view but the (freshly built) store has no state for
                 // it yet -- the role-promote rehydration case. Create the state from the graph
                 // definition so the store is populated rather than empty.
-                matViewStateStore.createViewState(viewDefinition);
+                target.createViewState(viewDefinition);
             }
 
-            final MatViewState state = matViewStateStore.getViewState(tableToken);
+            final MatViewState state = target.getViewState(tableToken);
             // Can be null if the state store implementation is no-op.
             // The no-op state store does nothing on view creation and other operations
             // and is used when mat views are disabled.
@@ -4210,7 +4274,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     LOG.info().$("base table for materialized view does not exist [table=").$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
                             .I$();
-                    matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
+                    target.enqueueInvalidate(tableToken, "base table does not exist");
                     return;
                 }
 
@@ -4219,7 +4283,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     LOG.info().$("base table for materialized view is not WAL table [table=").$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
                             .I$();
-                    matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
+                    target.enqueueInvalidate(tableToken, "base table is not WAL table");
                     return;
                 }
 
@@ -4237,7 +4301,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // kickstart on the persisted-state path below; timer/period views are driven by the
                     // timer job and need no incremental kickstart here.
                     if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                        matViewStateStore.enqueueIncrementalRefresh(tableToken);
+                        target.enqueueIncrementalRefresh(tableToken);
                     }
                     return;
                 }
@@ -4254,7 +4318,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
-                    matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
+                    target.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
                 } else if (state.getLastRefreshBaseTxn() > -1 && hasBaseTableTruncateInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)) {
                     // A truncate in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no
                     // data interval, so resuming an incremental refresh would silently advance past it
@@ -4265,10 +4329,10 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
                             .I$();
-                    matViewStateStore.enqueueInvalidate(tableToken, "truncate operation");
+                    target.enqueueInvalidate(tableToken, "truncate operation");
                 } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                     // Kickstart immediate refresh.
-                    matViewStateStore.enqueueIncrementalRefresh(tableToken);
+                    target.enqueueIncrementalRefresh(tableToken);
                 }
             }
         } catch (Throwable th) {
