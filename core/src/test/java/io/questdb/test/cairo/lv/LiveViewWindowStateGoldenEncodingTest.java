@@ -139,9 +139,9 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
      */
     private static final String GOLDEN_MANIFEST_ROW_COUNT_AND_WELFORD =
             "4c56574d" + "00000001" + "00000028" + "00000000" + "00000008" + "00000002"
-                    + "00000001" + "00000001" + "00000008" + "00000008" + "0000001c"
+                    + "00000001" + "00000008" + "00000008" + "0000001c"
                     + "4c564143" + "00000001" + "00000003" + "00000001" + "00000003" + "ffffffff" + "00000000"
-                    + "00000001" + "00000001" + "00000010" + "00000018" + "0000001c"
+                    + "00000001" + "00000010" + "00000018" + "0000001c"
                     + "4c564143" + "00000001" + "00000004" + "00000001" + "00000001" + "00000002" + "0000000a";
     /**
      * The manifest of {@code sum(x) + count(k)} over one window: the shape the fused work
@@ -150,9 +150,9 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
      */
     private static final String GOLDEN_MANIFEST_SUM_AND_KEY_COUNT =
             "4c56574d" + "00000001" + "00000020" + "00000000" + "00000008" + "00000002"
-                    + "00000001" + "00000001" + "00000008" + "00000010" + "0000001c"
+                    + "00000001" + "00000008" + "00000010" + "0000001c"
                     + "4c564143" + "00000001" + "00000001" + "00000001" + "00000001" + "00000002" + "0000000a"
-                    + "00000001" + "00000001" + "00000018" + "00000008" + "0000001c"
+                    + "00000001" + "00000018" + "00000008" + "0000001c"
                     + "4c564143" + "00000001" + "00000002" + "00000001" + "00000002" + "00000001" + "0000000c";
     /**
      * The manifest of {@code sum(x) + avg(x) + count(x)} over one window: one component,
@@ -161,7 +161,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
      */
     private static final String GOLDEN_MANIFEST_SUM_AVG_COUNT =
             "4c56574d" + "00000001" + "00000018" + "00000000" + "00000008" + "00000001"
-                    + "00000001" + "00000001" + "00000008" + "00000010" + "0000001c"
+                    + "00000001" + "00000008" + "00000010" + "0000001c"
                     + "4c564143" + "00000001" + "00000001" + "00000001" + "00000001" + "00000002" + "0000000a";
     /**
      * {@code max(x)} over the DOUBLE column of {@code gold}, at base index 2. It reads its

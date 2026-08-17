@@ -64,29 +64,21 @@ import java.util.Arrays;
  *   anchorStateLength: INT
  *   componentCount: INT
  *   per component, in the plan's canonical order:
- *     storageKind: INT
  *     codecVersion: INT
  *     stateOffset: INT
  *     stateLength: INT
  *     identityLength: INT
  *     identity: identityLength bytes
  * </pre>
+ * A component carries no storage-kind discriminator. Every component this format
+ * admits inlines into the leaf's scalar slot - {@code readWindowState} rejects a fused
+ * entry that references a state page at all - so a per-component kind field would have
+ * one writable value and no reader. A later format that grows a second storage kind
+ * adds the field under {@link #FORMAT_VERSION} 2, which is cheaper than carrying four
+ * dead bytes per component through every root until then.
  */
 public final class LiveViewWindowStateManifest {
     public static final int FORMAT_VERSION = 1;
-    /**
-     * The component's state lives in the partition-map leaf's scalar slot. The only
-     * storage kind the first fused release writes.
-     */
-    public static final int STORAGE_KIND_INLINE = 1;
-    /**
-     * Reserved for the combined overflow state page a later format may add for a group
-     * that cannot fit the inline budget. {@link #encode} writes a storage kind per
-     * component, so this reserves the value 2 in that field against a later writer
-     * reusing it for something else. Nothing reads it back today: the manifest is
-     * produced and byte-compared, never decoded.
-     */
-    public static final int STORAGE_KIND_PAGE = 2;
     private static final int MAGIC = 0x4c56574d; // LVWM
     private final int anchorStateLength;
     private final int anchorStateOffset;
@@ -169,7 +161,7 @@ public final class LiveViewWindowStateManifest {
     private byte[] encode(ObjList<LiveViewAccumulatorDescriptor> components, IntList componentOffsets) {
         int size = 6 * Integer.BYTES;
         for (int i = 0; i < componentCount; i++) {
-            size += 5 * Integer.BYTES + components.getQuick(i).getEncoded().length;
+            size += 4 * Integer.BYTES + components.getQuick(i).getEncoded().length;
         }
         final ByteBuffer buffer = ByteBuffer.allocate(size);
         buffer.putInt(MAGIC);
@@ -181,7 +173,6 @@ public final class LiveViewWindowStateManifest {
         for (int i = 0; i < componentCount; i++) {
             final LiveViewAccumulatorDescriptor component = components.getQuick(i);
             final byte[] identity = component.getEncoded();
-            buffer.putInt(STORAGE_KIND_INLINE);
             buffer.putInt(component.getCodecVersion());
             buffer.putInt(componentOffsets.getQuick(i));
             buffer.putInt(component.getStateLength());

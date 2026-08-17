@@ -677,8 +677,8 @@ public final class LiveViewWindowStatePlan {
          * A group that overflows therefore degrades rather than falling off a cliff: declining
          * whole would put every function back on a root of its own, which costs a slower seal
          * and twice the metadata segments per seal. Keeping the part that fits keeps most of
-         * the win, and the components left out are exactly the ones that would have needed a
-         * storage kind the leaf does not have.
+         * the win, and the components left out are exactly the ones that would have needed an
+         * overflow page beside the leaf, which a fused entry must not reference.
          * <p>
          * The prefix is taken in canonical identity order, which is the order the layout is
          * assigned in, so the answer does not depend on the SELECT list. It is a prefix rather
