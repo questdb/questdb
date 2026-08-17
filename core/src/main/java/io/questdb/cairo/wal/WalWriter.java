@@ -687,23 +687,30 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             dropPendingDurable();
             return;
         }
-        if (isInColumnarWrite()) {
-            columnarAppender.cancelColumnarWrite();
-        }
-        // Deferred 2 (group commit): flush any pending device flush so a CLEAN handoff (pool return / close)
-        // is durable — the next acquirer and any durable-ack consumer must see the frontier on disk. A flush
-        // failure here is a genuine durability fault: mark distressed (which expels rather than pools the
-        // writer) and rethrow, rather than silently pooling a writer whose acked-as-handed-off tail is not
-        // on disk. Use dropPendingDurable() after distressing to clear pending + deregister under the monitor
-        // before doClose can close any fd.
         try {
+            if (isInColumnarWrite()) {
+                columnarAppender.cancelColumnarWrite();
+            }
+            // Deferred 2 (group commit): flush any pending device flush so a CLEAN handoff (pool return /
+            // close) is durable — the next acquirer and any durable-ack consumer must see the frontier on
+            // disk. Before rollback0(), which only rewinds UNCOMMITTED rows: the frontier being flushed
+            // here is already committed, so the two are independent and this order keeps the durability
+            // work ahead of the rewind.
             flushPendingDurable();
+            rollback0();
         } catch (Throwable th) {
+            // Latch so the expel path's second close attempt short-circuits on
+            // the distressed check above instead of retrying the failed IO and
+            // replacing the original exception. rollback0() already latches
+            // its own failures; this extends the same guarantee to the
+            // columnar cancel.
             distressed = true;
+            // A flush failure here is a genuine durability fault, and distressing alone is not enough:
+            // clear pending AND deregister under the writer monitor BEFORE doClose can close any fd, or a
+            // background flusher holding this writer reference could fdatasync a closed fd.
             dropPendingDurable();
             throw th;
         }
-        rollback0();
     }
 
     private void rollback0() {

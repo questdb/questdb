@@ -43,6 +43,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
@@ -302,6 +303,18 @@ public class TableSequencerAPI implements QuietCloseable {
         final int effective = io.questdb.cairo.CommitMode.effectiveCommitMode(tableMode, configuration.getCommitMode());
         tracker.setCommitMode(effective);
         return effective;
+    }
+
+    /**
+     * Non-creating counterpart to {@link #getTxnTracker(TableToken)}: returns the tracker only if
+     * one has already been installed, and never allocates or installs one on a miss. A caller that
+     * only needs to inspect suspension state, and for which "no tracker yet" means "never
+     * suspended", should prefer this on a hot read path (e.g. a metrics scrape) over the creating
+     * accessor.
+     */
+    @Nullable
+    public SeqTxnTracker getTxnTrackerIfExists(TableToken tableToken) {
+        return seqTxnTrackers.get(tableToken.getDirName());
     }
 
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {

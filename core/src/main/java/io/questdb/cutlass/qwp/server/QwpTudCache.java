@@ -39,6 +39,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.SymbolCache;
@@ -77,6 +78,17 @@ public class QwpTudCache implements QuietCloseable {
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
+    private volatile int cachedTableCount;
+    // Optional callback mirroring commitAll(consumer)'s: invoked after a
+    // successful salvage commit (see salvageBufferedRows), which bypasses
+    // commitAll/commitIfMaxUncommittedRowsReached. Set by
+    // QwpIngressProcessorState so its durable-ack bookkeeping sees the
+    // salvaged txn; UDP receivers leave it null (no ack channel to update).
+    // NOTE: salvage is not the only commit path without a consumer hook --
+    // QwpWalAppender's internal threshold commit (appendToWalColumnar ->
+    // tud.commitIfMaxUncommittedRowsCountReached()) also advances lastSeqTxn
+    // without notifying anyone; see issue #7482.
+    private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
     private Path path;
@@ -148,9 +160,24 @@ public class QwpTudCache implements QuietCloseable {
             for (int i = 0, n = keys.size(); i < n; i++) {
                 Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                Misc.free(tud);
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // Freeing a discarded writer still closes it, rolling back
+                    // its buffered rows through real file IO that can fail on
+                    // ENOSPC/EIO. Swallow so the loop frees the remaining
+                    // entries and the map/flag/count reset below still runs.
+                    // An escape here would wedge the cache -- entries kept,
+                    // isDistressed latched true, cachedTableCount stale -- and
+                    // abort the per-message finally that routes a distressed
+                    // commit into clear(). Mirrors reset(); the commit loops
+                    // rely on this branch to absorb their own free failures.
+                    LOG.error().$("could not close discarded writer [table=").$(tableName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
             }
             tableUpdateDetails.clear();
+            cachedTableCount = 0;
             isDistressed = false;
         }
     }
@@ -159,9 +186,20 @@ public class QwpTudCache implements QuietCloseable {
     public void close() {
         reset();
         tableUpdateDetails.clear();
-        ddlMem = Misc.free(ddlMem);
-        path = Misc.free(path);
-        symbolCachePool = Misc.free(symbolCachePool);
+        cachedTableCount = 0;
+        // Thread the frees so one failing close cannot skip the rest; the
+        // first failure carries the later ones as suppressed and rethrows
+        // at the end.
+        final var ddlMemToFree = ddlMem;
+        ddlMem = null;
+        Throwable cleanupFailure = Misc.freeBestEffort(null, ddlMemToFree);
+        final var pathToFree = path;
+        path = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pathToFree);
+        final var symbolCachePoolToFree = symbolCachePool;
+        symbolCachePool = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, symbolCachePoolToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -180,41 +218,59 @@ public class QwpTudCache implements QuietCloseable {
      * to record which client messages still need an object-store upload.
      */
     public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped()) {
-                        final boolean willAdvance = consumer != null && !tud.isFirstRow();
-                        tud.commit(false);
-                        if (willAdvance && !tud.isDropped()) {
-                            consumer.accept(
-                                    tud.getTableToken().getTableName(),
-                                    tud.getTableToken().getDirName(),
-                                    tud.getLastSeqTxn()
-                            );
-                        }
-                    }
-                } catch (CommitFailedException e) {
-                    if (!e.isTableDropped()) {
-                        throw e.getReason();
-                    } else {
-                        tud.setIsDropped();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        Utf8Sequence discardedTableName = null;
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            // Capture before the commit: a table-dropped commit fails without
+            // committing, and freeing a commitOnClose=false TUD below rolls its
+            // buffered rows back, so we must remember whether rows are about to
+            // be discarded.
+            final boolean hadBufferedRows = !tud.isFirstRow();
+            try {
+                if (!tud.isDropped()) {
+                    final boolean willAdvance = consumer != null && hadBufferedRows;
+                    tud.commit(false);
+                    if (willAdvance && !tud.isDropped()) {
+                        consumer.accept(
+                                tud.getTableToken().getTableName(),
+                                tud.getTableToken().getDirName(),
+                                tud.getLastSeqTxn()
+                        );
                     }
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
+            } catch (CommitFailedException e) {
+                if (!e.isTableDropped()) {
+                    throw e.getReason();
                 }
+                tud.setIsDropped();
             }
-        } while (droppedTableFound);
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
+                cachedTableCount = tableUpdateDetails.size();
+                // The free below rolls back this dropped table's buffered rows.
+                // On the QWP deferred-ack path the caller must NOT clear its
+                // uncommitted-deferred-rows clamp, or the cumulative durable-ack
+                // would cover the discarded rows (a phantom ack -> silent data
+                // loss). Propagate after the loop so the client replays the
+                // group (at-least-once) rather than losing the rows; any other
+                // tables committed above stay durable and are simply re-sent.
+                if (hadBufferedRows && discardedTableName == null) {
+                    discardedTableName = tableName;
+                }
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
+        if (discardedTableName != null) {
+            throw CairoException.nonCritical()
+                    .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                    .put(discardedTableName);
+        }
     }
 
     /**
@@ -238,41 +294,56 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped() && !tud.isFirstRow()) {
-                        final long seqTxnBefore = tud.getLastSeqTxn();
-                        tud.commitIfMaxUncommittedRowsCountReached();
-                        if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
-                            consumer.accept(
-                                    tud.getTableToken().getTableName(),
-                                    tud.getTableToken().getDirName(),
-                                    tud.getLastSeqTxn()
-                            );
-                        }
-                    }
-                } catch (CommitFailedException e) {
-                    if (!e.isTableDropped()) {
-                        throw e.getReason();
-                    } else {
-                        tud.setIsDropped();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        Utf8Sequence discardedTableName = null;
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            // Capture before the forced commit: a table-dropped commit fails
+            // without committing, and freeing the TUD below rolls its buffered
+            // rows back, so we must remember whether rows are about to be
+            // discarded.
+            final boolean hadBufferedRows = !tud.isFirstRow();
+            try {
+                if (!tud.isDropped() && hadBufferedRows) {
+                    final long seqTxnBefore = tud.getLastSeqTxn();
+                    tud.commitIfMaxUncommittedRowsCountReached();
+                    if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
+                        consumer.accept(
+                                tud.getTableToken().getTableName(),
+                                tud.getTableToken().getDirName(),
+                                tud.getLastSeqTxn()
+                        );
                     }
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
+            } catch (CommitFailedException e) {
+                if (!e.isTableDropped()) {
+                    throw e.getReason();
                 }
+                tud.setIsDropped();
             }
-        } while (droppedTableFound);
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
+                cachedTableCount = tableUpdateDetails.size();
+                // See commitAll: a mid-group forced commit that discards a
+                // dropped table's buffered rows must not let the deferred-ack
+                // clamp release, or the group-closing commit would phantom-ack
+                // the discarded rows. Propagate so the client replays.
+                if (hadBufferedRows && discardedTableName == null) {
+                    discardedTableName = tableName;
+                }
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
+        if (discardedTableName != null) {
+            throw CairoException.nonCritical()
+                    .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                    .put(discardedTableName);
+        }
     }
 
     /**
@@ -282,72 +353,156 @@ public class QwpTudCache implements QuietCloseable {
      * (e.g. UDP receivers) where there is no client to report the error to.
      */
     public void commitAllBestEffort() {
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped()) {
-                        tud.commit(false);
-                    }
-                } catch (CommitFailedException e) {
-                    if (e.isTableDropped()) {
-                        tud.setIsDropped();
-                    } else {
-                        LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
-                    }
-                } catch (Throwable t) {
-                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            try {
+                if (!tud.isDropped()) {
+                    tud.commit(false);
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
+            } catch (CommitFailedException e) {
+                if (e.isTableDropped()) {
+                    tud.setIsDropped();
+                } else {
+                    tud.setWriterInError();
+                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
                 }
+            } catch (Throwable t) {
+                tud.setWriterInError();
+                LOG.error().$("commit error [table=").$(tableName).$(", e=").$safe(t.getMessage()).I$();
             }
-        } while (droppedTableFound);
+
+            // A DROP is detected the moment the name registry marks the token
+            // dropped (getTableTokenByDirName returns null before any physical
+            // dir purge). This also covers the zero-row dropped-table case,
+            // where commit() short-circuits and throws nothing, and a distressed
+            // writer that throws a plain CairoException after DROP; without it
+            // the loop would retry and log the same table forever. This is a
+            // fire-and-forget path (no ack), so no rows are silently acknowledged.
+            //
+            // A writer whose commit failed for any other reason is evicted as
+            // well: retrying generally cannot succeed for a distressed or
+            // out-of-date writer, and this fire-and-forget path has no client
+            // to report to -- the next datagram rebuilds a fresh entry.
+            //
+            // That includes the one TRANSIENT failure, a role-derived
+            // read-only refusal (TableUpdateDetails.commit() throws
+            // readOnlyAccess() before marking the writer in error), and the
+            // eviction there is deliberate, not collateral: ENT quiesces this
+            // whole loop on demote (switchRole publishes acceptOpen=false
+            // before runSerially's commit check), so the refusal can only fire
+            // in the narrow flip window -- at most one tick, discarding at
+            // most one commit window's rows, within the UDP no-ack contract.
+            // Retaining the entry instead would keep an already-acquired
+            // writer absorbing rows on a node whose getWalWriter fence (ENT
+            // refuses acquisition while read-only) exists precisely to block
+            // client writes there -- and would inject those rows on a later
+            // promote. The WS path answers this same refusal by severing the
+            // connection (rejectCairoError -> roleChangeClosePending);
+            // eviction is this ack-less path's analog of that close.
+            if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
+                tud.setIsDropped();
+            }
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
+                cachedTableCount = tableUpdateDetails.size();
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // Closing the evicted writer rolls back its buffered rows --
+                    // real file IO that can fail on ENOSPC/EIO. The entry is
+                    // already out of the map; swallowing keeps this best-effort
+                    // loop alive for the remaining tables and keeps close()
+                    // releasing the rest of the cache.
+                    LOG.error().$("could not close evicted writer [table=").$(tableName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
+            } else {
+                i++;
+            }
+        }
     }
 
     public long commitWalTables(long wallClockMillis) {
         long minTableNextCommitTime = Long.MAX_VALUE;
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped()) {
-                        long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
-                        wallClockMillis = tud.getMillisecondClock().getTicks();
-                        if (tableNextCommitTime < minTableNextCommitTime) {
-                            minTableNextCommitTime = tableNextCommitTime;
-                        }
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            try {
+                if (!tud.isDropped()) {
+                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
+                    wallClockMillis = tud.getMillisecondClock().getTicks();
+                    if (tableNextCommitTime < minTableNextCommitTime) {
+                        minTableNextCommitTime = tableNextCommitTime;
                     }
-                } catch (CommitFailedException e) {
-                    if (e.isTableDropped()) {
-                        tud.setIsDropped();
-                    } else {
-                        LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
-                    }
-                } catch (Throwable t) {
-                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
+            } catch (CommitFailedException e) {
+                if (e.isTableDropped()) {
+                    tud.setIsDropped();
+                } else {
+                    tud.setWriterInError();
+                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
                 }
+            } catch (Throwable t) {
+                tud.setWriterInError();
+                LOG.error().$("commit error [table=").$(tableName).$(", e=").$safe(t.getMessage()).I$();
             }
-        } while (droppedTableFound);
+
+            // A DROP is detected the moment the name registry marks the token
+            // dropped (getTableTokenByDirName returns null before any physical
+            // dir purge). This also covers the zero-row dropped-table case,
+            // where commit() short-circuits and throws nothing, and a distressed
+            // writer that throws a plain CairoException after DROP; without it
+            // the loop would retry and log the same table forever. This is a
+            // fire-and-forget path (no ack), so no rows are silently acknowledged.
+            //
+            // A writer whose commit failed for any other reason is evicted as
+            // well: retrying generally cannot succeed for a distressed or
+            // out-of-date writer, and this fire-and-forget path has no client
+            // to report to -- the next datagram rebuilds a fresh entry.
+            //
+            // That includes the one TRANSIENT failure, a role-derived
+            // read-only refusal (TableUpdateDetails.commit() throws
+            // readOnlyAccess() before marking the writer in error), and the
+            // eviction there is deliberate, not collateral: ENT quiesces this
+            // whole loop on demote (switchRole publishes acceptOpen=false
+            // before runSerially's commit check), so the refusal can only fire
+            // in the narrow flip window -- at most one tick, discarding at
+            // most one commit window's rows, within the UDP no-ack contract.
+            // Retaining the entry instead would keep an already-acquired
+            // writer absorbing rows on a node whose getWalWriter fence (ENT
+            // refuses acquisition while read-only) exists precisely to block
+            // client writes there -- and would inject those rows on a later
+            // promote. The WS path answers this same refusal by severing the
+            // connection (rejectCairoError -> roleChangeClosePending);
+            // eviction is this ack-less path's analog of that close.
+            if (!tud.isDropped() && (tud.isWriterInError() || isTableTokenStale(tud))) {
+                tud.setIsDropped();
+            }
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
+                cachedTableCount = tableUpdateDetails.size();
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // Closing the evicted writer rolls back its buffered rows --
+                    // real file IO that can fail on ENOSPC/EIO. The entry is
+                    // already out of the map; swallowing keeps this best-effort
+                    // loop alive for the remaining tables and keeps close()
+                    // releasing the rest of the cache.
+                    LOG.error().$("could not close evicted writer [table=").$(tableName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
+            } else {
+                i++;
+            }
+        }
         return minTableNextCommitTime;
     }
 
@@ -360,7 +515,32 @@ public class QwpTudCache implements QuietCloseable {
     ) {
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
-            return tableUpdateDetails.valueAt(key);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
+            if (!isTableTokenStale(tud)) {
+                try {
+                    applyPendingStructureChanges(tud);
+                } catch (Throwable th) {
+                    // Two ways to get here. (1) goActive() failed: the writer is
+                    // distressed (the flag never clears) while the table is alive,
+                    // so no staleness check would ever evict this entry and the
+                    // table would be wedged on this receiver until restart.
+                    // (2) goActive() replayed a concurrent RENAME (see
+                    // applyPendingStructureChanges): buffered rows are already
+                    // salvaged and the entry must not serve another lookup under
+                    // the old name. Either way: evict and free the entry --
+                    // rolling back any still-uncommitted rows -- and rethrow so
+                    // the QWP layer refuses the frame (the deferred-ack clamp
+                    // holds; the client replays). The next lookup acquires a
+                    // fresh writer from the pool.
+                    tableUpdateDetails.removeAt(key);
+                    cachedTableCount = tableUpdateDetails.size();
+                    Misc.free(tud, th);
+                    throw th;
+                }
+                return tud;
+            }
+            evictStaleTud(key, tableNameUtf8, tud);
+            key = tableUpdateDetails.keyIndex(tableNameUtf8);
         }
 
         if (tableUpdateDetails.size() >= maxTables) {
@@ -400,9 +580,14 @@ public class QwpTudCache implements QuietCloseable {
                     maxUncommittedRows
             );
             tableUpdateDetails.putAt(key, tableNameCopy, tud);
+            cachedTableCount = tableUpdateDetails.size();
             return tud;
         } catch (Throwable th) {
-            Misc.free(tud != null ? tud : walWriter);
+            // Fold a close-IO failure (rollback-on-close can hit ENOSPC/EIO)
+            // into the primary as suppressed instead of masking it -- matches
+            // the sibling free on the applyPendingStructureChanges failure path
+            // above.
+            Misc.free(tud != null ? tud : walWriter, th);
             throw th;
         }
     }
@@ -412,13 +597,40 @@ public class QwpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            Misc.free(tud);
+            try {
+                Misc.free(tud);
+            } catch (Throwable th) {
+                // Closing a discarded writer rolls back its buffered rows --
+                // real file IO that can fail on ENOSPC/EIO. Swallowing keeps
+                // this loop freeing the remaining entries and keeps reset()
+                // throw-free for both callers: close() and
+                // QwpIngressProcessorState.onDisconnected().
+                LOG.error().$("could not close discarded writer [table=").$(tableName)
+                        .$(", e=").$safe(th.getMessage()).I$();
+            }
         }
         tableUpdateDetails.clear();
+        cachedTableCount = 0;
+    }
+
+    /**
+     * Registers the callback invoked after a successful salvage commit in
+     * {@link #salvageBufferedRows}, called from both {@link #evictStaleTud}
+     * and {@link #applyPendingStructureChanges}. See {@link #committedTxnConsumer}.
+     */
+    public void setCommittedTxnConsumer(CommittedTxnConsumer consumer) {
+        this.committedTxnConsumer = consumer;
     }
 
     public void setDistressed() {
         this.isDistressed = true;
+    }
+
+    /**
+     * Number of tables currently held in the cache.
+     */
+    public int size() {
+        return cachedTableCount;
     }
 
     /**
@@ -437,6 +649,160 @@ public class QwpTudCache implements QuietCloseable {
             return typeCode == QwpConstants.TYPE_TIMESTAMP || typeCode == QwpConstants.TYPE_TIMESTAMP_NANOS;
         }
         return TableUtils.isValidColumnName(columnName, maxFileNameLength);
+    }
+
+    /**
+     * Bring a cached table's writer up to date with structure changes committed
+     * since it was last refreshed.
+     * <p>
+     * Nothing else on this path does. {@link #isTableTokenStale} only notices a
+     * change of table IDENTITY -- a DROP mints a new {@link TableToken} -- while
+     * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} keeps the token and merely
+     * bumps the metadata version. The cached writer therefore kept the column's
+     * old type indefinitely, and rows of the new type were converted against it:
+     * refused on QWP/WebSocket, and silently dropped on QWP/UDP, which has no
+     * ack channel to refuse through. The UDP receiver makes that unbounded --
+     * it holds ONE cache for every sender, with no reconnect to heal it.
+     * <p>
+     * Gated on the sequencer's transaction counter. The counter advances on
+     * EVERY committed txn -- structure changes, other writers' data commits,
+     * and this entry's own commits -- so the gate does not mean "a structure
+     * change happened": on the per-frame WS commit path the previous frame's
+     * own commit reopens it, and goActive() runs about once per frame. What
+     * the gate does avoid is replaying the change log more than once within
+     * one commit batch, and any replay at all on idle tables. An up-to-date
+     * goActive() is cheap: when the writer's structure version is current the
+     * sequencer answers with EmptyOperationCursor, no IO -- but it still
+     * costs a sequencer acquire/release per open gate.
+     * <p>
+     * Any failure here -- a table dropped concurrently, or a transient I/O error
+     * reading the change log -- makes {@code goActive} throw and leaves the
+     * writer permanently distressed. The gate is advanced only after a
+     * successful call, so a failed replay is retried by the next lookup rather
+     * than latched as done; the caller evicts and frees this entry on failure
+     * and rethrows, refusing the frame rather than acknowledging it -- the safe
+     * direction. Relying on {@link #isTableTokenStale} alone would not do: a
+     * transient failure leaves the table alive, so the token never goes stale
+     * and the entry would stay wedged in the cache with a distressed writer.
+     * <p>
+     * A renamed table's writer is deliberately left untouched: the change log
+     * carries the RENAME TABLE entry, and replaying it here would rebind the
+     * writer's token and defeat the sequencer's token-mismatch check, silently
+     * committing rows keyed by the old name into the renamed table. See the
+     * directory-name guard below.
+     * When the rename lands concurrently with the lookup -- the registry not
+     * yet updated when the guard reads it -- the replay does rebind the
+     * writer; the token comparison around goActive() below catches exactly
+     * that case, salvages and refuses. See the in-method comment.
+     */
+    private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
+        if (!(tud.getWriter() instanceof WalWriter walWriter)) {
+            return;
+        }
+        final TableToken cachedToken = tud.getTableToken();
+        // Never bring a renamed table's writer up to date here: the change log
+        // contains the RENAME TABLE entry, and replaying it rebinds the writer's
+        // token -- defeating the sequencer's token-mismatch check and silently
+        // committing rows keyed by the OLD name into the renamed table. Leaving
+        // the writer as-is preserves the loud commit-time
+        // TableReferenceOutOfDateException.
+        if (engine.getTableTokenByDirName(cachedToken.getDirName()) != cachedToken) {
+            return;
+        }
+        final long seqTxn = engine.getTableSequencerAPI()
+                .getTxnTracker(cachedToken)
+                .getSeqTxn();
+        if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
+            return;
+        }
+        final TableToken tokenBeforeReplay = walWriter.getTableToken();
+        walWriter.goActive();
+        if (walWriter.getTableToken() != tokenBeforeReplay) {
+            // goActive() replayed a RENAME that the registry guard above could
+            // not see yet: CairoEngine.rename() publishes the sequencer txn
+            // BEFORE it updates the name registry, and this lookup ran inside
+            // that window. The writer is now bound to the renamed table;
+            // letting the lookup proceed would silently commit rows keyed by
+            // the OLD name into it, with OK acks, for the life of the
+            // connection. Salvage the buffered rows -- they belong to this
+            // same physical table -- then throw: the caller evicts the entry
+            // and refuses the frame, and the client's retry lands after the
+            // registry has caught up. Rebuilding within this lookup instead
+            // would re-acquire a writer that rebinds the same way. On the WS
+            // deferred-ack path the salvaged rows' frames were never acked
+            // before this throw, so the client's replay re-delivers them into
+            // whatever the old name resolves to after the rename -- duplicate
+            // delivery across tables, consistent with commitAll's
+            // partial-commit replay posture.
+            salvageBufferedRows(tud, walWriter);
+            throw CairoException.nonCritical()
+                    .put("table is being renamed, cannot ingest [table=")
+                    .put(tokenBeforeReplay.getTableName())
+                    .put(']');
+        }
+        // Only a successful replay advances the gate: a failure must be retried
+        // by the next lookup, not latched as done.
+        tud.setLastStructureCheckSeqTxn(seqTxn);
+    }
+
+    // Evicts a stale cached entry (see isTableTokenStale): either the table was
+    // DROPped -- its token resolves by neither name nor directory -- or it was
+    // RENAMEd and the old name was reused by a new table. A pure rename that
+    // does NOT reuse the old name is not stale and never reaches here from the
+    // lookup path -- its entry stays cached and every commit through it fails
+    // loudly with TableReferenceOutOfDateException; on the UDP fire-and-forget
+    // loops that failure latches writerInError, which evicts the entry in the
+    // same commit pass. A dropped table's rows cannot be re-homed and are
+    // discarded; a renamed table's rows are salvaged below instead.
+    private void evictStaleTud(int key, Utf8Sequence tableNameUtf8, WalTableUpdateDetails tud) {
+        final boolean hadBufferedRows = !tud.isFirstRow();
+        final boolean isRenamed = engine.getTableTokenByDirName(tud.getTableToken().getDirName()) != null;
+        boolean isSalvaged = false;
+        if (hadBufferedRows && isRenamed && tud.getWriter() instanceof WalWriter walWriter) {
+            // The writer's table is alive under a new name, so its buffered rows
+            // are salvageable. goActive() replays the rename into the writer --
+            // rebinding its token -- after which the sequencer accepts the commit
+            // and the rows land in the renamed table: the same table identity
+            // that accepted them. The entry is evicted right after, so the healed
+            // token can never serve another lookup under the old name.
+            try {
+                walWriter.goActive();
+                isSalvaged = salvageBufferedRows(tud, walWriter);
+            } catch (Throwable th) {
+                LOG.error().$("could not salvage buffered rows of a renamed table [table=")
+                        .$(tableNameUtf8).$(", e=").$safe(th.getMessage()).I$();
+            }
+        }
+        tableUpdateDetails.removeAt(key);
+        cachedTableCount = tableUpdateDetails.size();
+        try {
+            // Freeing a commitOnClose=false TUD rolls back whatever is still
+            // uncommitted -- real file IO that can fail on ENOSPC/EIO.
+            Misc.free(tud);
+        } catch (Throwable th) {
+            // Neither branch below may let that failure escape. After a
+            // successful salvage the rows are already committed and durable, so
+            // an escape would turn a success into a frame refusal and the
+            // client would replay rows the renamed table already holds --
+            // duplicate data. In the discard branch the throw below is the more
+            // informative one: it names the table and the reason the rows went
+            // away, where a raw IO error refuses the frame just the same but
+            // tells the operator nothing. Either way the writer is already out
+            // of the map and discarded, and the condition that broke this close
+            // resurfaces on the next commit through the fresh writer, which does
+            // propagate. This log keeps the IO detail.
+            LOG.error().$("could not close evicted stale writer [table=").$(tableNameUtf8)
+                    .$(", e=").$safe(th.getMessage()).I$();
+        }
+        // Rows the eviction could not re-home are gone: refuse so the QWP layer
+        // rejects instead of acknowledging them; the UDP receiver has no ack and
+        // simply drops the datagram.
+        if (hadBufferedRows && !isSalvaged) {
+            throw CairoException.nonCritical()
+                    .put(isRenamed ? "renamed" : "dropped")
+                    .put(" table discarded buffered rows, cannot acknowledge: ")
+                    .put(tableNameUtf8);
+        }
     }
 
     private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,
@@ -499,6 +865,72 @@ public class QwpTudCache implements QuietCloseable {
                     .put(']');
         }
         return tableToken;
+    }
+
+    private boolean isTableTokenStale(WalTableUpdateDetails tud) {
+        final TableToken cachedToken = tud.getTableToken();
+        final TableToken byName = engine.getTableTokenIfExists(cachedToken.getTableName());
+        if (byName == cachedToken) {
+            return false;
+        }
+        // The cached name no longer resolves to the cached table. Either the
+        // table was dropped -- its directory no longer resolves either -- or
+        // another live table took the name after a rename (byName is a
+        // different, live token). A pure rename whose old name is NOT re-used
+        // resolves the directory but not the name, and is deliberately not
+        // stale: on the lookup path the entry stays cached and commits keep
+        // failing with TableReferenceOutOfDateException, exactly as on master.
+        // The UDP commit loops additionally evict such an entry once a failed
+        // commit latches writerInError -- a deliberate change from master,
+        // which retried the wedged entry forever.
+        return byName != null || engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
+    }
+
+    /**
+     * Commits a stale entry's buffered rows through its writer AFTER
+     * {@code goActive()} replayed a RENAME into it -- the rows land in the
+     * renamed table: the same physical table that accepted them. Rebinds the
+     * TUD's token to the writer's first, so the commit's insert authorization
+     * names the table the rows actually land in, not the old name (which on
+     * the evictStaleTud path already belongs to a different table). Notifies
+     * {@link #committedTxnConsumer} because this commit bypasses
+     * commitAll/commitIfMaxUncommittedRowsReached, so durable-ack bookkeeping
+     * would otherwise never learn about the txn.
+     * <p>
+     * No-ops (returns false, no rebind, no commit, no notify) when the entry
+     * has no buffered rows: the normal inter-batch state on the WS path, which
+     * commits after every batch. Without this guard, {@code tud.commit(false)}
+     * short-circuits on zero uncommitted rows without advancing the sequencer,
+     * yet the caller would still notify {@link #committedTxnConsumer} with the
+     * seqTxn of an earlier, already-acked commit -- keyed under the RENAMED
+     * table's name instead. That plants a phantom per-table watermark and
+     * makes durable-ack gating wait on a table the client never wrote to.
+     *
+     * @return true when the rows were committed; false when there was nothing
+     * to salvage, or the commit failed (the caller frees the entry, rolling
+     * back whatever remains uncommitted)
+     */
+    private boolean salvageBufferedRows(WalTableUpdateDetails tud, WalWriter walWriter) {
+        if (tud.isFirstRow()) {
+            return false;
+        }
+        try {
+            tud.updateTableToken(walWriter.getTableToken());
+            tud.commit(false);
+        } catch (Throwable th) {
+            LOG.error().$("could not salvage-commit buffered rows of a renamed table [table=")
+                    .$safe(walWriter.getTableToken().getTableName())
+                    .$(", e=").$safe(th.getMessage()).I$();
+            return false;
+        }
+        if (committedTxnConsumer != null) {
+            committedTxnConsumer.accept(
+                    walWriter.getTableToken().getTableName(),
+                    walWriter.getTableToken().getDirName(),
+                    tud.getLastSeqTxn()
+            );
+        }
+        return true;
     }
 
     /**
