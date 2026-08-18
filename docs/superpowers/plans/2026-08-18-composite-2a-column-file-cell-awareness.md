@@ -136,12 +136,17 @@ The blocker is not the two path resolutions; it is that the async path persists 
 with `CREATE TABLE IF NOT EXISTS` and **no migration path**. Appending a cellKey column would leave a
 newer build reading index 11 on a pre-existing table that will never have it.
 
-Recommendation on file: route composite column-file cleanup through the **cell-aware partition purge**
-(`partitionRemoveCandidates` already carries `(timestamp, nameTxn, cellKey)` and already defers
-removal until readers release), avoiding the persisted schema entirely. **What must be proven first:**
-that a column file's reader-visibility constraint is the same as its partition's. If those lifetimes
-differ, that route is wrong and the schema migration is the only correct option — a cost to accept
-deliberately, not discover.
+**The equivalence was proven false on 2026-08-18, which kills that recommendation.** Column purge keys
+on `isRangeAvailable(columnVersion + 1, updateTxn)` — the COLUMN's version and the txn that superseded
+it — while partition purge keys on PARTITION nameTxn. An `UPDATE` supersedes a column WITHOUT changing
+the partition's nameTxn, so a pinned reader can still need the old column file while the partition is
+current. Routing column cleanup through the partition purge would delete files a live reader needs:
+strictly worse than the leak.
+
+So the route is (a): add a cellKey column to `sys.column_versions_purge_log` and make the positional
+reads tolerate its absence on a pre-existing table. That is a migration for a `BYPASS WAL` system
+table shared with plain tables, and should be planned as its own piece of work rather than folded into
+a column-DDL task.
 
 - [ ] **Step 3: Fix the reached site(s) per that decision**
 
