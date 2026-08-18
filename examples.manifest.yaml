@@ -10,13 +10,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
+        <version>9.4.3</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    implementation 'org.questdb:questdb:9.4.3'
     ```
 - name: ilp-http-auth
   lang: java
@@ -30,13 +30,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
+        <version>9.4.3</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    implementation 'org.questdb:questdb:9.4.3'
     ```
 - name: ilp
   lang: java
@@ -50,13 +50,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
+        <version>9.4.3</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    implementation 'org.questdb:questdb:9.4.3'
     ```
 - name: ilp-auth-tls
   lang: java
@@ -70,13 +70,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
+        <version>9.4.3</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    implementation 'org.questdb:questdb:9.4.3'
     ```
   auth:
     kid: admin
@@ -96,13 +96,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
+        <version>9.4.3</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    implementation 'org.questdb:questdb:9.4.3'
     ```
   auth:
     kid: testUser1
@@ -122,12 +122,12 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
+        <version>9.4.3</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    implementation 'org.questdb:questdb:9.4.3'
     ```
   conf: tcp::addr=localhost:9009;
