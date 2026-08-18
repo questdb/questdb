@@ -36,6 +36,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
@@ -138,7 +139,8 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_LONG_MIN
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -155,8 +157,9 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            // An unbounded frame start carries no live-view layout: the parser
-                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            // An unbounded frame start carries no live-view layout, and needs none:
+                            // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                            // in MaxMinWindowFunctionFactoryHelper.
                             valueTypes = MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView
@@ -225,7 +228,8 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_LONG_MIN
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

@@ -56,6 +56,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalEventCursor;
@@ -73,7 +74,6 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -204,6 +204,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // hold a REPLACE_RANGE delete band that denies the ROWS discovery its key domain.
     private boolean applyAheadInsertOnly;
     private final ApplyWal2TableJob applyJob;
+    // Test-only observability for the WAL-loss re-derive's drift branch. Counts the
+    // re-derives this worker completed only after recompiling against changed base
+    // metadata, so the plain success path leaves it at 0. Kept on the worker rather
+    // than the view because it is not a production metric; a test reads it to prove
+    // which branch ran - the two branches differ in nothing else a test can observe.
+    private long baseMetadataDriftRecompileCount;
     private final BlockFileWriter blockFileWriter;
     // Sits directly under the window cursor on the two repair replays that
     // re-version logical roots, so each boundary freezes between two rows rather
@@ -279,6 +285,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LiveViewCheckpointScanCost scanCost = new LiveViewCheckpointScanCost();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
+    // Test-only: when armed, the WAL-loss re-derive runs this action after its entry
+    // broken-dependency check and before the replay, modelling the base apply that lands
+    // mid-method - the window ApplyWal2TableJob opens between changing the base writer and
+    // invalidating the dependent views. Lets a test drive the second, in-catch refusal
+    // deterministically instead of racing a thread against the drive.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private Runnable simulateBaseApplyDuringRederiveForTest;
+    // Test-only: when armed, the fallback scan runs this action BETWEEN the ahead guard's two
+    // reads - after the view watermark read, before the base sequencer head read. That interval
+    // is the contract, not a convenience: it is the window a concurrent refresh worker used to
+    // race, so a test can publish and refresh the next base commit there instead of relying on
+    // thread timing. Keep the call between the two reads. Moving it outside them, or reordering
+    // the reads across it, makes the guard sample a coherent pair either way and silently strips
+    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the two orders
+    // apart.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
+    // Test-only: an extra closeable whose close() throws. consumeBaseMetadataCloseFaultForTest
+    // closes it and returns the resulting throwable as the primary of the very freeBestEffort call
+    // that closes the pooled base metadata, so the fault lands in closeFailure exactly where a real
+    // TableMetadata.close() failure would. Consuming it inside the close statement is what pins the
+    // close's position: relocating that statement into a try-with-resources takes the fault with it,
+    // and the test's "the fault fired" assertion goes red.
+    // One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private QuietCloseable simulateBaseMetadataCloseFailureForTest;
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
     // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
     // was busy, or its memory-pressure control backed off). Lets a test drive the
@@ -394,6 +428,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
     }
 
+    /**
+     * Test-only: number of WAL-loss re-derives this worker completed through the base-metadata drift
+     * branch of {@link #rederiveFromAppliedBaseAfterWalLoss} - the ones that recompiled through
+     * {@link #recoverFromBaseMetadataDrift} and retried. A re-derive that succeeded on the plain path
+     * does not count.
+     */
+    @TestOnly
+    public long baseMetadataDriftRecompileCountForTest() {
+        return baseMetadataDriftRecompileCount;
+    }
+
     @Override
     public void close() {
         LOG.debug().$("live view refresh job closing [workerId=").$(workerId).I$();
@@ -495,6 +540,69 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: arms a one-shot action that {@link #rederiveFromAppliedBaseAfterWalLoss} runs after
+     * its entry broken-dependency check and before the replay, so a test can land a base schema
+     * change in exactly the window {@code ApplyWal2TableJob} opens between applying a structural
+     * change to the base writer and invalidating the dependent views. That is the only way to reach
+     * the re-derive's second, in-catch refusal deterministically: both checks read the same applied
+     * base metadata, so nothing but a concurrent apply separates them. Production never calls this.
+     * <p>
+     * Two constraints bind the action. First, it runs inside the same {@code try} that
+     * {@link #rederiveFromAppliedBaseAfterWalLoss}'s trailing {@code catch (Throwable)} closes, and
+     * that clause logs and returns false - the very refusal such a test asserts - so an action that
+     * lets a throwable escape turns a broken fixture into a passing test. The action must catch its
+     * own throwables and hand them back to the test thread. Second, {@code refreshInstance} holds
+     * the instance's refresh latch across this call, so the action must not reach a path that waits
+     * for that latch: {@code DROP LIVE VIEW} on this view ({@code LiveViewInstance.fenceRefresh})
+     * and a checkpoint freeze ({@code LiveViewInstance.startCheckpoint}) both spin-then-sleep on it
+     * with no timeout, and would hang this thread against a latch only this thread can release.
+     */
+    @TestOnly
+    public void setSimulateBaseApplyDuringRederiveForTest(Runnable action) {
+        this.simulateBaseApplyDuringRederiveForTest = action;
+    }
+
+    /**
+     * Test-only: arms a one-shot action that the fallback scan runs BETWEEN the two reads feeding
+     * the live-view-ahead guard - after the view watermark read, after which it blocks the scan,
+     * and before the base sequencer head read. The interval is what the arming test asserts on:
+     * a commit published there is visible to the base-head read but not to the already-captured
+     * watermark, which is exactly the asymmetry that distinguishes the correct read order from
+     * the racy one. Relocating this call outside the two reads leaves
+     * {@code testConcurrentRefreshCannotInvalidateFromStaleBaseHead} green under a read-order
+     * swap that fully restores the race.
+     * <p>
+     * Unlike {@link #setSimulateBaseApplyDuringRederiveForTest}, the action runs with no refresh
+     * latch held and no enclosing {@code catch}, so it may block and a throwable it raises
+     * propagates out of {@code Job.run()} to the caller rather than being swallowed. Production
+     * never calls this.
+     */
+    @TestOnly
+    public void setSimulateBaseCommitBetweenAheadGuardReadsForTest(Runnable action) {
+        this.simulateBaseCommitBetweenAheadGuardReadsForTest = action;
+    }
+
+    /**
+     * Test-only: arms a one-shot closeable that
+     * {@link #isRederiveRefusedForBrokenDependency} closes as part of the same statement that closes
+     * the pooled base metadata (see {@link #consumeBaseMetadataCloseFaultForTest}), so the metadata
+     * tenant still returns to the pool and {@code assertMemoryLeak} keeps its force. A
+     * {@code close()} that throws is the only way a test can produce a close failure there:
+     * {@code TableMetadataPool} has no reachable path that makes its tenant's {@code close()} throw
+     * (see the comment on the close itself). The read-failure {@code catch} releases the armed
+     * closeable too, so arming it never leaks when the read throws first.
+     * <p>
+     * Because the close statement itself consumes the fault, that statement is what the test pins:
+     * moving the close back inside a try-with-resources deletes the statement, the fault is never
+     * consumed, and the test's "the injected close fault must have run" assertion goes red.
+     * Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateBaseMetadataCloseFailureForTest(QuietCloseable closeFault) {
+        this.simulateBaseMetadataCloseFailureForTest = closeFault;
+    }
+
+    /**
      * Test-only: makes every out-of-order repair skip the inline apply of its own
      * REPLACE_RANGE block, so the block stays committed-but-unapplied and the repair
      * takes its unreconciled branch. Production never calls this.
@@ -537,8 +645,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * ({@link #drainBaseWal}) is the fresh, settled source. A read-only replica overrides this to
      * {@code true}: it downloads and applies its base WAL asynchronously, so the raw segments can still
      * be settling (mid-download / post-apply purge) when the sequencer head already advertises the
-     * commit -- a raw read would transiently miss applied rows. Under symmetric local refresh
-     * (questdb-enterprise:docs/live_view_replication.md) the replica runs the full refresh + flush locally, so
+     * commit -- a raw read would transiently miss applied rows. Under symmetric local refresh the
+     * replica runs the full refresh + flush locally, so
      * {@link #refreshInstance} routes it through the coupled applied-base drain
      * ({@link #drainAppliedBase}), which pins the applied base reader behind the cooperative apply-lag
      * gate and routes any timestamp overlap through {@code o3Replay} -- the same well-tested path a
@@ -989,6 +1097,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 } finally {
                     executionContext.setLiveViewCompile(false);
                 }
+                // Decompose once, here, and hand the same plan to everything below: the
+                // anchor build, the repair planner and every refresh cycle read the
+                // window factory, the two projections and the base scan off it rather
+                // than re-walking the tree and risking a different answer. CREATE already
+                // accepted this shape, so a reject here means the recompile after a base
+                // DDL produced a shape the refresh path cannot drive - which must fail
+                // loudly rather than run on a mismatched chain.
+                final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0);
                 // Build the anchor machinery (anchor Function + LiveViewWindow)
                 // BEFORE caching the factory. Those are what dispatch the per-row
                 // resetPartition; without them an anchored view cannot produce
@@ -1011,15 +1127,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             MemoryTrackerWorkload.LIVE_VIEW_REFRESH
                     ));
                 }
-                ensureAnchorFunction(instance, factory);
+                ensureAnchorFunction(instance, plan);
                 // Which plans bound this view's repair follows from the factory alone, so
                 // it settles here rather than at the first out-of-order row. That is what
                 // lets live_views() report the answer for a view no late row has reached
                 // yet, which is the one whose latency cliff is still invisible.
                 instance.setCheckpointRepairDependencyPlans(
-                        repairDependencyPlans(instance, unwrapWindowFactory(factory))
+                        repairDependencyPlans(instance, plan.getWindowFactory())
                 );
-                instance.setCompiledFactory(factory);
+                instance.setCompiledFactory(factory, plan);
                 committed = true;
             } finally {
                 if (!committed) {
@@ -1042,7 +1158,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link LiveViewInstance}; consumed by the runtime hookup that wraps the
      * source cursor with {@link LiveViewWindow#processRow(Record)}.
      */
-    private void ensureAnchorFunction(LiveViewInstance instance, RecordCursorFactory compiledFactory) throws SqlException {
+    private void ensureAnchorFunction(LiveViewInstance instance, LiveViewCompiledPlan plan) throws SqlException {
         if (instance.getAnchorFunction() != null) {
             return;
         }
@@ -1067,10 +1183,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .put(", sql=").put(spec.anchorExpressionSql)
                         .put(']');
             }
-            // Resolve against the LV's projected metadata (the page-frame factory's
-            // metadata at the leaf of the compiled tree). That matches the records
-            // WalSegmentRecordCursor emits at runtime.
-            RecordMetadata projectedMeta = findLeafProjectedMetadata(compiledFactory);
+            // Resolve against the window's input metadata. That is what the window
+            // functions and their PARTITION BY keys resolve against, and it is the shape
+            // of the records reaching the anchor dispatch at runtime - which sits above
+            // any alias or pre-window projection, precisely so a window partitioned by
+            // `sym AS s` finds `s` here. With no projection in the tree it is the leaf
+            // scan's metadata, which is what WalSegmentRecordCursor emits directly.
+            RecordMetadata projectedMeta = plan.getWindowInputMetadata();
             if (projectedMeta == null) {
                 throw CairoException.critical(0)
                         .put("live view anchor compile could not resolve projected metadata [view=")
@@ -1084,7 +1203,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
-            WindowRecordCursorFactory wf = unwrapWindowFactory(compiledFactory);
+            WindowRecordCursorFactory wf = plan.getWindowFactory();
             // Reset only the anchored WINDOW's functions (UNBOUNDED PRECEDING ... CURRENT
             // ROW frames). A bounded ROWS/RANGE window declared alongside the anchored one
             // must keep sliding across anchor crossings -- dispatching resetPartition to it
@@ -1185,15 +1304,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * runtime, so an anchor {@code Function} compiled against it will produce
      * correct results when invoked on the LV's source rows.
      */
-    private static RecordMetadata findLeafProjectedMetadata(RecordCursorFactory factory) {
-        WindowRecordCursorFactory wf = unwrapWindowFactory(factory);
-        RecordCursorFactory base = wf.getBaseFactory();
-        if (base.getFilter() != null) {
-            base = base.getBaseFactory();
-        }
-        return base.getMetadata();
-    }
-
     /**
      * Determines whether the anchor expression is provably monotone non-decreasing
      * with the base scan order, which is the enabling condition for frontier-gated
@@ -1442,17 +1552,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private RecordToRowCopier ensureCopier(
             LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
             WalWriter walWriter
     ) throws SqlException {
         long metadataVersion = walWriter.getMetadata().getMetadataVersion();
         RecordToRowCopier copier = instance.getRecordToRowCopier();
         if (copier == null || instance.getRecordRowCopierMetadataVersion() != metadataVersion) {
+            // The view's own schema, which is the output projection's when the SELECT
+            // wraps a window function in an expression and the window factory's when it
+            // does not. Reading the window factory's here instead would generate a copier
+            // for the wrong column count and mis-write every row.
+            final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                columnFilter.of(windowFactory.getMetadata().getColumnCount());
+                columnFilter.of(outMetadata.getColumnCount());
                 copier = RecordToRowCopierUtils.generateCopier(
                         compiler.getAsm(),
-                        windowFactory.getMetadata(),
+                        outMetadata,
                         walWriter.getMetadata(),
                         columnFilter,
                         engine.getConfiguration()
@@ -1463,9 +1577,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return copier;
     }
 
+    /**
+     * The decomposed plan for {@code instance}, compiling the view's SELECT first when no
+     * factory is cached. Every refresh path reads the window factory, the projections, the
+     * filter and the base scan off this rather than re-walking the factory tree.
+     */
+    private LiveViewCompiledPlan getPlan(LiveViewInstance instance) throws SqlException {
+        ensureCompiledFactory(instance);
+        return instance.getCompiledPlan();
+    }
+
     private WindowRecordCursorFactory getWindowFactory(LiveViewInstance instance) throws SqlException {
-        RecordCursorFactory factory = ensureCompiledFactory(instance);
-        return unwrapWindowFactory(factory);
+        return getPlan(instance).getWindowFactory();
     }
 
     /**
@@ -1476,12 +1599,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code appliedWatermark} on the instance and rewrites {@code _lv.s}.
      */
     private void incrementalRefresh(LiveViewInstance instance, long fromSeqTxn, long toSeqTxn, boolean leadMode) throws SqlException {
-        WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final LiveViewCompiledPlan compiledPlan = getPlan(instance);
+        WindowRecordCursorFactory windowFactory = compiledPlan.getWindowFactory();
+        final Function filter = compiledPlan.getFilter();
         TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        RecordMetadata baseMetadata = compiledPlan.getBaseScanMetadata();
         final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         buildColumnMappings(baseMetadata, baseToken);
 
@@ -1499,7 +1621,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (a non-persisted type
         // such as INTERVAL) falls back to disk-only. The staging buffer is reshaped on schema-mismatch;
         // the LV's tier is lazily allocated on first use.
-        RecordMetadata outMetadata = windowFactory.getMetadata();
+        RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
         int cursorTimestampIndex = outMetadata.getTimestampIndex();
         if (cursorTimestampIndex < 0) {
             throw CairoException.nonCritical()
@@ -1541,7 +1663,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-            RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+            RecordToRowCopier copier = ensureCopier(instance, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             if (lvTimestampIndex < 0) {
                 throw CairoException.nonCritical()
@@ -1745,10 +1867,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final String viewName = instance.getDefinition().getViewName();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
 
-        final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        final PageFrameRecordCursorFactory pageFrameFactory = (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final Function filter = compiledPlan.getFilter();
+        final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+        final RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
         final int cursorTimestampIndex = outMetadata.getTimestampIndex();
         if (cursorTimestampIndex < 0) {
             throw CairoException.nonCritical()
@@ -1919,7 +2041,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                    final RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                    final RecordToRowCopier copier = ensureCopier(instance, walWriter);
                     try (RecordCursor pageCursor = emptyForwardRange
                             ? EmptyTableRecordCursor.INSTANCE
                             : pageFrameFactory.getCursorFromTimestamp(executionContext, scanLowTs)) {
@@ -1928,14 +2050,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             filteringCursor.of(source, filter, executionContext);
                             source = filteringCursor;
                         }
+                        // Rebuild the compiled nodes between the base scan and the window -
+                        // an alias, a column drop, a pre-window scalar - so the window
+                        // functions see the shape they were compiled against. Above the
+                        // filter, which resolves against the base scan, and below the anchor
+                        // dispatch, which resolves against the window's input.
+                        source = compiledPlan.wrapWindowInput(source, executionContext);
                         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
                         if (anchorWindow != null) {
                             anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                             source = anchorDispatchingCursor;
                         }
                         try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                            final Record outRecord = windowCursor.getRecord();
-                            while (windowCursor.hasNext()) {
+                            // Rows leave the window in the window factory's shape; the output
+                            // projection turns them into the view's own schema, which is what
+                            // the copier writes and the tier stores. Drive the projected
+                            // cursor rather than the window one - it is what advances the
+                            // projection's per-row memoization before the record is read.
+                            final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                            final Record outRecord = outCursor.getRecord();
+                            while (outCursor.hasNext()) {
                                 // Accumulators advanced for this row; a failure before commit
                                 // triggers a window-state rebuild (see handleRefreshFailure).
                                 // The coupled forward scan feeds the same incremental cursor
@@ -2379,19 +2513,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     filteringCursor.of(source, filter, executionContext);
                     source = filteringCursor;
                 }
+                final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+                source = compiledPlan.wrapWindowInput(source, executionContext);
                 LiveViewWindow anchorWindow = instance.getAnchorWindow();
                 if (anchorWindow != null) {
-                    // Anchor dispatch sits between the filter (or lower-bound
-                    // cursor) and the window cursor so window functions see
-                    // resetPartition before pass1 evaluates the row.
+                    // Anchor dispatch sits between the window's input projection (or the
+                    // filter, or the lower-bound cursor) and the window cursor so window
+                    // functions see resetPartition before pass1 evaluates the row.
                     anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                     source = anchorDispatchingCursor;
                 }
 
                 RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
                 try {
-                    Record outRecord = windowCursor.getRecord();
-                    while (windowCursor.hasNext()) {
+                    RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                    Record outRecord = outCursor.getRecord();
+                    while (outCursor.hasNext()) {
                         // Accumulators advanced for this row; a failure before commit
                         // triggers a window-state rebuild (see handleRefreshFailure).
                         windowStateDirty = true;
@@ -2571,7 +2708,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return Math.max(deleteLo, Numbers.LONG_NULL + 1);
     }
 
-    // Under symmetric local refresh (questdb-enterprise:docs/live_view_replication.md) the live-view table is
+    // Under symmetric local refresh the live-view table is
     // node-local derived data: every node -- primary AND replica -- refreshes and flushes its own LV
     // table locally, and LV WAL is never uploaded or downloaded. So the read-only fence this method once
     // held (refuse an LV mint on a read-only node, to stop a demoting primary externalizing a local-only
@@ -2748,7 +2885,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
         final int tsColIdx = outMetadata.getTimestampIndex();
         final int publishedIdx = tier.getPublishedIdx();
         final LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
@@ -2766,7 +2903,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (hasSymbols) {
                 bufferRecord.setSymbolResolvers(buildFlushSymbolResolvers(outMetadata, symbolReader, tier.getSymbolCache()));
             }
-            RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+            RecordToRowCopier copier = ensureCopier(instance, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             if (lvTimestampIndex < 0) {
                 throw CairoException.nonCritical()
@@ -3510,43 +3647,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 persistState(instance);
             }
-            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh (the
-            // lead path) and drainAppliedBase's overlap branch (the coupled dedup path,
-            // where an ALTER ... DEDUP ENABLE flip can leave a pre-dedup RAM lead) zero
-            // it explicitly first, and the remaining coupled-forward and replay-to-applied
-            // callers carry no un-flushed lead so it is already 0. The capable path
+            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh and
+            // drainAppliedBase's overlap branch (where an ALTER ... DEDUP ENABLE flip can
+            // leave a pre-dedup RAM lead) zero it explicitly, and the coupled-forward and
+            // replay-to-applied callers carry no un-flushed lead. The capable path
             // rebuilds the tier as a pure disk subset (leadRowCount 0).
-            // This branch rewrote nothing on disk and left the published slot
-            // untouched, so a slot that is STILL a current un-flushed lead keeps its
-            // stamped leadRowCount as the true lead. Resync instance.leadRowCount to it:
-            // leaving it at 0 desyncs the two, so the next publish would reclassify those
-            // L never-flushed rows as overlap (size() under-reports, iteration serves
-            // them as phantoms) and flushLead's overlapCount would skip them entirely.
+            // This branch rewrote nothing on disk and left the published slot untouched,
+            // so a slot that is STILL a current un-flushed lead keeps its stamped
+            // leadRowCount as the true lead. Resync instance.leadRowCount to it: leaving
+            // it at 0 would reclassify those never-flushed rows as overlap, so size()
+            // under-reports, iteration serves them as phantoms, and flushLead's
+            // overlapCount skips them entirely.
             //
             // But re-arm ONLY from a slot whose stamped LV-table seqTxn still matches the
             // applied disk seqTxn. A slot whose stamp has fallen behind disk holds rows
-            // that are already durable, so its leadRowCount is NOT an un-flushed lead and
-            // the correct value is the 0 the caller left. Two paths leave such a
-            // stale-stamped slot, and both must be excluded:
-            //   - an emergency flush wrote the lead to disk, set tierStale, and left the
-            //     slot's now-durable leadRowCount stamped (isTierStale() would catch it); and
-            //   - a normal flush wrote the lead to disk but its restampSlot 0 -> -1 CAS
-            //     lost to a reader pin, so the slot kept its now-durable stamp while
-            //     tierStale stayed FALSE (restampSlotAfterFlush ignores the CAS result) --
-            //     an isTierStale() guard MISSES this one.
-            // Re-arming from either would make the finishLeadRefresh flush path trust a
-            // stale non-zero leadRowCount and re-flush the already-durable rows as on-disk
+            // that are already durable, so the 0 the caller left is correct. Two paths
+            // leave such a stale stamp: an emergency flush that set tierStale
+            // (isTierStale() would catch it), and a normal flush whose restampSlot
+            // 0 -> -1 CAS lost to a reader pin, leaving tierStale FALSE because
+            // restampSlotAfterFlush ignores the CAS result -- an isTierStale() guard
+            // MISSES that one. Re-arming from either would make finishLeadRefresh trust a
+            // stale non-zero leadRowCount and re-flush already-durable rows as on-disk
             // duplicates. The seqTxn-match check below subsumes both (both leave
             // slot.lvSeqTxn() != applied) and needs no reader open: the applied seqTxn is
             // the same coordinate flushLead / publishToInMemoryTier stamp the slot from,
             // and nothing has applied to the LV table since (this branch does not commit).
             //
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
-            // WindowFunction.supportsCheckpointState() folds in the anchor key type check),
-            // and o3Replay recomputes capability above, so a freshly-validated view
-            // never reaches this branch. It fires only for a view that is
-            // non-capable at runtime (e.g. a restored view whose function lost
-            // snapshot support); the resync keeps its bookkeeping correct if so.
+            // WindowFunction.supportsCheckpointState() folds in the anchor key type check)
+            // and o3Replay recomputes capability above, so a freshly-validated view never
+            // reaches this branch. It fires only for a view that is non-capable at runtime
+            // (e.g. a restored view whose function lost snapshot support); the resync
+            // keeps its bookkeeping correct if so.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
             if (ncTier != null) {
                 final LiveViewInMemoryBuffer ncSlot = ncTier.getSlot(ncTier.getPublishedIdx());
@@ -3659,7 +3791,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void resumeSuspendedRepair(LiveViewInstance instance, LiveViewCheckpointRepairSession session)
             throws SqlException {
         final RecordCursorFactory compiledFactory = instance.getCompiledFactory();
-        if (compiledFactory == null || unwrapWindowFactory(compiledFactory) != session.getWindowFactory()) {
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        if (compiledFactory == null || compiledPlan == null || compiledPlan.getWindowFactory() != session.getWindowFactory()) {
             LOG.info().$("live view runtime changed under a parked O3 repair, discarding the candidate [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", turns=").$(session.getTurns())
@@ -3829,7 +3962,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 rangeFrameWidth = rangePlan.getMaxFrameWidth();
             }
             if (rowsPlan != null) {
-                rowsBoundDiscovery.of(rowsPlan, windowFactory, reader);
+                rowsBoundDiscovery.of(rowsPlan, instance.getCompiledPlan(), reader);
                 rowsBoundSource = rowsBoundDiscovery;
             }
             // The segment bounds the repair from both sides without reading a base row, so
@@ -4008,15 +4141,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerAttached = true;
 
-            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
             try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                RecordToRowCopier copier = ensureCopier(instance, walWriter);
                 // Open the snapshot AT replayLowTs rather than scanning up to it: the
                 // inclusive-lower-bound cursor culls whole partitions and binary-searches
                 // into the first one. Head-hit exists to re-evaluate only the tail above
@@ -4039,6 +4171,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         filteringCursor.of(source, filter, executionContext);
                         source = filteringCursor;
                     }
+                    source = compiledPlan.wrapWindowInput(source, executionContext);
                     final LiveViewWindow anchorWindow = instance.getAnchorWindow();
                     if (anchorWindow != null) {
                         anchorDispatchingCursor.of(source, anchorWindow, executionContext);
@@ -4064,10 +4197,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // inside LiveViewWindow.restore() (it clears before
                             // reinserting), so no explicit wipe is needed here.
                             // Order matters: function maps clear -> restore root.
+                            // isOpen() rather than a null test: a function whose state the
+                            // window owns keeps a closed map, and its accumulator is
+                            // cleared with the anchor map's own entry instead.
                             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                             for (int i = 0, n = functions.size(); i < n; i++) {
                                 Map m = functions.getQuick(i).getPartitionMap();
-                                if (m != null) {
+                                if (m != null && m.isOpen()) {
                                     m.clear();
                                 }
                             }
@@ -4107,8 +4243,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // logically truncates rows above replayLowTs, so the
                         // counter rewinds in step with the table.
                         instance.setLvRowsTotal(anchorLvRowPosition);
-                        Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
+                        // Rows leave the window in the window factory's shape; the
+                        // output projection turns them into the view's own schema,
+                        // which is what the copier was generated for. Drive the
+                        // projected cursor rather than the window one - it is what
+                        // advances the projection's per-row memoization before the
+                        // record is read. Without the wrap the copier reads the
+                        // window's own columns positionally, so a projected view
+                        // silently stores a different window column in each of its
+                        // computed columns. wrapWindowOutput does not rewind and
+                        // returns windowCursor itself when the view has no
+                        // projection, so the unprojected replay is unchanged.
+                        final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                        Record outRecord = outCursor.getRecord();
+                        while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                 replayMaxTs = ts;
@@ -4549,11 +4697,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerAttached = true;
 
-            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
             // Both scans below open the snapshot AT the scan floor rather than scanning up
@@ -4660,7 +4807,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 WalWriter walWriter = resuming ? resumed.takeWalWriter() : engine.getWalWriter(instance.getLiveViewToken());
                 boolean walWriterRetained = false;
                 try {
-                    RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                    RecordToRowCopier copier = ensureCopier(instance, walWriter);
                     try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
                             executionContext,
                             turnLowTs,
@@ -4689,12 +4836,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
                             source = boundaryFreezingCursor;
                         }
+                        source = compiledPlan.wrapWindowInput(source, executionContext);
                         if (anchorWindow != null) {
                             anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                             source = anchorDispatchingCursor;
                         }
                         try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                            Record outRecord = windowCursor.getRecord();
+                            RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                            Record outRecord = outCursor.getRecord();
                             // Designated timestamp of the group the replay is inside, and
                             // how many of its rows are already folded into the window
                             // state. A turn may stop anywhere, including mid-group, so this
@@ -4714,7 +4863,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         .skipRows(repairSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                             }
                             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-                            while (windowCursor.hasNext()) {
+                            // Drive the projected cursor rather than the window one - it is
+                            // what advances the projection's per-row memoization before the
+                            // record is read. Nothing else invalidates a memoizer's cache:
+                            // wrapWindowOutput's of() re-inits the functions but leaves the
+                            // cached value valid, so the replay would emit the value the
+                            // preceding drain left behind for every row it re-emits.
+                            while (outCursor.hasNext()) {
                                 // The turn budget below ends a localized repair, but only a
                                 // localized one: an unlocalized rebuild recomputes the whole
                                 // view in this loop and may not yield, so the breaker is the
@@ -5083,39 +5238,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 repairPublication.watermarkAdvanced();
                 if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
-                    // Post-replay head: retireCheckpointStateOnO3 cleared the head
-                    // metadata above, so force seals a fresh boundary reflecting the
-                    // post-replay state (firstCp is already true here; force keeps the
-                    // intent explicit and robust). A subsequent O3 above it can then
-                    // resume from it instead of paying for another full rebuild.
+                    // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
+                    // above, so force seals a fresh boundary reflecting the post-replay state
+                    // (firstCp is already true here; force keeps the intent explicit). A
+                    // subsequent O3 above it resumes from there instead of rebuilding in full.
                     //
                     // The head's maxTs has to describe the state the checkpoint is about to
-                    // serialise. That is replayMaxTs for a rebuild that ran to the end of the
-                    // base table, but the runtime frontier for one that stopped at a finite H
-                    // and put its own state back - the restore just rewound the functions past
+                    // serialise: replayMaxTs for a rebuild that ran to the end of the base
+                    // table, but the runtime frontier for one that stopped at a finite H and
+                    // put its own state back - the restore just rewound the functions past
                     // replayMaxTs, so sealing them under it would claim a boundary the state
                     // does not sit at, and the next O3 would resume from it and re-read rows
                     // the state already holds. The frontier is a real timestamp whenever the
                     // plan tagged a finite H (it had to be at or above H to do so), so this
-                    // seals even when the replacement emitted nothing at all - the retire above
+                    // seals even when the replacement emitted nothing at all - the retire
                     // dropped every boundary, and a view left with none rebuilds from scratch
                     // on the next restart.
                     //
-                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
-                    // from the on-disk size above), so adding them again would
-                    // double-count lvRowPosition. Mirrors the seed-completion path.
+                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced from the
+                    // on-disk size above), so adding them again would double-count
+                    // lvRowPosition. Mirrors the seed-completion path.
                     //
-                    // A published splice already IS this repair's timeline publication,
-                    // and it appended no root. That is enough only while the newest
-                    // root it kept still sits at the frontier: the splice moved the
-                    // generation's normalizedBaseSeqTxn up to E, and restart replays
-                    // (E, durableBase] alone, so any row above that root came from a
-                    // base transaction the replay will not walk and the restored state
-                    // would never see it. Seal the frontier as a root of its own
-                    // whenever it has run past the splice's head key - the convergence
-                    // that let the repair keep the primary runtime is exactly what
-                    // makes that runtime the correct state there - and leave the seal
-                    // to re-stamp the head metadata alone when the two already agree.
+                    // A published splice already IS this repair's timeline publication and
+                    // appended no root, which is enough only while the newest root it kept
+                    // still sits at the frontier: the splice moved the generation's
+                    // normalizedBaseSeqTxn up to E, and restart replays (E, durableBase]
+                    // alone, so any row above that root came from a base transaction the
+                    // replay will not walk and the restored state would never see it. Seal
+                    // the frontier as a root of its own whenever it has run past the splice's
+                    // head key - the convergence that let the repair keep the primary runtime
+                    // is exactly what makes that runtime the correct state there - and leave
+                    // the seal to re-stamp the head metadata alone when the two agree.
                     final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                             ? instance.getLatestSeenTs()
                             : replayMaxTs;
@@ -5567,11 +5720,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerBound = true;
 
-            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
-            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
             if (cursorTimestampIndex < 0) {
                 throw CairoException.nonCritical()
@@ -5580,7 +5732,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                RecordToRowCopier copier = ensureCopier(instance, walWriter);
                 // Open the snapshot AT the START FROM boundary rather than scanning up to it:
                 // the same inclusive-lower-bound cursor the forward path takes, which culls
                 // whole partitions and binary-searches into the first one instead of walking
@@ -5599,6 +5751,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         filteringCursor.of(source, filter, executionContext);
                         source = filteringCursor;
                     }
+                    source = compiledPlan.wrapWindowInput(source, executionContext);
                     if (anchorWindow != null) {
                         anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
@@ -5612,8 +5765,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             seedSkipCounter.set(dataOffset);
                             pageCursor.skipRows(seedSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                         }
-                        Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
+                        // Bound after the skip above, not before: wrapWindowOutput does not
+                        // rewind, so it neither undoes the skip nor cares that it happened.
+                        RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                        Record outRecord = outCursor.getRecord();
+                        while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
                                 batchMaxTs = ts;
@@ -5954,7 +6110,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean force,
             boolean appendTimelineRoot
     ) {
-        // Under symmetric local refresh (questdb-enterprise:docs/live_view_replication.md) every node --
+        // Under symmetric local refresh every node --
         // primary or replica -- owns and seals its own node-local checkpoint timeline for restart
         // recovery; nothing replicates. So this seal runs on every role.
         if (!instance.isSnapshotCapabilityComputed()) {
@@ -6201,7 +6357,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final Map map = functions.getQuick(i).getPartitionMap();
-                if (map != null) {
+                if (map != null && map.isOpen()) {
                     map.clear();
                 }
             }
@@ -6212,10 +6368,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseReader);
             executionContext.of(baseReader);
             readerAttached = true;
-            final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            final Function filter = filterFactory.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory =
-                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
+            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
             // Start strictly above the predecessor: its restored state already covers
             // every row at or below its timestamp, so the frame it holds is the warm-up
             // the replay resumes from. Stop at the ceiling - every corrupt boundary is
@@ -6246,10 +6401,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         pageFrameFactory.getMetadata().getTimestampIndex()
                 );
                 source = boundaryFreezingCursor;
+                source = compiledPlan.wrapWindowInput(source, executionContext);
                 if (anchorWindow != null) {
                     anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                     source = anchorDispatchingCursor;
                 }
+                // No output projection here: the heal emits nothing, so no row is ever read
+                // out of this cursor and there is nothing for a projection to compute.
                 try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
                     while (windowCursor.hasNext()) {
                         // The heal emits nothing - the live-view table is already
@@ -6362,14 +6520,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lowTimestampInclusive,
             long highTimestampInclusive
     ) throws SqlException {
-        RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final Function filter = compiledPlan.getFilter();
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        final RecordMetadata baseMetadata = compiledPlan.getBaseScanMetadata();
         final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         buildColumnMappings(baseMetadata, baseToken);
-        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
         final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
         long replayedRows = 0;
@@ -7008,8 +7165,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.isLeadEligibilityComputed()) {
             return instance.isLeadEligible();
         }
-        WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        RecordMetadata outMetadata = windowFactory.getMetadata();
+        RecordMetadata outMetadata = getPlan(instance).getOutputMetadata();
         boolean eligible = outMetadata.getTimestampIndex() >= 0;
         for (int i = 0, n = outMetadata.getColumnCount(); eligible && i < n; i++) {
             if (!LiveViewInMemoryBuffer.isColumnTypeSupported(outMetadata.getColumnType(i))) {
@@ -7470,9 +7626,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setTierStale(true);
             return;
         }
-        // unwrapWindowFactory is total here: ensureCompiledFactory unwraps the same object
-        // before caching it, so a non-null compiled factory has already survived this call.
-        final RecordMetadata outMetadata = unwrapWindowFactory(compiledFactory).getMetadata();
+        // The plan is total here: ensureCompiledFactory decomposes the same object before
+        // caching it, so a non-null compiled factory has already survived that walk.
+        final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
         final int tsColIdx = outMetadata.getTimestampIndex();
         if (tsColIdx < 0 || !ensureStagingAndTier(instance, outMetadata, tsColIdx)) {
             // An output column type the tier cannot store: this view never populates the
@@ -8100,11 +8256,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // mirroring the mat-view "view is ahead of base table and cannot be synchronized" guard in
             // CairoEngine.loadMatViewIntoStore. A strict no-op on a healthy node, where a view never
             // outruns the base it derives from.
+            // Read the view watermark first. A refresh publishes it only after consuming the
+            // corresponding sequencer transaction, so observing that volatile write before reading
+            // the monotonic base head yields a coherent pair. Reading base first lets another worker
+            // advance the view between the reads and manufactures a false ahead state from two
+            // different points in time. Monotonicity is what makes the order sufficient rather than
+            // merely narrower: TableTransactionLog.lastTxn is a volatile field over an append-only
+            // log, and lastTxn() reads it under the sequencer READ lock, so it cannot observe the
+            // appender's half-published state.
+            final long lastProcessedSeqTxn = instance.getLastProcessedSeqTxn();
+            final Runnable aheadGuardAction = simulateBaseCommitBetweenAheadGuardReadsForTest;
+            if (aheadGuardAction != null) {
+                simulateBaseCommitBetweenAheadGuardReadsForTest = null;
+                aheadGuardAction.run();
+            }
             final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-            if (instance.getLastProcessedSeqTxn() > baseSeqLastTxn) {
+            if (lastProcessedSeqTxn > baseSeqLastTxn) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
-                        .$(", lastProcessedSeqTxn=").$(instance.getLastProcessedSeqTxn())
+                        .$(", lastProcessedSeqTxn=").$(lastProcessedSeqTxn)
                         .$(", baseTableTxn=").$(baseSeqLastTxn)
                         .I$();
                 engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
@@ -8339,6 +8509,107 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only seam: closes the armed close fault, if any, and returns the throwable its
+     * {@code close()} raised, so a caller can hand it to {@code Misc.freeBestEffort} as the primary
+     * of the same call that closes the real resource. Disarms one-shot. Returns null in production,
+     * where the field is never set, at a cost of one null check.
+     *
+     * @see #setSimulateBaseMetadataCloseFailureForTest
+     */
+    @TestOnly
+    private @Nullable Throwable consumeBaseMetadataCloseFaultForTest() {
+        if (simulateBaseMetadataCloseFailureForTest == null) {
+            return null;
+        }
+        final QuietCloseable closeFault = simulateBaseMetadataCloseFailureForTest;
+        simulateBaseMetadataCloseFailureForTest = null;
+        return Misc.freeBestEffort(null, closeFault);
+    }
+
+    /**
+     * Decides whether the WAL-loss re-derive must refuse outright because the base's applied
+     * metadata no longer resolves every column the view REFERENCES under the same name AND type
+     * ({@link LiveViewInstance#findFirstMissingOrRetypedColumn}, the same predicate
+     * {@code invalidateLiveViewsForBaseSchemaChange} invalidates on). Rebuilding across a dropped,
+     * renamed or retyped referenced column would recompute the view over the NEW schema and commit
+     * the result as if nothing happened, converting a loud, correct invalidation into silently wrong
+     * output.
+     * <p>
+     * Reads the base metadata FRESH on every call, so
+     * {@link #rederiveFromAppliedBaseAfterWalLoss} can ask both before the replay and again after a
+     * {@link TableReferenceOutOfDateException} - the drift proves the base metadata moved since the
+     * first read, and the recompile that follows would adopt whatever it moved to. The answer is
+     * only as fresh as the read that produced it: this method closes the metadata before it returns,
+     * and the caller's replay and recompile each open their own base reader afterwards, so asking
+     * again NARROWS the window in which a structural change slips past unseen - it does not close
+     * it.
+     * <p>
+     * A metadata read that FAILS is not a refusal. "Cannot read the metadata" and "the metadata
+     * says a referenced column broke" are different answers: the read can fail for reasons that have
+     * nothing to do with the view's health - the metadata pool refusing while a concurrent DDL or
+     * checkpoint holds the entry, {@code verifyTableToken} racing a rename, pool exhaustion - and
+     * this runs when the flush-retry budget is already spent, so refusing on a doubt would brick a
+     * view over a healthy base with no second chance. An unreadable base falls through to the
+     * replay, whose own {@code getReader} opens the base for real and faults loudly if it truly is
+     * unreadable. A read that SUCCEEDS and names a broken dependency is a decision, and refuses -
+     * including when the metadata close that follows then fails, which is why the close sits
+     * outside the guarded region rather than inside a try-with-resources.
+     * <p>
+     * On refusal, stashes the offending column name as the pending invalidation reason, which
+     * {@link #handleRefreshFailure} invalidates with, so {@code live_views().invalidation_reason}
+     * names the broken dependency exactly as the apply-side invalidation does.
+     *
+     * @return true when the caller must abandon the re-derive and let the view invalidate
+     */
+    private boolean isRederiveRefusedForBrokenDependency(LiveViewInstance instance, TableToken baseToken, CairoException cause) {
+        final String viewName = instance.getDefinition().getViewName();
+        final String brokenColumn;
+        TableMetadata baseMetadata = null;
+        try {
+            baseMetadata = engine.getTableMetadata(baseToken);
+            brokenColumn = instance.findFirstMissingOrRetypedColumn(baseMetadata);
+        } catch (Throwable e) {
+            Misc.free(baseMetadata, e);
+            consumeBaseMetadataCloseFaultForTest(); // @TestOnly no-op in production; releases an armed fault the close below never reaches
+            LOG.error().$("live view could not read the applied base metadata before re-deriving, proceeding [view=")
+                    .$(viewName)
+                    .$(", error=").$(e).I$();
+            return false;
+        }
+        // The close sits OUTSIDE the guard above on purpose: a close that fails cannot unmake the
+        // answer the read already produced. A try-with-resources runs its implicit close BEFORE the
+        // catch clause of the same statement, so any close fault would route an already-named broken
+        // column into the "proceeding" branch and let the re-derive adopt the new schema. That is a
+        // language-level guarantee rather than a defence against a known fault: TableMetadataPool
+        // has no reachable path that makes this tenant's close() throw today - AbstractMultiTenantPool
+        // only ever claims an UNALLOCATED slot (releaseAll's idle sweep, notifyDropped, lock), and the
+        // one branch that erases a LIVE borrower's slot, releaseAll at pool shutdown, calls goodbye()
+        // first, which nulls the tenant's pool and entry so close() never reaches returnToPool at all.
+        // Log the close failure and drop it: the caller's contract is that this check answers rather
+        // than throws.
+        //
+        // consumeBaseMetadataCloseFaultForTest() is null in production and costs one null check; a
+        // test arms it to make this very close report a failure. It sits INSIDE this statement so
+        // that the statement is what a mutation has to delete or move, and deleting it deletes the
+        // fault's consumption too.
+        final Throwable closeFailure = Misc.freeBestEffort(consumeBaseMetadataCloseFaultForTest(), baseMetadata);
+        if (closeFailure != null) {
+            LOG.error().$("live view could not close the applied base metadata after the dependency check [view=")
+                    .$(viewName)
+                    .$(", error=").$(closeFailure).I$();
+        }
+        if (brokenColumn == null) {
+            return false;
+        }
+        instance.setPendingInvalidationReason("base schema change to a referenced column [column=" + brokenColumn + ']');
+        LOG.critical().$("live view cannot re-derive from the applied base across a base schema change to a referenced column [view=")
+                .$(viewName)
+                .$(", column=").$safe(brokenColumn)
+                .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
+        return true;
+    }
+
+    /**
      * Recovery for a refresh cycle that failed with
      * {@link TableReferenceOutOfDateException}: the base table's metadata version
      * drifted from the cached compiled factory. Frees the compiled artifacts so
@@ -8394,6 +8665,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Only carries the view as far as the base has APPLIED, because that is all the base table
      * holds; a base still applying WAL of its own keeps its remaining commits for the next drain,
      * which reads them from WAL if it can and comes back here if it cannot.
+     * <p>
+     * Two guards bracket the rebuild, because it is the last thing standing between a recoverable
+     * fault and a permanent invalidation - and, for the same reason, the last place a silent schema
+     * adoption could hide.
+     * <p>
+     * The rebuild refuses outright when the base's applied metadata no longer resolves every column
+     * the view REFERENCES under the same name AND type
+     * ({@link #isRederiveRefusedForBrokenDependency}). A restart makes that reachable with no drift
+     * exception to stop it: a reloaded view has no compiled factory, so
+     * {@code ensureCompiledFactory} compiles it against the base's CURRENT metadata and the replay
+     * runs clean.
+     * <p>
+     * That question is asked TWICE, against freshly read metadata each time: once before the replay,
+     * and again inside the drift catch below, before the recompile. The second ask earns its keep
+     * because {@code ApplyWal2TableJob} applies a structural change to the base writer BEFORE it
+     * calls {@code invalidateLiveViewsForBaseSchemaChange}, so an {@code ALTER TABLE base ALTER
+     * COLUMN <referenced> TYPE ...} landing between the first read and the replay's reader open
+     * passes the entry check on the OLD metadata and surfaces only as the drift - by which point the
+     * first answer has decided nothing about the schema the recompile is about to adopt.
+     * <p>
+     * Neither ask CLOSES that window; both only narrow it. The check reads the base metadata under
+     * its own guarded read and closes it before returning, and the recompile re-reads the
+     * metadata independently - {@code ensureCompiledFactory} opens its own base reader - so nothing
+     * pins a metadata version across the gap. A structural change landing inside that gap (one
+     * {@code prepareForBaseSchemaRecompile} plus one compile wide) still passes the second check,
+     * and the recompile still adopts the NEW schema and republishes the whole tier from it. Pinning
+     * the metadata open across the whole recovery would close the gap, at the cost of holding a
+     * pooled metadata tenant across a long call. What bounds the residue today is the apply side:
+     * {@code invalidateLiveViewsForBaseSchemaChange} marks the registered instance invalid
+     * microseconds later, and an invalid view stays queryable - so the worst surviving outcome is an
+     * already-invalid view holding rows recomputed from the new schema rather than the stale
+     * old-schema ones.
+     * <p>
+     * When every referenced column survives but the base metadata version moved anyway, the cached
+     * plan is stale and {@code LiveViewRefreshSqlExecutionContext.getReader} refuses the reader with
+     * {@link TableReferenceOutOfDateException}. A symbol-capacity rebuild is the canonical case, and
+     * it is also what strands the WAL symbol dictionary that brings a lagging view here in the first
+     * place, so this is not a corner: the recovery is recompiled through
+     * {@link #recoverFromBaseMetadataDrift} and retried EXACTLY ONCE. Once, because the flush-retry
+     * budget is already exhausted by the time this method runs, so nothing outside it would bound a
+     * loop; and the retry cannot re-enter here, because
+     * {@code rebuildActiveWindowStateFromAppliedBase} catches its own throwables and returns them.
      *
      * @return true when the view recovered and must not be invalidated
      */
@@ -8406,7 +8719,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (baseAppliedSeqTxn <= instance.getLastProcessedSeqTxn()) {
             return false;
         }
+        final String viewName = instance.getDefinition().getViewName();
+        // The rebuild would read a broken dependency through the base's NEW schema and commit the
+        // result, so refuse before touching anything.
+        if (isRederiveRefusedForBrokenDependency(instance, baseToken, cause)) {
+            return false;
+        }
         try {
+            if (simulateBaseApplyDuringRederiveForTest != null) { // @TestOnly, always null in production
+                final Runnable baseApply = simulateBaseApplyDuringRederiveForTest;
+                simulateBaseApplyDuringRederiveForTest = null;
+                baseApply.run();
+            }
             // Drop any un-flushed lead the failed cycles left published (a lead-eligible view
             // between flushes carries a non-zero leadRowCount and a slot holding those rows). The
             // replay recomputes the whole view and rewrites the on-disk tier via REPLACE_RANGE, so
@@ -8429,13 +8753,68 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
             instance.recordRefreshSuccess();
             LOG.info().$("live view re-derived from the applied base after base WAL loss [view=")
-                    .$(instance.getDefinition().getViewName())
+                    .$(viewName)
                     .$(", head=").$(baseAppliedSeqTxn)
+                    .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
+            return true;
+        } catch (TableReferenceOutOfDateException drift) {
+            // recoverFromBaseMetadataDrift only re-derives an ACTIVE view; for a SEEDING one it
+            // re-arms the sweep and returns null WITHOUT rebuilding, so reporting that as a
+            // recovery would claim a re-derive that did not happen - and this method has already
+            // dropped the un-flushed lead via setLeadRowCount(0). Refuse instead: the caller
+            // invalidates, which is the loud, correct outcome for a view whose data it cannot
+            // reconstruct here.
+            if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
+                return false;
+            }
+            // The drift proves the base metadata moved AFTER the entry check read it, so that read
+            // decided nothing about the schema the recompile is about to adopt. Ask again, against
+            // metadata read now. That narrows the window to the gap between this read and the
+            // recompile's own reader open; it does not close it (see the method javadoc).
+            if (isRederiveRefusedForBrokenDependency(instance, baseToken, cause)) {
+                return false;
+            }
+            // The cached plan predates a base metadata change that left every referenced column
+            // intact (re-checked just above), so the plan is stale rather than wrong. Recompile
+            // through the sibling recovery and take the one retry the exhausted budget cannot give
+            // us.
+            LOG.info().$("live view re-derive found the base metadata changed, recompiling once [view=")
+                    .$(viewName)
+                    .$(", error=").$safe(drift.getFlyweightMessage()).I$();
+            final Throwable recompiledError;
+            try {
+                // Java routes nothing thrown in one catch clause to a later clause of the same try,
+                // and the recovery's prepareForBaseSchemaRecompile() closes artifacts, which this
+                // file documents can throw. Catch it here so the refusal outcome is the same one the
+                // trailing catch (Throwable) would have produced.
+                recompiledError = recoverFromBaseMetadataDrift(instance);
+            } catch (Throwable recoveryFailure) {
+                LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
+                        .$(viewName)
+                        .$(", error=").$(recoveryFailure).I$();
+                return false;
+            }
+            if (recompiledError != null) {
+                LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
+                        .$(viewName)
+                        .$(", error=").$(recompiledError).I$();
+                return false;
+            }
+            // The recompiled retry is the only thing separating this outcome from the plain success
+            // path above - both leave the view valid over the same rows - so a test asserting the
+            // outcome alone cannot tell them apart. Count the branch here, where it succeeded, and
+            // the plain path stays at 0. @TestOnly, read by LiveViewSmokeTest.
+            baseMetadataDriftRecompileCount++;
+            LOG.info().$("live view re-derived from the applied base after base WAL loss and a base metadata change [view=")
+                    .$(viewName)
+                    // Not baseAppliedSeqTxn: the recompiled recovery re-reads the base writer txn
+                    // itself and can carry the view further, so report where the view actually landed.
+                    .$(", head=").$(instance.getLastProcessedSeqTxn())
                     .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
             return true;
         } catch (Throwable e) {
             LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
-                    .$(instance.getDefinition().getViewName())
+                    .$(viewName)
                     .$(", error=").$(e).I$();
             return false;
         }
@@ -8762,12 +9141,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Cooperative apply-lag handoff: this cycle's O3 replay needs the
                 // base applied to a seqTxn ApplyWal2TableJob has not reached yet.
                 // ensureBaseApplied threw before any destructive replay work, so
-                // the view is untouched - no watermark advance, no failure
-                // accounting, no invalidation. Leave invalidationReason null and
+                // the view's DURABLE output is untouched - no watermark advance, no
+                // failure accounting, no invalidation. Leave invalidationReason null and
                 // return through the finally; the next fallback scan retries this
                 // view (head > processedTo still holds) once the apply catches up.
                 // Not counting this toward the flush-retry budget is deliberate:
                 // apply lag is transient and self-heals, unlike a refresh fault.
+                //
+                // The compiled factory's accumulators are NOT untouched. The drain that
+                // raised this had already fed every commit below the offending one through
+                // the window cursor, and its O3 detect rolled back only the WAL draft and
+                // latestSeenTs - the accumulators keep every row they counted. So carry the
+                // debt onto the instance: windowStateDirty is a per-turn field that
+                // refreshInstance re-seeds from the instance at every entry, so without this
+                // the next turn starts from a clean slate and drains those same commits
+                // again over accumulators that already counted them. The re-fed rows then
+                // carry cumulative values continuing from the abandoned cycle - a running
+                // count(*) emits N+1.. for what is the view's FIRST row - and the lead
+                // publish makes them reader-visible without any commit at all. The
+                // instance.isWindowStateDirty() gate rebuilds from the applied base before
+                // that drain instead. Gated on the flag rather than raised unconditionally:
+                // a cycle that deferred before feeding a single row owes no rebuild.
+                // See LiveViewConcurrencyTest.testApplyLagDeferralRebuildsAdvancedWindowState.
+                if (windowStateDirty) {
+                    markWindowStateDirty(instance);
+                }
                 // Arm a short back-off so the next scans skip this view instead of
                 // re-draining the whole window every tick until apply lands. Record the
                 // target seqTxn first so the pre-latch guard, which reads it once it sees
@@ -8997,7 +9395,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", retryCount=").$(retryCount)
                     .$(", elapsedUs=").$(elapsedUs)
                     .$(", error=").$(t).I$();
-            return "flush retry budget exhausted";
+            // The re-derive refuses a base schema change that broke a column the view references,
+            // and stashes a reason naming that column. Prefer it: the generic budget message would
+            // hide the one diagnostic an operator can act on, and leaving the stash undrained would
+            // carry it onto an unrelated later invalidation (refreshInstance only drains it when no
+            // reason was returned here).
+            final String rederiveRefusal = instance.takePendingInvalidationReason();
+            return rederiveRefusal != null ? rederiveRefusal : "flush retry budget exhausted";
         }
         LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
                 .$(", retryCount=").$(retryCount)
@@ -9038,21 +9442,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 refreshInstance(instance, seqTxn);
             }
         }
-    }
-
-    private static WindowRecordCursorFactory unwrapWindowFactory(RecordCursorFactory factory) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (f instanceof WindowRecordCursorFactory wf) {
-                return wf;
-            }
-            if (f instanceof QueryProgress) {
-                f = f.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
     /**
@@ -9203,13 +9592,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return discovered;
         }
 
-        void of(LiveViewCheckpointRowsPlan plan, WindowRecordCursorFactory windowFactory, TableReader reader) {
+        void of(LiveViewCheckpointRowsPlan plan, LiveViewCompiledPlan compiledPlan, TableReader reader) {
             this.discovered = false;
             this.plan = plan;
             this.reader = reader;
-            final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-            this.filter = filterFactory.getFilter();
-            this.pageFrameFactory = (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
+            this.filter = compiledPlan.getFilter();
+            this.pageFrameFactory = compiledPlan.getPageFrameFactory();
         }
     }
 

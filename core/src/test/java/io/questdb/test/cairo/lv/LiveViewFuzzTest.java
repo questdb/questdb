@@ -1566,14 +1566,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
-    // Drives the named view's seed sweep to completion on the caller's job,
-    // re-fetching the instance each pass so it survives a restart, then applies
-    // the LV WAL. Mirrors the smoke test helper.
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing
-    // the clock each pass so deferred flushes land, and applying the LV's own
-    // WAL after each burst.
-
     // Removal traffic for the dedup arm that keeps the recompute oracle sound.
     // Inserts a small batch into a far-future partition (strictly above all real
     // data and the current frontier) and drops it BEFORE the LV refreshes, so the
@@ -3116,7 +3108,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // is gone with the floor it protected: BEGINNING now has no lower bound at all.)
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
-        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        // Only the crash-recovery arm needs a bounded cut. It restores the view from a sealed
+        // checkpoint timeline, and a boundary at or above the last row's ts leaves the view empty for
+        // the whole run, so nothing ever seals and restartAndRecoverLead falls back to the
+        // applied-base rebuild - which publishes straight to LV disk and leaves no lead for
+        // assertLeadReadBack to find. The plain lead read-back arm does not: buildLeadForReadBack
+        // inserts its own two rows above the global max ts with i > 0, and those clear every boundary
+        // the draw can produce, so its lead is non-empty at any cut. Capping it too would drop the
+        // upper half of the range for nothing. nextInt takes one draw whatever the bound, so the rest
+        // of the run is unaffected either way.
+        final long boundary = startBoundary(rnd, startMode, tsv, false, leadReadBack && restart ? rowCount / 2 : rowCount);
         final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
         final String oracleSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
@@ -4010,6 +4011,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             for (int i = 0; i < 12_000 && instance.getLastProcessedSeqTxn() < lastBaseTxn && errors.isEmpty(); i++) {
+                Os.sleep(10);
+            }
+
+            // Hold the readers open until each has seen the populated view. The o3 arm can publish
+            // the whole window in a single terminal REPLACE_RANGE commit - an O3 replay recomputes
+            // the view and rewrites the tier in one go - so the view is empty right up to the moment
+            // the catch-up loop above returns, and the commit that ends that loop is also the first
+            // one a reader could observe. Winding the readers down here therefore hands the vacuity
+            // guard below a run in which they only ever saw empty snapshots, and it fails a healthy
+            // run. Bounded, and it exits the moment both readers have their row, so it costs nothing
+            // on the arm that accumulates incrementally.
+            for (int i = 0; i < 1_000
+                    && (nativeRowsValidated.get() == 0 || wrapperRowsValidated.get() == 0)
+                    && errors.isEmpty(); i++) {
                 Os.sleep(10);
             }
 
