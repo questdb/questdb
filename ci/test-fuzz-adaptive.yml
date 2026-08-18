@@ -35,13 +35,25 @@
 # The soak cron deliberately skips 00:00-01:59 so the 01:00 nightly gets the pool to itself: the pool runs
 # one agent at a time, so a soak queued mid-nightly does not just delay itself, it wedges between two nightly
 # shards and stretches the nightly's test work over several hours.
+#
+# CADENCE IS EVERY TWO HOURS, and that is a capacity decision, not a preference. A soak run takes a very
+# steady ~49m (median over 300 finished builds, range 46-54). Hourly put a 49m job into a 60m slot on a
+# single agent -- 82% utilisation before counting the nightly -- and at that utilisation any variance
+# queues and never drains. It showed up every morning as a backlog behind the 01:00 nightly (02:00 waited
+# 46m, 03:00 35m, 04:00 26m, draining only by 06:00) and, when anything perturbed it, compounded into
+# multi-day waits: builds queued 2026-08-12 waited 8104m, i.e. the fuzzer was soaking week-old commits
+# while reporting against the branch head. Two-hourly is ~41% utilisation: the nightly is absorbed, the
+# queue drains, and each run still draws a fresh seed. Fewer long sweeps beat more truncated ones -- the
+# value is in uninterrupted seed runs, not in runs per day.
+#
+# If you raise the cadence again, cut TOTAL_RUN_MINUTES to match: keep run-minutes per slot under ~60%.
 
 trigger: none
 
 pr: none
 
 schedules:
-  - cron: "0 2-23 * * *"
+  - cron: "0 2-22/2 * * *"
     displayName: Run continuous soak (outside nightly window)
     branches:
       include:
