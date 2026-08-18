@@ -446,10 +446,14 @@ public interface CairoConfiguration {
     long getLiveViewInMemoryMaxMicros();
 
     /**
-     * Anchor-map tombstone count threshold above which {@code LiveViewWindow}
-     * fires compaction. The compaction also fires when
-     * {@code tombstoneCount > 0.5 * anchorMap.size()}, regardless of this
-     * absolute threshold.
+     * Reclaimable-partition threshold for the frontier sweep in {@code LiveViewWindow}. The
+     * sweep drops the anchor-map partitions that have fallen behind the previous anchor
+     * bucket, and it runs only once the anchor has advanced past a bucket boundary since the
+     * last sweep and all three of these hold together: the anchor map holds more partitions
+     * than this threshold, at least this many of them are reclaimable, and the reclaimable
+     * ones are at least half the map. A higher value leaves the anchor map larger between
+     * sweeps; a lower one sweeps more often. Neither matters for a view whose anchor is not
+     * provably monotone, or is NULL - such a view never compacts, at any value of this key.
      */
     int getLiveViewPartitionCompactThreshold();
 

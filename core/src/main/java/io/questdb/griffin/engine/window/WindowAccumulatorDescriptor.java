@@ -459,7 +459,7 @@ public final class WindowAccumulatorDescriptor {
      * and one afterwards. Present only in the three respect-the-first-row families
      * ({@link #FAMILY_DOUBLE_FIRST_VALUE}, {@link #FAMILY_LONG_FIRST_VALUE} and the two
      * {@code last_value} ones), and read and written by their contributor alone: it says what
-     * a private map answers with {@code MapValue.isNew()} and a group's value cannot.
+     * a private map reads {@code MapValue.isNew()} for.
      * <p>
      * The two IGNORE NULLS {@code first_value} families deliberately do not carry it. Their
      * value slot is only ever written with a value their predicate admits, so its NULL is the

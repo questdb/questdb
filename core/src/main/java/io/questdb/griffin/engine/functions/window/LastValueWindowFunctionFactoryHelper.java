@@ -1939,8 +1939,8 @@ public class LastValueWindowFunctionFactoryHelper {
         /**
          * Replaces the group's slice with this row's payload when the row contributes, and takes
          * the partition's first row whether it contributes or not - which is what the private-map
-         * implementation below does on its {@code isNew()} branch. The flag carries "this
-         * partition has written its slot" where {@code isNew()} cannot.
+         * implementation below does on its {@code isNew()} branch. The flag is what carries
+         * "this partition has written its slot" for the group.
          */
         @Override
         public void accumulateWindowState(Record record, MapValue value) {

@@ -3533,9 +3533,8 @@ public class FirstValueWindowFunctionFactoryHelper {
 
         /**
          * Captures the first row of the partition into the group's slice and leaves every later
-         * row alone. The flag is what says which of the two this row is: a private map answers
-         * that with {@code isNew()}, and a group's value cannot, because it was created and put
-         * to identity before any contributor ran.
+         * row alone. The flag is what says which of the two this row is; the private-map
+         * implementation below reads {@code isNew()} for the same answer.
          */
         @Override
         public void accumulateWindowState(Record record, MapValue value) {

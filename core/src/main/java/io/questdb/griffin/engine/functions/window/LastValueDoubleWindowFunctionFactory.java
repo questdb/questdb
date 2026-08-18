@@ -1349,8 +1349,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
          * the partition's first row whether it contributes or not - which is what the private-map
          * implementation below does on its {@code isNew()} branch, and is a real difference on
          * data: a partition beginning with an infinity emits that infinity until a finite value
-         * arrives. The flag is what carries "this partition has written its slot" where
-         * {@code isNew()} cannot.
+         * arrives. The flag is what carries "this partition has written its slot" for the
+         * group.
          */
         @Override
         public void accumulateWindowState(Record record, MapValue value) {

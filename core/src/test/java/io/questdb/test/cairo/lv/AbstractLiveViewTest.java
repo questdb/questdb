@@ -138,10 +138,34 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         return plan.getWindowFactory().getWindowFunctions();
     }
 
+    /**
+     * Whether the engine's {@code MillisecondClock} follows the simulated microsecond clock. Probed
+     * rather than declared: moves {@code currentMicros} to a stamp no wall clock reads, asks the
+     * engine's own configuration for the time, then puts the clock back. A derived clock answers
+     * with the stamp; a pinned real one answers with wall time.
+     */
+    private static boolean isEngineMillisecondClockDerivedFromTestClock() {
+        // 2100-01-01T00:00:00Z in micros, far enough from now that no real clock reads it.
+        final long probeMicros = 4_102_444_800_000_000L;
+        final long savedMicros = currentMicros;
+        try {
+            setCurrentMicros(probeMicros);
+            return engine.getConfiguration().getMillisecondClock().getTicks() == probeMicros / 1000;
+        } finally {
+            setCurrentMicros(savedMicros);
+        }
+    }
+
     @Before
     @Override
     public void setUp() {
         super.setUp();
+        Assert.assertEquals(
+                "isMillisecondClockSimulated() disagrees with the MillisecondClock the engine actually runs on; "
+                        + "override it to match, because setUp() sizes the engine's spin deadlines from this answer",
+                isMillisecondClockSimulated(),
+                isEngineMillisecondClockDerivedFromTestClock()
+        );
         if (isMillisecondClockSimulated()) {
             // These tests hand-drive the clock, and CairoTestConfiguration derives the millisecond clock
             // the engine's spin deadlines run on from that same simulated clock. So a soak whose refresh
@@ -236,6 +260,15 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * that installs a real {@code MillisecondClock} of its own must override this and return false:
      * {@link #setUp} then leaves it {@link io.questdb.test.AbstractCairoTest#DEFAULT_SPIN_LOCK_TIMEOUT},
      * which on a real clock is genuine liveness cover rather than an artifact of the simulated one.
+     * <p>
+     * It describes the wiring, not every instant: the derived clock falls through to real wall time
+     * while {@code currentMicros == -1}, so a simulated suite still reads real time until its first
+     * {@code setCurrentMicros}.
+     * <p>
+     * {@link #setUp} asserts the answer against the engine's actual clock rather than trusting it,
+     * so a subclass that pins a real clock and forgets to override this fails immediately instead of
+     * silently inheriting a simulated-year {@code spinLockTimeout} - which is the defect the hook
+     * exists to prevent.
      */
     protected boolean isMillisecondClockSimulated() {
         return true;

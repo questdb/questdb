@@ -65,6 +65,20 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
         setCurrentMicros(0L);
     }
 
+    /**
+     * Compiles every test in this suite with function memoization on, which is what a server does
+     * and what {@code AbstractTest.setUp()} turns off for the corpus at large. The subject matter
+     * here IS the projection, so the plan shape production runs is the one worth covering: a
+     * memoized output column is what turned a driven-cursor mistake on the O3 replay path into
+     * wrong stored values rather than a slower recompute.
+     */
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        allowFunctionMemoization();
+    }
+
     @Test
     public void testAnchoredWindowPartitionedByAnAliasedColumn() throws Exception {
         // The anchor expression and the window's PARTITION BY keys resolve against the
@@ -177,6 +191,124 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFoldedWindowColumnReplaysOutOfOrder() throws Exception {
+        // testTwoWindowFunctionsFoldedIntoOneColumn pins the folded shape on the drain path
+        // only. Slot resolution is fixed at compile time and one ProjectingRecordCursor serves
+        // every path, so the drain is an argument that the repair paths agree - but it is an
+        // argument, and the two bugs this suite was written for both hid on a repair path the
+        // drain covered by that same argument. The three tests below drive the folded column
+        // through each of them instead.
+        //
+        // The back-dated row lands inside partition A, so both window functions rewind: every
+        // later A row's average moves, and the row that used to follow 12:00:00 now lags the
+        // new one. A replay that reads either operand from the wrong slot swaps them, and
+        // `lag - avg` is as valid a DOUBLE as `avg - lag`.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, avg(px) OVER (" + FRAME + ") - lag(px) OVER ("
+                    + FRAME + ") AS c FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:00.500000Z','A',6.0)");
+            refresh();
+
+            // A refresh fault recomputes the view from the applied base, which would repair a
+            // stale replay before the assertions below could read it.
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc
+                            2026-08-07T12:00:00.000000Z\tA\tnull
+                            2026-08-07T12:00:00.500000Z\tA\t-2.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0
+                            2026-08-07T12:00:02.000000Z\tB\tnull
+                            2026-08-07T12:00:03.000000Z\tA\t1.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
+    public void testFoldedWindowColumnSurvivesCheckpointRestore() throws Exception {
+        // The folded column through a checkpoint restore: the view resumes from window state a
+        // previous process sealed, keyed by the window factory's own output positions. Two
+        // window functions mean two sets of those positions, so a restore that reassembles them
+        // in the compiled order rather than the sealed one feeds the projection the wrong pair.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, avg(px) OVER (" + FRAME + ") - lag(px) OVER ("
+                    + FRAME + ") AS c FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Back-dated, so the restored view replays from a checkpoint rather than appending.
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:00.500000Z','A',6.0)");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc
+                            2026-08-07T12:00:00.000000Z\tA\tnull
+                            2026-08-07T12:00:00.500000Z\tA\t-2.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0
+                            2026-08-07T12:00:02.000000Z\tB\tnull
+                            2026-08-07T12:00:03.000000Z\tA\t1.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
+    public void testFoldedWindowColumnSurvivesRestart() throws Exception {
+        // The folded column through a restart: the compiled factory is gone and the plan is
+        // rebuilt from the stored SQL, so the projection has to land on the same two window
+        // outputs in the same two slots the view's single stored column was built from.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, avg(px) OVER (" + FRAME + ") - lag(px) OVER ("
+                    + FRAME + ") AS c FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:05.000000Z','A',26.0)");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc
+                            2026-08-07T12:00:00.000000Z\tA\tnull
+                            2026-08-07T12:00:01.000000Z\tA\t2.0
+                            2026-08-07T12:00:02.000000Z\tB\tnull
+                            2026-08-07T12:00:03.000000Z\tA\t4.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0
+                            2026-08-07T12:00:05.000000Z\tA\t-10.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
     public void testIncrementalCommitsAgreeWithARecompute() throws Exception {
         // The refresh rebuilds the whole chain per commit rather than once, so a
         // projection re-bound wrongly on a later commit diverges here and nowhere in a
@@ -198,6 +330,95 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                 refresh();
                 assertMatchesRecompute(viewSql);
             }
+        });
+    }
+
+    @Test
+    public void testMemoizedProjectionColumnSurvivesCheckpointRestore() throws Exception {
+        // The two memoized replay tests cover the O3 paths; this one covers the restore. What
+        // it adds is coverage rather than a proof: the restore recompiles, so its memoizers are
+        // new objects and the rebind clear MemoizerFunction.init() performs is not observable
+        // from here - MemoizerFunctionTest pins that directly. What is observable is whether a
+        // view whose output column compiles to a memoizer survives the restore with the right
+        // values, which is the cell of the shape x path matrix this suite was missing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseWithAJsonColumn();
+            final String viewSql = "SELECT ts, sym, json_extract(j, '$.px')::double - avg(px) OVER ("
+                    + FRAME + ") AS dev FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            // Without a memoizer this is a slower green copy of testProjectionSurvivesCheckpointRestore.
+            // EXPLAIN renders the wrap as memoize(...); noLeakCheck() keeps the assertion from
+            // clearing the engine out from under the live view the rest of the test drives.
+            assertQuery(viewSql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("memoize(");
+            insertJsonRowsWithExactAverages();
+            refresh();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Back-dated, so the restored view replays from a checkpoint rather than appending.
+            execute("INSERT INTO base (ts, sym, px, j) VALUES ('2026-08-07T12:00:00.500000Z','A',6.0,'{\"px\":6.0}')");
+            refresh();
+
+            // A refresh fault recomputes the view from the applied base, which would repair a
+            // stale projection before the assertion below could read it.
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tdev
+                            2026-08-07T12:00:00.000000Z\tA\t0.0
+                            2026-08-07T12:00:00.500000Z\tA\t-2.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t15.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
+    public void testMemoizedProjectionColumnSurvivesRestart() throws Exception {
+        // The memoized column through a restart. Same standing as the restore case above: the
+        // rebuilt plan carries new memoizers, so this covers the shape on the path rather than
+        // proving the clear. The rows it appends sit beside rows the previous process stored,
+        // and only the values say whether the projection resumed on the right column.
+        assertMemoryLeak(() -> {
+            createBaseWithAJsonColumn();
+            final String viewSql = "SELECT ts, sym, json_extract(j, '$.px')::double - avg(px) OVER ("
+                    + FRAME + ") AS dev FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            assertQuery(viewSql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("memoize(");
+            insertJsonRowsWithExactAverages();
+            refresh();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            execute("INSERT INTO base (ts, sym, px, j) VALUES ('2026-08-07T12:00:05.000000Z','A',26.0,'{\"px\":26.0}')");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tdev
+                            2026-08-07T12:00:00.000000Z\tA\t0.0
+                            2026-08-07T12:00:01.000000Z\tA\t2.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t12.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0
+                            2026-08-07T12:00:05.000000Z\tA\t6.0
+                            """);
+            assertMatchesRecompute(viewSql);
         });
     }
 
@@ -235,16 +456,12 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
     public void testOutOfOrderRowReplaysAMemoizedProjectionColumn() throws Exception {
         // json_extract() reports shouldMemoize(), and that propagates up the expression
         // it sits in, so the output projection compiles `dev` to a DoubleFunctionMemoizer.
-        // A memoizer recomputes only after ProjectingRecordCursor.hasNext() invalidates
-        // its cache, and nothing else invalidates it - not of(), not init(), not toTop().
-        // The replay must therefore drive the projected cursor: driving the raw window
-        // cursor skips every invalidation and pins `dev` to whatever the preceding
-        // in-order drain left cached, for every row the replay re-emits, with no refresh
-        // fault to show for it.
-        //
-        // Memoization is on by default in a server; AbstractTest.setUp() turns it off, so
-        // the test turns it back on to compile the shape production compiles.
-        allowFunctionMemoization();
+        // Within a traversal, only ProjectingRecordCursor.hasNext() invalidates that cache
+        // - MemoizerFunction.init()/toTop() cover a rebind and a rewind, neither of which a
+        // driven replay performs per row. The replay must therefore drive the projected
+        // cursor: driving the raw window cursor skips every invalidation and pins `dev` to
+        // whatever the preceding in-order drain left cached, for every row the replay
+        // re-emits, with no refresh fault to show for it.
         assertMemoryLeak(() -> {
             createBaseWithAJsonColumn();
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
@@ -344,16 +561,12 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
         //
         // A memoized column is what separates them. json_extract() reports shouldMemoize(),
         // and that propagates up the expression it sits in, so the output projection compiles
-        // `dev` to a DoubleFunctionMemoizer, whose cache only ProjectingRecordCursor.hasNext()
-        // invalidates - not of(), not init(), not toTop(). Driving the window cursor instead
+        // `dev` to a DoubleFunctionMemoizer, whose cache within a traversal only
+        // ProjectingRecordCursor.hasNext() invalidates. Driving the window cursor instead
         // therefore hands every row the resume re-emits whatever `dev` the preceding in-order
         // drain left cached, with no refresh fault to show for it. That same mutation shipped
         // at the sibling o3HeadMissReplay site, which is why replayFromAnchor carries its own
         // memoized case instead of leaning on testOutOfOrderRowReplaysAMemoizedProjectionColumn.
-        //
-        // Memoization is on by default in a server; AbstractTest.setUp() turns it off, so
-        // the test turns it back on to compile the shape production compiles.
-        allowFunctionMemoization();
         // One commit per row (checkpoint.rows = 1 seals a root per drain) leaves a timeline
         // of anchors below the back-dated row, which is what lets planO3Repair resume instead
         // of rebuilding the whole affected interval.
@@ -604,6 +817,114 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                             2026-08-07T12:00:03.000000Z\tA\t12.0\t24.0
                             2026-08-07T12:00:04.000000Z\tB\t2.0\t4.0
                             """);
+        });
+    }
+
+    @Test
+    public void testProjectedColumnWrappingAnotherProjectedExpressionReplaysOutOfOrder() throws Exception {
+        // The doubled shape on the O3 replay path. The test above pins the slot arithmetic on
+        // the drain; a replay re-emits rows through the same compiled projection but from a
+        // rewound window, so a projection that reads `px` across the wrong offset diverges here
+        // on the rows whose average moved rather than on every row.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS c, "
+                    + "(px - avg(px) OVER (" + FRAME + ")) * 2 AS c2 FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:00.500000Z','A',6.0)");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc\tc2
+                            2026-08-07T12:00:00.000000Z\tA\t0.0\t0.0
+                            2026-08-07T12:00:00.500000Z\tA\t-2.0\t-4.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0\t8.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t15.0\t30.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0\t4.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
+    public void testProjectedColumnWrappingAnotherProjectedExpressionSurvivesCheckpointRestore() throws Exception {
+        // The doubled shape through a checkpoint restore. Four output functions plus a reserved
+        // internal timestamp slot have to be rebuilt in the same order the sealed window state
+        // was indexed by, and a restore that reassembles them one place off still yields four
+        // plausible DOUBLEs.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS c, "
+                    + "(px - avg(px) OVER (" + FRAME + ")) * 2 AS c2 FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:00.500000Z','A',6.0)");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc\tc2
+                            2026-08-07T12:00:00.000000Z\tA\t0.0\t0.0
+                            2026-08-07T12:00:00.500000Z\tA\t-2.0\t-4.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0\t8.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t15.0\t30.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0\t4.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
+    public void testProjectedColumnWrappingAnotherProjectedExpressionSurvivesRestart() throws Exception {
+        // The doubled shape through a restart. The stored table has two data columns built from
+        // one window output; the recompiled plan has to produce both again, in that order, or
+        // the copier writes `c2` into `c`.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS c, "
+                    + "(px - avg(px) OVER (" + FRAME + ")) * 2 AS c2 FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:05.000000Z','A',26.0)");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc\tc2
+                            2026-08-07T12:00:00.000000Z\tA\t0.0\t0.0
+                            2026-08-07T12:00:01.000000Z\tA\t2.0\t4.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t12.0\t24.0
+                            2026-08-07T12:00:04.000000Z\tB\t2.0\t4.0
+                            2026-08-07T12:00:05.000000Z\tA\t6.0\t12.0
+                            """);
+            assertMatchesRecompute(viewSql);
         });
     }
 
@@ -975,6 +1296,20 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                   ('2026-08-07T12:00:01.000000Z','A',11.0),
                   ('2026-08-07T12:00:02.000000Z','B',20.0),
                   ('2026-08-07T12:00:03.000000Z','A',13.0)""");
+    }
+
+    private void insertJsonRowsWithExactAverages() throws Exception {
+        // insertRowsWithExactAverages() with a JSON mirror of px, so a view over
+        // json_extract(j, '$.px') carries the same values as one over px - and compiles a
+        // memoizer, because json_extract() reports shouldMemoize() and that propagates up the
+        // expression it sits in.
+        execute("""
+                INSERT INTO base (ts, sym, px, j) VALUES
+                  ('2026-08-07T12:00:00.000000Z','A',10.0,'{"px":10.0}'),
+                  ('2026-08-07T12:00:01.000000Z','A',14.0,'{"px":14.0}'),
+                  ('2026-08-07T12:00:02.000000Z','B',20.0,'{"px":20.0}'),
+                  ('2026-08-07T12:00:03.000000Z','A',30.0,'{"px":30.0}'),
+                  ('2026-08-07T12:00:04.000000Z','B',24.0,'{"px":24.0}')""");
     }
 
     private void insertRowsIncludingANullSymbol() throws Exception {

@@ -122,9 +122,7 @@ final class ProjectingRecordCursor implements RecordCursor {
         if (!base.hasNext()) {
             return false;
         }
-        for (int i = 0, n = memoizers.size(); i < n; i++) {
-            memoizers.getQuick(i).memoize(recordA.getInternalJoinRecord());
-        }
+        clearMemos();
         return true;
     }
 
@@ -141,6 +139,9 @@ final class ProjectingRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         base.recordAt(((VirtualFunctionRecord) record).getBaseRecord(), atRowId);
+        // The row moved without a hasNext(), so the projection's caches describe the row
+        // before it. VirtualFunctionRecordCursor.recordAt() clears them for the same reason.
+        clearMemos();
     }
 
     @Override
@@ -151,6 +152,8 @@ final class ProjectingRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         base.toTop();
+        // MemoizerFunction.toTop() clears the memoized value before delegating, so a rewind
+        // cannot serve the previous traversal's last row to the first row of this one.
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).toTop();
         }
@@ -162,12 +165,26 @@ final class ProjectingRecordCursor implements RecordCursor {
      * rows on the cursor underneath it after the whole chain is built, and a rewind here
      * would undo that skip - and, above the window, would rewind a cursor whose window
      * state is mid-stream.
+     * <p>
+     * Not rewinding is what makes the re-initialisation load-bearing rather than tidy. The
+     * plan reuses one instance of this cursor for the view's whole life, so its memoizers
+     * carry the previous drain's last row into the rebind; {@link MemoizerFunction#init}
+     * drops that value, and a projection read taken before the first {@link #hasNext()} on
+     * the new base would otherwise answer with it. That is the shape of the O3 replay bug
+     * this cursor's memoizers shipped with - there the driving loop skipped hasNext()
+     * entirely, so every row of the replay answered with it.
      */
     void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         this.base = base;
         this.recordA.of(base.getRecord());
         this.symbolTableSource.ofBase(base);
         Function.init(functions, symbolTableSource, executionContext, null);
+    }
+
+    private void clearMemos() {
+        for (int i = 0, n = memoizers.size(); i < n; i++) {
+            memoizers.getQuick(i).clearMemo();
+        }
     }
 
     /**
