@@ -73,10 +73,16 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
         assertRefusedAtStatement("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
     }
 
-    @Test
-    public void testForceDropPartitionRefusesAtTheStatement() throws Exception {
-        assertRefusedAtStatement("ALTER TABLE c FORCE DROP PARTITION LIST '2023-01-01'");
-    }
+    /*
+     * The FORCE DROP refusal test that stood here is gone -- sub-project 1D made it cell-aware.
+     *
+     * Worth recording what it was FOR: when this suite was written, FORCE DROP was the only one of the
+     * six lifecycle DDLs that already refused synchronously, which made it the POSITIVE CONTROL. The
+     * same assertion passed for it unchanged while failing for the other five, proving those five
+     * failures were real rather than an artifact of how the suite asserts. It served that purpose, and
+     * the remaining tests here (ATTACH, DETACH, SQUASH) still guard the synchronous-refusal contract
+     * that 1B Task 0 established for them.
+     */
 
     @Test
     public void testSquashPartitionsRefusesAtTheStatement() throws Exception {

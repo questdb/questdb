@@ -2716,25 +2716,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void forceRemovePartitions(LongList partitionTimestamps) {
-        // Plan 4b Task 1b: FORCE DROP PARTITION is not yet cell-aware for a real (routed) composite
-        // table, for the same reasons removePartition's own "Plan 4a DDL gate sweep" comment already
-        // documents for plain DROP PARTITION (which this method is the ungated sibling of --
-        // AlterOperation#isForceWalBypass routes FORCE DROP PARTITION around that gate entirely).
-        // txWriter#getPartitionIndex(long) below is cellKey-blind (always resolves cellKey 0 for the
-        // day); for a day with 2+ cells this can only ever select and drop ONE cell, silently leaving
-        // sibling cells attached while columnVersionWriter.removePartition(timestamp) -- also
-        // cellKey-blind -- wipes column-version records that may still belong to an untouched sibling
-        // cell sharing the same timestamp. Gated unconditionally for any real (non-dormant) composite
-        // table -- cell-aware FORCE DROP PARTITION is deferred to a later sub-plan. Plain and
-        // dormant-composite tables are completely unaffected.
-        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
-        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
-        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support FORCE DROP PARTITION [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // SP1D (Task 3): FORCE DROP PARTITION is cell-aware as of 2026-08-18. The gate that stood
+        // here predicted its own failure exactly -- "getPartitionIndex is cellKey-blind ... for a day
+        // with 2+ cells this can only ever select and drop ONE cell" -- and measurement with the gate
+        // lifted showed it removed NOTHING, because after cell 0 the blind lookup returns -1. The loop
+        // below now drains every cell of each requested day, columnVersionWriter.removePartition stays
+        // day-level (once per timestamp), and the surviving active partition's max is read from the
+        // cell rather than the day container.
 
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
@@ -2747,7 +2735,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int removedCount = 0;
         for (int i = 0; i < partitionTimestamps.size(); i++) {
             long timestamp = partitionTimestamps.getQuick(i);
-            final int index = txWriter.getPartitionIndex(timestamp);
+            // SP1D (Task 3): cell-agnostic. getPartitionIndex resolves cellKey 0 ONLY, so on a
+            // composite table this returned -1 the moment cell 0 was gone and FORCE DROP removed
+            // NOTHING at all -- measured with the gate lifted. Identical for a plain table, whose day
+            // is its own single cell.
+            final int index = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
             if (index < 0) {
                 LOG.debug().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestampDriver, timestamp).I$();
                 continue;
@@ -2763,14 +2755,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
-            // cellKey resolved before removeAttachedPartitions (below) mutates the array -- gated
-            // above for any real composite table, so this is always 0 here, matching plain behaviour.
-            final int cellKey = txWriter.getPartitionCellKey(index);
+
+            // SP1D: drain EVERY cell of the day. The original body removed one attached entry per
+            // requested timestamp, which is correct for a plain table (a day IS its single cell) and
+            // could never empty a composite day. FORCE DROP can only ever name a whole day -- its LIST
+            // parser rejects <day>/<cell> with a date-format error -- so removing the day's every cell
+            // is exactly what the statement asked for.
+            int cellIndex = index;
+            while (cellIndex >= 0) {
+                final int cellKey = txWriter.getPartitionCellKey(cellIndex);
+                final long cellNameTxn = txWriter.getPartitionNameTxn(cellIndex);
+                txWriter.removeAttachedPartitions(timestamp, cellKey);
+                // Add the partition to the partition remove list that can be deleted if there are no
+                // open readers after the commit
+                partitionRemoveCandidates.add(timestamp, cellNameTxn, cellKey);
+                cellIndex = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
+            }
+
+            // SP1D: column versions are keyed by DAY, not by cell, so this is called ONCE per
+            // requested timestamp and deliberately NOT inside the drain -- calling it per cell would
+            // wipe records still belonging to siblings not yet removed.
+            //
+            // It runs AFTER the drain rather than before it (the original single-entry code ran it
+            // first). For a plain table the two orders are indistinguishable -- one entry, one call.
+            // For composite the call would otherwise precede N removals, so a failure mid-drain would
+            // leave the day's column versions wiped while cells were still attached. Wiping last means
+            // the torn state cannot occur.
             columnVersionWriter.removePartition(timestamp);
-            txWriter.removeAttachedPartitions(timestamp);
-            // Add the partition to the partition remove list that can be deleted if there are no open readers
-            // after the commit
-            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index), cellKey);
         }
 
         if (removedCount > 0) {
@@ -2787,7 +2798,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
                     long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
                     long txn = txWriter.getPartitionNameTxn(partitionIndex);
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
+                    // SP1D: the surviving active partition is a CELL on a composite table, so the
+                    // cell-blind 5-arg resolver would read the max from a day container that holds no
+                    // column files. Same defect 1B fixed for DROP's active-tail branch (N1).
+                    if (isRoutedComposite()) {
+                        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                        cellSegmentSink.clear();
+                        renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(partitionIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn, cellSegmentSink);
+                    } else {
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
+                    }
                     try {
                         readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
                         maxTimestamp = attachMaxTimestamp;

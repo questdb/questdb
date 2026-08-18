@@ -48,10 +48,6 @@ public class CompositeTtlAndForceDropTest extends AbstractCompositeTwinTest {
     /**
      * FORCE DROP of a whole day must match the plain twin.
      */
-    @Ignore("SP1D Task 3: FORCE DROP is still gated and, measured with the gate lifted, removes"
-            + " NOTHING on a composite table. forceRemovePartitions iterates each requested timestamp"
-            + " ONCE through the cellKey-0-blind getPartitionIndex, so it can never drain a multi-cell"
-            + " day. Un-ignore when Task 3 lands.")
     @Test(timeout = 60_000)
     public void testForceDropWholeDayMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -72,10 +68,6 @@ public class CompositeTtlAndForceDropTest extends AbstractCompositeTwinTest {
      * it needs its own guard. 1B measured that naming one cell in a {@code DROP} destroyed the whole
      * day; the same shape must not be reachable here.
      */
-    @Ignore("SP1D Task 3: FORCE DROP is still gated and, measured with the gate lifted, removes"
-            + " NOTHING on a composite table. forceRemovePartitions iterates each requested timestamp"
-            + " ONCE through the cellKey-0-blind getPartitionIndex, so it can never drain a multi-cell"
-            + " day. Un-ignore when Task 3 lands.")
     @Test(timeout = 60_000)
     public void testForceDropIndividualCellIsRefused() throws Exception {
         assertMemoryLeak(() -> {

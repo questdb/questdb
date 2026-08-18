@@ -137,16 +137,12 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * bypassing the sequencer), so it needed its own dedicated gate; {@link #testDropPartitionGated()}
      * alone never exercised it.
      */
-    @Test
-    public void testForceDropPartitionGated() throws Exception {
-        assertMemoryLeak(() -> {
-            createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c force drop partition list '2020-01-01'",
-                    "c",
-                    "composite partitioning does not yet support FORCE DROP PARTITION");
-        });
-    }
+    /**
+     * FORCE DROP PARTITION became SUPPORTED on composite tables in sub-project 1D, so the gate this
+     * test asserted is gone. Coverage moved to {@code CompositeTtlAndForceDropTest}. A cell-qualified
+     * name needs no gate here: this statement's LIST parser rejects it with a date-format error, which
+     * is why FORCE DROP required no equivalent of 1B's refuseCellQualifiedPartitionName.
+     */
 
     /**
      * Plan 4b Task 1b. TTL eviction shares {@code dropPartitionByExactTimestamp}'s cell-blind selection
