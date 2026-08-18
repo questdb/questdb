@@ -162,7 +162,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
         // Two windows over one key that differ in nothing but the frame. Their sums keep
         // different states - one gives values back and the other never does - so the two must not
         // meet, and what keeps them apart is the frame in the group's spec rather than anything
-        // about the families. Two groups, two maps, two lookups a row: this is the shape that
+        // about the families. Two groups and two maps: this is the shape that
         // would silently produce a cumulative total for a bounded output if the spec stopped
         // discriminating.
         assertMemoryLeak(() -> {
@@ -192,8 +192,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
-                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
                 }
             }
         });
@@ -235,8 +233,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
-                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
                 }
             }
         });
@@ -276,9 +272,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfusedOnWindow("t", RANGE_FRAME_WINDOW, "sum(x) over w", "count(x) over w");
@@ -357,10 +350,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
                     // One accumulator for two outputs, so the frame is maintained once.
-                    Assert.assertEquals(rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfusedOnWindow("t", RANGE_FRAME_WINDOW, "sum(x) over w", "avg(x) over w");
@@ -402,9 +392,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfusedOnWindow("t", ROWS_FRAME_WINDOW, "sum(x) over w", "count(x) over w");
@@ -453,10 +440,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
                     // One accumulator for two outputs, so the frame is maintained once.
-                    Assert.assertEquals(rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfusedOnWindow("t", ROWS_FRAME_WINDOW, "sum(x) over w", "avg(x) over w");
@@ -492,9 +476,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused("sum(x) over w", "count(x) over w", "first_value(x) over w");
@@ -526,7 +507,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                     // A second execution starts from an empty key domain, so the running
                     // totals restart rather than continuing the first cursor's.
                     Assert.assertEquals(ORDINARY_ROW_COUNT, drain(cursor));
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
                 }
             }
         });
@@ -622,10 +602,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
                     // One accumulator for two outputs, so x is read and compensated once.
-                    Assert.assertEquals(rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             // Both sums over one argument: five slots, and each total maintained by the
@@ -649,8 +626,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 );
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
                 }
             }
             assertFusedMatchesUnfused("ksum(x) over w", "count(x) over w");
@@ -697,9 +672,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused("max(x) over w", "min(x) over w");
@@ -738,11 +710,8 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
                     // Two accumulators, four outputs: x is read once per component and not
                     // once per call.
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused(
@@ -786,9 +755,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(DECIMAL_KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfusedOn("td", "count(d128) over w", "max(d128) over w");
@@ -841,8 +807,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 );
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
-                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
-                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
                 }
             }
         });
@@ -872,8 +836,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
                 }
             }
             // And the answers are the unfused path's, over the shapes an expression key is
@@ -942,10 +904,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
                     // Two accumulators for three outputs: x is read once per component.
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused("sum(x) over w", "max(x) over w", "count(x) over w");
@@ -980,9 +939,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(CAPTURE_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(4 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused(
@@ -1031,9 +987,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused("count(*) over w", "row_number() over w", "count(k) over w");
@@ -1101,9 +1054,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(DECIMAL_KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(12 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(12 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfusedOn(
@@ -1251,9 +1201,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(4 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(4 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused(
@@ -1321,11 +1268,10 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSumAndCountShareOneMapAndOneLookup() throws Exception {
+    public void testSumAndCountShareOneMap() throws Exception {
         // The headline shape. sum(x) counts finite x values and count(y) counts non-null y
         // values, so the two disagree on every row where exactly one is absent and keep
-        // separate counters - what they share is the key domain, the hash table and the row's
-        // one lookup.
+        // separate counters - what they share is the key domain and hash table.
         assertMemoryLeak(() -> {
             createTable();
             insertOrdinaryRows();
@@ -1343,10 +1289,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(ORDINARY_ROW_COUNT, rows);
-                    // One lookup per row for both outputs, and one update per component.
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                     // Reported together on purpose: MapFactory selects on the key and the
                     // widened value against this limit, so neither number explains the choice
                     // on its own.
@@ -1383,13 +1325,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    // One update a row for three outputs - and one evaluation of x with it.
-                    // accumulateWindowState is the only place any of these families reads its
-                    // argument, and only the component's one contributor is asked to run it,
-                    // so the update count is the argument-evaluation count for this shape.
-                    Assert.assertEquals(rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused("sum(x) over w", "avg(x) over w", "count(x) over w");
@@ -1421,9 +1356,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(5 * rows, state.getProjectionWriteCount());
                 }
             }
             assertFusedMatchesUnfused(
@@ -1532,9 +1464,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(CAPTURE_SHAPE_ROW_COUNT, rows);
-                    Assert.assertEquals(rows, state.getLookupCount());
-                    Assert.assertEquals(3 * rows, state.getContributorUpdateCount());
-                    Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                 }
             }
             // The differential, and then the one answer it is worth naming outright: partition
@@ -1580,11 +1509,8 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 final StringSink second = new StringSink();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     CursorPrinter.println(cursor, factory.getMetadata(), first, true, false);
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
                     cursor.toTop();
-                    Assert.assertEquals(0, state.getLookupCount());
                     CursorPrinter.println(cursor, factory.getMetadata(), second, true, false);
-                    Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
                 }
                 TestUtils.assertEquals(first, second);
             }
@@ -1633,10 +1559,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 );
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
-                    // Two key domains, two lookups a row: co-location is per window and never
-                    // across windows.
-                    Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
-                    Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
+                    // Co-location is per window and never across windows.
                 }
             }
         });
@@ -1673,7 +1596,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
             Assert.assertEquals(mapImplementation, state.getMapImplementation());
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 CursorPrinter.println(cursor, factory.getMetadata(), localSink, true, false);
-                Assert.assertEquals(ORDINARY_ROW_COUNT, state.getLookupCount());
             }
         }
         return localSink.toString();

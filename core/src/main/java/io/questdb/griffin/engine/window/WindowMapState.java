@@ -139,22 +139,6 @@ import org.jetbrains.annotations.TestOnly;
  * concentrated where it is not.
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
-    /**
-     * Whether the group keeps the structural counters the fusion tests and
-     * {@code WindowMapFusionBenchmark} read back. Off unless
-     * {@code -Dquestdb.window.map.counters=true} is on the command line; the surefire
-     * {@code argLine} sets it, and the benchmark sets it for itself.
-     * <p>
-     * A {@code static final} rather than an {@code assert}, because every shipped artifact runs
-     * with assertions on - {@code core/docker-entrypoint.sh}, {@code core/src/main/bin/questdb.sh}
-     * and the AMI systemd unit all pass {@code -ea} - so assert-gating would have left the
-     * increments in the server's hot loop, which is the cost they exist to avoid. HotSpot folds a
-     * {@code static final} of an initialized class to a constant, so with the property unset every
-     * {@code if (COUNTERS_ENABLED)} below and the field write inside it leave the compiled code
-     * entirely. A group's traversal methods run once per row of the query, so that is the
-     * difference between measuring fusion and charging every user of it for the measurement.
-     */
-    private static final boolean COUNTERS_ENABLED = Boolean.getBoolean("questdb.window.map.counters");
     private final int componentCount;
     /**
      * The contributors' arguments, one per component, in component order - borrowed exactly as
@@ -177,27 +161,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
     private final int unorderedMapMaxEntrySize;
-    /**
-     * Pass-1 rows this group absorbed - every row it saw, less the ones
-     * {@link #isRowRefusedByEveryComponent} turned away. Kept only under
-     * {@link #COUNTERS_ENABLED}.
-     */
-    private long contributedRowCount;
-    /**
-     * Partitions {@link #putIdentity} had to create an entry for, pass 1 having left every row of
-     * them out. Kept only under {@link #COUNTERS_ENABLED}.
-     */
-    private long identityRowCount;
-    /**
-     * Rows {@link #projectPass2} walked, which for a two-pass group is every row of the
-     * traversal and for a one-pass group is none. Kept only under {@link #COUNTERS_ENABLED}.
-     */
-    private long pass2RowCount;
-    /**
-     * Pass-1 rows every component refused. Kept only under {@link #COUNTERS_ENABLED}.
-     */
-    private long skippedRowCount;
-
     private WindowMapState(
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
@@ -310,7 +273,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         if (map.isOpen()) {
             map.clear();
         }
-        resetStructuralCounters();
     }
 
     @Override
@@ -354,9 +316,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     public void computeNext(Record record) {
         if (isPass1SkipEnabled && isRowRefusedByEveryComponent(record)) {
-            if (COUNTERS_ENABLED) {
-                skippedRowCount++;
-            }
             return;
         }
         final MapKey key = map.withKey();
@@ -375,36 +334,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
                 plan.getProjectionFunction(p).projectWindowState(record, value);
             }
         }
-        if (COUNTERS_ENABLED) {
-            contributedRowCount++;
-        }
-    }
-
-    /**
-     * The number of times a contributor absorbed a row, which is the contributed row count
-     * times the component count. Beside {@link #getLookupCount()} it is what says a group
-     * removed updates rather than only maps. Requires {@link #COUNTERS_ENABLED}.
-     */
-    @TestOnly
-    public long getContributorUpdateCount() {
-        requireCounters();
-        return contributedRowCount * componentCount;
-    }
-
-    /**
-     * The number of times this group looked a key up - one per row, however many outputs read
-     * the value back, and two per row for a two-pass group, which probes once in each traversal.
-     * A group that skips pass-1 rows probes fewer times than that, and once more than that for
-     * every row of a partition pass 2 had to insert. Structural rather than timed: a lookup
-     * reduction that is only visible in elapsed time is not a measurement.
-     * <p>
-     * Derived from the per-traversal tallies rather than counted at the probes themselves.
-     * Requires {@link #COUNTERS_ENABLED}.
-     */
-    @TestOnly
-    public long getLookupCount() {
-        requireCounters();
-        return contributedRowCount + pass2RowCount + identityRowCount;
     }
 
     /**
@@ -417,34 +346,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         return map.getClass().getSimpleName();
     }
 
+    /**
+     * The number of distinct keys the group currently holds. Tests use this to observe the
+     * pass-1 key domain directly without adding work to the per-row production path.
+     */
+    @TestOnly
+    public long getMapSize() {
+        return map.size();
+    }
+
     public WindowAccumulatorPlan getPlan() {
         return plan;
-    }
-
-    /**
-     * The number of projection writes the group made, which is the projection count times the
-     * rows the projecting traversal walked - pass 2's rows for a two-pass group, and pass 1's
-     * contributed rows for a one-pass group, which projects from the value it has just loaded.
-     * A skipped pass-1 row writes no projection either way: a one-pass group never skips, and a
-     * two-pass group projects the row in pass 2 off the identity entry {@link #putIdentity}
-     * makes for it. Requires {@link #COUNTERS_ENABLED}.
-     */
-    @TestOnly
-    public long getProjectionWriteCount() {
-        requireCounters();
-        return (isTwoPass ? pass2RowCount : contributedRowCount) * projectionCount;
-    }
-
-    /**
-     * The number of pass-1 rows the group left out of its map because every component refused
-     * them. Zero for a group {@link #isPass1SkipEnabled()} does not hold for, and the structural
-     * evidence that the skip fired rather than merely compiled. Requires
-     * {@link #COUNTERS_ENABLED}.
-     */
-    @TestOnly
-    public long getSkippedRowCount() {
-        requireCounters();
-        return skippedRowCount;
     }
 
     /**
@@ -525,9 +437,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         for (int p = 0; p < projectionCount; p++) {
             plan.getProjectionFunction(p).projectWindowState(record, value);
         }
-        if (COUNTERS_ENABLED) {
-            pass2RowCount++;
-        }
     }
 
     /**
@@ -538,7 +447,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         map.reopen();
-        resetStructuralCounters();
     }
 
     /**
@@ -547,7 +455,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     public void reset() {
         map.close();
-        resetStructuralCounters();
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
@@ -608,16 +515,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Whether the structural counters are being kept, which is
-     * {@code -Dquestdb.window.map.counters=true} on this JVM's command line. Read by the
-     * benchmark, which needs them and would otherwise report a fusion result made of zeroes.
-     */
-    @TestOnly
-    public static boolean areCountersEnabled() {
-        return COUNTERS_ENABLED;
-    }
-
-    /**
      * Whether no component of the group would absorb this row, which is what lets pass 1 leave
      * the row's key out of the map.
      * <p>
@@ -636,20 +533,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Refuses to answer a counter the group was never told to keep.
-     * <p>
-     * Returning the zero the field still holds would be worse than useless: an assertion that a
-     * group skipped no rows, or made no lookups, passes on that zero whatever the group did.
-     */
-    private static void requireCounters() {
-        if (!COUNTERS_ENABLED) {
-            throw new IllegalStateException(
-                    "WindowMapState structural counters are off; run with -Dquestdb.window.map.counters=true"
-            );
-        }
-    }
-
-    /**
      * Creates the entry for a partition pass 1 skipped whole and puts every component of it to
      * identity, returning the value the caller's projections then read.
      * <p>
@@ -657,16 +540,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * {@link #projectPass2(Record)} just looked up with: pass 2's hot path is the lookup that
      * finds an entry, and a {@code findValue()} is the cheaper of the two ways to make it. What
      * this costs is one extra key write on the rows of a partition no row contributed to, which
-     * is the population the skip exists for - and which {@link #getLookupCount()} counts, so the
-     * skip's saving is reported net of what it spends here rather than gross.
+     * is the population the skip exists for.
      */
     private MapValue putIdentity(Record record) {
         final MapKey key = map.withKey();
         putKey(key, record);
         final MapValue value = key.createValue();
-        if (COUNTERS_ENABLED) {
-            identityRowCount++;
-        }
         if (value.isNew()) {
             for (int c = 0; c < componentCount; c++) {
                 plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
@@ -691,10 +570,4 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
     }
 
-    private void resetStructuralCounters() {
-        contributedRowCount = 0;
-        identityRowCount = 0;
-        pass2RowCount = 0;
-        skippedRowCount = 0;
-    }
 }

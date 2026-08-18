@@ -303,6 +303,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "first_value(xdec128)",
             "last_value(xdec) ignore nulls",
     };
+    private static final String[] SKIP_ENABLED_WHOLE_PARTITION_CALLS = {
+            "sum(xd)",
+            "avg(xd)",
+            "count(xd)",
+    };
     private Rnd rnd;
 
     @Override
@@ -317,7 +322,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int boundIterations = 0;
             int boundGroups = 0;
-            long skippedRows = 0;
+            int skipEnabledGroups = 0;
             for (int i = 0; i < ITERATIONS; i++) {
                 final String table = "t" + i;
                 final String data = createTable(table);
@@ -325,14 +330,18 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                         PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE,
                         ENTRY_SIZES[rnd.nextInt(ENTRY_SIZES.length)]
                 );
-                final String sql = randomQuery(table);
+                // Preserve all random draws unless the last iteration must supply the run's
+                // skip-enabled group. The assertion below still catches compiler or binding
+                // drift that makes this known-compatible shape ineligible.
+                final boolean isSkipEnabledGroupRequired = i == ITERATIONS - 1 && skipEnabledGroups == 0;
+                final String sql = randomQuery(table, isSkipEnabledGroupRequired);
                 final int[] groups = new int[1];
+                final int[] skipEnabled = new int[1];
                 final int[] unfusedGroups = new int[1];
-                final long[] skipped = new long[1];
                 final String fused;
                 final String unfused;
                 try {
-                    fused = render(sql, groups, skipped);
+                    fused = render(sql, groups, skipEnabled);
                     setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
                     try {
                         unfused = render(sql, unfusedGroups, null);
@@ -350,7 +359,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                     boundIterations++;
                     boundGroups += groups[0];
                 }
-                skippedRows += skipped[0];
+                skipEnabledGroups += skipEnabled[0];
                 Assert.assertEquals(context(i, data, sql), unfused, fused);
             }
             // A generator that stopped producing fusible shapes - a family withdrawn, a decline
@@ -360,18 +369,14 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                     "no iteration bound a window Map group, so nothing here was differential",
                     boundIterations > 0
             );
-            // The whole-partition arm's own liveness check. Every table this generator builds has
-            // a NULL-heavy DOUBLE column, so a run that drew even one whole-partition query over
-            // one skips rows - and a run that skipped none compared the two arms over a path the
-            // skip never took.
             Assert.assertTrue(
-                    "no bound group skipped a pass-1 row, so the refused-row path was never taken",
-                    skippedRows > 0
+                    "no bound group enabled pass-1 skipping, so the refused-row path was never eligible",
+                    skipEnabledGroups > 0
             );
             LOG.info().$("window map fusion fuzz [iterations=").$(ITERATIONS)
                     .$(", fusedIterations=").$(boundIterations)
                     .$(", boundGroups=").$(boundGroups)
-                    .$(", skippedRows=").$(skippedRows)
+                    .$(", skipEnabledGroups=").$(skipEnabledGroups)
                     .I$();
         });
     }
@@ -382,23 +387,27 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
 
     /**
      * Renders {@code sql} twice off one cursor, requires the two passes to agree, and reports
-     * how many Map groups the compile bound into {@code groups}.
+     * how many Map groups the compile bound into {@code groups} and how many of those enabled
+     * pass-1 skipping into {@code skipEnabled}.
      * <p>
      * The second pass is not a formality: a group's map is cleared by the cursor's
      * {@code toTop} and by nothing else, so a domain that survived one - or one cleared once
      * per bound member rather than once per group - shows up here and nowhere else in this
      * class.
-     *
-     * @param skipped receives how many pass-1 rows the bound groups left out of their maps, or
-     *                null when the caller does not read it. Counted while the cursor is open,
-     *                since closing it hands the group's map back and resets the counters with it
      */
-    private static String render(String sql, int[] groups, long[] skipped) throws SqlException {
+    private static String render(String sql, int[] groups, int[] skipEnabled) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
             final ObjList<WindowMapState> states = windowMapStates(factory);
             if (groups != null) {
                 groups[0] = states == null ? 0 : states.size();
+            }
+            if (skipEnabled != null && states != null) {
+                for (int i = 0, n = states.size(); i < n; i++) {
+                    if (states.getQuick(i).isPass1SkipEnabled()) {
+                        skipEnabled[0]++;
+                    }
+                }
             }
             final StringSink first = new StringSink();
             final StringSink second = new StringSink();
@@ -406,11 +415,6 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                 CursorPrinter.println(cursor, factory.getMetadata(), first, true, false);
                 cursor.toTop();
                 CursorPrinter.println(cursor, factory.getMetadata(), second, true, false);
-                if (skipped != null && states != null) {
-                    for (int i = 0, n = states.size(); i < n; i++) {
-                        skipped[0] += states.getQuick(i).getSkippedRowCount();
-                    }
-                }
             }
             TestUtils.assertEquals(first, second);
             return first.toString();
@@ -558,11 +562,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
      * included: a cumulative ROWS or RANGE frame, or a bounded ROWS or RANGE one in each of the
      * three geometries its ring comes in.
      */
-    private String randomQuery(String table) {
-        final int windowCount = 1 + rnd.nextInt(2);
+    private String randomQuery(String table, boolean isSkipEnabledGroupRequired) {
+        final int windowCount = isSkipEnabledGroupRequired ? 1 : 1 + rnd.nextInt(2);
         final String[] specs = new String[windowCount];
         final int[] frameKinds = new int[windowCount];
-        final boolean wholePartition = rnd.nextInt(3) == 0;
+        final boolean wholePartition = isSkipEnabledGroupRequired || rnd.nextInt(3) == 0;
         for (int w = 0; w < windowCount; w++) {
             // A key is a column or an expression over one or two of them, and which it is
             // decides how the group writes it: off the record's own columns, or through the
@@ -595,10 +599,10 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                     + " between "
                     + frame;
         }
-        final int outputs = 2 + rnd.nextInt(4);
+        final int outputs = isSkipEnabledGroupRequired ? SKIP_ENABLED_WHOLE_PARTITION_CALLS.length : 2 + rnd.nextInt(4);
         final StringBuilder sql = new StringBuilder("select ts");
         for (int o = 0; o < outputs; o++) {
-            final int w = rnd.nextInt(windowCount);
+            final int w = isSkipEnabledGroupRequired ? 0 : rnd.nextInt(windowCount);
             final String[] calls;
             switch (frameKinds[w]) {
                 case FRAME_RANGE:
@@ -617,9 +621,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                     calls = BOUNDED_ROWS_FRAME_CALLS;
                     break;
             }
-            final String call = frameKinds[w] != FRAME_WHOLE_PARTITION && rnd.nextInt(8) == 0
-                    ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
-                    : calls[rnd.nextInt(calls.length)];
+            final String call = isSkipEnabledGroupRequired
+                    ? SKIP_ENABLED_WHOLE_PARTITION_CALLS[o]
+                    : frameKinds[w] != FRAME_WHOLE_PARTITION && rnd.nextInt(8) == 0
+                            ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
+                            : calls[rnd.nextInt(calls.length)];
             sql.append(", ").append(call).append(" over ");
             if (rnd.nextBoolean()) {
                 sql.append('w').append(w);

@@ -67,10 +67,9 @@ import java.util.Locale;
  * function on a private map, at both configured
  * {@code cairo.sql.unordered.map.max.entry.size} settings that ship.
  * <p>
- * Every arm reports the numbers the acceptance plan asks for - ns/row, the query's peak and
- * retained <b>tracked</b> native bytes, how many maps were open and of which implementation, the
- * configured entry-size limit, and the per-row lookup, accumulator-update and argument-evaluation
- * counts - so a win can be read as a structural fact rather than inferred from a clock.
+ * Every arm reports timing and throughput, the query's peak and retained <b>tracked</b> native
+ * bytes, how many maps were open and of which implementation, and the configured entry-size limit,
+ * so a win can be read alongside the structural facts rather than inferred from a clock alone.
  *
  * <h2>The two arms</h2>
  * {@code cairo.sql.window.map.fusion.enabled} is the control. With it off the query compiles the
@@ -78,16 +77,6 @@ import java.util.Locale;
  * with it on the group owns one map and makes the row's one lookup. The two arms run the same SQL
  * over the same table in the same JVM, and their output checksums must be equal - a mismatch fails
  * the run rather than being reported, because a faster wrong answer is not a measurement.
- *
- * <h2>Where the counters come from</h2>
- * The fused arm's lookup and update counts are {@link WindowMapState}'s own
- * {@code @TestOnly} counters. The unfused arm has none to read: a private partition map is probed
- * inside each function's {@code computeNext} and nothing counts it. Its numbers are therefore
- * structural - one lookup, one accumulator update and one argument evaluation per row per function
- * that owns an open map - which is exact for the families this benchmark drives, each of which
- * probes once and reads its argument once per row. The same derivation covers a residual function
- * sitting beside a bound group. Adding production counters to the private path for a measurement is
- * what step 3.2 declined to do for its own rule, and the same reasoning holds here.
  *
  * <h2>Cases 4 and 12: fusing across a Map-implementation change</h2>
  * Co-location widens the value and can push a group onto an {@code OrderedMap} that every member
@@ -163,21 +152,7 @@ import java.util.Locale;
  * whether that skip pays is how often the argument is absent, which is what this option varies:
  * {@code --null-pct=0,50,90,99,100} makes {@code x} NULL on that percentage of rows and {@code y}
  * NULL on the same percentage offset by 37, so a two-argument group has to refuse both before it
- * skips anything. The {@code skips/row} column is where the answer is legible; a shape with no
- * skippable group reports zero there in both arms.
- *
- * <h2>What the structural columns cost</h2>
- * The {@code lookups/row}, {@code skips/row} and {@code updates/row} columns read counters
- * {@code WindowMapState} keeps only under {@code -Dquestdb.window.map.counters=true}, so that a
- * server never pays for them on a path it runs once per row of every window query. {@code main()}
- * sets that property for itself, so no command line below has to.
- * <p>
- * What it costs these timings is a field increment per row, and only in the fused arm - an
- * unfused plan binds no group and so runs no counter at all. The fused-versus-unfused ratios
- * this benchmark exists to report are therefore biased against fusion by however much that
- * increment costs, and a fused win it reports is a floor rather than an estimate. Running with
- * the property unset removes the bias and the structural columns together, which is a fair
- * timing and no evidence.
+ * skips anything.
  *
  * <h2>Build and run</h2>
  * <pre>
@@ -213,7 +188,6 @@ public class WindowMapFusionBenchmark {
     private static final long TS_STEP_MICROS = 1_000L;
 
     public static void main(String[] args) throws Exception {
-        configureStructuralCounters(args);
         long rows = 2_000_000L;
         String keysArg = "1000,1000000";
         String keyTypesArg = "int,symbol,string,varchar";
@@ -248,8 +222,6 @@ public class WindowMapFusionBenchmark {
                 warmups = Integer.parseInt(arg.substring(10));
             } else if (arg.startsWith("--runs=")) {
                 runs = Integer.parseInt(arg.substring(7));
-            } else if (arg.startsWith("--counters=")) {
-                // configureStructuralCounters(args) consumed and validated it before this loop.
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -329,7 +301,7 @@ public class WindowMapFusionBenchmark {
 
             final List<String> table = new ArrayList<>();
             table.add("shape\tcursor\tkey\tkeys\tnullPct\tmaxEntry\tfusion\tplans\tgroups\tmaps\tmapImpl"
-                    + "\tcomps\tslots\tlookups/row\tskips/row\tupdates/row\targs/row\tns/row\trows/s"
+                    + "\tcomps\tslots\tns/row\trows/s"
                     + "\tpeakKiB\tretainedKiB\tchecksum");
             System.out.println(table.get(0));
 
@@ -494,18 +466,6 @@ public class WindowMapFusionBenchmark {
         return values;
     }
 
-    /**
-     * One counter-derived column, or {@code n/a} where this run kept no counters. Never {@code
-     * 0.00} in that case: a zero there reads as a measured absence of lookups, which is the one
-     * thing it does not mean.
-     */
-    private static String perRow(long total, long rows) {
-        if (!WindowMapState.areCountersEnabled()) {
-            return "n/a";
-        }
-        return String.format(Locale.ROOT, "%.2f", total / (double) rows);
-    }
-
     private static String row(
             Shape shape,
             Cursor cursor,
@@ -518,7 +478,7 @@ public class WindowMapFusionBenchmark {
     ) {
         return String.format(
                 Locale.ROOT,
-                "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%s\t%s\t%s\t%.2f"
+                "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d"
                         + "\t%.1f\t%.0f\t%d\t%d\t%d",
                 shape.name,
                 cursor.name,
@@ -533,10 +493,6 @@ public class WindowMapFusionBenchmark {
                 arm.mapImplementation,
                 arm.components,
                 arm.slots,
-                perRow(arm.lookups, arm.rows),
-                perRow(arm.skips, arm.rows),
-                perRow(arm.updates, arm.rows),
-                arm.argumentEvaluations / (double) arm.rows,
                 arm.nanos / (double) arm.rows,
                 arm.rows / (arm.nanos / 1e9),
                 arm.peakBytes / 1024,
@@ -676,54 +632,13 @@ public class WindowMapFusionBenchmark {
     }
 
     /**
-     * Decides whether this run keeps {@code WindowMapState}'s structural counters, and does it
-     * before anything has had a chance to load that class.
-     * <p>
-     * They are gated on a {@code static final} read of {@code questdb.window.map.counters} rather
-     * than left always-on, because they sit on a per-row path a server runs for every window
-     * query, and a server runs with {@code -ea} - so an {@code assert} would not have gated them.
-     * Setting the property here rather than asking for it on the command line is safe for one
-     * reason only: {@code WindowMapState} is initialized on first use, and the only classes
-     * initialized before this call are this one and its supertypes, none of which touch it. The
-     * read-back below is what keeps that reasoning honest - if some future static field loads the
-     * class earlier, this fails loudly instead of reporting a fusion result made of zeroes.
-     * <p>
-     * {@code --counters=off} leaves the property alone, which is how to time the two arms with
-     * nothing on the fused arm's per-row path that the server would not run. The structural
-     * columns then report {@code n/a} rather than zero, because a run that cannot count is not a
-     * run that counted nothing.
-     */
-    private static void configureStructuralCounters(String[] args) {
-        boolean enabled = true;
-        for (String arg : args) {
-            if ("--counters=off".equals(arg)) {
-                enabled = false;
-            } else if ("--counters=on".equals(arg)) {
-                enabled = true;
-            } else if (arg.startsWith("--counters=")) {
-                throw new IllegalArgumentException("--counters must be one of on, off: " + arg);
-            }
-        }
-        if (enabled) {
-            System.setProperty("questdb.window.map.counters", "true");
-        }
-        if (WindowMapState.areCountersEnabled() != enabled) {
-            throw new IllegalStateException(
-                    "WindowMapState was initialized before its counters could be configured; pass "
-                            + "-Dquestdb.window.map.counters=" + enabled + " on the command line instead"
-            );
-        }
-    }
-
-    /**
      * Captures the structural facts of the drain that just finished, while the cursor is still
-     * open: a close resets the group counters and frees the maps this reads.
+     * open: a close frees the maps this reads.
      * <p>
      * A map is counted where it actually holds backing, so a bound function's dormant private map
-     * is not one. The bound groups' lookup and update counts are measured; a function on its own
-     * map contributes the structural one-per-row, since the private path carries no counter.
+     * is not one.
      */
-    private static void captureStructure(Arm arm, WindowProbe factory, long rows) {
+    private static void captureStructure(Arm arm, WindowProbe factory) {
         final LinkedHashMap<String, Integer> implementations = new LinkedHashMap<>();
         final ObjList<WindowAccumulatorPlan> plans = factory.plans;
         arm.plans = plans == null ? 0 : plans.size();
@@ -732,19 +647,9 @@ public class WindowMapFusionBenchmark {
             for (int i = 0, n = states.size(); i < n; i++) {
                 final WindowMapState state = states.getQuick(i);
                 arm.groups++;
-                if (WindowMapState.areCountersEnabled()) {
-                    arm.lookups += state.getLookupCount();
-                    arm.skips += state.getSkippedRowCount();
-                    arm.updates += state.getContributorUpdateCount();
-                }
                 final WindowAccumulatorPlan plan = state.getPlan();
                 arm.components += plan.getComponentCount();
                 arm.slots += plan.getSlotCount();
-                for (int c = 0, m = plan.getComponentCount(); c < m; c++) {
-                    if (WindowAccumulatorDescriptor.familyTakesArgument(plan.getComponent(c).getFamily())) {
-                        arm.argumentEvaluations += rows;
-                    }
-                }
                 if (state.isMapOpen()) {
                     arm.openMaps++;
                     implementations.merge(state.getMapImplementation(), 1, Integer::sum);
@@ -760,24 +665,11 @@ public class WindowMapFusionBenchmark {
             }
             arm.openMaps++;
             implementations.merge(map.getClass().getSimpleName(), 1, Integer::sum);
-            // Twice a row for a whole-partition two-pass function: pass 1 probes to accumulate and
-            // pass 2 probes again to read the finished state back. Once for everything else, which
-            // computes and writes its output in the one pass.
-            arm.lookups += function.getPassCount() > WindowFunction.ONE_PASS ? 2 * rows : rows;
-            arm.updates += rows;
             // Its own standalone image, which is what makes the components and slots column
             // comparable across the two arms: three private (sum, nonNullCount)-shaped states are
             // three components and five slots whether or not a group would fold them into one.
             arm.components++;
             arm.slots += WindowAccumulatorDescriptor.familySlotCount(function.windowAccumulatorFamily());
-            // Exact for the families here, each of which reads its argument once per row inside
-            // the same computeNext that probes. It is a declaration rather than a measurement, so
-            // a function that reads an argument without declaring an accumulator family reports
-            // none: the whole-partition shapes are exactly that, and every one of them evaluates
-            // its argument once a row in pass 1.
-            if (function.windowAccumulatorArgument() != null) {
-                arm.argumentEvaluations += rows;
-            }
         }
         final StringBuilder sink = new StringBuilder();
         for (java.util.Map.Entry<String, Integer> entry : implementations.entrySet()) {
@@ -833,7 +725,7 @@ public class WindowMapFusionBenchmark {
                 arm.checksum = digest;
                 arm.retainedBytes = tracker.getUsed();
                 arm.peakBytes = sampler.peak();
-                captureStructure(arm, windowFactory, rows);
+                captureStructure(arm, windowFactory);
             } finally {
                 sampler.watch(null);
             }
@@ -842,10 +734,9 @@ public class WindowMapFusionBenchmark {
     }
 
     /**
-     * The three lists a report row is read off, taken once per arm because they are the factory's
-     * own and outlive its cursors. The counters behind them are not: they live on the
-     * {@link WindowMapState}s, which a close resets, so {@code captureStructure} still has to run
-     * while the cursor is open.
+     * The three lists a report row reads from belong to the factory and outlive its cursors.
+     * {@code captureStructure} still runs while the cursor is open because the cursor allocates
+     * the maps and makes them observable.
      */
     private static final class WindowProbe {
         final ObjList<WindowFunction> functions;
@@ -865,20 +756,16 @@ public class WindowMapFusionBenchmark {
 
     private static final class Arm {
         String mapImplementation = "none";
-        long argumentEvaluations;
         long checksum;
         int components;
         int groups;
-        long lookups;
         long nanos;
         int openMaps;
         long peakBytes;
         int plans;
         long retainedBytes;
         long rows;
-        long skips;
         int slots;
-        long updates;
     }
 
     /**
@@ -1103,8 +990,7 @@ public class WindowMapFusionBenchmark {
          * behind one key instead of merging them. It is the row that separates the merge from
          * co-location, and the one where the refused-row skip is a joint decision - a row counts
          * as refused only when neither column offers a finite value, so
-         * {@code --null-pct=90} skips rather less than 0.90 of the rows here and the
-         * {@code skips/row} column says how much less.
+         * {@code --null-pct=90} skips rather less than 0.90 of the rows here.
          * <p>
          * A wider fused value than {@link #PARTITION_SUM_AVG}'s, so an INT-keyed group crosses
          * {@code --entry-size=32} onto an {@code OrderedMap} while its unfused members keep an

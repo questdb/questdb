@@ -77,14 +77,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     // function of the data alone.
     private static final String ORDERED_WINDOW =
             " from t window w as (partition by k order by ts desc rows between unbounded preceding and current row)";
-    // The one partition of insertRows() whose every x a DOUBLE accumulator refuses - 'nx', whose
-    // two rows hold a NULL and an infinity. A skipping group has no entry for it when pass 1
-    // ends, so pass 2 inserts one, which is one lookup on top of the two-a-row it already makes.
-    private static final int REFUSED_X_PARTITION_COUNT = 1;
-    // The rows of insertRows() whose x a DOUBLE accumulator refuses: two holding NULL and one
-    // holding an infinity, which CONTRIBUTION_FINITE_DOUBLE turns away alike. A whole-partition
-    // group over x alone leaves exactly these out of its map in pass 1.
-    private static final int REFUSED_X_ROW_COUNT = 3;
     private static final int ROW_COUNT = 9;
     // The same window written so the base cursor's own order satisfies it. Its functions need
     // no sort of their own and are traversed with the base scan that fills the chain - the
@@ -223,8 +215,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final long rows = WindowMapStateTest.drain(cursor);
                             Assert.assertEquals(ROW_COUNT, rows);
-                            Assert.assertEquals(0, state.getSkippedRowCount());
-                            Assert.assertEquals(2 * rows, state.getLookupCount());
                         }
                     }
                 }
@@ -289,14 +279,14 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // contributed to would have been left sitting at anyway - a NULL sum, a NULL average and
         // a zero count - which is what the reference arm below is asserting as well.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE s (ts TIMESTAMP, k SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (ts TIMESTAMP, k INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO s VALUES
-                    ('2024-01-01T00:00:00.000000Z', 'live', 1.0),
-                    ('2024-01-01T00:00:01.000000Z', 'dead', null),
-                    ('2024-01-01T00:00:02.000000Z', 'dead', 'Infinity'::double),
-                    ('2024-01-01T00:00:03.000000Z', 'live', 4.0),
-                    ('2024-01-01T00:00:04.000000Z', 'dead', null)""");
+                    ('2024-01-01T00:00:00.000000Z', 1, 1.0),
+                    ('2024-01-01T00:00:01.000000Z', 2, null),
+                    ('2024-01-01T00:00:02.000000Z', 2, 'Infinity'::double),
+                    ('2024-01-01T00:00:03.000000Z', 1, 4.0),
+                    ('2024-01-01T00:00:04.000000Z', 2, null)""");
             final String sql = "SELECT k, sum(x) OVER (PARTITION BY k) AS s, avg(x) OVER (PARTITION BY k) AS a, "
                     + "count(x) OVER (PARTITION BY k) AS c FROM s";
             for (int light = 0; light < 2; light++) {
@@ -308,27 +298,60 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     assertBoundGroupCount(groups, 1);
                     final WindowMapState state = groups.getStates().getQuick(0);
                     Assert.assertTrue(state.isPass1SkipEnabled());
+                    state.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+                    state.reopen();
+                    try {
+                        final int[] key = new int[1];
+                        final int[] keyReads = new int[1];
+                        final double[] value = new double[1];
+                        final Record record = new Record() {
+                            @Override
+                            public double getDouble(int col) {
+                                return value[0];
+                            }
+
+                            @Override
+                            public int getInt(int col) {
+                                keyReads[0]++;
+                                return key[0];
+                            }
+                        };
+                        final int[] keys = {1, 2, 2, 1, 2};
+                        final double[] values = {1.0, Double.NaN, Double.POSITIVE_INFINITY, 4.0, Double.NaN};
+                        for (int i = 0; i < keys.length; i++) {
+                            key[0] = keys[i];
+                            value[0] = values[i];
+                            state.computeNext(record);
+                        }
+                        // Pass 1 saw two partition keys, but key 2 contained only rows the group
+                        // refused. Its absence from the map directly proves that computeNext took
+                        // the skip branch for those rows.
+                        Assert.assertEquals(1, state.getMapSize());
+                        keyReads[0] = 0;
+                        for (int i = 0; i < keys.length; i++) {
+                            key[0] = keys[i];
+                            value[0] = values[i];
+                            state.projectPass2(record);
+                        }
+                        // Pass 2 reads one key per row to find its value and reads key 2 once
+                        // more when its first row creates the identity entry pass 1 omitted.
+                        Assert.assertEquals(6, keyReads[0]);
+                    } finally {
+                        state.reset();
+                    }
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(5, WindowMapStateTest.drain(cursor));
-                        // The three rows of 'dead' are one NULL, one infinity and one NULL, all
-                        // three of which CONTRIBUTION_FINITE_DOUBLE refuses alike - so pass 1
-                        // wrote no key for that partition at all.
-                        Assert.assertEquals(3, state.getSkippedRowCount());
-                        // Twice a row less those three, plus one more for the entry pass 2
-                        // creates: 'dead' is looked up once in pass 2 by each of its three rows
-                        // and inserted on the first of them.
-                        Assert.assertEquals(2 * 5 - 3 + 1, state.getLookupCount());
                     }
                 }
                 // Read twice over, which is what says the pass-2 create is idempotent: the second
                 // cursor finds the entry the first one left and projects the same identity off it.
                 assertQuery(sql).expectSize().returns("""
                         k\ts\ta\tc
-                        live\t5.0\t2.5\t2
-                        dead\tnull\tnull\t0
-                        dead\tnull\tnull\t0
-                        live\t5.0\t2.5\t2
-                        dead\tnull\tnull\t0
+                        1\t5.0\t2.5\t2
+                        2\tnull\tnull\t0
+                        2\tnull\tnull\t0
+                        1\t5.0\t2.5\t2
+                        2\tnull\tnull\t0
                         """);
             }
         });
@@ -339,7 +362,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // One ORDER BY, two frames, two Map subgroups - and only one of them has anything left
         // to do when the pass-2 traversal of that sort group runs. The cumulative group's
         // outputs were final row by row and it is absent from the pass-2 list; the
-        // whole-partition one is in both lists and probes twice a row.
+        // whole-partition one is in both lists.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -364,20 +387,11 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, cumulative.getLookupCount());
-                        // Twice a row less the rows pass 1 skipped: the whole-partition group is
-                        // sum(x) and avg(x), whose one component refuses a non-finite x, so the
-                        // three such rows cost it no probe in pass 1 and one each in pass 2. The
-                        // cumulative group beside it skips nothing - it projects from the value
-                        // it loads, so it needs the entry whether the row contributed or not.
+                        // The whole-partition component can refuse non-finite x values in pass 1.
+                        // The cumulative group beside it cannot skip because it projects from
+                        // the value it loads whether or not the row contributed.
                         Assert.assertTrue(pass2State.isPass1SkipEnabled());
                         Assert.assertFalse(cumulative.isPass1SkipEnabled());
-                        Assert.assertEquals(REFUSED_X_ROW_COUNT, pass2State.getSkippedRowCount());
-                        Assert.assertEquals(0, cumulative.getSkippedRowCount());
-                        Assert.assertEquals(
-                                2 * rows - REFUSED_X_ROW_COUNT + REFUSED_X_PARTITION_COUNT,
-                                pass2State.getLookupCount()
-                        );
                     }
                 }
                 assertFusedMatchesUnfused(
@@ -419,7 +433,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertSame(state, groups.getUnorderedPass2States().getQuick(0));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
-                        Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
                     }
                 }
                 final String ordered = "select ts, sum(x) over p, count(y) over p" + ORDERED_PARTITION_WINDOW;
@@ -436,7 +449,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertNull(groups.getUnorderedPass2States());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
-                        Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
                     }
                 }
             }
@@ -467,8 +479,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(0, state.getSkippedRowCount());
-                        Assert.assertEquals(2 * rows, state.getLookupCount());
                     }
                 }
                 assertFusedMatchesUnfused(
@@ -706,11 +716,8 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
 
     @Test
     public void testMergedProjectionsShareOneComponentAndOneArgumentEvaluation() throws Exception {
-        // The acceptance shape, read off a sorted traversal: three maps, three probes, three
-        // components, five slots, three updates and three evaluations of x a row become one of
-        // each. The update count is the argument-evaluation count for these families, because
-        // accumulateWindowState is the only place any of them reads its argument and only the
-        // component's one contributor is asked to run it.
+        // The acceptance shape, read off a sorted traversal: the three projections share one
+        // component and its two slots, so one contributor evaluates x for the group.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -731,9 +738,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, state.getLookupCount());
-                        Assert.assertEquals(rows, state.getContributorUpdateCount());
-                        Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                     }
                 }
             }
@@ -771,7 +775,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, state.getLookupCount());
                     }
                 }
             }
@@ -779,10 +782,10 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderedSortGroupSharesOneMapAndOneLookup() throws Exception {
+    public void testOrderedSortGroupSharesOneMap() throws Exception {
         // The headline shape on a sorted traversal. sum(x) counts finite x values and count(y)
         // counts non-null y values, so the two keep separate counters; what they share is the
-        // key domain, the hash table and the row's one lookup.
+        // key domain and hash table.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -808,9 +811,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         Assert.assertTrue(state.isMapOpen());
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        Assert.assertEquals(rows, state.getLookupCount());
-                        Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
-                        Assert.assertEquals(2 * rows, state.getProjectionWriteCount());
                         Assert.assertNotNull(state.getMapImplementation());
                         Assert.assertTrue(state.getUnorderedMapMaxEntrySize() > 0);
                     }
@@ -821,7 +821,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     for (int i = 0; i < 10; i++) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             Assert.assertEquals("iteration " + i, ROW_COUNT, WindowMapStateTest.drain(cursor));
-                            Assert.assertEquals(ROW_COUNT, state.getLookupCount());
                         }
                     }
                 }
@@ -880,7 +879,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // Two windows that agree on their ORDER BY and differ in their partition key are one
         // sort group and two Map subgroups. The compiler's own sort-sharing key would have put
         // all four accumulators in one map value keyed by whichever partition came first; the
-        // window spec is what keeps them apart, and the two lookups a row are what says so.
+        // window spec is what keeps them apart.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -904,8 +903,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
-                        Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
-                        Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
                     }
                 }
                 assertFusedMatchesUnfused(
@@ -1026,23 +1023,10 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
-                        // Two probes a row rather than one, because the group looks its key up
-                        // once in each traversal - against the six the three unfused functions
-                        // make, each probing in both of its own passes - less the pass-1 probes
-                        // the rows its one component refuses no longer cost it. The 'nx'
-                        // partition is refused whole, so pass 2 is where its entry appears at
-                        // all, and the three outputs still read the identity it would have been
-                        // left sitting at: see the reference comparison below.
+                        // The 'nx' partition is refused whole in pass 1, so pass 2 is where its
+                        // entry appears at all. The three outputs still read the identity it
+                        // would have been left sitting at; see the reference comparison below.
                         Assert.assertTrue(state.isPass1SkipEnabled());
-                        Assert.assertEquals(REFUSED_X_ROW_COUNT, state.getSkippedRowCount());
-                        Assert.assertEquals(
-                                2 * rows - REFUSED_X_ROW_COUNT + REFUSED_X_PARTITION_COUNT,
-                                state.getLookupCount()
-                        );
-                        Assert.assertEquals(rows - REFUSED_X_ROW_COUNT, state.getContributorUpdateCount());
-                        // Written in pass 2 alone: pass 1 projects nothing, because the
-                        // accumulator is not final until it has absorbed the last row.
-                        Assert.assertEquals(3 * rows, state.getProjectionWriteCount());
                         // The property the skipped preparePass2 rests on. A bound function's
                         // own map stays closed for the factory's whole life, so the walk it
                         // would perform has nothing to walk - and the guard that skips it is

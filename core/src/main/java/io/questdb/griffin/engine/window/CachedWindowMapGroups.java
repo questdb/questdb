@@ -302,8 +302,7 @@ public final class CachedWindowMapGroups implements QuietCloseable {
 
     /**
      * Every bound group, in no particular traversal order. It is the lifecycle list - what
-     * {@link #reopen} allocates and {@link #reset} hands back - and what a test reads the
-     * structural counters off.
+     * {@link #reopen} allocates and {@link #reset} hands back.
      */
     @TestOnly
     public ObjList<WindowMapState> getStates() {
