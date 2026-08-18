@@ -1220,8 +1220,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
-        if (symbolMapWriter.isCached() != cache) {
+        final boolean isFlagChanging = symbolMapWriter.isCached() != cache;
+        // The second disjunct is a writer that dropped its cache when the cache ran its key
+        // buffer out. That drop keeps the column's flag on, so a CACHE would otherwise match
+        // the flag the column already carries and do nothing - leaving the operator who
+        // issued it no way to ask for the acceleration back short of restarting the writer.
+        // It fires only where there is no cache to discard, so a CACHE over a healthy column
+        // still leaves the warm cache the writer has been filling alone.
+        if (isFlagChanging || (cache && !symbolMapWriter.isCacheAllocated())) {
             symbolMapWriter.updateCacheFlag(cache);
+        }
+        // Keyed on the flag alone, not on the disjunction above. The recovery changes nothing
+        // the table metadata records, and rewriting it swaps _meta through _meta.swp and bumps
+        // the metadata version every reader watches - too much to spend on a statement that
+        // asks for what the column already declares.
+        if (isFlagChanging) {
             TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolCacheFlag(cache);
             writeMetadataToDisk();

@@ -121,9 +121,10 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 int timestampIdx,
                 int n,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n, partitionByKeyTypes, liveView);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n, partitionByKeyTypes, liveView, configuration);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
