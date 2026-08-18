@@ -54,7 +54,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 | 3 | `DETACH PARTITION` | 1 — partition-lifecycle |
 | 4 | `ATTACH PARTITION` | 1 — partition-lifecycle |
 | 5 | `SQUASH PARTITIONS` (split-fragment squash; today a silent skip) | 1 — partition-lifecycle |
-| 6 | TTL-based partition eviction | 1 — partition-lifecycle |
+| 6 | TTL-based partition eviction — **SUPPORTED 2026-08-18 (1D)**; whole days only, per-dimension TTL remains deferred by decision | 1 — partition-lifecycle (done) |
 | 7 | `DROP COLUMN` | 2 — column-ddl |
 | 8 | `RENAME COLUMN` | 2 — column-ddl |
 | 9 | `ALTER COLUMN TYPE` | 2 — column-ddl |
@@ -183,7 +183,6 @@ composite partitioning does not yet support ORDER BY on an indexed symbol column
 composite partitioning does not yet support REINDEX TABLE
 composite partitioning does not yet support RENAME COLUMN
 composite partitioning does not yet support SQUASH PARTITIONS
-composite partitioning does not yet support TTL-based partition eviction
 composite partitioning does not yet support UPDATE
 composite partitioning does not yet support a POSTING index seal on this partition
 composite partitioning does not yet support a covering POSTING index reseal on a PARQUET partition
@@ -220,7 +219,12 @@ diff /tmp/code.keys /tmp/spec.keys
 ```
 
 Any line in the code set that is not in the spec set is a NEW gate, and the roadmap has a new hole.
-Verified clean 2026-08-18: 37 refusals in code, 37 known keys, empty diff.
+Verified clean 2026-08-18: 36 refusals in code, 36 known keys, empty diff.
+
+The count moved 38 → 37 → 36 over one working session: 9A deleted the multi-sub-day-interval gate,
+1B REPLACED the blanket DROP PARTITION gate with a much narrower cell-qualified one (a swap the count
+alone would have hidden), and 1D removed the TTL gate outright. Three of those four changes lifted a
+real restriction rather than discovering one.
 
 The count held at 37 across sub-project 1B, but one key was REPLACED rather than removed: the blanket
 "does not yet support DROP PARTITION" gave way to the far narrower "does not yet support dropping an

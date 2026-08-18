@@ -48,9 +48,10 @@ public class CompositeTtlAndForceDropTest extends AbstractCompositeTwinTest {
     /**
      * FORCE DROP of a whole day must match the plain twin.
      */
-    @Ignore("SP1D Task 1 MEASURED 2026-08-18: neither operation inherited 1B's fix. With the gates"
-            + " lifted, FORCE DROP and TTL both removed NOTHING on the composite table while the plain"
-            + " twin dropped/evicted correctly. Tasks 2-3 are implementation, not gate removal.")
+    @Ignore("SP1D Task 3: FORCE DROP is still gated and, measured with the gate lifted, removes"
+            + " NOTHING on a composite table. forceRemovePartitions iterates each requested timestamp"
+            + " ONCE through the cellKey-0-blind getPartitionIndex, so it can never drain a multi-cell"
+            + " day. Un-ignore when Task 3 lands.")
     @Test(timeout = 60_000)
     public void testForceDropWholeDayMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -71,9 +72,10 @@ public class CompositeTtlAndForceDropTest extends AbstractCompositeTwinTest {
      * it needs its own guard. 1B measured that naming one cell in a {@code DROP} destroyed the whole
      * day; the same shape must not be reachable here.
      */
-    @Ignore("SP1D Task 1 MEASURED 2026-08-18: neither operation inherited 1B's fix. With the gates"
-            + " lifted, FORCE DROP and TTL both removed NOTHING on the composite table while the plain"
-            + " twin dropped/evicted correctly. Tasks 2-3 are implementation, not gate removal.")
+    @Ignore("SP1D Task 3: FORCE DROP is still gated and, measured with the gate lifted, removes"
+            + " NOTHING on a composite table. forceRemovePartitions iterates each requested timestamp"
+            + " ONCE through the cellKey-0-blind getPartitionIndex, so it can never drain a multi-cell"
+            + " day. Un-ignore when Task 3 lands.")
     @Test(timeout = 60_000)
     public void testForceDropIndividualCellIsRefused() throws Exception {
         assertMemoryLeak(() -> {
@@ -109,9 +111,6 @@ public class CompositeTtlAndForceDropTest extends AbstractCompositeTwinTest {
      * The plain twin is the anti-vacuity control: it must actually LOSE partitions, otherwise the
      * workload never triggered eviction and any agreement between the twins is meaningless.
      */
-    @Ignore("SP1D Task 1 MEASURED 2026-08-18: neither operation inherited 1B's fix. With the gates"
-            + " lifted, FORCE DROP and TTL both removed NOTHING on the composite table while the plain"
-            + " twin dropped/evicted correctly. Tasks 2-3 are implementation, not gate removal.")
     @Test(timeout = 60_000)
     public void testTtlEvictsWholeDaysMatchingPlainTwin() throws Exception {
         assertMemoryLeak(() -> {

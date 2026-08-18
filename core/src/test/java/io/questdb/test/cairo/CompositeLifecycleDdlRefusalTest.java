@@ -83,16 +83,14 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
         assertRefusedAtStatement("ALTER TABLE c SQUASH PARTITIONS");
     }
 
-    /**
-     * TTL is the odd one out and the worst of the six: it is not evaluated at the DDL statement but at
-     * every subsequent COMMIT. So setting a TTL on a composite table suspends the table on the next
-     * ordinary INSERT — the user's DDL and the statement that actually breaks are different
-     * statements, and neither is the one that reports the problem.
+    /*
+     * The SET TTL refusal test that stood here is gone: sub-project 1D made TTL eviction cell-aware,
+     * so SET TTL is no longer refused on a composite table. It was the worst of the six for
+     * invariant 6 -- evaluated at every COMMIT rather than at its own DDL, so a composite table
+     * accepted the TTL and then suspended on the next ordinary INSERT. Both halves are now fixed: the
+     * refusal became synchronous in 1B Task 0, and 1D removed the need for it entirely.
+     * Eviction correctness lives in CompositeTtlAndForceDropTest.
      */
-    @Test
-    public void testSetTtlRefusesAtTheStatement() throws Exception {
-        assertRefusedAtStatement("ALTER TABLE c SET TTL 1 DAY");
-    }
 
     /**
      * Issues {@code ddl} against a routed composite table and requires BOTH:

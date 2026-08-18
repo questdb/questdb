@@ -154,16 +154,12 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * #testDropPartitionGated()}'s own gate was added for, but reached via {@code ALTER TABLE ... SET TTL}
      * instead, which was left ungated until now.
      */
-    @Test
-    public void testSetTtlGated() throws Exception {
-        assertMemoryLeak(() -> {
-            createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c set ttl 1 day",
-                    "c",
-                    "composite partitioning does not yet support TTL-based partition eviction");
-        });
-    }
+    /**
+     * TTL eviction became SUPPORTED on composite tables in sub-project 1D, so the gate this test
+     * asserted is gone. Coverage moved to {@code CompositeTtlAndForceDropTest}, which proves the
+     * stronger property: a composite table evicts the same days as its plain twin, through the path
+     * that actually evicts (a COMMIT, not the SET TTL statement).
+     */
 
     @Test
     public void testAlterColumnTypeGated() throws Exception {

@@ -9173,11 +9173,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reachable by tracing AlterOperation#applyTtl, which calls setMetaTtl() then enforceTtl()
         // synchronously, so a bare `ALTER TABLE ... SET TTL` against a freshly-created composite table
         // (zero rows ever inserted) hit this gate immediately. See isRoutedComposite()'s own doc.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support TTL-based partition eviction [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // SP1D: TTL eviction is cell-aware as of 2026-08-18; the gate that stood here is gone. Two
+        // fixes were needed beyond the shared removal 1B corrected: readMinTimestamp built a day-level
+        // path for the NEXT partition (a CELL on a composite table), and the split-partition assertion
+        // below assumed a same-floor sibling sits at a HIGHER timestamp, which is false for sibling
+        // cells sharing a day's exact timestamp.
 
         if (getPartitionCount() < 2) {
             // there is only a single partition, which is the active one
@@ -9193,7 +9193,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
             long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
-                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
+                // SP1D: on a PLAIN table a second entry sharing this floor can only be the higher part
+                // of a SPLIT partition, hence the original assertion. A composite table breaks that
+                // premise legitimately: sibling CELLS of one day share the day's exact timestamp, so
+                // partitionTimestamp == floorTimestamp is the normal case there. The plain contract is
+                // preserved verbatim; only the composite case is admitted.
+                assert partitionTimestamp != floorTimestamp || isRoutedComposite()
+                        : "Expected a higher part of a split partition";
                 evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
                 continue;
             }
@@ -16047,7 +16053,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long timestamp = txWriter.getPartitionTimestampByIndex(1);
         final boolean isParquet = txWriter.isPartitionParquet(1);
         try {
-            setStateForTimestamp(other, timestamp);
+            // SP1D: partition index 1 is a CELL on a composite table, so its data is at
+            // <day>/<cell>.<txn> and setStateForTimestamp's day-level path finds nothing. Measured:
+            // TTL eviction suspended the table with "could not read long [path=.../2023-01-01/ts.d]"
+            // after evicting the first cell of a day, because the new table minimum was read from the
+            // day container. This is the third cell-blind site in the drop path -- sub-project 1B
+            // fixed the MAX recompute (the previous partition) and this MIN recompute is its sibling.
+            if (isRoutedComposite()) {
+                final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                cellSegmentSink.clear();
+                renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(1));
+                setPathForNativePartition(other, timestampType, partitionBy, timestamp,
+                        txWriter.getPartitionNameTxn(1), cellSegmentSink);
+            } else {
+                setStateForTimestamp(other, timestamp);
+            }
             return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);

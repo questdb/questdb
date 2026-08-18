@@ -5899,10 +5899,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // this DDL but at every subsequent COMMIT, so before this gate a composite table accepted the
         // TTL and then suspended on the next ordinary INSERT. The user's DDL and the statement that
         // actually broke were different statements, and neither reported the problem.
-        if (isRoutedCompositeTable(tableToken)) {
-            throw SqlException.$(tableNamePosition, "composite partitioning does not yet support TTL-based partition eviction [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // SP1D: SET TTL no longer refuses on a composite table -- eviction is cell-aware. The
+        // statement-time gate added in 1B Task 0 goes with the writer-side one it fronted.
         final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                 tableNamePosition,
                 tableToken,
