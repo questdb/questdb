@@ -166,13 +166,24 @@ stages:
                   inc='**/cairo/crash/*.java'; what='adaptive-crash-sweeps'
                 fi
                 echo "=== soak iteration $iter ($what), $(( (budget - ( $(date +%s) - start )) / 60 ))m budget left ==="
-                mvn -f pom.xml -s "${MAVEN_SETTINGS_FILE:-ci/maven-settings-hetzner.xml}" \
+                # Bound the ITERATION, not just the decision to start one. min_iter is an estimate; an
+                # iteration that runs long would otherwise be killed by the step timeout, which reports
+                # as a hard red indistinguishable from a real fuzz failure. A clean cut here is reported
+                # as budget exhaustion instead.
+                remaining=$(( budget - ( $(date +%s) - start ) ))
+                timeout --signal=TERM --kill-after=60s "${remaining}s" \
+                  mvn -f pom.xml -s "${MAVEN_SETTINGS_FILE:-ci/maven-settings-hetzner.xml}" \
                   --batch-mode --quiet \
                   -Dtest.include="$inc" -Dtest.exclude= \
                   -Dout="$(Build.SourcesDirectory)/ci/qlog.conf" \
                   -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false \
                   -P local-client $(MAVEN_RUN_OPTS) test
                 rc=$?
+                if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
+                  echo "soak iteration $iter ($what) hit the run budget and was stopped cleanly; not a failure"
+                  rc=0
+                  break
+                fi
                 if [ $rc -ne 0 ]; then
                   echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>"
                   break
@@ -186,7 +197,12 @@ stages:
               fi
               exit $rc
             displayName: "Continuous soak loop"
-            timeoutInMinutes: 30
+            # MUST exceed TOTAL_RUN_MINUTES, or the loop is hard-killed mid-iteration and Slack reports
+            # "Adaptive Commit Fuzz Failed" for a run in which nothing failed. It was 30 while the loop
+            # budgeted against 50, so any iteration started with the permitted 27m of budget left ran
+            # past the cap: builds 260301/260319/260329/260424 all died as "The task has timed out"
+            # after sweeping thousands of seeds with zero test failures.
+            timeoutInMinutes: 60
 
       - job: RunAdaptiveCrashNightly
         displayName: "adaptive crash nightly"
