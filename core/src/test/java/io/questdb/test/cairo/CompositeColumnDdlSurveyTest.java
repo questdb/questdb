@@ -43,6 +43,17 @@ import org.junit.Test;
  * <p>
  * All {@code @Ignore}d — they are run by temporarily lifting the writer-side gates, exactly as 1D
  * Task 1 was run, and the findings recorded. They are NOT a claim that any of this works.
+ * <p>
+ * <b>A twin DATA comparison cannot verify a STRUCTURE change, and this survey proved it the hard
+ * way.</b> {@code surveyAddIndex} passed — and a follow-up probe showed {@code isColumnIndexed} was
+ * FALSE afterwards: {@code ADD INDEX} reported success and created no index. The twin comparison
+ * could not see it, because an index changes no query RESULT; and the indexed-{@code WHERE} check was
+ * accepted rather than refused by the indexed-predicate gate for the same reason — there was no index
+ * to refuse over. A silent no-op passing as success is precisely the failure the cardinal rule
+ * forbids, and lifting the gate on that evidence would have shipped it.
+ * <p>
+ * So every structure-changing survey below must assert the STRUCTURE ({@code isColumnIndexed}, the
+ * column type, the on-disk files) and not only the rows.
  */
 public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
 
@@ -64,7 +75,10 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             execute("ALTER TABLE p ALTER COLUMN sym ADD INDEX");
             drainWalQueue();
             assertTwinEqual("");
-            assertTwinEqual(" WHERE sym = 'S1'");
+            // THE ASSERTION THAT MATTERS: the index must actually exist. Without this the test passes
+            // over a silent no-op -- measured 2026-08-18, isColumnIndexed was false here.
+            assertIndexed("c", "sym", true);
+            assertIndexed("p", "sym", true);
         });
     }
 
@@ -100,10 +114,13 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             createTwins("ts TIMESTAMP, exch SYMBOL, sym SYMBOL INDEX, px DOUBLE",
                     "PARTITION BY DAY, exch LAYOUT PLAIN");
             seedTwoDays();
+            assertIndexed("c", "sym", true);  // precondition: the index exists before we drop it
             execute("ALTER TABLE c ALTER COLUMN sym DROP INDEX");
             execute("ALTER TABLE p ALTER COLUMN sym DROP INDEX");
             drainWalQueue();
             assertTwinEqual("");
+            assertIndexed("c", "sym", false);
+            assertIndexed("p", "sym", false);
         });
     }
 
@@ -146,6 +163,19 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             drainWalQueue();
             assertTwinEqual("");
         });
+    }
+
+    /**
+     * Asserts a column's INDEXED flag. A twin data comparison is blind to this, which is how
+     * {@code ADD INDEX} passed while creating no index at all.
+     */
+    private void assertIndexed(String table, String column, boolean expected) throws Exception {
+        engine.releaseInactive();
+        try (io.questdb.cairo.TableReader reader = getReader(table)) {
+            final int idx = reader.getMetadata().getColumnIndex(column);
+            org.junit.Assert.assertEquals(table + '.' + column + " indexed flag",
+                    expected, reader.getMetadata().isColumnIndexed(idx));
+        }
     }
 
     /**
