@@ -1673,6 +1673,132 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseDoesNotTruncateRegionPublishedByAnotherWriter() throws Exception {
+        // PostingIndexWriter.close() trims the .pk to chain.getRegionLimit() -- THIS instance's
+        // cached high-water, snapshotted when it last published. More than one
+        // PostingIndexWriter can be open on the same .pk: O3CopyJob.updateIndex opens its own
+        // instance via openFromO3Context and frees it in a finally, alongside the TableWriter's
+        // own indexer. When the other instance extends the chain in between, the closing
+        // instance's cached value lags the file and the trim lops off the tail of the
+        // just-published entry -- typically its last GEN_DIR_ENTRY_SIZE gen-dir slot. Those
+        // bytes read back as zeros, so that generation's TXN_AT_SEAL regresses to 0 behind a
+        // real txn: readers then see a non-monotonic gen-dir whose trailing generation is
+        // silently empty (SIZE=0, KEY_COUNT=0) yet visible to every pinned reader, dropping
+        // rows from POSTING index scans.
+        // Not on Windows, for the same reason as testReopenExtendFailureDoesNotTruncateKeyFile:
+        // the .pk is trimmed to a page multiple, so the loss is only observable when the stale
+        // and published region limits land in different pages. That boundary is 4K on Linux and
+        // 16K on Mac but 64K on the Windows agents, where the chain built below still fits in
+        // the first page and the truncation would not show.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final FilesFacade rawFf = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "concurrent_close_trunc";
+                final int numKeys = 64;
+
+                // Seed a SMALL chain: its regionLimit must stay inside the first page so the
+                // stale trim below lands well short of the region the extender publishes.
+                try (PostingIndexWriter seed = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    long row = 0;
+                    for (int k = 0; k < numKeys; k++) {
+                        seed.add(k, row++);
+                    }
+                    seed.setMaxValue(row - 1);
+                    seed.commit();
+                    seed.seal();
+                }
+
+                final int publishedGenCount;
+                final int publishedKeyCount;
+                final long publishedMaxValue;
+                final long publishedRegionLimit;
+
+                try (PostingIndexWriter extender = new PostingIndexWriter(configuration);
+                     PostingIndexWriter stale = new PostingIndexWriter(configuration)) {
+                    // `stale` snapshots the region high-water as it is right now...
+                    stale.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+
+                    // ...then a second instance publishes another generation, growing the
+                    // live chain region past what `stale` cached.
+                    extender.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+                    extender.setNextTxnAtSeal(2L);
+                    long row = numKeys;
+                    // Enough seal cycles to push the live region several pages past what
+                    // `stale` cached, so a trim to the stale value provably drops published
+                    // bytes (including the head entry) rather than rounding back up.
+                    for (int cycle = 0; cycle < 200; cycle++) {
+                        for (int k = 0; k < numKeys; k++) {
+                            extender.add(k, row++);
+                        }
+                        extender.setMaxValue(row - 1);
+                        extender.commit();
+                        extender.seal();
+                    }
+                    publishedGenCount = extender.getGenCount();
+                    publishedKeyCount = extender.getKeyCount();
+                    publishedMaxValue = extender.getMaxValue();
+
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                            rawFf.getPageSize(),
+                            rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                            MemoryTag.MMAP_DEFAULT, 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(pk);
+                        publishedRegionLimit = chain.getRegionLimit();
+                    }
+
+                    // Closing the stale instance must not trim below the region another
+                    // instance published under the chain-header seqlock.
+                    stale.close();
+                    Assert.assertTrue(
+                            "close() on a stale writer must not trim the .pk below the published regionLimit",
+                            rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE))
+                                    >= publishedRegionLimit
+                    );
+                }
+
+                // The published generation must survive intact on disk: a truncated tail
+                // would come back as a zeroed gen-dir slot.
+                try (PostingIndexWriter recovered = new PostingIndexWriter(configuration)) {
+                    recovered.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+                    Assert.assertEquals("recovered gen count", publishedGenCount, recovered.getGenCount());
+                    Assert.assertEquals("recovered key count", publishedKeyCount, recovered.getKeyCount());
+                    Assert.assertEquals("recovered max value", publishedMaxValue, recovered.getMaxValue());
+                }
+
+                // ...and the gen-dir TXN_AT_SEAL sequence must still be non-decreasing, which
+                // is what readers rely on to tell a published generation from a torn one.
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                        PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                        rawFf.getPageSize(),
+                        rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)),
+                        MemoryTag.MMAP_DEFAULT, 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(pk);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(pk, head);
+                    long prevTxnAtSeal = Long.MIN_VALUE;
+                    for (int g = 0; g < head.genCount; g++) {
+                        long slot = PostingIndexChainEntry.resolveGenDirOffset(
+                                head.offset, g, head.coveringFormat, head.coverCount);
+                        long txnAtSeal = pk.getLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+                        Assert.assertTrue(
+                                "gen-dir TXN_AT_SEAL must not regress [gen=" + g + ", txnAtSeal=" + txnAtSeal
+                                        + ", prev=" + prevTxnAtSeal + ']',
+                                txnAtSeal >= prevTxnAtSeal
+                        );
+                        prevTxnAtSeal = txnAtSeal;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReopenRejectsShortKeyFile() throws Exception {
         // M2/m2: a .pk physically shorter than KEY_FILE_RESERVED is rejected cleanly on reopen
         // with "Index file too short" rather than being mapped and read past its backed extent.

@@ -75,21 +75,18 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return null;
             }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next++);
-            final String str = Chars.toString(value);
-            symbols.add(str);
-            return str;
+            return getSymbol0(value);
         }
 
         @Override
         protected AbstractCastToSymbolFunction newFunc() {
             return new Func(arg);
+        }
+
+        @Override
+        protected String symbolOf(int key) {
+            // The shortcut keys on the code point, so render the character it stands for.
+            return Chars.toString((char) key);
         }
     }
 }
