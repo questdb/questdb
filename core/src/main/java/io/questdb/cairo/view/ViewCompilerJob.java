@@ -93,9 +93,8 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             SqlExecutionContext executionContext,
             ObjList<TableToken> tempSink
     ) {
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                SuspensionScope.Mode.BLOCKING
-        );
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
             engine.getTableTokens(tableTokens, false);
@@ -116,7 +115,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             try {
                 Path.clearThreadLocals();
             } finally {
-                SuspensionScope.restore(previousMode);
+                SuspensionScope.restoreMode(suspensionScope, previousMode);
             }
         }
     }
@@ -139,13 +138,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                SuspensionScope.Mode.BLOCKING
-        );
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             return processNotifications();
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
     }
 

@@ -138,9 +138,8 @@ public class PGServer implements Closeable {
                 }
             } else {
                 final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
-                    final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                            SuspensionScope.Mode.BLOCKING
-                    );
+                    final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+                    final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -169,7 +168,7 @@ public class PGServer implements Closeable {
                         metrics.healthMetrics().incrementUnhandledErrors();
                         dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     } finally {
-                        SuspensionScope.restore(previousMode);
+                        SuspensionScope.restoreMode(suspensionScope, previousMode);
                     }
                     return false;
                 };

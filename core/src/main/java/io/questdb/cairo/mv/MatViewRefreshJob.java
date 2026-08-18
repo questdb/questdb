@@ -192,13 +192,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (fiberRuntime != null) {
             return processNotifications();
         }
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                SuspensionScope.Mode.BLOCKING
-        );
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             return processNotifications();
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
     }
 

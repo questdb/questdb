@@ -230,7 +230,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
-        Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getCountDistinctCapacity());
         Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
@@ -2652,6 +2652,21 @@ public class PropServerConfigurationTest {
                         .getWriterWorkerPoolConfiguration()
                         .getWorkerCount()
         );
+    }
+
+    @Test
+    public void testLineTcpWorkerCheckSkippedWhenLineTcpCannotRun() throws Exception {
+        final Properties disabled = new Properties();
+        disabled.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        disabled.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        disabled.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
+        Assert.assertFalse(newPropServerConfiguration(disabled).getLineTcpReceiverConfiguration().isEnabled());
+
+        final Properties readOnly = new Properties();
+        readOnly.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        readOnly.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        readOnly.setProperty(PropertyKey.READ_ONLY_INSTANCE.getPropertyPath(), "true");
+        Assert.assertTrue(newPropServerConfiguration(readOnly).getCairoConfiguration().isReadOnlyInstance());
     }
 
     @Test

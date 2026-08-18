@@ -1116,11 +1116,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
         // Mirrors doRun(): WAL apply must never fiber-suspend, or an applied UPDATE that
         // waits on WAL progress would park the apply it depends on.
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             applyWal(tableToken, engine, operationExecutor, runStatus);
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
     }
 
@@ -1244,11 +1245,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return true;
         }
 
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             applyWal(tableToken, engine, operationExecutor, workerContext);
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
         return true;
     }

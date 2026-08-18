@@ -1061,6 +1061,56 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testSharedPoolsFoldIlpJobsAndStillIngestEveryTable() throws Exception {
+        // Unset ILP worker counts fold the scheduler to min(2, poolWorkerCount) jobs on a 4-worker
+        // pool; tables load balance over the job count, so every writer index must still have a job.
+        assertMemoryLeak(() -> {
+            final String[] tables = {"fold_ilp_a", "fold_ilp_b", "fold_ilp_c", "fold_ilp_d"};
+            for (String table : tables) {
+                execute("CREATE TABLE " + table + " (value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            }
+            minIdleMsBeforeWriterRelease = 25;
+            final WorkerPool ioPool = new TestWorkerPool(
+                    "fold-ilp-io",
+                    4,
+                    engine.getMetrics(),
+                    WorkerPoolMode.FIBER_HOST
+            );
+            final WorkerPool writerPool = new TestWorkerPool(
+                    "fold-ilp-writer",
+                    4,
+                    engine.getMetrics(),
+                    WorkerPoolMode.LEGACY
+            );
+            final LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
+            try {
+                writerPool.start(LOG);
+                ioPool.start(LOG);
+                send(WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket("""
+                        fold_ilp_a value=1i 1000000000
+                        fold_ilp_b value=2i 2000000000
+                        fold_ilp_c value=3i 3000000000
+                        fold_ilp_d value=4i 4000000000
+                        """), tables);
+                for (int i = 0; i < tables.length; i++) {
+                    assertQuery("SELECT value, ts FROM " + tables[i])
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    value\tts
+                                    %d\t1970-01-01T00:00:0%d.000000Z
+                                    """.formatted(i + 1, i + 1));
+                }
+            } finally {
+                ioPool.halt();
+                writerPool.halt();
+                receiver.close();
+                Path.clearThreadLocals();
+            }
+        });
+    }
+
+    @Test
     public void testShutdownWithDedicatedPoolsCloseIoPoolFirst() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();

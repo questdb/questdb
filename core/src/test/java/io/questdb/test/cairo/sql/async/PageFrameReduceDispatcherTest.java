@@ -3031,7 +3031,13 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     engine.getMessageBus(),
                     dispatcherRuntime
             );
+            final AtomicReference<Throwable> ownerTaskError = new AtomicReference<>();
             final FiberTask ownerTask = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    ownerTaskError.set(th);
+                }
+
                 @Override
                 protected boolean runStep() {
                     Assert.assertFalse(dispatcher.consumeUnordered(-1, queue, subSeq, frameSequence));
@@ -3046,6 +3052,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
                 Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
                 Assert.assertEquals(1, ownerRuntime.drain(1));
+                if (ownerTaskError.get() != null) {
+                    throw new AssertionError(ownerTaskError.get());
+                }
                 Assert.assertEquals(0, frameSequence.getDoneLatch().getCount());
                 Assert.assertEquals(1, dispatcherRuntime.getOutstandingTaskCount());
 

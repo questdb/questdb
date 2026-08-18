@@ -34,6 +34,7 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -508,6 +509,19 @@ public class WorkerPool implements Closeable {
         return Math.max(1, deadline - System.nanoTime());
     }
 
+    // Polls at the same cadence SOCountDownLatch.await() parks at, so a lost unpark still
+    // recovers within one park interval rather than one stall-log interval.
+    private void awaitHalt(SOCountDownLatch latch, String stage) {
+        final long startNanos = System.nanoTime();
+        long nextStallLogNanos = startNanos + DEFAULT_HALT_TIMEOUT_NANOS;
+        while (!latch.await(Os.PARK_NANOS_MAX)) {
+            if (System.nanoTime() - nextStallLogNanos >= 0) {
+                logHaltStall(stage, startNanos);
+                nextStallLogNanos += DEFAULT_HALT_TIMEOUT_NANOS;
+            }
+        }
+    }
+
     private void countDownUnstartedWorkers(int firstUnstartedWorker) {
         for (int i = firstUnstartedWorker; i < workerCount; i++) {
             halted.countDown();
@@ -598,8 +612,14 @@ public class WorkerPool implements Closeable {
                     }
                 } else if (!isBounded) {
                     // the halting thread drains so closure does not depend on a live worker
+                    final long drainStartNanos = System.nanoTime();
+                    long nextStallLogNanos = drainStartNanos + DEFAULT_HALT_TIMEOUT_NANOS;
                     while (!runtime.awaitClosed(System.nanoTime() + 1_000_000L)) {
                         runtime.drain(runtime.getMountBudget());
+                        if (System.nanoTime() - nextStallLogNanos >= 0) {
+                            logHaltStall("drain the fiber runtime", drainStartNanos);
+                            nextStallLogNanos += DEFAULT_HALT_TIMEOUT_NANOS;
+                        }
                     }
                 }
             }
@@ -624,7 +644,7 @@ public class WorkerPool implements Closeable {
                 if (isBounded) {
                     isStartComplete = started.await(remaining(deadlineNanos));
                 } else {
-                    started.await();
+                    awaitHalt(started, "start");
                     isStartComplete = true;
                 }
                 if (isStartComplete) {
@@ -636,7 +656,7 @@ public class WorkerPool implements Closeable {
                     if (isBounded) {
                         isWorkerHalted = halted.await(remaining(deadlineNanos));
                     } else {
-                        halted.await();
+                        awaitHalt(halted, "halt");
                         isWorkerHalted = true;
                     }
                     if (!isWorkerHalted) {
@@ -714,6 +734,15 @@ public class WorkerPool implements Closeable {
             if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    private void logHaltStall(String stage, long startNanos) {
+        try {
+            LOG.error().$("still waiting for worker pool to ").$(stage)
+                    .$(" [pool=").$(poolName)
+                    .$(", waited=").$((System.nanoTime() - startNanos) / 1_000_000).$("ms").I$();
+        } catch (Throwable ignore) {
         }
     }
 

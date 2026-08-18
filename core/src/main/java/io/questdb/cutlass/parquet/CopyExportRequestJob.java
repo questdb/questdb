@@ -208,11 +208,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     private void processRequest(int carrierId) {
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             processRequestBlocking(carrierId);
         } finally {
-            SuspensionScope.restore(previousMode);
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
     }
 

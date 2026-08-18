@@ -5544,6 +5544,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }
             )) {
+                Assert.assertFalse(dispatcher.hasPendingIOEvents());
                 long clientFd = Net.socketTcp(true);
                 final long buffer = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                 final long sockAddr = Net.sockaddr("127.0.0.1", dispatcher.getPort());
@@ -5563,6 +5564,7 @@ public class IODispatcherTest extends AbstractTest {
                         propagated = th;
                     }
                     Assert.assertSame(failure, propagated);
+                    Assert.assertFalse(dispatcher.hasPendingIOEvents());
 
                     assertEventually(() -> {
                         dispatcher.run();

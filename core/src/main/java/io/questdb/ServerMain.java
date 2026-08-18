@@ -2139,6 +2139,17 @@ public class ServerMain implements Closeable {
                 }
             }
         }
+
+        // Without this override the deadline-aware stop would fall through Component's default to
+        // the unbounded stop(), leaving the bounded teardown bounded only by the pre-stop hook.
+        @Override
+        public void stop(long deadlineNanos) {
+            if (ServerMain.this.workerPoolManager != null) {
+                if (!ServerMain.this.workerPoolManager.haltBy(deadlineNanos)) {
+                    throw new IllegalStateException("worker pools did not halt");
+                }
+            }
+        }
     }
 
 }

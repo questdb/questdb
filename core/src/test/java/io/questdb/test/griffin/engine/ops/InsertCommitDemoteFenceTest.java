@@ -459,7 +459,13 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                         return true;
                     }
                 };
+                final AtomicReference<Throwable> replacementTaskError = new AtomicReference<>();
                 final FiberTask replacementTask = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        replacementTaskError.set(th);
+                    }
+
                     @Override
                     protected boolean runStep() {
                         readLock.lock();
@@ -484,6 +490,9 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
 
                     Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(replacementTask));
                     Assert.assertEquals(1, runtime.drain(1));
+                    if (replacementTaskError.get() != null) {
+                        throw new AssertionError(replacementTaskError.get());
+                    }
                     Assert.assertTrue(replacementTask.isDone());
                     Assert.assertEquals(1, runtime.getCreatedFiberCount());
                 } finally {

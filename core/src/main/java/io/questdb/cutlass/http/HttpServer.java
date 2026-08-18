@@ -661,16 +661,15 @@ public class HttpServer implements Closeable {
                 useful |= rescheduleContext.launchReruns(runtime, launcher);
                 return useful;
             }
-            final SuspensionScope.Mode previousMode = SuspensionScope.enter(
-                    SuspensionScope.Mode.BLOCKING
-            );
+            final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+            final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
             try {
                 selectorFactory.populateMissing(selector);
                 boolean useful = dispatcher.processIOQueue(processor);
                 useful |= rescheduleContext.runReruns(selector);
                 return useful;
             } finally {
-                SuspensionScope.restore(previousMode);
+                SuspensionScope.restoreMode(suspensionScope, previousMode);
             }
         }
 
