@@ -65,10 +65,11 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * per-cell, so this may need only the gate removed — but an index is built by scanning each
      * partition, and a composite partition is a cell.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. 2026-08-18:"
-            + " ADD INDEX is a SILENT NO-OP, DROP INDEX unverified, RENAME COLUMN and ALTER COLUMN"
-            + " TYPE fail. DROP COLUMN's per-cell leak is fixed ONLY on the uncontended path -- with a"
-            + " reader pinned, the async fallback fires and every cell file still leaks (SP2A Task 2).")
+    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
+            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
+            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
+            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
+            + " fail outright.")
     @Test(timeout = 60_000)
     public void surveyAddIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -90,10 +91,11 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * DROP COLUMN. Column files live per partition, so on a composite table they live per CELL. The
      * question is whether the removal walks cells or days.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. 2026-08-18:"
-            + " ADD INDEX is a SILENT NO-OP, DROP INDEX unverified, RENAME COLUMN and ALTER COLUMN"
-            + " TYPE fail. DROP COLUMN's per-cell leak is fixed ONLY on the uncontended path -- with a"
-            + " reader pinned, the async fallback fires and every cell file still leaks (SP2A Task 2).")
+    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
+            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
+            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
+            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
+            + " fail outright.")
     @Test(timeout = 60_000)
     public void surveyDropColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -115,10 +117,11 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
     /**
      * DROP INDEX, the counterpart of {@link #surveyAddIndex()}.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. 2026-08-18:"
-            + " ADD INDEX is a SILENT NO-OP, DROP INDEX unverified, RENAME COLUMN and ALTER COLUMN"
-            + " TYPE fail. DROP COLUMN's per-cell leak is fixed ONLY on the uncontended path -- with a"
-            + " reader pinned, the async fallback fires and every cell file still leaks (SP2A Task 2).")
+    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
+            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
+            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
+            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
+            + " fail outright.")
     @Test(timeout = 60_000)
     public void surveyDropIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -140,10 +143,11 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * no partition data at all. If ANY column DDL works unchanged on a composite table, it is this one
      * — which is exactly why it is worth measuring rather than assuming.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. 2026-08-18:"
-            + " ADD INDEX is a SILENT NO-OP, DROP INDEX unverified, RENAME COLUMN and ALTER COLUMN"
-            + " TYPE fail. DROP COLUMN's per-cell leak is fixed ONLY on the uncontended path -- with a"
-            + " reader pinned, the async fallback fires and every cell file still leaks (SP2A Task 2).")
+    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
+            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
+            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
+            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
+            + " fail outright.")
     @Test(timeout = 60_000)
     public void surveyRenameColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -161,10 +165,11 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * ALTER COLUMN TYPE rewrites every partition's column file, so on a composite table it must rewrite
      * every CELL's. Expected to be the most expensive of the four.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. 2026-08-18:"
-            + " ADD INDEX is a SILENT NO-OP, DROP INDEX unverified, RENAME COLUMN and ALTER COLUMN"
-            + " TYPE fail. DROP COLUMN's per-cell leak is fixed ONLY on the uncontended path -- with a"
-            + " reader pinned, the async fallback fires and every cell file still leaks (SP2A Task 2).")
+    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
+            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
+            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
+            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
+            + " fail outright.")
     @Test(timeout = 60_000)
     public void surveyAlterColumnType() throws Exception {
         assertMemoryLeak(() -> {
