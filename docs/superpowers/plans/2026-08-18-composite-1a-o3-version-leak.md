@@ -4,6 +4,15 @@
 
 **Goal:** Stop composite tables leaking orphaned day-level partition-version directories under out-of-order writes, and un-ignore `CompositeO3PurgeSkipTest` as the acceptance criterion.
 
+**RE-SCOPED 2026-08-18 by Task 2's finding: this is a WRITER defect, not a purge-job defect.** With
+the purge job ON and OFF, the same composite churn leaves the byte-identical set of day-level
+directories — so the writer produces them and the purge merely fails to reclaim them. The trigger is
+narrow: an O3 write that **prepends below the partition's minimum timestamp**. Since composite
+partitioning is unreleased there is no on-disk legacy to clean, so the fix is in the producer alone
+and `O3PartitionPurgeJob`'s composite gate stays as it is. Task 3 targets the O3 write path; the
+three cellKey-0 assumptions catalogued in Task 2 Step 3 are documentation for whoever later lifts the
+purge gate, and are NOT part of 1A.
+
 **Architecture:** Measured, not assumed (probe run 2026-08-18, recorded in the ledger). A composite table's live container is the **unversioned** day directory, with per-cell versions inside it (`2023-01-02/E0.18`). Alongside it, out-of-order writes leave **day-level** version directories holding full column files (`2023-01-02.6`, `.12`, `.18`) that hold no live rows — every row is accounted for in the cells. `O3PartitionPurgeJob` skips composite tables entirely, so those are never reclaimed. This plan first establishes *who creates them*, then fixes the producer if that is cheap and the purge otherwise.
 
 **Tech Stack:** Java 25 (`JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64`), Maven offline (`mvn -o -pl core`), JUnit 4, `QDB_TEST_TMPDIR=/dev/shm`.
