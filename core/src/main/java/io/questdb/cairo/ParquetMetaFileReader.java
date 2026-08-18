@@ -149,6 +149,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     // Trailing bytes after a parquet file's footer body: 4-byte footer length + 4-byte PAR1 magic.
     private static final int PARQUET_TRAILER_SIZE = 8;
+    /**
+     * Mirrors {@code FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT} in
+     * qdb-parquet-meta. Set alongside the optional covering-index bit on every
+     * footer that publishes a covering token.
+     */
+    private static final long COVERING_INDEX_REQUIRED_BIT = 1L << 32;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     // Each row group block starts with an 8-byte NUM_ROWS u64 prefix; column chunks follow.
     private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
@@ -1200,7 +1206,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
         long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
-        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
+        // COVERING_INDEX_REQUIRED_BIT is ours and is set on every footer that
+        // carries a covering section, so it must be excluded here or this
+        // reader rejects files it wrote itself. It sits in the required half
+        // deliberately: an older build, which does not know it, rejects the
+        // _pm rather than skipping the covering section and serving the
+        // partition from a native chain the seal discarded.
+        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK & ~COVERING_INDEX_REQUIRED_BIT;
         if (unknownRequiredFooter != 0) {
             throw CairoException.critical(0)
                     .put("unsupported required _pm footer feature flags [flags=0x")

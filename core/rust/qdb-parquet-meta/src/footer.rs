@@ -720,7 +720,12 @@ impl FooterBuilder {
         // feature_flags() can't desync from the actual payload.
         let known_section_bits = FooterFeatureFlags::SEQ_TXN_BIT
             | FooterFeatureFlags::SCRATCHPAD_BIT
-            | FooterFeatureFlags::COVERING_INDEX_BIT;
+            | FooterFeatureFlags::COVERING_INDEX_BIT
+            // Cleared with its optional twin and re-derived below, so a caller
+            // cannot leave the required bit set on a footer that carries no
+            // covering section -- which would make every older reader reject a
+            // file that has nothing to hide from them.
+            | FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT;
         let mut effective_flags = FooterFeatureFlags(self.feature_flags.0 & !known_section_bits);
         if self.seq_txn.is_some() {
             effective_flags = effective_flags.with_seq_txn();
@@ -803,6 +808,46 @@ mod tests {
     fn parse_footer_with_bloom(buf: &[u8], start: usize, bloom_section_size: usize) -> Footer<'_> {
         let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
         Footer::new(&buf[start..], footer_length, bloom_section_size).unwrap()
+    }
+
+    #[test]
+    fn a_covering_section_sets_a_required_bit_an_old_reader_rejects() {
+        use crate::types::FooterFeatureFlags;
+        // A reader that predates the covering index knows no required bits.
+        const OLD_READER_KNOWN_REQUIRED: u64 = 0;
+        let flags = FooterFeatureFlags(
+            FooterFeatureFlags::COVERING_INDEX_BIT
+                | FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT,
+        );
+        assert_ne!(
+            0,
+            flags.unknown_required(OLD_READER_KNOWN_REQUIRED),
+            "an older reader must REJECT a footer carrying a covering token, not skip it: \
+             skipping dispatches a native reader over a chain the seal discarded, which \
+             answers no keys and no rows"
+        );
+        // The current reader knows the bit and accepts it.
+        assert_eq!(
+            0,
+            flags.unknown_required(FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT)
+        );
+    }
+
+    #[test]
+    fn a_written_covering_footer_carries_the_required_bit() {
+        let mut fb = FooterBuilder::new(1024, 512);
+        fb.add_covering_index(7, 3, 128);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+        let footer = parse_footer(&buf, start);
+        assert!(footer.feature_flags().has_covering_index());
+        assert_ne!(
+            0,
+            footer.feature_flags().0
+                & crate::types::FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT,
+            "writing a covering section must set the required bit too, or an older reader \
+             silently skips the section instead of rejecting the file"
+        );
     }
 
     #[test]

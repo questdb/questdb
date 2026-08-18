@@ -1962,15 +1962,20 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
                     Assert.assertTrue(reader.resolveLastFooter());
 
-                    // Prime native verification on valid bytes, then set required bit 32.
+                    // Prime native verification on valid bytes, then set required bit 33.
                     // The second resolve reuses the cached native reader and must reach
                     // the Java required-footer-feature guard.
+                    //
+                    // Bit 33, not 32: bit 32 is COVERING_INDEX_REQUIRED_BIT, which this
+                    // build KNOWS and therefore accepts, so it no longer stands for "a
+                    // required bit from a newer writer". Any newly allocated required bit
+                    // has to be excluded from this test the same way.
                     long originalFlags = Unsafe.getLong(footerFlagsAddr);
-                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
+                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 33));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x100000000]");
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x200000000]");
                 } finally {
                     reader.clear();
                 }

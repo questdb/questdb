@@ -290,8 +290,24 @@ impl FooterFeatureFlags {
         self.0 & Self::COVERING_INDEX_BIT != 0
     }
 
+    /// Set whenever [`Self::COVERING_INDEX_BIT`] is set. Lives in the REQUIRED
+    /// half (bits 32-63) so a reader that predates the covering index REJECTS
+    /// the file rather than skipping the section.
+    ///
+    /// Skipping is the dangerous outcome, not a graceful one. The seal discards
+    /// the native `.pk`/`.pv` chain, so a reader that concludes "no covering
+    /// index is published" serves the partition from a chain with no visible
+    /// generation and answers "no keys, no rows" -- a silent empty result on a
+    /// downgrade. Rejecting the `_pm` fails the partition loudly, and the
+    /// operator recovers by converting it back to native on a build that
+    /// understands the token.
+    pub const COVERING_INDEX_REQUIRED_BIT: u64 = 1 << 32;
+
+    /// Sets both covering-index bits. They are never set independently: the
+    /// optional one says a covering section is present, the required one stops
+    /// an older reader ignoring that fact.
     pub const fn with_covering_index(self) -> Self {
-        Self(self.0 | Self::COVERING_INDEX_BIT)
+        Self(self.0 | Self::COVERING_INDEX_BIT | Self::COVERING_INDEX_REQUIRED_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.
