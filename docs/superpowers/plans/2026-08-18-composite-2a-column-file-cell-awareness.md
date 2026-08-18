@@ -101,7 +101,22 @@ not the fix; addressing is.
 
 ---
 
-### Task 2: Make `ColumnPurgeOperator` resolve cell paths
+### Task 2: Make `ColumnPurgeOperator` resolve cell paths — **REQUIRED, not optional**
+
+> **MEASURED 2026-08-18, after Task 1 landed.** Task 1 fixed the SYNCHRONOUS purge, and on an idle
+> table that is the whole story: the async fallback fires zero times and every cell file is removed.
+> With a `TableReader` held open across the drop — the normal production case — synchronous removal
+> fails, the fallback fires, and **every cell file leaks exactly as before**: `E0/px.d`, `E1/px.d`,
+> `E2/px.d` and the day-level file all survive.
+>
+> So Task 1 fixed the path an idle TEST takes, not the path a live SYSTEM takes. This task is what
+> makes `DROP COLUMN` actually safe, and it brings back the persisted-schema question Task 1
+> sidestepped: the async path is precisely the one that writes `sys.column_versions_purge_log`. The
+> three options under Task 1 Step 2 now apply HERE, and option 3 ("avoid the log entirely") is no
+> longer available.
+>
+> **Method note worth carrying:** measure purge and cleanup work with a reader pinned. Idle is the
+> unrepresentative case, and it is the one a test creates by default.
 
 **Files:**
 - Modify: `core/src/main/java/io/questdb/cairo/ColumnPurgeOperator.java` (~`503`, ~`564`)
