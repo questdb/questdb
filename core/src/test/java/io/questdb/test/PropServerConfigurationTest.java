@@ -3001,7 +3001,7 @@ public class PropServerConfigurationTest {
         // Degrade-by-default is a deliberate exemption from fail-stop, not an oversight.
         Assert.assertFalse(cairo.isPartitionChecksumStrict());
         // 0: the scrub is opt-in until it is serialised against the writer -- see the accessor javadoc.
-        Assert.assertEquals(0L, cairo.getPartitionChecksumScrubBytesPerSecond());
+        Assert.assertEquals("the scrub is opt-in: see the accessor javadoc for the two measured failures", 0L, cairo.getPartitionChecksumScrubBytesPerSecond());
     }
 
     @Test

@@ -680,13 +680,21 @@ public interface CairoConfiguration {
      * Bytes per second the background checksum scrub may hash. 0 disables the scrub, and 0 is the
      * DEFAULT.
      * <p>
-     * The scrub holds no lock and reads a partition's sidecar and its data at different instants, so a
-     * partition rewritten in between mismatches for entirely healthy reasons. Enabling it by default
-     * made O3Test condemn eight healthy partitions. The job now corroborates every mismatch against a
-     * freshly-read sidecar and requires the generation to be unchanged, which narrows that window but
-     * does not close it -- a lock-free scan of files another thread may rewrite cannot be made sound
-     * by re-reading alone. Until it is properly serialised against the writer, detection here is
-     * OPT-IN: a false positive takes a healthy partition offline, which is worse than not scrubbing.
+     * Two attempts at making it default-on both failed against O3Test, and the second failure is the
+     * informative one. The scrub now enumerates partitions through a {@link TableReader} -- pinning a
+     * txn so the partition VERSIONS it reads cannot be purged -- skips the active partition, and
+     * corroborates every mismatch against a freshly-read sidecar with an unchanged generation. That
+     * still produced 46 false "partition failed checksum verification" errors on healthy data.
+     * <p>
+     * The reason is that pinning a txn does NOT make a non-active partition immutable: O3 can append
+     * to an existing partition version in place. So there is no read-only vantage point from which a
+     * background thread can hash partition files and distinguish a concurrent legitimate rewrite from
+     * corruption. Making this safe needs real synchronisation with the writer -- holding the table
+     * write lock for the hashed range, or having the writer publish a quiesced marker per partition --
+     * not a cleverer read.
+     * <p>
+     * Until then this stays OPT-IN. A false positive takes a healthy partition offline, which is
+     * strictly worse than not scrubbing. It is safe to enable on a table that is not being written.
      */
     default long getPartitionChecksumScrubBytesPerSecond() {
         return 0;

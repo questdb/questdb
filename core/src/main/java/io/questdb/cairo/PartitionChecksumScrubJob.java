@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -113,32 +114,51 @@ public class PartitionChecksumScrubJob extends SynchronizedJob {
         return spent > 0;
     }
 
-    /** Hashes up to {@code budget} bytes of one table's sealed partitions. Returns bytes hashed. */
+    /**
+     * Hashes up to {@code budget} bytes of one table's SEALED partitions. Returns bytes hashed.
+     * <p>
+     * Enumerates through a {@link TableReader} rather than walking the directory. That is what makes
+     * the scan sound: the reader pins a txn, so the partition VERSIONS it reports cannot be purged or
+     * replaced underneath the scrub, and QuestDB writes an O3 rewrite into a NEW directory version
+     * rather than mutating a pinned one. Walking the filesystem blind is what made the scrub condemn
+     * eight healthy partitions in O3Test.
+     * <p>
+     * The last partition is skipped unconditionally: it is the active append target, is never sealed,
+     * and its files legitimately change while being read.
+     */
     private long scrubTable(TableToken token, long budget) {
         long spent = 0;
-        final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token);
-        final int tableLen = path.size();
-        try (PartitionChecksumSidecar sidecar = new PartitionChecksumSidecar()) {
-            final java.io.File tableDir = new java.io.File(path.toString());
-            final java.io.File[] partitions = tableDir.listFiles();
-            if (partitions == null) {
+        try (TableReader reader = engine.getReader(token)) {
+            final int partitionCount = reader.getPartitionCount();
+            final int timestampType = reader.getMetadata().getTimestampType();
+            final int partitionBy = reader.getPartitionedBy();
+            if (!PartitionBy.isPartitioned(partitionBy)) {
                 return 0;
             }
-            for (java.io.File p : partitions) {
-                if (spent >= budget) {
-                    break;
+            for (int i = 0; i < partitionCount - 1 && spent < budget; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.NATIVE) {
+                    continue; // parquet verifies its own page CRCs
                 }
-                if (!p.isDirectory()) {
+                final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(
+                        path,
+                        timestampType,
+                        partitionBy,
+                        reader.getPartitionTimestampByIndex(i),
+                        reader.getPartitionNameTxnByIndex(i)
+                );
+                final java.io.File dir = new java.io.File(path.toString());
+                if (!dir.isDirectory()) {
                     continue;
                 }
-                spent += scrubPartition(token, p, sidecar, budget - spent);
+                try (PartitionChecksumSidecar sidecar = new PartitionChecksumSidecar()) {
+                    spent += scrubPartition(token, dir, sidecar, budget - spent);
+                }
             }
         } catch (Throwable th) {
-            // The scrub is diagnostic. It must never take a worker thread, or a table, down.
+            // Diagnostic only: never take a worker thread, or a table, down.
             LOG.error().$("partition checksum scrub failed [table=").$(token)
                     .$(", error=").$(th.getMessage()).I$();
-        } finally {
-            path.trimTo(tableLen);
         }
         return spent;
     }
