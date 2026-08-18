@@ -490,6 +490,75 @@ public interface CairoConfiguration {
 
     int getParquetExportVersion();
 
+    /**
+     * How long a folder compaction has just touched is left alone, in microseconds.
+     */
+    long getPartitionCompactionCooldown();
+
+    /**
+     * The minimum wasted BYTES a folder must hold before the waste-ratio rule will fire on it. The
+     * comparison is made in rows, through the writer's average record size.
+     */
+    long getPartitionCompactionDeadMinSize();
+
+    /**
+     * The waste-ratio rule fires when a folder's dead rows exceed this multiple of its live rows.
+     */
+    int getPartitionCompactionDeadRowsRatio();
+
+    /**
+     * The ceiling of the doubling back-off applied to a folder whose compaction was declined, in
+     * microseconds.
+     */
+    long getPartitionCompactionDeclineBackoffMax();
+
+    /**
+     * How long a folder's geometry must have been unchanged before the age rule will compact it, in
+     * microseconds.
+     */
+    long getPartitionCompactionIdleTimeout();
+
+    /**
+     * How many JOINs - piece folds that copy nothing - one housekeeping pass may perform.
+     */
+    int getPartitionCompactionMaxJoinsPerCommit();
+
+    /**
+     * The piece-count rule fires when a folder holds more pieces than this.
+     */
+    int getPartitionCompactionMaxPieces();
+
+    /**
+     * How many rows a compaction may copy in one housekeeping pass. A folder larger than this is still
+     * compacted when nothing else has run in that pass, otherwise it could never be compacted at all.
+     */
+    long getPartitionCompactionMaxRowsPerCommit();
+
+    /**
+     * The table-pressure rule turns on when the table's estimated dead BYTES exceed this, whatever the
+     * percentage says.
+     */
+    long getPartitionCompactionTableDeadMaxSize();
+
+    /**
+     * The table-pressure rule turns on when the table's dead rows reach this percentage of its total.
+     */
+    int getPartitionCompactionTableDeadPercent();
+
+    /**
+     * The table-pressure rule turns off again only once the table's dead rows fall below this
+     * percentage. Two thresholds rather than one, or the rule would switch on and off around a single
+     * point and queue a folder on every commit forever. Clamped to at most
+     * {@link #getPartitionCompactionTableDeadPercent()}.
+     */
+    int getPartitionCompactionTableDeadStopPercent();
+
+    /**
+     * The wall-clock budget one housekeeping pass may spend compacting, in microseconds. Checked
+     * between folders, never inside one.
+     */
+    long getPartitionCompactionTimeBudget();
+
     double getPartitionEncoderParquetBloomFilterFpp();
 
     int getPartitionEncoderParquetCompressionCodec();
@@ -1092,6 +1161,12 @@ public interface CairoConfiguration {
     boolean isParquetExportRawArrayEncoding();
 
     boolean isParquetExportStatisticsEnabled();
+
+    /**
+     * Whether the writer reclaims the dead space a merge-append leaves behind in a composite
+     * partition's column files. See PARTITION_COMPACTION.md.
+     */
+    boolean isPartitionCompactionEnabled();
 
     boolean isPartitionEncoderParquetRawArrayEncoding();
 

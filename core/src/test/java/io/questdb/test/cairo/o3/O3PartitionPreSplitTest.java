@@ -723,6 +723,65 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
     }
 
     /**
+     * CONVERT PARTITION TO PARQUET does not know a partition can be composite. It calls
+     * {@code TableWriter.getPartitionSize} (live rows) as the row count and maps each column file straight
+     * from byte 0 for that many rows - correct for an ordinary partition, where live rows sit contiguously
+     * at the front, but wrong once a merge-append has relocated a piece to the tail: the bytes at
+     * {@code [0, liveRows)} are then a mix of leftover dead space and out-of-timestamp-order piece data, not
+     * the partition's actual rows in order. The parquet file comes out with the wrong values in the wrong
+     * order. Fixed by compacting the partition to a fresh, ordinary directory first - see
+     * {@code TableWriter.compactPartitionForConversion}.
+     */
+    @Test
+    public void testConvertCompositePartitionToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            // A backdated stride lands inside the day, relocating the piece it overlaps to the shared
+            // files' tail and leaving the vacated bytes as dead space - the shape a naive linear read of
+            // [0, liveRows) gets wrong.
+            execute(
+                    "CREATE TABLE z AS (SELECT x::INT + 1000000 i, -x - 1000000L AS j," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+            assertPieceRelocatedAboveLastPiece("x");
+
+            // A later day, so 2020-02-03 is no longer the active partition and CONVERT PARTITION TO
+            // PARQUET is allowed to touch it.
+            execute(
+                    "CREATE TABLE w AS (SELECT x::INT + 2000000 i, -x - 2000000L AS j," +
+                            " timestamp_sequence('2020-02-04', 15*1000000L) ts FROM long_sequence(100))"
+            );
+            execute("INSERT INTO x SELECT * FROM w");
+            drainWalQueue();
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM z UNION ALL SELECT * FROM w) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= '2020-02-03' AND ts < '2020-02-04'");
+            drainWalQueue();
+
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
      * A rewrite relocates a piece to the tail of the shared column files, so the pieces of one partition no
      * longer sit in timestamp order: ascending physical row ids can step BACKWARDS in time at a piece
      * boundary. One {@code .pk} serves the whole partition, so a key's posting list carries both pieces and

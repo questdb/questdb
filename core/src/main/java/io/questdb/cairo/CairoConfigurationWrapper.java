@@ -759,6 +759,66 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionCooldown() {
+        return getDelegate().getPartitionCompactionCooldown();
+    }
+
+    @Override
+    public long getPartitionCompactionDeadMinSize() {
+        return getDelegate().getPartitionCompactionDeadMinSize();
+    }
+
+    @Override
+    public int getPartitionCompactionDeadRowsRatio() {
+        return getDelegate().getPartitionCompactionDeadRowsRatio();
+    }
+
+    @Override
+    public long getPartitionCompactionDeclineBackoffMax() {
+        return getDelegate().getPartitionCompactionDeclineBackoffMax();
+    }
+
+    @Override
+    public long getPartitionCompactionIdleTimeout() {
+        return getDelegate().getPartitionCompactionIdleTimeout();
+    }
+
+    @Override
+    public int getPartitionCompactionMaxJoinsPerCommit() {
+        return getDelegate().getPartitionCompactionMaxJoinsPerCommit();
+    }
+
+    @Override
+    public int getPartitionCompactionMaxPieces() {
+        return getDelegate().getPartitionCompactionMaxPieces();
+    }
+
+    @Override
+    public long getPartitionCompactionMaxRowsPerCommit() {
+        return getDelegate().getPartitionCompactionMaxRowsPerCommit();
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadMaxSize() {
+        return getDelegate().getPartitionCompactionTableDeadMaxSize();
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadPercent() {
+        return getDelegate().getPartitionCompactionTableDeadPercent();
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopPercent() {
+        return getDelegate().getPartitionCompactionTableDeadStopPercent();
+    }
+
+    @Override
+    public long getPartitionCompactionTimeBudget() {
+        return getDelegate().getPartitionCompactionTimeBudget();
+    }
+
+    @Override
     public double getPartitionEncoderParquetBloomFilterFpp() {
         return getDelegate().getPartitionEncoderParquetBloomFilterFpp();
     }
@@ -1671,6 +1731,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParquetExportStatisticsEnabled() {
         return getDelegate().isParquetExportStatisticsEnabled();
+    }
+
+    @Override
+    public boolean isPartitionCompactionEnabled() {
+        return getDelegate().isPartitionCompactionEnabled();
     }
 
     @Override
