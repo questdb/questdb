@@ -44,7 +44,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
@@ -151,11 +150,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         this.windowStateNonNullCountSlot = projection == null
                 ? -1
                 : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_NON_NULL_COUNT);
-    }
-
-    @Override
-    public @Nullable ObjList<? extends Function> checkpointPartitionByFunctions() {
-        return partitionByRecord == null ? null : partitionByRecord.getFunctions();
     }
 
     @Override

@@ -150,7 +150,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private long rowNumber;
         // Single-writer (refresh worker), not volatile.
         private long tombstoneCount;
-        // The row counter's slot in LiveViewWindow's fused map value, or -1 when this
+        // The row counter's slot in the fused map value WindowMapState owns, or -1 when this
         // function owns its state in the map above as it always has. Installed and
         // cleared by the window-state plan, both on the refresh worker.
         private int windowStateRowCountSlot = -1;
@@ -237,8 +237,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void retainPartitions(Map survivingKeys, RecordSink survivingKeySink) {
             if (isWindowStateOwned()) {
-                // The sweep rebuilt the window's fused map and the counter rode across
-                // inside the entries it kept. There is no second map to prune.
+                // A bound function keeps no partition map of its own: the group owns the
+                // one entry the counter lives in, and there is no second map to prune.
                 return;
             }
             // RowNumber implements WindowFunction directly (no BasePartitionedWindowFunction),

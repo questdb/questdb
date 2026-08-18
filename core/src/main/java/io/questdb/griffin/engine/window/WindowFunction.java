@@ -212,25 +212,6 @@ public interface WindowFunction extends Function {
         return null;
     }
 
-    /**
-     * The compiled PARTITION BY terms this function keys its per-partition state by, or
-     * null when it keeps no keyed state.
-     * <p>
-     * The reference is <b>non-owning</b>, exactly as
-     * {@link #windowAccumulatorArgument()}'s is: the window function owns its
-     * partition-by functions and frees them, and the compiler only reads their identity.
-     * What it reads them for is the one relation that holds between a call's argument and
-     * the window rather than between two calls - a {@code count(k)} over the column its
-     * own window partitions by, whose value is the partition's row count wherever
-     * {@code k} is present. Resolving the terms to base columns is the same proof
-     * {@code directColumnIndex} applies to an argument, so an expression term proves
-     * nothing and the relation is declined.
-     */
-    @Nullable
-    default ObjList<? extends Function> checkpointPartitionByFunctions() {
-        return null;
-    }
-
     default void computeNext(Record record) {
     }
 

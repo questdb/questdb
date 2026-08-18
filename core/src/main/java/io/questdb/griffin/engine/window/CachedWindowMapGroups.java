@@ -351,8 +351,28 @@ public final class CachedWindowMapGroups implements QuietCloseable {
         // thing only - the lowest position among equal candidates wins the contributor role -
         // and a bucket collects its members in SELECT order, so the two agree on which that is.
         final ObjList<WindowMapSpec> bucketSpecs = new ObjList<>(bucket.size());
+        final int specCount = specFunctions.size();
+        // Both lists run in SELECT order, so a member sits at or after the previous member's
+        // index and the search resumes there rather than at zero. It wraps, so a bucket that
+        // arrives in some other order - or holds a function these lists never carried - still
+        // gets the answer a scan from zero would give it, only after more compares. Restarting
+        // every member at zero made this quadratic in the window-function count.
+        int cursor = 0;
         for (int i = 0, n = bucket.size(); i < n; i++) {
-            bucketSpecs.add(specOf(bucket.getQuick(i), specFunctions, specs));
+            final WindowFunction function = bucket.getQuick(i);
+            WindowMapSpec spec = null;
+            for (int k = 0; k < specCount; k++) {
+                int j = cursor + k;
+                if (j >= specCount) {
+                    j -= specCount;
+                }
+                if (specFunctions.getQuick(j) == function) {
+                    spec = specs.getQuick(j);
+                    cursor = j + 1 < specCount ? j + 1 : 0;
+                    break;
+                }
+            }
+            bucketSpecs.add(spec);
         }
         return WindowAccumulatorPlanBuilder.compileGroups(bucket, bucketSpecs, chainTypes);
     }
@@ -374,16 +394,4 @@ public final class CachedWindowMapGroups implements QuietCloseable {
         return spec.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD;
     }
 
-    private static @Nullable WindowMapSpec specOf(
-            @NotNull WindowFunction function,
-            @NotNull ObjList<WindowFunction> specFunctions,
-            @NotNull ObjList<WindowMapSpec> specs
-    ) {
-        for (int i = 0, n = specFunctions.size(); i < n; i++) {
-            if (specFunctions.getQuick(i) == function) {
-                return specs.getQuick(i);
-            }
-        }
-        return null;
-    }
 }

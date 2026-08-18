@@ -166,23 +166,34 @@ import java.util.Locale;
  * skips anything. The {@code skips/row} column is where the answer is legible; a shape with no
  * skippable group reports zero there in both arms.
  *
+ * <h2>Why this runs with {@code -ea}</h2>
+ * The {@code lookups/row}, {@code skips/row} and {@code updates/row} columns read counters
+ * {@code WindowMapState} keeps behind {@code assert}, so that a server never pays for them on a
+ * path it runs once per row of every window query. This benchmark needs them, so it refuses to
+ * start without assertions and every command line below passes {@code -ea}.
+ * <p>
+ * What that costs the timings is a field increment per row, and only in the fused arm - an
+ * unfused plan binds no group and so runs no counter at all. The fused-versus-unfused ratios
+ * this benchmark exists to report are therefore biased against fusion by however much that
+ * increment costs, and a fused win it reports is a floor rather than an estimate.
+ *
  * <h2>Build and run</h2>
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
  *
  * # the whole acceptance matrix at both shipped entry-size settings
- * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ * java -ea --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark
  *
  * # one shape, one key type, the transition measurement of case 4
- * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ * java -ea --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark \
  *     --shape=count-count --key-type=int --entry-size=11,16
  *
  * # case 11: both cached factories, including the two-pass shapes
- * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ * java -ea --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark \
  *     --cursor=cached,cached-light --key-type=int --entry-size=32
@@ -200,6 +211,7 @@ public class WindowMapFusionBenchmark {
     private static final long TS_STEP_MICROS = 1_000L;
 
     public static void main(String[] args) throws Exception {
+        requireAssertions();
         long rows = 2_000_000L;
         String keysArg = "1000,1000000";
         String keyTypesArg = "int,symbol,string,varchar";
@@ -655,6 +667,27 @@ public class WindowMapFusionBenchmark {
      * is not one. The bound groups' lookup and update counts are measured; a function on its own
      * map contributes the structural one-per-row, since the private path carries no counter.
      */
+    /**
+     * Refuses to run without assertions, because the structural columns would silently read zero.
+     * <p>
+     * {@code WindowMapState} keeps its lookup, update and skip tallies behind {@code assert} so a
+     * server pays nothing for them on a per-row path. That makes {@code -ea} this benchmark's
+     * business rather than the JVM's default, and a run that quietly reported {@code 0.00}
+     * lookups/row would read as a fusion result rather than a missing flag.
+     */
+    private static void requireAssertions() {
+        boolean enabled = false;
+        //noinspection AssertWithSideEffects,ConstantValue
+        assert enabled = true;
+        //noinspection ConstantValue
+        if (!enabled) {
+            throw new IllegalStateException(
+                    "WindowMapFusionBenchmark needs -ea: the lookups/row, skips/row and updates/row "
+                            + "columns read assert-gated counters and would report zero without it"
+            );
+        }
+    }
+
     private static void captureStructure(Arm arm, WindowProbe factory, long rows) {
         final LinkedHashMap<String, Integer> implementations = new LinkedHashMap<>();
         final ObjList<WindowAccumulatorPlan> plans = factory.plans;
