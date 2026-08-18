@@ -24,9 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -190,6 +193,53 @@ public class CompositeSymbolCapacityAlterTest extends AbstractCairoTest {
                 .returns("count\n" + expectedRows + "\n");
         assertSqlCursors("SELECT * FROM p ORDER BY ts, exch, px", "SELECT * FROM c ORDER BY ts, exch, px");
         assertSqlCursors("SELECT exch, count() FROM p ORDER BY exch", "SELECT exch, count() FROM c ORDER BY exch");
+    }
+
+    /**
+     * AUTOSCALE, the automatic sibling of the explicit ALTER above. {@code scaleSymbolCapacities} runs
+     * from {@code housekeep()} on ordinary commits and simply calls {@code changeSymbolCapacity} -- the
+     * same statement this suite already proves safe for composite, whose cell-blind reopen is skipped
+     * for a routed table.
+     *
+     * <p>Asserts the capacity ACTUALLY GREW. Without that, enabling autoscale could be "achieved" by
+     * leaving the skip in place, which is precisely the silent no-op this suite exists to prevent.
+     */
+    @Test
+    public void testSymbolCapacityAutoScalesOnACompositeTable() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL CAPACITY 4, px DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("c"))) {
+                Assert.assertEquals("precondition: sym starts small", 4,
+                        reader.getSymbolMapReader(2).getSymbolCapacity());
+            }
+
+            // Enough distinct values in the NON-dimension symbol column to cross the autoscale
+            // threshold. The dimension column stays low-cardinality so the day keeps a sane cell count.
+            final StringBuilder rows = new StringBuilder();
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) {
+                    rows.append(',');
+                }
+                rows.append("('2023-01-01T00:").append(String.format("%02d", i)).append(":00.000000Z','E")
+                        .append(i % 3).append("','S").append(i).append("',").append(i).append(".0)");
+            }
+            execute("INSERT INTO c VALUES " + rows);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            Assert.assertFalse("autoscale must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            try (TableReader reader = engine.getReader(engine.verifyTableName("c"))) {
+                final int capacity = reader.getSymbolMapReader(2).getSymbolCapacity();
+                Assert.assertTrue("symbol capacity must have auto-scaled past its initial 4, was " + capacity,
+                        capacity > 4);
+            }
+            // every row landed, i.e. autoscale did not disturb the write path
+            printSql("select count() from c");
+            TestUtils.assertContains(sink, "40");
+        });
     }
 
     private void createTwins() throws SqlException {

@@ -17966,10 +17966,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            LOG.info().$("composite table, skipping symbol capacity autoscale (cell-blind reopen, cell-aware autoscale deferred) [table=").$(tableToken).I$();
-            return;
-        }
+        // SP (2026-08-18): the skip that stood here is GONE, and its own stated reason is why. It cited
+        // changeSymbolCapacity's follow-on "reopen the last partition's column file" step as able to
+        // reposition the active writer's handle onto the wrong cell. That reopen is now skipped INSIDE
+        // changeSymbolCapacity for a routed composite table (see its comment), so the hazard this gate
+        // guarded against no longer exists and the gate was stale. Symbol capacity is a table-global
+        // property of the column's symbol map with no per-cell component; autoscale just calls the same
+        // ALTER that CompositeSymbolCapacityAlterTest already proves safe here.
         if (configuration.autoScaleSymbolCapacity()) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 var w = denseSymbolMapWriters.getQuick(i);
