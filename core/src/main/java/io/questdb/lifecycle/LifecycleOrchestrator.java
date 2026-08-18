@@ -13,6 +13,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CancellationException;
@@ -89,6 +90,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // and writers never race the hashmap's rehash boundary.
     private final ConcurrentHashMap<String, Long> lastTransitionMicros = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ProgressEvent> latestProgress = new ConcurrentHashMap<>();
+    // Runs after the executor drain and before the boot-thread rendezvous, so a shutdown landing
+    // during a long-running boot start() can spend its remaining budget unwinding the work instead
+    // of waiting it out. The enterprise overlay installs a restore-cancel signaller here. The hook
+    // must be non-blocking and idempotent because a bounded close can be retried. Resource teardown
+    // belongs in stop().
+    @Nullable
+    private volatile Runnable preJoinCancelHook;
     // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
     // worker-pool halt hooks here: the stop loop frees component resources (e.g. the http
     // dispatcher's native FDSet) dependents-first, and on a boot-failure rollback shared pool
@@ -167,6 +175,20 @@ public class LifecycleOrchestrator implements QuietCloseable {
                     ? awaitInFlightWork(deadlineNanos)
                     : awaitInFlightWork();
             isInterrupted |= Thread.interrupted();
+            // Signal cooperative cancellation to any in-flight boot work before waiting for the
+            // boot thread to unwind. The hook is an atomic signal only; resource teardown belongs
+            // in the reverse-topological stop pass below.
+            final Runnable cancelHook = preJoinCancelHook;
+            if (cancelHook != null) {
+                try {
+                    cancelHook.run();
+                } catch (Throwable t) {
+                    try {
+                        injectedLog.error().$("pre-join cancel hook failed ").$(t).$();
+                    } catch (Throwable ignore) {
+                    }
+                }
+            }
             if (!isInFlightWorkComplete) {
                 try {
                     injectedLog.error()
@@ -214,14 +236,12 @@ public class LifecycleOrchestrator implements QuietCloseable {
                         }
                     }
                 } catch (Throwable t) {
-                    isEveryComponentStopped = false;
-                    final boolean hasRetainedComponents = retainPreStopFailureComponents(retainedComponentNames);
+                    if (retainPreStopFailureComponents(retainedComponentNames)) {
+                        isEveryComponentStopped = false;
+                    }
                     try {
                         injectedLog.error().$("pre-stop hook failed ").$(t).$();
                     } catch (Throwable ignore) {
-                    }
-                    if (!hasRetainedComponents) {
-                        return false;
                     }
                 }
                 for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
@@ -322,6 +342,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return registryByName.get(name);
     }
 
+    /**
+     * Test-only view of the installed pre-join cancel hook; see {@link #setPreJoinCancelHook(Runnable)}.
+     */
+    @TestOnly
+    public Runnable getPreJoinCancelHookForTest() {
+        return preJoinCancelHook;
+    }
+
     public boolean isStopComplete() {
         synchronized (closeLock) {
             return isStopComplete;
@@ -393,6 +421,18 @@ public class LifecycleOrchestrator implements QuietCloseable {
             }
             throw new LifecycleStartupException("boot-essential component(s) failed");
         }
+    }
+
+    /**
+     * Installs a hook that shutdown runs after the executor drain and before the boot-thread
+     * rendezvous, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay installs a
+     * restore-cancel signaller so shutdown can spend its remaining budget unwinding a long PITR
+     * restore instead of waiting it out. The hook must be non-blocking and idempotent because a
+     * bounded close can be retried. It must not free resources; that belongs in the component's
+     * {@code stop()} method.
+     */
+    public void setPreJoinCancelHook(@Nullable Runnable hook) {
+        this.preJoinCancelHook = hook;
     }
 
     /**
