@@ -124,13 +124,26 @@ not the fix; addressing is.
 Both sites use the cell-blind 5-arg `setPathForNativePartition`. They must use the 6-arg overload with
 the rendered cell segment, exactly as sub-projects 1B/1C/1D did for the partition paths.
 
-- [ ] **Step 1: Confirm which of the two sites the DROP COLUMN path actually reaches**
+- [x] **Step 1: Confirm which of the two sites the DROP COLUMN path actually reaches** — DONE.
 
-Instrument rather than assume — this is the technique that pinned 1A's producer and 1C's whole-day
-regression. One may be a retry/async path that a synchronous test never exercises, and "fixed" code on
-an unreached path is worse than an untouched one.
+Both are reached only via the async fallback, which fires when synchronous removal fails. Instrumented
+and measured: zero times on an idle table, four times with a reader pinned.
 
-- [ ] **Step 2: Fix the reached site, then decide about the other with evidence**
+- [ ] **Step 2: Decide HOW, before touching either site — see `.superpowers/sdd/sp2a-task-2-decision.md`**
+
+The blocker is not the two path resolutions; it is that the async path persists to
+`sys.column_versions_purge_log`, which is **read and written by fixed positional index** and created
+with `CREATE TABLE IF NOT EXISTS` and **no migration path**. Appending a cellKey column would leave a
+newer build reading index 11 on a pre-existing table that will never have it.
+
+Recommendation on file: route composite column-file cleanup through the **cell-aware partition purge**
+(`partitionRemoveCandidates` already carries `(timestamp, nameTxn, cellKey)` and already defers
+removal until readers release), avoiding the persisted schema entirely. **What must be proven first:**
+that a column file's reader-visibility constraint is the same as its partition's. If those lifetimes
+differ, that route is wrong and the schema migration is the only correct option — a cost to accept
+deliberately, not discover.
+
+- [ ] **Step 3: Fix the reached site(s) per that decision**
 
 - [ ] **Step 3: Run, negative-control, commit**
 
