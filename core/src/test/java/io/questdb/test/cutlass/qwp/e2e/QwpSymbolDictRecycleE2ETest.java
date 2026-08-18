@@ -200,6 +200,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             }
 
             List<Long> ackedFsns = Collections.synchronizedList(new ArrayList<>());
+            long finalEpochBase;
             long preRecycleFsn;
             long resetsPerformed;
             long tsBase = 1_700_000_000_000_000_000L;
@@ -235,6 +236,10 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 }
 
                 resetsPerformed = sender.getSymbolDictResetsPerformed();
+                // Captured here (post-loop, pre-close) so the FSN-continuity
+                // anchor below reflects the LAST epoch this run ever reached,
+                // not an intermediate one.
+                finalEpochBase = sender.getFsnEpochBaseForTest();
                 Assert.assertTrue("expected the threshold to be crossed several times over "
                                 + TOTAL_ROWS + " rows, but symbolDictResetsPerformed=" + resetsPerformed,
                         resetsPerformed >= 2);
@@ -300,17 +305,27 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // recycle boundary in the run above.
             List<Long> snapshot = new ArrayList<>(ackedFsns);
             Assert.assertFalse("progress handler must have fired at least once", snapshot.isEmpty());
-            // Not vacuous: a regression that drops the progress dispatcher's
-            // re-attachment to the rebuilt cursor loop after the first recycle
-            // (QwpWebSocketSender's step-7 reconnect) would stop every callback
-            // at the boundary, leaving only pre-recycle entries in snapshot --
-            // the strict-increase loop below would still pass on that truncated
-            // list. This asserts the stream actually kept firing past the point
-            // where preRecycleFsn was captured (well before any recycle), so a
-            // dispatcher that stops at the first boundary fails here.
-            Assert.assertTrue("progress handler must have kept firing past the pre-recycle point, "
-                            + "last observed FSN=" + snapshot.get(snapshot.size() - 1),
-                    snapshot.get(snapshot.size() - 1) > preRecycleFsn);
+            // Not vacuous, and anchored to survive every boundary, not just the
+            // first: a regression that drops the progress dispatcher's
+            // re-attachment to the rebuilt cursor loop after ANY recycle
+            // (QwpWebSocketSender's step-7 reconnect) stops every callback from
+            // that boundary onward. Comparing against preRecycleFsn alone would
+            // NOT catch this -- epoch 0 spans three batches, so a dispatcher
+            // dying at the very first boundary still leaves batch-2/3 acks in
+            // snapshot that are already > preRecycleFsn. Anchoring on
+            // finalEpochBase (the epoch base as of the LAST recycle, captured
+            // above before close()) closes that gap: any delivery at or above
+            // finalEpochBase is necessarily an ack from the final epoch, so
+            // this only passes if callbacks survived every recycle boundary
+            // the run crossed (resetsPerformed of them, asserted >= 2 above).
+            // A size-based lower bound on snapshot would NOT work as a
+            // substitute or supplement here -- SenderProgressDispatcher is a
+            // single-slot coalescing watermark mailbox, so the list length
+            // says nothing about how many acks actually landed.
+            Assert.assertTrue("progress handler must have kept firing through the final epoch, "
+                            + "last observed FSN=" + snapshot.get(snapshot.size() - 1)
+                            + ", finalEpochBase=" + finalEpochBase,
+                    snapshot.get(snapshot.size() - 1) >= finalEpochBase);
             for (int i = 1, n = snapshot.size(); i < n; i++) {
                 Assert.assertTrue("external FSN must strictly increase across every recycle "
                                 + "boundary, got " + snapshot.get(i - 1) + " -> " + snapshot.get(i)
