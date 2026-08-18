@@ -4,6 +4,11 @@
 
 AWS_REGION 		?= eu-west-1
 
+# Build a single architecture, e.g. ONLY=questdb-ami-amazon-linux-2023-arm64.
+# Both architectures are built when unset.
+ONLY 			?=
+PACKER_ONLY		= $(if $(ONLY),-only=$(ONLY),)
+
 packer ?= packer
 git    ?= git
 aws    ?= aws
@@ -15,6 +20,7 @@ install_aws_plugin:
 build: QUESTDB_VERSION?=$(shell $(git) rev-parse --short HEAD)-snapshot
 build:
 	$(packer) build \
+	$(PACKER_ONLY) \
 	-var ami_regions=$(AMI_REGIONS) \
 	-var questdb_version=$(QUESTDB_VERSION) \
 	packer.json
@@ -23,6 +29,7 @@ build_release: QUESTDB_VERSION?=$(shell $(git) symbolic-ref -q --short HEAD || g
 build_release: AMI_REGIONS?=$(shell export AWS_REGION=$(AWS_REGION); $(aws) ec2 describe-regions | $(jq) -r '.Regions | map(.RegionName) | join(",")')
 build_release:
 	$(packer) build \
+	$(PACKER_ONLY) \
 	-var ami_regions=$(AMI_REGIONS) \
 	-var questdb_version=$(QUESTDB_VERSION) \
 	-var ami_groups=all \

@@ -1,5 +1,5 @@
 {
-  "_comment": "Packer Template for demo. Based on Amazon Linux 2023",
+  "_comment": "Packer template for the AWS Marketplace AMI. Amazon Linux 2023, x86_64 and arm64",
   "variables": {
     "base_ami_name": "questdb",
     "region": "eu-west-1",
@@ -9,7 +9,7 @@
   },
   "builders": [
     {
-      "name": "questdb-ami-amazon-linux-2023",
+      "name": "questdb-ami-amazon-linux-2023-x86_64",
       "ami_name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-al2023-x86_64-ebs",
       "ami_description": "An Amazon Linux 2023 instance with QuestDB-{{ user `questdb_version` }} installed and running",
       "ami_regions": "{{user `ami_regions`}}",
@@ -46,6 +46,46 @@
         "OS_Version": "Amazon Linux 2023",
         "Base_AMI_Name": "{{ .SourceAMIName }}",
         "Name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-al2023-x86_64-ebs"
+      }
+    },
+    {
+      "name": "questdb-ami-amazon-linux-2023-arm64",
+      "ami_name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-al2023-arm64-ebs",
+      "ami_description": "An Amazon Linux 2023 instance with QuestDB-{{ user `questdb_version` }} installed and running",
+      "ami_regions": "{{user `ami_regions`}}",
+      "ami_groups": "{{user `ami_groups`}}",
+      "instance_type": "t4g.large",
+      "region": "{{user `region`}}",
+      "type": "amazon-ebs",
+      "force_deregister": "true",
+      "force_delete_snapshot": "true",
+      "source_ami_filter": {
+        "filters": {
+          "virtualization-type": "hvm",
+          "architecture": "arm64",
+          "name": "al2023-ami-202*-arm64",
+          "block-device-mapping.volume-type": "gp3",
+          "root-device-type": "ebs"
+        },
+        "owners": ["137112412989"],
+        "most_recent": true
+      },
+      "launch_block_device_mappings": [
+        {
+          "device_name": "/dev/xvdb",
+          "volume_size": 50,
+          "delete_on_termination": false,
+          "volume_type": "gp3",
+          "iops": 3000,
+          "throughput": 250
+        }
+      ],
+
+      "ssh_username": "ec2-user",
+      "tags": {
+        "OS_Version": "Amazon Linux 2023",
+        "Base_AMI_Name": "{{ .SourceAMIName }}",
+        "Name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-al2023-arm64-ebs"
       }
     }
   ],
