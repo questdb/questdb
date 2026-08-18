@@ -669,7 +669,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
-            clearTodoLog();
+            if (pendingRetireCoveringTokenWriterIndex < 0) {
+                // Held back when a covering-token retirement is outstanding.
+                // The replay is at the end of this constructor, because it
+                // needs writer state that does not exist yet here; clearing the
+                // record now would drop the intent while the work is still
+                // undone, and anything that throws in between -- or a crash --
+                // loses it for good. recoverRetireCoveringToken clears it once
+                // the retirement has actually run.
+                clearTodoLog();
+            }
             this.slaveTxReader = new TxReader(ff);
             commandQueue = new RingQueue<>(
                     TableWriterTask::new,
@@ -14003,11 +14012,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (retireParquetIndexTokens(writerIndex)) {
                 commitTxWriter();
             }
-        } catch (Throwable th) {
-            LOG.error().$("could not finish a covering index token retirement [table=")
-                    .$(tableToken).$(", error=").$(th.getMessage()).I$();
-        } finally {
+            // Cleared only on success. A transient I/O fault must leave the
+            // record in place so the next writer open retries; clearing it in a
+            // finally would turn one bad open into a permanent leak of the
+            // token and its artifacts.
             clearTodoLog();
+        } catch (Throwable th) {
+            LOG.error().$("could not finish a covering index token retirement, will retry on the next open [table=")
+                    .$(tableToken).$(", error=").$(th.getMessage()).I$();
         }
     }
 
