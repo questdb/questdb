@@ -67,8 +67,7 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
 
             final TableToken tableToken = engine.verifyTableName("x");
             try (WalWriter writer = engine.getWalWriter(tableToken)) {
-                @SuppressWarnings("unchecked")
-                final ObjList<SymbolMapReader> readers = (ObjList<SymbolMapReader>) symbolMapReadersField.get(writer);
+                @SuppressWarnings("unchecked") final ObjList<SymbolMapReader> readers = (ObjList<SymbolMapReader>) symbolMapReadersField.get(writer);
                 final SymbolMapReader originalReader = readers.getQuick(0);
                 readers.setQuick(0, staleReader);
                 try {
