@@ -315,6 +315,56 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * Derived from master's #7487, "stop partition squash losing var-column data on the open
+     * partition". That fix landed in the PLAIN squash loop; the composite merge is a separate method
+     * and merged without conflict -- which is exactly the situation where a shared hazard hides.
+     *
+     * <p>A VARCHAR column is the sensitive one: it has both a data and an index file, and the bug
+     * master fixed lost data when the squash target WAS the open partition. The composite active-tail
+     * squash merges into the open day by definition, so this asserts the same property directly:
+     * squash a fragment on the tail day of a table with a var-size column, keep writing, and require
+     * the twin to agree on every row.
+     */
+    @Test(timeout = 60_000)
+    public void testVarColumnSurvivesTailSquashThenMoreWrites() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins("ts TIMESTAMP, exch SYMBOL, note VARCHAR, px DOUBLE",
+                    "PARTITION BY DAY, exch LAYOUT PLAIN");
+            final String order = " ORDER BY ts, exch, px";
+            // One cell per COMMIT. A composite table with a var-size column refuses an INTERLEAVED
+            // multi-cell commit ("an interleaved multi-cell commit is not yet supported for a table
+            // with a var-size column"), which is a write-path limitation independent of squash -- and
+            // it suspended this test on its first insert until the writes were separated.
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0','alpha',1.0),"
+                    + "('2023-01-01T20:00:00.000000Z','E0','bravo',2.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-01T21:00:00.000000Z','E1','charlie',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // O3 write into the middle of the day -> a real split fragment on the TAIL day
+            insertIntoBoth("('2023-01-01T10:00:00.000000Z','E0','delta',4.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            execute("ALTER TABLE p SQUASH PARTITIONS");
+            drainWalQueue();
+
+            // keep writing AFTER the squash -- this is where a stale var-column append position bites
+            insertIntoBoth("('2023-01-01T22:00:00.000000Z','E0','echo',5.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-01T23:00:00.000000Z','E1','foxtrot',6.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            assertTwinEqual("", order);
+            assertSqlCursors("SELECT note FROM p" + order, "SELECT note FROM c" + order);
+        });
+    }
+
+    /**
      * PREMISE CHECK for the backward-scan defect: is the trigger really "a split fragment", or is it
      * "cells whose timestamps interleave"? No fragment here at all -- two cells, each holding rows on
      * BOTH sides of the other's rows. A backward walk over partition entries can only produce ts-DESC
