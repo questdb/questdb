@@ -2804,15 +2804,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // could never empty a composite day. FORCE DROP can only ever name a whole day -- its LIST
             // parser rejects <day>/<cell> with a date-format error -- so removing the day's every cell
             // is exactly what the statement asked for.
-            int cellIndex = index;
-            while (cellIndex >= 0) {
-                final int cellKey = txWriter.getPartitionCellKey(cellIndex);
-                final long cellNameTxn = txWriter.getPartitionNameTxn(cellIndex);
-                txWriter.removeAttachedPartitions(timestamp, cellKey);
-                // Add the partition to the partition remove list that can be deleted if there are no
-                // open readers after the commit
-                partitionRemoveCandidates.add(timestamp, cellNameTxn, cellKey);
-                cellIndex = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
+            // REGRESSION FIX 2026-08-18: the drain is COMPOSITE-ONLY. It was unconditional, and on a
+            // PLAIN table with split partitions it dropped rows master keeps:
+            // getAnyPartitionIndexByTimestamp searches with Vect.BIN_SEARCH_SCAN_UP, which can answer
+            // with a nearby entry when the exact floor is absent, whereas master's getPartitionIndex
+            // requires an exact lo-timestamp match. So once the day entry was removed the next
+            // iteration found a split FRAGMENT and removed that too.
+            // Caught by WalTableFailureTest#testForceDropPartitionRangeNotOnDiskWithSplits (4200 rows
+            // expected, 3240 survived). A plain day is its own single cell, so one removal is both
+            // sufficient and exactly what master did.
+            if (isRoutedComposite()) {
+                int cellIndex = index;
+                while (cellIndex >= 0) {
+                    final long entryTs = txWriter.getPartitionTimestampByIndex(cellIndex);
+                    // Bound the drain to THIS day. A sibling cell shares the raw timestamp; anything
+                    // else (a fragment, or the next day) must not be swept up by a SCAN_UP answer.
+                    if (entryTs != timestamp) {
+                        break;
+                    }
+                    final int cellKey = txWriter.getPartitionCellKey(cellIndex);
+                    final long cellNameTxn = txWriter.getPartitionNameTxn(cellIndex);
+                    txWriter.removeAttachedPartitions(timestamp, cellKey);
+                    // Add the partition to the partition remove list that can be deleted if there are
+                    // no open readers after the commit
+                    partitionRemoveCandidates.add(timestamp, cellNameTxn, cellKey);
+                    cellIndex = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
+                }
+            } else {
+                final long cellNameTxn = txWriter.getPartitionNameTxn(index);
+                txWriter.removeAttachedPartitions(timestamp);
+                partitionRemoveCandidates.add(timestamp, cellNameTxn, 0);
             }
 
             // SP1D: column versions are keyed by DAY, not by cell, so this is called ONCE per
