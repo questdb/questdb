@@ -26,12 +26,16 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -68,6 +72,31 @@ public class VarcharFunctionTest {
             return utf8Seq;
         }
     };
+
+    @Test
+    public void testCastMalformedVarcharToSymbol() {
+        final Utf8Sequence malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
+        final ObjList<Function> args = new ObjList<>();
+        args.add(new VarcharFunction() {
+            @Override
+            public Utf8Sequence getVarcharA(Record rec) {
+                return malformed;
+            }
+
+            @Override
+            public Utf8Sequence getVarcharB(Record rec) {
+                return malformed;
+            }
+
+            @Override
+            public boolean isConstant() {
+                return true;
+            }
+        });
+        try (Function cast = new CastVarcharToSymbolFunctionFactory().newInstance(0, args, null, null, null)) {
+            Assert.assertNull(cast.getSymbol(null));
+        }
+    }
 
     @Test
     public void testCastStrToChar() {
@@ -517,6 +546,25 @@ public class VarcharFunctionTest {
     @Test
     public void testGetStrLen() {
         Assert.assertEquals(1, function.getStrLen(null));
+    }
+
+    @Test
+    public void testGetStrRejectsMalformedUtf8() {
+        final Utf8Sequence malformed = new Utf8String(new byte[]{'1', (byte) 0xC3}, false);
+        final VarcharFunction malformedFunction = new VarcharFunction() {
+            @Override
+            public Utf8Sequence getVarcharA(Record rec) {
+                return malformed;
+            }
+
+            @Override
+            public Utf8Sequence getVarcharB(Record rec) {
+                return malformed;
+            }
+        };
+
+        Assert.assertNull(malformedFunction.getStrA(null));
+        Assert.assertNull(malformedFunction.getStrB(null));
     }
 
     @Test

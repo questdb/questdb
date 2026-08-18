@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -56,6 +57,7 @@ public class WalEventCursor {
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
+    private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
@@ -96,7 +98,23 @@ public class WalEventCursor {
         if (!WalTxnType.isDataType(type)) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
-        return (type == DATA) ? dataInfo : mvDataInfo;
+        switch (type) {
+            case DATA:
+                return dataInfo;
+            case MAT_VIEW_DATA:
+                return mvDataInfo;
+            case LIVE_VIEW_DATA:
+                return lvDataInfo;
+            default:
+                throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("unexpected WAL data type=").put(type);
+        }
+    }
+
+    public LiveViewDataInfo getLiveViewDataInfo() {
+        if (type != LIVE_VIEW_DATA) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not LIVE_VIEW_DATA, type=").put(type);
+        }
+        return lvDataInfo;
     }
 
     public MatViewDataInfo getMatViewDataInfo() {
@@ -170,6 +188,33 @@ public class WalEventCursor {
         type = WalTxnType.NONE;
     }
 
+    /**
+     * Positions the cursor so the next {@link #hasNext()} reads the record at
+     * {@code resumeOffset}, which must be a value previously returned by
+     * {@link #resumeOffset()} for this segment's event file. Extends the mapping to
+     * cover that offset first, because a fresh {@code WalEventReader.of(path, -1)}
+     * maps only the header. Used by {@link WalReader} to fold only newly-appended
+     * events into the symbol maps across same-segment rebinds, since WAL event files
+     * are append-only (new records overwrite the trailing end-of-events marker).
+     */
+    void resumeFrom(long resumeOffset) {
+        eventMem.extend(resumeOffset + Integer.BYTES);
+        memSize = eventMem.size();
+        nextOffset = resumeOffset;
+        txn = END_OF_EVENTS;
+        type = WalTxnType.NONE;
+    }
+
+    /**
+     * The offset the next {@link #hasNext()} would read from. After a walk stops at
+     * the trailing end-of-events marker this is the marker's position - exactly where
+     * the next appended record lands - so it is a valid resume point for a later
+     * {@link #resumeFrom(long)}.
+     */
+    long resumeOffset() {
+        return nextOffset;
+    }
+
     private void checkMemSize(long requiredBytes) {
         if (memSize < offset + requiredBytes) {
             throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
@@ -219,6 +264,74 @@ public class WalEventCursor {
         return value;
     }
 
+    /**
+     * Reads a decimal of the given type and binds it, either by index when {@code name} is null, or by name.
+     * Stored values are sign-extended to 256 bits, stored nulls are turned back into the 256-bit null.
+     */
+    private void readDecimal(BindVariableService bindVariableService, int index, CharSequence name, int type) throws SqlException {
+        long hh = Decimals.DECIMAL256_HH_NULL;
+        long hl = Decimals.DECIMAL256_HL_NULL;
+        long lh = Decimals.DECIMAL256_LH_NULL;
+        long ll = Decimals.DECIMAL256_LL_NULL;
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8: {
+                final byte value = readByte();
+                if (value != Decimals.DECIMAL8_NULL) {
+                    hh = hl = lh = value < 0 ? -1 : 0;
+                    ll = value;
+                }
+                break;
+            }
+            case ColumnType.DECIMAL16: {
+                final short value = readShort();
+                if (value != Decimals.DECIMAL16_NULL) {
+                    hh = hl = lh = value < 0 ? -1 : 0;
+                    ll = value;
+                }
+                break;
+            }
+            case ColumnType.DECIMAL32: {
+                final int value = readInt();
+                if (value != Decimals.DECIMAL32_NULL) {
+                    hh = hl = lh = value < 0 ? -1 : 0;
+                    ll = value;
+                }
+                break;
+            }
+            case ColumnType.DECIMAL64: {
+                final long value = readLong();
+                if (value != Decimals.DECIMAL64_NULL) {
+                    hh = hl = lh = value < 0 ? -1 : 0;
+                    ll = value;
+                }
+                break;
+            }
+            case ColumnType.DECIMAL128: {
+                final long hi = readLong();
+                final long lo = readLong();
+                if (hi != Decimals.DECIMAL128_HI_NULL || lo != Decimals.DECIMAL128_LO_NULL) {
+                    hh = hl = hi < 0 ? -1 : 0;
+                    lh = hi;
+                    ll = lo;
+                }
+                break;
+            }
+            case ColumnType.DECIMAL256:
+                hh = readLong();
+                hl = readLong();
+                lh = readLong();
+                ll = readLong();
+                break;
+            default:
+                throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+        }
+        if (name != null) {
+            bindVariableService.setDecimal(name, hh, hl, lh, ll, type);
+        } else {
+            bindVariableService.setDecimal(index, hh, hl, lh, ll, type);
+        }
+    }
+
     private double readDouble() {
         checkMemSize(Double.BYTES);
         final double value = eventMem.getDouble(offset);
@@ -255,6 +368,9 @@ public class WalEventCursor {
                 break;
             case MAT_VIEW_DATA:
                 mvDataInfo.read();
+                break;
+            case LIVE_VIEW_DATA:
+                lvDataInfo.read();
                 break;
             case SQL:
                 sqlInfo.read();
@@ -440,6 +556,21 @@ public class WalEventCursor {
                     }
                 }
             }
+        }
+    }
+
+    public class LiveViewDataInfo extends DataInfo {
+        private long maxBaseSeqTxnInBlock;
+
+        public long getMaxBaseSeqTxnInBlock() {
+            return maxBaseSeqTxnInBlock;
+        }
+
+        @Override
+        protected void read() {
+            super.read();
+            // The single LV-specific extra field; symbol map diffs follow.
+            maxBaseSeqTxnInBlock = readLong();
         }
     }
 
@@ -629,33 +760,12 @@ public class WalEventCursor {
                         bindVariableService.setArray(i, readArray(arrayViewPool.next()));
                         break;
                     case ColumnType.DECIMAL8:
-                        byte decimal8 = readByte();
-                        long s = decimal8 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(i, s, s, s, decimal8, type);
-                        break;
                     case ColumnType.DECIMAL16:
-                        short decimal16 = readShort();
-                        s = decimal16 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(i, s, s, s, decimal16, type);
-                        break;
                     case ColumnType.DECIMAL32:
-                        int decimal32 = readInt();
-                        s = decimal32 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(i, s, s, s, decimal32, type);
-                        break;
                     case ColumnType.DECIMAL64:
-                        long decimal64 = readLong();
-                        s = decimal64 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(i, s, s, s, decimal64, type);
-                        break;
                     case ColumnType.DECIMAL128:
-                        long hi = readLong();
-                        long lo = readLong();
-                        s = hi < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(i, s, s, hi, lo, type);
-                        break;
                     case ColumnType.DECIMAL256:
-                        bindVariableService.setDecimal(i, readLong(), readLong(), readLong(), readLong(), type);
+                        readDecimal(bindVariableService, i, null, type);
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -728,33 +838,12 @@ public class WalEventCursor {
                         bindVariableService.setArray(i, readArray(arrayViewPool.next()));
                         break;
                     case ColumnType.DECIMAL8:
-                        byte decimal8 = readByte();
-                        long s = decimal8 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(name, s, s, s, decimal8, type);
-                        break;
                     case ColumnType.DECIMAL16:
-                        short decimal16 = readShort();
-                        s = decimal16 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(name, s, s, s, decimal16, type);
-                        break;
                     case ColumnType.DECIMAL32:
-                        int decimal32 = readInt();
-                        s = decimal32 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(name, s, s, s, decimal32, type);
-                        break;
                     case ColumnType.DECIMAL64:
-                        long decimal64 = readLong();
-                        s = decimal64 < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(name, s, s, s, decimal64, type);
-                        break;
                     case ColumnType.DECIMAL128:
-                        long hi = readLong();
-                        long lo = readLong();
-                        s = hi < 0 ? -1 : 0;
-                        bindVariableService.setDecimal(name, s, s, hi, lo, type);
-                        break;
                     case ColumnType.DECIMAL256:
-                        bindVariableService.setDecimal(name, readLong(), readLong(), readLong(), readLong(), type);
+                        readDecimal(bindVariableService, -1, name, type);
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

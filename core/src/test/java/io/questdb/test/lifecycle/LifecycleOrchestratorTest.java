@@ -17,13 +17,230 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LifecycleOrchestratorTest {
 
     @Rule
     public Timeout timeout = Timeout.builder().withTimeout(30, TimeUnit.SECONDS).withLookingForStuckThread(true).build();
+
+    @Test
+    public void testCloseDrainsInFlightWorkWhenCallerIsInterrupted() throws Exception {
+        CountDownLatch awaitEntered = new CountDownLatch(1);
+        CountDownLatch drainComplete = new CountDownLatch(1);
+        AtomicBoolean hasAwaitCompleted = new AtomicBoolean();
+        AtomicBoolean isDrainCompleteAtStop = new AtomicBoolean();
+        AtomicReference<Throwable> releaserFailure = new AtomicReference<>();
+        LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null) {
+            @Override
+            protected boolean awaitInFlightWork() {
+                awaitEntered.countDown();
+                try {
+                    boolean hasDrained = drainComplete.await(5, TimeUnit.SECONDS);
+                    hasAwaitCompleted.set(hasDrained);
+                    return hasDrained;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        };
+        orch.setPreStopHook(() -> isDrainCompleteAtStop.set(hasAwaitCompleted.get()));
+        orch.run();
+
+        Thread releaser = new Thread(() -> {
+            try {
+                if (!awaitEntered.await(10, TimeUnit.SECONDS)) {
+                    throw new AssertionError("close() did not enter the in-flight drain");
+                }
+                drainComplete.countDown();
+            } catch (Throwable th) {
+                releaserFailure.set(th);
+            }
+        }, "lifecycle-drain-releaser");
+        releaser.setDaemon(true);
+        releaser.start();
+
+        try {
+            Thread.currentThread().interrupt();
+            orch.close();
+            Assert.assertTrue("close() did not restore the caller interrupt flag", Thread.interrupted());
+            releaser.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse("lifecycle drain releaser did not stop", releaser.isAlive());
+            if (releaserFailure.get() != null) {
+                throw new AssertionError("lifecycle drain releaser failed", releaserFailure.get());
+            }
+            Assert.assertTrue("close() entered pre-stop before in-flight work drained", isDrainCompleteAtStop.get());
+        } finally {
+            Thread.interrupted();
+            drainComplete.countDown();
+            releaser.join(TimeUnit.SECONDS.toMillis(10));
+            orch.close();
+        }
+    }
+
+    @Test
+    public void testCloseDrainsInFlightWorkWhenInterruptedDuringAwait() throws Exception {
+        CountDownLatch awaitEntered = new CountDownLatch(1);
+        CountDownLatch preStopEntered = new CountDownLatch(1);
+        CountDownLatch releasePreStop = new CountDownLatch(1);
+        CountDownLatch releaseTask = new CountDownLatch(1);
+        CountDownLatch taskStarted = new CountDownLatch(1);
+        AtomicBoolean hasTaskCompleted = new AtomicBoolean();
+        AtomicBoolean isInterruptRestored = new AtomicBoolean();
+        AtomicBoolean isPreStopInterrupted = new AtomicBoolean();
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+
+        class TestOrchestrator extends LifecycleOrchestrator {
+            private TestOrchestrator() {
+                super(null, null, null);
+            }
+
+            @Override
+            protected boolean awaitInFlightWork() {
+                awaitEntered.countDown();
+                return super.awaitInFlightWork();
+            }
+
+            private void submitInFlightWork(Runnable task) {
+                executor.execute(task);
+            }
+        }
+
+        TestOrchestrator orch = new TestOrchestrator();
+        orch.setPreStopHook(() -> {
+            isPreStopInterrupted.set(Thread.currentThread().isInterrupted());
+            preStopEntered.countDown();
+            try {
+                releasePreStop.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        Thread closeThread = new Thread(() -> {
+            try {
+                orch.close();
+                isInterruptRestored.set(Thread.currentThread().isInterrupted());
+            } catch (Throwable th) {
+                closeFailure.set(th);
+            }
+        }, "lifecycle-close-test");
+
+        try {
+            orch.run();
+            orch.submitInFlightWork(() -> {
+                taskStarted.countDown();
+                try {
+                    releaseTask.await();
+                    hasTaskCompleted.set(true);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            Assert.assertTrue("in-flight task did not start", taskStarted.await(5, TimeUnit.SECONDS));
+            closeThread.start();
+
+            Assert.assertTrue("close() did not enter the in-flight drain", awaitEntered.await(5, TimeUnit.SECONDS));
+            closeThread.interrupt();
+            TestUtils.assertEventually(() -> {
+                Thread.State state = closeThread.getState();
+                Assert.assertTrue(
+                        preStopEntered.getCount() == 0
+                                || (!closeThread.isInterrupted()
+                                && (state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING))
+                );
+            }, 5);
+            Assert.assertEquals("close() entered pre-stop before in-flight work drained", 1, preStopEntered.getCount());
+
+            releaseTask.countDown();
+            Assert.assertTrue("close() did not enter pre-stop", preStopEntered.await(5, TimeUnit.SECONDS));
+            Assert.assertFalse("pre-stop inherited the drain interrupt", isPreStopInterrupted.get());
+            releasePreStop.countDown();
+            closeThread.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse("close thread did not stop", closeThread.isAlive());
+            Assert.assertNull("close failed", closeFailure.get());
+            Assert.assertTrue("in-flight task did not complete", hasTaskCompleted.get());
+            Assert.assertTrue("close() did not restore the caller interrupt flag", isInterruptRestored.get());
+        } finally {
+            releaseTask.countDown();
+            releasePreStop.countDown();
+            closeThread.join(TimeUnit.SECONDS.toMillis(10));
+            orch.close();
+        }
+    }
+
+    @Test
+    public void testCloseWaitsForBootWhenInterruptedDuringJoin() throws Exception {
+        final BarrierComponent component = new BarrierComponent("boot-blocker");
+        final CountDownLatch preStopEntered = new CountDownLatch(1);
+        final AtomicBoolean isInterruptRestored = new AtomicBoolean();
+        final AtomicReference<Throwable> bootFailure = new AtomicReference<>();
+        final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(component);
+        orch.setPreStopHook(preStopEntered::countDown);
+
+        final Thread bootThread = new Thread(() -> {
+            try {
+                orch.run();
+            } catch (Throwable th) {
+                bootFailure.set(th);
+            }
+        }, "lifecycle-boot-test");
+        final Thread closeThread = new Thread(() -> {
+            try {
+                orch.close();
+                isInterruptRestored.set(Thread.currentThread().isInterrupted());
+            } catch (Throwable th) {
+                closeFailure.set(th);
+            }
+        }, "lifecycle-boot-close-test");
+
+        try {
+            bootThread.start();
+            Assert.assertTrue("component start did not block", component.awaitEntered(TimeUnit.SECONDS.toMillis(5)));
+            closeThread.start();
+            TestUtils.assertEventually(
+                    () -> Assert.assertEquals(Thread.State.TIMED_WAITING, closeThread.getState()),
+                    5
+            );
+
+            closeThread.interrupt();
+            TestUtils.assertEventually(() -> {
+                if (preStopEntered.getCount() == 0) {
+                    return;
+                }
+                Assert.assertFalse("close thread has not consumed the join interrupt", closeThread.isInterrupted());
+                boolean isJoining = false;
+                for (StackTraceElement frame : closeThread.getStackTrace()) {
+                    if (frame.getMethodName().equals("join") || frame.getMethodName().equals("timedJoin")) {
+                        isJoining = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("close thread did not resume the boot join", isJoining);
+            }, 5);
+            Assert.assertEquals("close entered pre-stop while boot was active", 1, preStopEntered.getCount());
+
+            component.releaseBarrier();
+            bootThread.join(TimeUnit.SECONDS.toMillis(5));
+            closeThread.join(TimeUnit.SECONDS.toMillis(5));
+            Assert.assertFalse("boot thread did not stop", bootThread.isAlive());
+            Assert.assertFalse("close thread did not stop", closeThread.isAlive());
+            Assert.assertNull("boot failed", bootFailure.get());
+            Assert.assertNull("close failed", closeFailure.get());
+            Assert.assertEquals("close did not run pre-stop", 0, preStopEntered.getCount());
+            Assert.assertTrue("close did not restore the join interrupt", isInterruptRestored.get());
+        } finally {
+            component.releaseBarrier();
+            bootThread.join(TimeUnit.SECONDS.toMillis(5));
+            closeThread.join(TimeUnit.SECONDS.toMillis(5));
+            orch.close();
+        }
+    }
 
     @Test
     public void testEnvelopeExtraDepsInjection() {

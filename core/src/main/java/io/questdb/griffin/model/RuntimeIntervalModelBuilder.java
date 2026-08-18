@@ -524,13 +524,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             isBetweenBoundaryFunctionConsumed = true;
             resetBetweenParsingState();
             Throwable failure = Misc.freeBestEffort(null, pendingFunction);
-            failure = Misc.freeBestEffort(failure, timestamp);
+            if (timestamp != pendingFunction) {
+                failure = Misc.freeBestEffort(failure, timestamp);
+            }
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
 
         // Reservation failure is pre-adoption: the incoming endpoint stays caller-owned and the
-        // pending endpoint remains attached for clearBetweenParsing().
+        // pending endpoint remains attached for clearBetweenParsing(). When both references point
+        // to the same Function, the builder already owns the incoming reference as the pending one.
+        isBetweenBoundaryFunctionConsumed = timestamp == pendingFunction;
         intersectBetweenDynamic(timestamp, functionPosition, pendingFunction, pendingFunctionPosition);
         isBetweenBoundaryFunctionConsumed = true;
         resetBetweenParsingState();
@@ -862,19 +866,29 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private void intersectBetweenDynamic(Function funcValue1, int funcPosition1, Function funcValue2, int funcPosition2) {
         assert !isEmptySet();
 
-        // Reserve capacity for the whole operation before mutating any list or adopting either
-        // function: a growth failure here leaves both functions with their previous owners and
-        // the lists untouched, instead of adopting one endpoint (double-closed by the caller and
-        // this builder) while stranding the other.
-        final boolean isCursor1 = funcValue1.getType() == ColumnType.CURSOR;
-        final boolean isCursor2 = funcValue2.getType() == ColumnType.CURSOR;
-        reserveEncodedIntervals(2, (isCursor1 ? 1 : 0) + (isCursor2 ? 1 : 0));
+        if (funcValue1 == funcValue2) {
+            // Evaluate and own a shared endpoint once. Adding the same Function twice would close
+            // it twice when the runtime model is released.
+            final boolean isCursor = funcValue1.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            final short operation = betweenNegated ? IntervalOperation.SUBTRACT : IntervalOperation.INTERSECT;
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, operation, staticIntervals);
+            addDynamicFunction(funcValue1, funcPosition1, isCursor);
+        } else {
+            // Reserve capacity for the whole operation before mutating any list or adopting either
+            // function: a growth failure here leaves both functions with their previous owners and
+            // the lists untouched, instead of adopting one endpoint (double-closed by the caller and
+            // this builder) while stranding the other.
+            final boolean isCursor1 = funcValue1.getType() == ColumnType.CURSOR;
+            final boolean isCursor2 = funcValue2.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(2, (isCursor1 ? 1 : 0) + (isCursor2 ? 1 : 0));
 
-        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        addDynamicFunction(funcValue1, funcPosition1, isCursor1);
-        addDynamicFunction(funcValue2, funcPosition2, isCursor2);
+            final short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+            addDynamicFunction(funcValue1, funcPosition1, isCursor1);
+            addDynamicFunction(funcValue2, funcPosition2, isCursor2);
+        }
         intervalApplied = true;
     }
 

@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 
 public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable {
@@ -38,10 +39,19 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     private int capacity;
     private int free;
     private long mask;
+    // Per-query native memory tracker bound by the owning component before the
+    // backing directory is (re)allocated. Null when no per-query limit applies;
+    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
     public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag) {
+        this(initialCapacity, loadFactor, noEntryKey, noEntryValue, memoryTag, true);
+    }
+
+    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag, boolean openOnInit) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -53,8 +63,12 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         this.size = 0;
         this.free = (int) (capacity * loadFactor);
         this.mask = capacity - 1;
-        this.ptr = Unsafe.malloc(8L * capacity, memoryTag);
-        zero();
+        if (openOnInit) {
+            this.ptr = Unsafe.malloc(8L * capacity, memoryTag, memoryTracker);
+            zero();
+        }
+        // else: ptr stays 0; the first reopen() allocates the directory under
+        // whatever MemoryTracker is bound at that time.
     }
 
     public int capacity() {
@@ -71,9 +85,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
+            mask = 0;
             size = 0;
         }
     }
@@ -84,6 +99,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     public int get(int key) {
         return valueAt(keyIndex(key));
+    }
+
+    public boolean isOpen() {
+        return ptr != 0;
     }
 
     public int keyAt(long index) {
@@ -136,9 +155,9 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             final long oldCapacity = capacity;
             long newPtr;
             if (ptr == 0) {
-                newPtr = Unsafe.malloc(8L * initialCapacity, memoryTag);
+                newPtr = Unsafe.malloc(8L * initialCapacity, memoryTag, memoryTracker);
             } else {
-                newPtr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * initialCapacity, memoryTag);
+                newPtr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * initialCapacity, memoryTag, memoryTracker);
             }
             ptr = newPtr;
             capacity = initialCapacity;
@@ -146,6 +165,17 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         }
 
         clear();
+    }
+
+    /**
+     * Binds the per-query tracker. It must be bound before the backing directory is
+     * allocated and cleared only after it is freed, so that a malloc and its matching free
+     * charge the same tracker. Rebinding over a live directory would refund bytes the new
+     * tracker was never charged.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        assert ptr == 0 || memoryTracker == null : "tracker must be bound before allocation";
+        this.memoryTracker = memoryTracker;
     }
 
     public int size() {
@@ -184,7 +214,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         }
 
         final int oldCapacity = capacity;
-        long newPtr = Unsafe.malloc(8L * newCapacity, memoryTag);
+        long newPtr = Unsafe.malloc(8L * newCapacity, memoryTag, memoryTracker);
 
         long oldPtr = ptr;
         ptr = newPtr;
@@ -207,10 +237,15 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             }
         }
 
-        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag, memoryTracker);
     }
 
     private void zero() {
+        if (ptr == 0) {
+            // Lazy-open (openOnInit == false) leaves capacity sized while ptr is still 0.
+            // reopen() zeroes the directory it allocates, so there is nothing to do here.
+            return;
+        }
         if (noEntryKey == 0) {
             // Vectorized fast path for zero default value.
             Vect.memset(ptr, 8L * capacity, 0);
