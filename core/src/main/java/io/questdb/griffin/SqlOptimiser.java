@@ -168,7 +168,12 @@ public class SqlOptimiser implements Mutable {
     // the value instead of dropping the row, so it changes the result for these and they are
     // rejected. first/last pick a winner by row id with no null test; array_agg appends the NaN as
     // a real element; bool_and/bool_or and mode(boolean) read a BOOLEAN, whose null constant is
-    // FALSE, so a non-matching row votes.
+    // FALSE, so a non-matching row votes; isOrdered compares raw longs, and LONG_NULL is
+    // Long.MIN_VALUE, so a non-matching row looks like a descending step.
+    //
+    // twap is rejected for a different reason: it requires its second argument to be the table's
+    // designated timestamp column itself, and wrapping that argument in a CASE replaces the column
+    // reference with an expression its factory refuses.
     private static final LowerCaseAsciiCharSequenceHashSet filterUnsupportedAggregates;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
@@ -13156,7 +13161,9 @@ public class SqlOptimiser implements Mutable {
         filterUnsupportedAggregates.add("bool_and");
         filterUnsupportedAggregates.add("bool_or");
         filterUnsupportedAggregates.add("first");
+        filterUnsupportedAggregates.add("isOrdered");
         filterUnsupportedAggregates.add("last");
         filterUnsupportedAggregates.add("mode");
+        filterUnsupportedAggregates.add("twap");
     }
 }

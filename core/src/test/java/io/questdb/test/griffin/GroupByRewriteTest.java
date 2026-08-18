@@ -74,6 +74,33 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterBindVariableAsAggregateParameter() throws Exception {
+        // a bind variable in a parameter position must pass through the CASE wrapper untouched,
+        // exactly like a literal constant would
+        assertMemoryLeak(() -> {
+            execute("create table t2 as ( select x from long_sequence(10) )");
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 0.5);
+            assertQuery("select approx_percentile(x::double, $1) filter (where x > 5) r from t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            8.25
+                            """);
+            assertQuery("select approx_percentile(x::double, $1, 5) filter (where x > 5) r from t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            8.000030517578125
+                            """);
+        });
+    }
+
+    @Test
     public void testFilterBindVariableCondition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y as ( select x from long_sequence(10) )");
@@ -216,6 +243,18 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterCountOfColumnSkipsNulls() throws Exception {
+        // count(column) counts non-null values among matching rows, unlike count(*)
+        assertAggQuery("""
+                        c\tcs
+                        4\t5
+                        """,
+                "select count(v) filter (where id > 5) c, count(*) filter (where id > 5) cs from t",
+                "create table t as ( select case when x % 4 = 0 then null else x end v, x id from long_sequence(10) )"
+        );
+    }
+
+    @Test
     public void testFilterCountStarMatchesFilteredSubQuery() throws Exception {
         assertAggQuery("""
                         r
@@ -230,6 +269,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                         """,
                 "select count(*) r from (select x from y where x > 5)",
                 null
+        );
+    }
+
+    @Test
+    public void testFilterDecimalAndLong256Arguments() throws Exception {
+        // CASE routes DECIMAL through getDecimalCommonType and LONG256 through its own case
+        // function, so neither is implied by the INT/LONG/FLOAT/DOUBLE coverage
+        assertAggQuery("""
+                        dec\tl256
+                        40.00\t0x28
+                        """,
+                "select sum(x::decimal(20,2)) filter (where x > 5) dec, sum(x::long256) filter (where x > 5) l256 from y",
+                "create table y as ( select x from long_sequence(10) )"
         );
     }
 
@@ -257,6 +309,17 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterEmptyTable() throws Exception {
+        assertAggQuery("""
+                        r
+                        null
+                        """,
+                "select sum(x) filter (where x > 5) r from e",
+                "create table e (x long, ts timestamp) timestamp(ts) partition by day"
+        );
+    }
+
+    @Test
     public void testFilterInCte() throws Exception {
         assertAggQuery("""
                         r
@@ -268,6 +331,41 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterInJoinedQuery() throws Exception {
+        // exercises the join-model arm of the lowering pass's recursion
+        assertMemoryLeak(() -> {
+            execute("create table a as ( select x id, ('g' || (x % 2))::symbol g from long_sequence(10) )");
+            execute("create table b as ( select x id, x v from long_sequence(10) )");
+            assertQuery("select a.g, sum(b.v) filter (where b.v > 5) s from a join b on (id) order by a.g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ts
+                            g0\t24
+                            g1\t16
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterInOrderBy() throws Exception {
+        // exercises the ORDER BY arm of the lowering pass: the aggregate appears in the order-by
+        // list as an expression rather than as an alias reference
+        assertMemoryLeak(() -> {
+            execute("create table p as ( select x from long_sequence(10) )");
+            assertQuery("select g, sum(x) filter (where x > 5) s from (select x, (x % 2)::symbol g from p)"
+                    + " order by sum(x) filter (where x > 5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ts
+                            1\t16
+                            0\t24
+                            """);
+        });
+    }
+
+    @Test
     public void testFilterInSubQuery() throws Exception {
         assertAggQuery("""
                         r
@@ -276,6 +374,24 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                 "select * from (select sum(x) filter (where x > 5) r from y)",
                 "create table y as ( select x from long_sequence(10) )"
         );
+    }
+
+    @Test
+    public void testFilterInUnionBranches() throws Exception {
+        // exercises the union-model arm of the lowering pass's recursion
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertQuery("select sum(x) filter (where x > 5) r from y"
+                    + " union all select sum(x) filter (where x <= 5) r from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            r
+                            40
+                            15
+                            """);
+        });
     }
 
     @Test
@@ -338,6 +454,9 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("create table y as ( select x from long_sequence(10) )");
             assertException("select sum(x) filter (x > 5) from y", 22, "'where' expected");
             assertException("select sum(x) filter (where x > 5 from y", 34, "')' expected");
+            assertException("select sum(x) filter (", 21, "'where' expected");
+            assertException("select sum(x) filter (where", 22, "filter condition expected");
+            assertException("select sum(x) filter (where)", 27, "filter condition expected");
         });
     }
 
@@ -363,6 +482,18 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterPlanRetainsAsyncGroupBy() throws Exception {
+        // the lowering must not knock a keyed aggregate off the parallel path
+        assertMemoryLeak(() -> {
+            execute("create table s2 as ( select x, (x % 2)::symbol g, timestamp_sequence(0, 1000) ts"
+                    + " from long_sequence(1000) ) timestamp(ts) partition by day");
+            assertQuery("select g, count(*) filter (where x > 500) c from s2")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By");
+        });
+    }
+
+    @Test
     public void testFilterPlanShowsLoweredCase() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y as ( select x from long_sequence(10) )");
@@ -379,6 +510,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             assertException(
                     "select sum(x) filter (where sum(x) > 5) from y",
                     28,
+                    "aggregate functions are not allowed in FILTER"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterRejectedForAggregateNestedInConditionFunction() throws Exception {
+        // the condition is validated recursively, including through a function's args list
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertException(
+                    "select sum(x) filter (where coalesce(sum(x), 0, 0) > 1) r from y",
+                    37,
                     "aggregate functions are not allowed in FILTER"
             );
         });
@@ -435,6 +579,34 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                             ts\tc
                             1970-01-01T00:00:00.000000Z\t0
                             1970-01-01T00:00:05.000000Z\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterSampleByFillModes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table g as ( select x, x::double d, timestamp_sequence(0, 2000000) ts"
+                    + " from long_sequence(10) ) timestamp(ts) partition by day");
+            final String counts = """
+                    ts\tc
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:05.000000Z\t0
+                    1970-01-01T00:00:10.000000Z\t0
+                    1970-01-01T00:00:15.000000Z\t2
+                    """;
+            assertQuery("select ts, count(*) filter (where x > 8) c from g sample by 5s fill(none)")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(counts);
+            assertQuery("select ts, count(*) filter (where x > 8) c from g sample by 5s fill(null)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary().returns(counts);
+            assertQuery("select ts, sum(d) filter (where x > 8) s from g sample by 5s fill(prev)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000Z\tnull
+                            1970-01-01T00:00:05.000000Z\tnull
+                            1970-01-01T00:00:10.000000Z\tnull
+                            1970-01-01T00:00:15.000000Z\t19.0
                             """);
         });
     }
