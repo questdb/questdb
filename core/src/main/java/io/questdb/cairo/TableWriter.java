@@ -8407,18 +8407,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (!isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
-                    if (isComposite) {
-                        // columns[] carries the append offset this partition had BEFORE it went composite,
-                        // and nothing will ever reposition it. The next openPartition reuses these same
-                        // MemoryMA objects for whatever partition becomes active next, closing this mapping
-                        // WITH truncation on the way, which cuts every column file back to that offset.
-                        // Retire it here instead, without truncating.
-                        if (!isLastPartitionClosed()) {
-                            closeActivePartition(false);
-                        }
-                    } else if (partitionMutates) {
+                    if (isComposite || partitionMutates) {
                         // The last partition is rewritten.
-                        closeActivePartition(true);
+                        closeActivePartition(!isComposite);
                     } else if (!isLastWrittenPartition) {
                         // The last partition is appended, and it is not the last partition anymore.
                         closeActivePartition(srcDataNewPartitionSize);
