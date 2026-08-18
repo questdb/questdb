@@ -31,24 +31,29 @@ import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.processors.LifecycleProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
-import io.questdb.lifecycle.Component;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.State;
@@ -58,14 +63,17 @@ import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -77,9 +85,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
-    private final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
@@ -88,7 +96,7 @@ public class ServerMain implements Closeable {
     // every role switch; volatile publishes the first-hydration write so a later switch on another
     // thread observes the non-null guard and suppresses the redundant re-run.
     private volatile Thread hydrateMetadataThread;
-    private io.questdb.lifecycle.LifecycleOrchestrator orchestrator;
+    private LifecycleOrchestrator orchestrator;
     private Thread shutdownHookThread;
 
     public ServerMain(String... args) {
@@ -354,7 +362,7 @@ public class ServerMain implements Closeable {
      * Test-only bootstrap for per-envelope lifecycle unit tests.
      * Initialises {@link #workerPoolManager} (so the protocol envelopes obtained via
      * {@link #testNewPgWireEnvelope()} et al. can wire jobs onto its pools) and stands up a
-     * minimal {@link io.questdb.lifecycle.LifecycleOrchestrator} with a stub PgWireEnvelope
+     * minimal {@link LifecycleOrchestrator} with a stub PgWireEnvelope
      * registered (so {@link #findEnvelope(String, Class)} succeeds when WebHttpEnvelope.start()
      * looks up the cross-envelope PGServer reference).
      * <p>
@@ -366,7 +374,7 @@ public class ServerMain implements Closeable {
      * <p>
      * Production server.start() callers MUST NOT invoke this method -- it is exclusively
      * for the in-process test harness that drives individual production envelopes via
-     * an external {@link io.questdb.lifecycle.LifecycleOrchestrator}.
+     * an external {@link LifecycleOrchestrator}.
      */
     @TestOnly
     public void testInitForEnvelopeTests() {
@@ -614,10 +622,6 @@ public class ServerMain implements Closeable {
             }
         };
 
-        // make sure view definitions are loaded before the view compiler job is started,
-        // all views have to be loaded with their dependencies before the compiler starts processing notifications
-        engine.buildViewGraphs();
-
         setupDedicatedPools(log, isReadOnly, config);
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -629,12 +633,21 @@ public class ServerMain implements Closeable {
         }
     }
 
-    private void joinThread(Thread thread, boolean ignoreInterrupt) {
+    private void joinThread(Thread thread, boolean isInterruptIgnored) {
         if (thread != null) {
+            boolean isInterrupted = false;
             try {
-                thread.join();
-            } catch (InterruptedException e) {
-                if (!ignoreInterrupt) {
+                while (thread.isAlive()) {
+                    try {
+                        thread.join();
+                    } catch (InterruptedException e) {
+                        // Keep joining: startup threads use engine-owned resources that
+                        // callers may close or mutate as soon as this method returns.
+                        isInterrupted = true;
+                    }
+                }
+            } finally {
+                if (isInterrupted && !isInterruptIgnored) {
                     Thread.currentThread().interrupt();
                 }
             }
@@ -651,9 +664,9 @@ public class ServerMain implements Closeable {
      * additional endpoints) on the same min-http listening socket.
      */
     protected void bindAdditionalMinHttpHandlers(
-            io.questdb.cutlass.http.HttpServer server,
-            io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig,
-            io.questdb.lifecycle.LifecycleOrchestrator orch
+            HttpServer server,
+            HttpServerConfiguration httpMinConfig,
+            LifecycleOrchestrator orch
     ) {
         // OSS default: no additional handlers.
     }
@@ -662,11 +675,11 @@ public class ServerMain implements Closeable {
      * Factory hook for the {@code GET /lifecycle} HTTP processor. Enterprise overrides
      * to return {@code EntLifecycleProcessor} which emits role-aware JSON fields.
      */
-    protected io.questdb.cutlass.http.processors.LifecycleProcessor newLifecycleProcessor(
-            io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig,
-            io.questdb.lifecycle.LifecycleOrchestrator orch
+    protected LifecycleProcessor newLifecycleProcessor(
+            HttpServerConfiguration httpMinConfig,
+            LifecycleOrchestrator orch
     ) {
-        return new io.questdb.cutlass.http.processors.LifecycleProcessor(httpMinConfig, orch::snapshot);
+        return new LifecycleProcessor(httpMinConfig, orch::snapshot);
     }
 
     /**
@@ -674,12 +687,12 @@ public class ServerMain implements Closeable {
      * an enterprise overlay (e.g. {@code EntLifecycleOrchestrator}) that carries the role-aware
      * surface absent from this OSS base.
      */
-    protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
-            @org.jetbrains.annotations.Nullable io.questdb.log.Log log,
-            @org.jetbrains.annotations.Nullable io.questdb.WorkerPoolManager workerPoolManager,
-            @org.jetbrains.annotations.Nullable Object tokioRuntime
+    protected LifecycleOrchestrator newOrchestrator(
+            @Nullable Log log,
+            @Nullable WorkerPoolManager workerPoolManager,
+            @Nullable Object tokioRuntime
     ) {
-        return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime);
+        return new LifecycleOrchestrator(log, workerPoolManager, tokioRuntime);
     }
 
     /**
@@ -688,8 +701,8 @@ public class ServerMain implements Closeable {
      * individual envelopes without forking the {@link #registerComponents} body. Mirrors
      * the existing {@link #setupMatViewJobs}, {@link #webConsoleSchema} hook conventions.
      */
-    protected ObjList<io.questdb.lifecycle.Component> baseComponents() {
-        final ObjList<io.questdb.lifecycle.Component> components = new ObjList<>();
+    protected ObjList<Component> baseComponents() {
+        final ObjList<Component> components = new ObjList<>();
         components.add(new FactoryProviderEnvelope());
         components.add(new EngineEnvelope());
         components.add(new HydrationEnvelope());
@@ -706,11 +719,11 @@ public class ServerMain implements Closeable {
      * Register lifecycle components with the orchestrator. Called by
      * {@link #start(boolean)} after orchestrator construction. Subclasses
      * (e.g. {@code EntServerMain}) override {@link #baseComponents()} to wrap or
-     * replace individual envelopes, and override {@link #registerComponents} to
+     * replace individual envelopes, and override {@code #registerComponents} to
      * add their own envelopes after invoking {@code super.registerComponents(orch)}.
      */
-    protected void registerComponents(io.questdb.lifecycle.LifecycleOrchestrator orch) {
-        final ObjList<io.questdb.lifecycle.Component> components = baseComponents();
+    protected void registerComponents(LifecycleOrchestrator orch) {
+        final ObjList<Component> components = baseComponents();
         for (int i = 0, n = components.size(); i < n; i++) {
             orch.register(components.getQuick(i));
         }
@@ -721,9 +734,16 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupDedicatedPools(Log log, boolean isReadOnly, ServerConfiguration config) {
-        if (config.getCairoConfiguration().isMatViewEnabled() && !isReadOnly) {
+        // Mat views and live views run the same workload shape (compile SELECT, run cursor,
+        // materialize) triggered by WAL commits, but they own separate pools. Sharing one made
+        // mat.view.refresh.worker.count silently govern live views too, and the engine cannot
+        // read a mat-view knob to answer "will a live view ever be refreshed?" - the question
+        // CairoEngine.buildViewGraphs and WalPurgeJob have to answer before they register a view
+        // or hold the base WAL on its behalf. Both counts default to the wal-apply worker count.
+        final boolean isMatViewEnabled = config.getCairoConfiguration().isMatViewEnabled();
+        if (isMatViewEnabled && !isReadOnly) {
             if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
-                // This starts mat view refresh jobs only when there is a dedicated pool for mat view refresh
+                // This starts refresh jobs only when there is a dedicated pool configured;
                 // this will not use shared pool write because getWorkerCount() > 0
                 WorkerPool mvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
                         config.getMatViewRefreshPoolConfiguration(),
@@ -733,9 +753,22 @@ public class ServerMain implements Closeable {
             } else {
                 log.advisory().$("mat view refresh is disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$(" to a positive value or keep default to enable refresh. CREATE MATERIALIZED VIEW")
+                        .$(" still succeeds, but nothing will refresh the view.")
                         .$();
             }
+        }
+
+        // No else-branch advisory: a zero live view worker count is no longer a half-on state to
+        // warn about. SqlParser rejects CREATE LIVE VIEW, buildViewGraphs registers nothing, and
+        // WalPurgeJob holds no base WAL - the same shape as cairo.live.view.enabled=false, which
+        // logs nothing either.
+        if (config.getCairoConfiguration().isLiveViewRefreshEnabled() && !isReadOnly) {
+            WorkerPool lvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getLiveViewRefreshPoolConfiguration(),
+                    WorkerPoolManager.Requester.LIVE_VIEW_REFRESH
+            );
+            setupLiveViewJobs(lvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
@@ -758,8 +791,16 @@ public class ServerMain implements Closeable {
         return new EngineMaintenanceJob(engine);
     }
 
-    protected void setupRowExpiryCleanupJob(WorkerPool sharedPoolWrite, CairoEngine engine) {
-        RowExpiryCleanupJob.assignToPool(sharedPoolWrite, engine);
+    protected void setupLiveViewJobs(WorkerPool lvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = lvWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker; workerCount lets each job shard the idle registry
+            // scan by live-view table id so the pool does O(views), not O(workers x views).
+            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, workerCount, engine, sharedQueryWorkerCount);
+            lvWorkerPool.assign(i, liveViewRefreshJob);
+            lvWorkerPool.freeOnExit(liveViewRefreshJob);
+        }
+        // There is no LiveViewTimerJob: idle flushes are driven by FLUSH EVERY
+        // ticks polled inside LiveViewRefreshJob, not by a separate timer.
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
@@ -767,6 +808,10 @@ public class ServerMain implements Closeable {
         mvWorkerPool.assign(new MatViewRefreshJob(engine, sharedQueryWorkerCount));
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
+    }
+
+    protected void setupRowExpiryCleanupJob(WorkerPool sharedPoolWrite, CairoEngine engine) {
+        RowExpiryCleanupJob.assignToPool(sharedPoolWrite, engine);
     }
 
     protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
@@ -846,7 +891,7 @@ public class ServerMain implements Closeable {
      * This envelope performs a no-op state transition (INIT -> STARTING -> READY)
      * and has no hard deps.
      */
-    private final class FactoryProviderEnvelope implements io.questdb.lifecycle.Component {
+    private static final class FactoryProviderEnvelope implements Component {
         private final ObjList<String> empty = new ObjList<>();
 
         @Override
@@ -865,10 +910,10 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+        public void start(LifecycleContext ctx) {
             // FactoryProvider is built in the ServerMain ctor at line :93. No-op state transition.
-            ctx.publish(io.questdb.lifecycle.State.STARTING);
-            ctx.publish(io.questdb.lifecycle.State.READY);
+            ctx.publish(State.STARTING);
+            ctx.publish(State.READY);
         }
 
         @Override
@@ -882,7 +927,7 @@ public class ServerMain implements Closeable {
      * This envelope performs a no-op state transition (INIT -> STARTING -> READY)
      * and hard-deps on factory-provider.
      */
-    private final class EngineEnvelope implements io.questdb.lifecycle.Component {
+    private final class EngineEnvelope implements Component {
         private final ObjList<String> empty = new ObjList<>();
         private final ObjList<String> hardDeps;
 
@@ -913,8 +958,8 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
-            ctx.publish(io.questdb.lifecycle.State.STARTING);
+        public void start(LifecycleContext ctx) {
+            ctx.publish(State.STARTING);
             // Run the post-restore engine initialization then load table state.
             // completeInit() was historically called inside the CairoEngine constructor; it is
             // now deferred here so the orchestrator DAG can gate it on backup-restore READY.
@@ -924,7 +969,13 @@ public class ServerMain implements Closeable {
                 ServerMain.this.engine.completeInit();
             }
             ServerMain.this.engine.load();
-            ctx.publish(io.questdb.lifecycle.State.READY);
+            // Load view definitions before publishing READY: load() mints a fresh, empty
+            // ViewStateStore, and every component that keys off engine READY -- the hydration
+            // envelope's compileAllViews and hydrateRecentWriteTracker among them -- walks the
+            // table name registry, which already carries the view tokens. Leaving the graph
+            // empty past this point makes those walks report every view as missing.
+            ServerMain.this.engine.buildViewGraphs();
+            ctx.publish(State.READY);
         }
 
         @Override
@@ -947,7 +998,7 @@ public class ServerMain implements Closeable {
      * the only path that ran compileAllViews. Without this envelope, production boot
      * silently skipped view compilation.
      */
-    private final class HydrationEnvelope implements io.questdb.lifecycle.Component {
+    private final class HydrationEnvelope implements Component {
         private final ObjList<String> empty = new ObjList<>();
         private final ObjList<String> hardDeps;
 
@@ -1015,13 +1066,13 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+        public void start(LifecycleContext ctx) {
             // The hydrator work runs on background threads from onDependencyState when engine
             // reaches READY. The envelope itself publishes READY synchronously so the orchestrator
             // does not block on it -- the background threads can outlive this start() call and the
             // ctor-owned freeOnExit chain ensures shutdown still joins them via ServerMain.close().
-            ctx.publish(io.questdb.lifecycle.State.STARTING);
-            ctx.publish(io.questdb.lifecycle.State.READY);
+            ctx.publish(State.STARTING);
+            ctx.publish(State.READY);
             // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
             // before our registration completed, onDependencyState would have missed it.
             // Self-fire the hydrator now.
@@ -1044,7 +1095,7 @@ public class ServerMain implements Closeable {
      * Both LineTcpReceiver and LineUdpReceiver share one acceptOpen flag.
      * They are skipped when the instance is read-only or ILP-TCP is disabled.
      */
-    private final class IlpTcpEnvelope implements io.questdb.lifecycle.Component {
+    private final class IlpTcpEnvelope implements Component {
         private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
         private volatile LifecycleContext ctxRef;
         private final ObjList<String> hardDeps;
@@ -1159,12 +1210,12 @@ public class ServerMain implements Closeable {
      * <p>
      * When http.min.enabled=false the envelope publishes READY without binding.
      */
-    public class MinHttpEnvelope implements io.questdb.lifecycle.Component {
+    public class MinHttpEnvelope implements Component {
         private final ObjList<String> empty = new ObjList<>();
         private final ObjList<String> hardDeps;
         private final Log log;
         private WorkerPool pool;
-        protected io.questdb.cutlass.http.HttpServer server;
+        protected HttpServer server;
 
         public MinHttpEnvelope(Log log) {
             this.log = log;
@@ -1188,14 +1239,14 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
-            ctx.publish(io.questdb.lifecycle.State.STARTING);
+        public void start(LifecycleContext ctx) {
+            ctx.publish(State.STARTING);
             try {
-                final io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig =
+                final HttpServerConfiguration httpMinConfig =
                         ServerMain.this.bootstrap.getConfiguration().getHttpMinServerConfiguration();
                 if (!httpMinConfig.isEnabled()) {
                     log.info().$("min-http envelope: http.min.enabled=false, skipping bind").$();
-                    ctx.publish(io.questdb.lifecycle.State.READY);
+                    ctx.publish(State.READY);
                     return;
                 }
                 int workerCount = httpMinConfig.getWorkerCount();
@@ -1208,22 +1259,22 @@ public class ServerMain implements Closeable {
                 // The pool must NOT be started yet -- assign() asserts !running. Start after bind.
                 server = ServerMain.this.services().createMinHttpServer(httpMinConfig, pool);
                 if (server != null) {
-                    final io.questdb.lifecycle.LifecycleOrchestrator orch = ServerMain.this.orchestrator;
-                    server.bind(new io.questdb.cutlass.http.HttpRequestHandlerFactory() {
+                    final LifecycleOrchestrator orch = ServerMain.this.orchestrator;
+                    server.bind(new HttpRequestHandlerFactory() {
                         @Override
-                        public io.questdb.std.ObjHashSet<String> getUrls() {
+                        public ObjHashSet<String> getUrls() {
                             return httpMinConfig.getContextPathLifecycle();
                         }
 
                         @Override
-                        public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
+                        public HttpRequestHandler newInstance() {
                             return ServerMain.this.newLifecycleProcessor(httpMinConfig, orch);
                         }
                     });
                     ServerMain.this.bindAdditionalMinHttpHandlers(server, httpMinConfig, orch);
                 }
                 pool.start(log);
-                ctx.publish(io.questdb.lifecycle.State.READY);
+                ctx.publish(State.READY);
             } catch (Throwable t) {
                 // Free partially-allocated resources before rethrow. The orchestrator's close loop
                 // skips FAILED components, so without this wrap a mid-body throw would leak the
@@ -1276,7 +1327,7 @@ public class ServerMain implements Closeable {
      * WorkerPoolConfiguration for the dedicated http-min pool.
      * Pool name is "http-min"; worker count is provided at construction time.
      */
-    private static final class MinHttpPoolConfiguration implements io.questdb.mp.WorkerPoolConfiguration {
+    private static final class MinHttpPoolConfiguration implements WorkerPoolConfiguration {
         private final int workerCount;
 
         MinHttpPoolConfiguration(int workerCount) {
@@ -1300,7 +1351,7 @@ public class ServerMain implements Closeable {
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * When PG wire is disabled the envelope publishes DEGRADED and waits for engine READY.
      */
-    private final class PgWireEnvelope implements io.questdb.lifecycle.Component {
+    private final class PgWireEnvelope implements Component {
         private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
         private volatile LifecycleContext ctxRef;
         private final ObjList<String> hardDeps;
@@ -1397,7 +1448,7 @@ public class ServerMain implements Closeable {
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Skipped when the instance is read-only or QWIP is disabled.
      */
-    public class QwipEnvelope implements io.questdb.lifecycle.Component {
+    public class QwipEnvelope implements Component {
         protected final AtomicBoolean acceptOpen = new AtomicBoolean(false);
         protected volatile LifecycleContext ctxRef;
         protected final Log log;
@@ -1520,7 +1571,7 @@ public class ServerMain implements Closeable {
      * Hard-deps on worker-pool-manager AND pg-wire (FlushQueryCacheJob, owned here,
      * needs the PGServer reference from PgWireEnvelope). Soft-dep on engine.
      */
-    private final class WebHttpEnvelope implements io.questdb.lifecycle.Component {
+    private final class WebHttpEnvelope implements Component {
         private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
         private volatile LifecycleContext ctxRef;
         private final ObjList<String> hardDeps;
@@ -1622,7 +1673,7 @@ public class ServerMain implements Closeable {
      * {@link ServerMain#workerPoolManagerExtraHardDeps()} so subclass overrides
      * participate via polymorphic dispatch on {@code ServerMain.this}.
      */
-    private final class WorkerPoolManagerEnvelope implements io.questdb.lifecycle.Component {
+    private final class WorkerPoolManagerEnvelope implements Component {
         private final ObjList<String> empty = new ObjList<>();
         private final ObjList<String> hardDeps;
         private final Log log;
@@ -1658,20 +1709,20 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
-            ctx.publish(io.questdb.lifecycle.State.STARTING);
+        public void start(LifecycleContext ctx) {
+            ctx.publish(State.STARTING);
             // Stage 1 -- verbatim lift of today's ServerMain.initialize() body lines :295-:398:
             // anonymous WorkerPoolManager subclass with configureWorkerPools override,
             // engine.buildViewGraphs(), setupDedicatedPools(), WAL apply on dedicated pool.
             // The 'workerPoolManager' field on ServerMain is assigned here.
             ServerMain.this.constructAndAssignWorkerPoolManager(log);
-            ctx.publish(io.questdb.lifecycle.State.DEGRADED);
+            ctx.publish(State.DEGRADED);
             // Stage 2 fires when all hard-required dependents of worker-pool-manager are stable.
             // The dependents are the 4 protocol envelopes (pg-wire, ilp-tcp, web-http, qwip).
             // When all 4 publish READY the orchestrator fires this onStableBelow callback.
             ctx.onStableBelow(name(), () -> {
                 ServerMain.this.workerPoolManager.start(log);
-                ctx.publish(io.questdb.lifecycle.State.READY);
+                ctx.publish(State.READY);
                 // Boot-tail: logBannerAndEndpoints runs after workerPoolManager.start(log)
                 // to preserve original ordering where the banner fires after worker threads start.
                 ServerMain.this.bootstrap.logBannerAndEndpoints(ServerMain.this.webConsoleSchema());

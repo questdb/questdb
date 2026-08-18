@@ -188,17 +188,17 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base)");
             final ObjList<TableToken> graphTokensBeforeRefresh = new ObjList<>();
-            engine.getMatViewGraph().getViews(graphTokensBeforeRefresh);
+            engine.getDependentViewGraph().getViews(graphTokensBeforeRefresh);
             Assert.assertEquals("before refresh", 1, graphTokensBeforeRefresh.size());
             drainWalAndMatViewQueues();
             // Both rows visible before the policy.
             assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n2\n");
             final TableToken currentToken = engine.verifyTableName("mv");
             final ObjList<TableToken> graphTokens = new ObjList<>();
-            engine.getMatViewGraph().getViews(graphTokens);
+            engine.getDependentViewGraph().getViews(graphTokens);
             Assert.assertEquals("current=" + currentToken + ", graph=" + graphTokens, 1, graphTokens.size());
             Assert.assertNotNull("current=" + currentToken + ", graph=" + graphTokens,
-                    engine.getMatViewGraph().getViewDefinition(currentToken));
+                    engine.getDependentViewGraph().getViewDefinition(currentToken));
 
             execute("alter materialized view mv set expire rows keep latest partition by k");
             drainWalAndMatViewQueues();

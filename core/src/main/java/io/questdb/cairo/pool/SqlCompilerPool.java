@@ -223,6 +223,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+            return delegate.parseExpression(expression);
+        }
+
+        @Override
         public QueryBuilder query() {
             return delegate.query();
         }

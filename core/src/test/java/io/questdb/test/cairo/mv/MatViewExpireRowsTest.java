@@ -1437,8 +1437,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             final TableToken mvToken = engine.verifyTableName("mv");
             final TableToken aggToken = engine.verifyTableName("agg");
-            assertTrue(engine.getMatViewGraph().getViewDefinition(mvToken).isPassthrough());
-            assertFalse(engine.getMatViewGraph().getViewDefinition(aggToken).isPassthrough());
+            assertTrue(engine.getDependentViewGraph().getViewDefinition(mvToken).isPassthrough());
+            assertFalse(engine.getDependentViewGraph().getViewDefinition(aggToken).isPassthrough());
 
             engine.releaseInactive();
 
@@ -1454,7 +1454,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
 
             // The live graph still serves the flag after the release.
-            assertTrue(engine.getMatViewGraph().getViewDefinition(mvToken).isPassthrough());
+            assertTrue(engine.getDependentViewGraph().getViewDefinition(mvToken).isPassthrough());
         });
     }
 

@@ -343,6 +343,164 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    /**
+     * Cadence, in live-view checkpoint seals, at which the refresh worker attempts
+     * one physical compaction pass over the live view's checkpoint timeline.
+     * Compaction repacks the still-live state pages of sparse data segments into a
+     * fresh segment and redirects the roots onto it, so the drained segments retire
+     * and the purge job reclaims their dead bytes. Zero (the default) disables it,
+     * leaving superseded pages to be reclaimed only when their whole segment
+     * becomes unreferenced.
+     */
+    long getLiveViewCheckpointCompactionInterval();
+
+    /**
+     * Wall-clock ceiling between consecutive head-checkpoint writes for a
+     * live view. The refresh worker writes a fresh head once this duration
+     * has elapsed since the prior write, even when
+     * {@link #getLiveViewCheckpointRows()} has not been reached. Caps the
+     * worst-case O3 / restart replay window for low-rate views.
+     */
+    long getLiveViewCheckpointMaxDurationMicros();
+
+    /**
+     * Cadence, in live-view checkpoint seals, at which the refresh worker sweeps
+     * the view's checkpoint directory for segments no generation references any
+     * more, unlinking them and staging their catalogue entries for the next seal
+     * to remove. Without it a sweep runs only when a worker reconciles the
+     * directory - once per process - so every segment a seal, a repair or a
+     * compaction supersedes waits for a restart before its bytes come back. Zero
+     * disables the cadence, leaving that reconciliation the only sweep.
+     */
+    long getLiveViewCheckpointPurgeInterval();
+
+    /**
+     * Per-turn budget on the base rows one localized out-of-order repair may
+     * replay. The repair's convergence boundary makes its work finite, but a
+     * dense interval can still hold more rows than one refresh turn should
+     * carry, so a replay that crosses this budget stops at the end of the
+     * current timestamp group and continues in a later turn. It publishes
+     * nothing while suspended: the replacement stays uncommitted in the
+     * live-view writer the repair holds, and no generation names its staged
+     * roots. The turn also ends on
+     * {@link #getLiveViewRefreshTurnMaxDurationMicros()}, whichever comes
+     * first. A value {@code <= 0} disables the row budget, leaving the
+     * wall-clock one alone to bound the turn.
+     */
+    long getLiveViewCheckpointRepairReplayMaxRows();
+
+    /**
+     * Budget on the partition keys one localized out-of-order repair may plan
+     * to re-emit. A timestamp-global replacement re-emits every key with a
+     * qualifying row in the replacement interval, and the repair holds a
+     * counter per such key while it discovers its bounds, so the key domain
+     * sizes both the planning memory and, for an indexed predecessor search,
+     * the number of index seeks. A discovery that crosses this budget reports
+     * an explicit budget status and hands the repair back to the unlocalized
+     * rebuild instead of planning a replacement of that width. A value
+     * {@code <= 0} disables the budget.
+     */
+    long getLiveViewCheckpointRepairScanMaxKeys();
+
+    /**
+     * Budget on the base rows one localized out-of-order repair may read while
+     * discovering its bounds. Counts rows pulled from the base table across
+     * every scan of one discovery - forward convergence search, backward
+     * predecessor walk, and per-key indexed seeks alike - including rows the
+     * view's {@code WHERE} filter then discards, since those cost the same read.
+     * A {@code ROWS N PRECEDING} dependency is discovered rather than derived,
+     * and a sparse partition key can spread its {@code N} rows over an
+     * arbitrary span, so this is the bound that keeps discovery from costing
+     * the view's whole history. Crossing it reports an explicit budget status
+     * and leaves the conservative bound in place rather than continuing the
+     * scan. A value {@code <= 0} disables the budget.
+     */
+    long getLiveViewCheckpointRepairScanMaxRows();
+
+    /**
+     * Row-count cadence trigger for head-checkpoint writes. The refresh
+     * worker writes a fresh head once this many live-view rows have been
+     * applied since the prior head. The natural sizing knob for high-rate
+     * views: raising it spaces checkpoints further apart at the cost of a
+     * larger O3 / restart replay window.
+     */
+    long getLiveViewCheckpointRows();
+
+    int getLiveViewFlushRetryMax();
+
+    long getLiveViewFlushRetryMaxDurationMicros();
+
+    /**
+     * Fast-path growth budget. When the published in-memory slot's footprint
+     * already meets or exceeds this size, the refresh worker falls
+     * back to a slow-path swap (which evicts rows older than {@code IN MEMORY}
+     * and may shrink the slot) instead of appending in place. Acts as a
+     * safety backstop against unbounded slot growth between slow-path edges.
+     * Operators with an {@code IN MEMORY} window large enough to exceed the
+     * default should raise this proportionally to keep the fast-path engaged.
+     */
+    long getLiveViewInMemoryBufferGrowthBytes();
+
+    long getLiveViewInMemoryBufferInitialBytes();
+
+    long getLiveViewInMemoryMaxMicros();
+
+    /**
+     * Anchor-map tombstone count threshold above which {@code LiveViewWindow}
+     * fires compaction. The compaction also fires when
+     * {@code tombstoneCount > 0.5 * anchorMap.size()}, regardless of this
+     * absolute threshold.
+     */
+    int getLiveViewPartitionCompactThreshold();
+
+    /**
+     * @return the byte limit applied to one live view's refresh, measured as the PEAK of a
+     * refresh cycle. {@code 0} means unlimited; only the global RSS limit applies.
+     * <p>
+     * The tracker is per-view and its lifetime matches the view's cached state, not one
+     * refresh attempt, because the persistent part of that state - the anchor map plus each
+     * anchored window function's partition map and ring buffers - outlives the cycle that
+     * built it. Unlike a query or a materialized-view refresh, this state is what the limit
+     * exists to bound: it is the only backstop for a view whose ANCHOR cannot drive frontier
+     * compaction (a LONG/INT anchor, or any anchor not provably monotone with the base scan
+     * order), since such a view retains every partition key it has ever seen.
+     * <p>
+     * The tracker also charges the transient per-cycle buffers of the view's compiled SELECT:
+     * LiveViewRefreshSqlExecutionContext hands it to AbstractPageFrameRecordCursor, which binds
+     * it into the frame memory pool and so into RowGroupBuffers. Parquet decode buffers are
+     * therefore charged alongside the persistent state, and freed at cursor close, so the
+     * accounting stays symmetric across cycles but the limit bounds the cycle's peak rather
+     * than its residue. Size the limit to include those transients: a peak that crosses it
+     * invalidates the view (LiveViewRefreshJob.handleRefreshFailure invalidates immediately on
+     * a limit breach rather than spending the retry budget), and invalidation is durable and
+     * sticky - recovery is an operator DROP + CREATE.
+     * <p>
+     * Two floors dominate that sizing. A view reading parquet partitions decodes a whole row
+     * group at a time. And a view whose SELECT binds a ring buffer - any RANGE frame, or a
+     * {@code PARTITION BY} ROWS / lag() / lead() ring - charges a whole
+     * {@link #getSqlWindowStorePageSize()} (1 MiB by default) on its first allocation (its
+     * first partition, where the frame is partitioned), however small the frame: the ring is
+     * created at page granularity. A NON-partitioned ROWS or
+     * lag()/lead() ring is fixed by the query text and stays on global accounting, so it
+     * imposes no floor here (see {@code WindowFunction.setMemoryTracker}).
+     */
+    long getLiveViewRefreshMemoryLimitBytes();
+
+    int getLiveViewRefreshTurnMaxCommits();
+
+    long getLiveViewRefreshTurnMaxDurationMicros();
+
+    /**
+     * Worker count of the dedicated live-view refresh pool
+     * ({@code live.view.refresh.worker.count}). A positive value is what makes
+     * {@code ServerMain} start {@code LiveViewRefreshJob}s at all, so it is also the
+     * signal {@link #isLiveViewRefreshEnabled()} reads. Lives on the cairo
+     * configuration rather than only on the pool configuration because the engine and
+     * {@code WalPurgeJob} have to answer "will anything ever refresh a live view?"
+     * without reaching into the server configuration.
+     */
+    int getLiveViewRefreshWorkerCount();
+
     boolean getLogLevelVerbose();
 
     boolean getLogSqlQueryProgressExe();
@@ -1043,6 +1201,29 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isLiveViewEnabled();
+
+    /**
+     * True when a {@code LiveViewRefreshJob} will actually run for this configuration:
+     * the feature flag is on AND the dedicated refresh pool has at least one worker.
+     * <p>
+     * Every decision that only makes sense while something advances a live view's
+     * watermarks must read THIS, not {@link #isLiveViewEnabled()} alone. Registering an
+     * unattended instance pins the base WAL at its genesis watermark forever, because
+     * {@code WalPurgeJob} clamps the purge floor to every registered view's
+     * {@code lvConsumedSeqTxn} and nothing would ever advance it. The predicate is
+     * config-derived and evaluated on the boot thread before the pools start, so the
+     * registration guard and the purge gate cannot disagree.
+     * <p>
+     * Deliberately excludes {@code isReadOnlyInstance()}: a read-only replica runs no
+     * refresh job either, but it still needs registered instances for the read path and
+     * for a later promote, and it creates no {@code WalPurgeJob} at all, so there is no
+     * floor to release there.
+     */
+    default boolean isLiveViewRefreshEnabled() {
+        return isLiveViewEnabled() && getLiveViewRefreshWorkerCount() > 0;
+    }
 
     boolean isMatViewCoveringIndexEnabled();
 

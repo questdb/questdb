@@ -89,6 +89,16 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'r';
     }
 
+    public static boolean isAnchorKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'h'
+                && (tok.charAt(4) | 32) == 'o'
+                && (tok.charAt(5) | 32) == 'r';
+    }
+
     public static boolean isAndKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -151,6 +161,36 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 't'
                 && (tok.charAt(3) | 32) == 'c'
                 && (tok.charAt(4) | 32) == 'h';
+    }
+
+    /**
+     * BACKFILL is no longer part of the live-view grammar; START FROM BEGINNING replaced it.
+     * The parser still recognizes the token so it can reject it with that pointer instead of
+     * a generic "'as' expected".
+     */
+    public static boolean isBackfillKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'k'
+                && (tok.charAt(4) | 32) == 'f'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'l'
+                && (tok.charAt(7) | 32) == 'l';
+    }
+
+    public static boolean isBeginningKeyword(CharSequence tok) {
+        return tok.length() == 9
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'g'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 'n'
+                && (tok.charAt(6) | 32) == 'i'
+                && (tok.charAt(7) | 32) == 'n'
+                && (tok.charAt(8) | 32) == 'g';
     }
 
     public static boolean isBetweenKeyword(CharSequence tok) {
@@ -457,6 +497,15 @@ public class SqlKeywords {
                 && (tok.charAt(14) | 32) == 'a'
                 && (tok.charAt(15) | 32) == 'm'
                 && (tok.charAt(16) | 32) == 'p';
+    }
+
+    public static boolean isDailyKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'i'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'y';
     }
 
     // Used in enterprise backups
@@ -822,6 +871,20 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'n';
     }
 
+    public static boolean isExpressionKeyword(CharSequence tok) {
+        return tok.length() == 10
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'x'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 's'
+                && (tok.charAt(6) | 32) == 's'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'o'
+                && (tok.charAt(9) | 32) == 'n';
+    }
+
     public static boolean isExtractKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'e'
@@ -897,6 +960,15 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'o'
                 && (tok.charAt(3) | 32) == 'a'
                 && (tok.charAt(4) | 32) == 't';
+    }
+
+    public static boolean isFlushKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'u'
+                && (tok.charAt(3) | 32) == 's'
+                && (tok.charAt(4) | 32) == 'h';
     }
 
     public static boolean isFollowingKeyword(CharSequence tok) {
@@ -1340,6 +1412,14 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'a'
                 && (tok.charAt(2) | 32) == 'p'
                 && (tok.charAt(3) | 32) == 's';
+    }
+
+    public static boolean isLiveKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'v'
+                && (tok.charAt(3) | 32) == 'e';
     }
 
     public static boolean isMaterializedKeyword(CharSequence tok) {

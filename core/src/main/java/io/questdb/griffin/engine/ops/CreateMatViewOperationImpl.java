@@ -442,6 +442,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (!baseTableToken.isWal()) {
             throw SqlException.$(baseTableNamePosition, "base table has to be WAL enabled");
         }
+        if (baseTableToken.isLiveView()) {
+            // A live view is implicitly WAL, so it slips past the isWal() gate above. Reject it for
+            // the same reason CREATE LIVE VIEW rejects live-on-live: a mat view refreshes through
+            // the apply pipeline that does not support an LV base, and its refresh reads the LV
+            // through LiveViewRecordCursorFactory, which unions the un-flushed tier - so it could
+            // materialise rows no LV WAL txn covers yet and record a lastRefreshBaseTxn behind them.
+            throw SqlException.$(baseTableNamePosition,
+                    "live views are not allowed as base tables [name=").put(baseTableName).put(']');
+        }
 
         // Find sampling interval.
         CharSequence intervalExpr = null;

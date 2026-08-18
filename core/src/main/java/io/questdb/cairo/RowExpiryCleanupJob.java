@@ -684,7 +684,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     // Advisory: reclaiming from an AGGREGATING (non-passthrough) view is best-effort - a later
                     // incremental/full refresh can regenerate reclaimed rows from base rows that still exist.
                     // Surface it so operators can align base-table retention with the EXPIRE ROWS horizon.
-                    final MatViewDefinition def = engine.getMatViewGraph().getViewDefinition(tableToken);
+                    final MatViewDefinition def = engine.getDependentViewGraph().getViewDefinition(tableToken);
                     if (def != null && !def.isPassthrough()) {
                         LOG.advisory().$("reclaimed expired rows from an aggregating materialized view; a later refresh may regenerate them - align base-table retention with the EXPIRE ROWS horizon [view=")
                                 .$safe(tableKey).I$();
