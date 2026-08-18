@@ -61,6 +61,17 @@ reader infers pair-ness from `extraInfo.size() / 2`.
 minimum the READER assumes stride 2. Find every other reader of `extraInfo` for
 `DROP_PARTITION`/`FORCE_DROP_PARTITION`/`ATTACH`/`DETACH` before changing anything.
 
+> **ANSWERED 2026-08-18 — and it overturned this task's own recommendation.** The stride is NOT
+> self-describing: `serializeBody` writes a length-prefixed flat array of longs, and the stride lives
+> only in each reader (`extraInfo.size() / 2`). So a stride change misreads an OLD WAL segment
+> replayed by NEW code — an ordinary upgrade — silently treating the next partition's timestamp as a
+> cellKey, on PLAIN tables, which are released. **All three options below are unsafe as written,
+> including option 3, which this plan wrongly weighted as the safe one.** The recommendation is a NEW
+> COMMAND CODE (`DROP_PARTITION_CELL`) with its own stride, following the existing
+> `DROP_PARTITION`/`FORCE_DROP_PARTITION` precedent. See
+> `.superpowers/sdd/sp1c-task-1-wire-format.md`, which also flags the authorization switch as an
+> easy-to-miss, security-relevant edit.
+
 - [ ] **Step 2: Choose between three representations, and write down why**
 
 1. **Widen the stride to 3** `(timestamp, position, cellKey)`. Uniform, but touches every reader and
