@@ -140,6 +140,7 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1617,14 +1618,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * the designated timestamp, so {@code WHERE exch = 'E0'} fails with "Invalid column: exch". Only
      * the LIST form can name a cell today.
      */
-    private void refuseCellQualifiedPartitionName(TableToken tableToken, CharSequence partitionName, int position) throws SqlException {
-        if (Chars.indexOf(partitionName, '/') < 0) {
-            return;
+    /**
+     * SP1C: resolves the cell component of {@code <day>/<cell>} to a cellKey, or -1 when the name
+     * names no cell at all.
+     * <p>
+     * The cell is matched by RENDERING each attached cellKey of that day and comparing, rather than by
+     * parsing the segment back into dimension values. Rendering is already the authority
+     * ({@code TableReader#renderCellSegment}), and a parser would be a second implementation of the
+     * same mapping that could disagree with it -- including on the escaping {@code putPathSafe}
+     * applies. This also makes both layouts work for free: PLAIN renders {@code E0}, Hive renders
+     * {@code exch=E0}, and the comparison never needs to know which.
+     *
+     * @return the resolved cellKey, or -1 if {@code partitionName} carries no cell component
+     * @throws SqlException if a cell component is present but matches no attached cell of that day
+     */
+    private int resolveCellQualifiedPartitionName(
+            TableToken tableToken,
+            CharSequence partitionName,
+            long partitionTimestamp,
+            int position
+    ) throws SqlException {
+        final int slash = Chars.indexOf(partitionName, '/');
+        if (slash < 0) {
+            return -1;
         }
-        if (isRoutedCompositeTable(tableToken)) {
-            throw SqlException.$(position, "composite partitioning does not yet support dropping an individual cell [table=")
-                    .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+        final CharSequence wanted = partitionName.subSequence(slash + 1, partitionName.length());
+        try (TableReader reader = engine.getReader(tableToken)) {
+            if (reader.getMetadata().getPartitionSpec().getDimensionCount() == 0) {
+                throw SqlException.$(position, "table is not composite, partition name cannot name a cell [table=")
+                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+            }
+            final StringSink rendered = new StringSink();
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionTimestampByIndex(i) != partitionTimestamp) {
+                    continue;
+                }
+                final int cellKey = reader.getPartitionCellKey(i);
+                rendered.clear();
+                reader.renderCellSegment(rendered, cellKey);
+                if (Chars.equals(rendered, wanted)) {
+                    return cellKey;
+                }
+            }
         }
+        // A name that matches nothing must fail LOUDLY. Dropping zero cells while reporting success is
+        // the silent path the cardinal rule forbids.
+        throw SqlException.$(position, "no such partition cell [table=")
+                .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
     }
 
     private boolean isRoutedCompositeTable(TableToken tableToken) {
@@ -1746,7 +1786,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int pos,
             int action
     ) throws SqlException {
-        final AlterOperationBuilder alterOperationBuilder;
+        AlterOperationBuilder alterOperationBuilder;
+        // SP1C: a DROP statement is either all whole-day or all cell-qualified; these track which.
+        boolean cellQualified = false;
+        int partitionCount = 0;
         switch (action) {
             case PartitionAction.CONVERT_TO_PARQUET:
             case PartitionAction.CONVERT_TO_NATIVE:
@@ -1785,15 +1828,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             final CharSequence partitionName = unquote(tok); // potentially a full timestamp, or part of it
             final int lastPosition = lexer.lastTokenPosition();
-            // SP1B: refuse a CELL-QUALIFIED name at the statement. reader == null is exactly
-            // statement-time compilation for a WAL table (see the comment below), and composite
-            // requires WAL, so this is the user-facing compile. During WAL application reader != null
-            // and the check is skipped -- the statement-time refusal means apply is never reached,
-            // and the writer-side gate remains the backstop for non-SQL paths.
-            if (action == PartitionAction.DROP && reader == null) {
-                refuseCellQualifiedPartitionName(tableToken, partitionName, lastPosition);
-            }
-
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             final int timestampType;
@@ -1813,7 +1847,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
-                alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+
+                // SP1C: a DROP naming <day>/<cell> removes THAT CELL only.
+                //
+                // Resolved on BOTH compile paths, deliberately. For a WAL table the ALTER is
+                // RE-COMPILED FROM SQL TEXT when the apply job runs it -- that is what the
+                // "reader == null means compilation for WAL table before applying" distinction below
+                // is about. Gating this on reader == null (as the first draft did) meant the
+                // apply-time compile never saw the cell and fell through to the whole-day branch, so
+                // the statement removed the day's EVERY cell. Measured: an unlink batch of one
+                // (correct) followed by a batch of three.
+                int cellKey = -1;
+                if (action == PartitionAction.DROP) {
+                    cellKey = resolveCellQualifiedPartitionName(tableToken, partitionName, timestamp, lastPosition);
+                }
+                if (cellKey >= 0) {
+                    // A statement is all-cell or all-day: the two need different commands (different
+                    // extraInfo strides), and one statement carries one command. Mixing is refused
+                    // rather than silently splitting, which would break the single-commit atomicity
+                    // the lifecycle spec requires.
+                    if (partitionCount > 0 && !cellQualified) {
+                        throw SqlException.$(lastPosition, "cannot mix whole-day and cell-qualified partition names in one statement");
+                    }
+                    cellQualified = true;
+                    alterOperationBuilder = this.alterOperationBuilder.ofDropPartitionCell(pos, tableToken, tableMetadata.getTableId());
+                    alterOperationBuilder.addPartitionCellToList(timestamp, lastPosition, cellKey);
+                } else {
+                    if (cellQualified) {
+                        throw SqlException.$(lastPosition, "cannot mix whole-day and cell-qualified partition names in one statement");
+                    }
+                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+                }
+                partitionCount++;
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
             }

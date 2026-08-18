@@ -24,7 +24,9 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -213,40 +215,152 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
     }
 
     /**
-     * The shape that stays refused, and why whole-day DROP could not simply un-gate.
+     * SP1C: the shape 1B refused is now SUPPORTED, and this test is the inversion of the refusal.
      * <p>
-     * MEASURED before this guard existed: {@code DROP PARTITION LIST '2023-01-01/E0'} — naming ONE
-     * cell — dropped the ENTIRE day. A table holding E0/E1/E2 went to empty. That is the alternative
-     * the lifecycle spec rejects outright: a destructive statement must not do visibly more than it
-     * names. Per-cell removal is sub-project 1C; until then the shape is refused at the statement.
-     * <p>
-     * The WHERE form needs no such test: its predicate compiles against metadata exposing only the
-     * designated timestamp, so {@code WHERE exch = 'E0'} fails with "Invalid column: exch" — verified
-     * by probe. Only LIST can name a cell.
+     * 1B measured {@code DROP PARTITION LIST '2023-01-01/E0'} taking a three-cell day to EMPTY, which
+     * is why it was refused: a destructive statement must not do visibly more than it names. Now it
+     * must do exactly what it names -- remove E0 and leave E1 and E2 whole.
      */
     @Test(timeout = 60_000)
-    public void testCellQualifiedDropIsRefusedAndChangesNothing() throws Exception {
+    public void testCellQualifiedDropRemovesOnlyThatCell() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeMultiCellDays();
+
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
+            drainWalQueue();
+
+            Assert.assertFalse("a supported drop must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            // E0's rows for that day are gone; its siblings keep every row
+            assertQuery("select exch, count() from c where ts < '2023-01-02' order by exch")
+                    .noLeakCheck().expectSize()
+                    .returns("exch\tcount\nE1\t1\nE2\t1\n");
+            // and no other day is touched
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n8\n");
+            final List<String> cells = cellDirs("c", "2023-01-01");
+            Assert.assertEquals("only the named cell may be removed " + cells, 2, cells.size());
+            Assert.assertTrue("the day container must survive while siblings remain " + dayDirs("c"),
+                    dayDirs("c").contains("2023-01-01"));
+        });
+    }
+
+    /**
+     * SP1C: dropping the cell that holds the table's MIN (or MAX) row must recompute that bound.
+     * <p>
+     * This is the defect self-review found and the other tests structurally could not: they assert row
+     * COUNTS and directory contents, and counts stay right because {@code _txn} loses the correct
+     * record. But a designated-timestamp {@code min(ts)}/{@code max(ts)} is answered FROM {@code _txn}
+     * rather than by scanning, so a stale bound is handed to the user as a wrong answer.
+     * <p>
+     * Third instance of this class in one session -- 1B's N1 read the max through a cell-blind path,
+     * 1D's read the min from a day container, and this one did not recompute at all.
+     */
+    @Test(timeout = 60_000)
+    public void testDroppingBoundaryCellsRecomputesMinAndMax() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeMultiCellDays();
+
+            // seeded: day1 E0 01:00 (table MIN) .. day3 E2 09:00 (table MAX)
+            assertBounds("2023-01-01T01:00:00.000000Z", "2023-01-03T09:00:00.000000Z");
+
+            // drop the cell holding the MIN row
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
+            drainWalQueue();
+            assertBounds("2023-01-01T05:00:00.000000Z", "2023-01-03T09:00:00.000000Z");
+
+            // drop the cell holding the MAX row
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-03/E2'");
+            drainWalQueue();
+            assertBounds("2023-01-01T05:00:00.000000Z", "2023-01-03T05:00:00.000000Z");
+        });
+    }
+
+    /**
+     * Dropping every cell one at a time drops the day -- the second half of the spec's rule.
+     */
+    @Test(timeout = 60_000)
+    public void testDroppingEveryCellDropsTheDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeMultiCellDays();
+
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
+            drainWalQueue();
+            System.out.println("SP1C_DIAG cells after E0 drop: " + cellDirs("c", "2023-01-01"));
+            Assert.assertTrue("day must survive with 2 cells left", dayDirs("c").contains("2023-01-01"));
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E1'");
+            drainWalQueue();
+            Assert.assertTrue("day must survive with 1 cell left", dayDirs("c").contains("2023-01-01"));
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E2'");
+            drainWalQueue();
+
+            // Every CELL is gone and the day holds no rows. The day CONTAINER itself survives, and
+            // that is a separate, pre-existing issue rather than a fault of the drop: it still holds
+            // day-level column files (exch.d/px.d/ts.d) that nothing reads. Sub-project 1A established
+            // that every live row lives in the CELL directories; these day-level files are vestigial.
+            // removeEmptyDayContainer refuses to delete a non-empty directory ON PURPOSE -- ff.rmdir
+            // is recursive, and this is the routine whose documented failure mode is silent data loss.
+            // Asserting "container gone" here would either be false or force that guard open.
+            Assert.assertTrue("every cell of the day must be gone " + cellDirs("c", "2023-01-01"),
+                    cellDirs("c", "2023-01-01").isEmpty());
+            Assert.assertEquals("the day container survives only because of vestigial day-level column"
+                            + " files -- if this list changes, re-check whether it can now be removed",
+                    "[exch.d, px.d, ts.d]", listAll("c", "2023-01-01").toString());
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n6\n");
+        });
+    }
+
+    /**
+     * A name that matches no attached cell must fail LOUDLY and change nothing. Dropping zero cells
+     * while reporting success is the silent path the cardinal rule forbids.
+     */
+    @Test(timeout = 60_000)
+    public void testUnknownCellNameIsRefusedAndChangesNothing() throws Exception {
         assertMemoryLeak(() -> {
             createTwins();
             seedThreeMultiCellDays();
 
             try {
-                execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
-                Assert.fail("dropping an individual cell must be refused until sub-project 1C");
+                execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/NOPE'");
+                Assert.fail("an unknown cell name must be refused");
             } catch (SqlException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(),
-                        "composite partitioning does not yet support dropping an individual cell");
+                TestUtils.assertContains(expected.getFlyweightMessage(), "no such partition cell");
             }
             drainWalQueue();
 
-            // the refusal must be CLEAN: nothing dropped, nothing suspended
-            Assert.assertFalse("a refused statement must not suspend the table",
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
-            Assert.assertEquals("no cell may be removed by a refused statement",
-                    3, cellDirs("c", "2023-01-01").size());
+            Assert.assertEquals("nothing may be removed", 3, cellDirs("c", "2023-01-01").size());
             assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize()
                     .returns("count\n9\n");
         });
+    }
+
+    /**
+     * Asserts the table's designated-timestamp bounds. Uses printSql rather than the fluent battery
+     * because min(ts)/max(ts) come back timestamp-typed, which that battery rejects.
+     */
+    private void assertBounds(String expectedMin, String expectedMax) throws Exception {
+        // The SQL form is NOT sufficient on its own: for a COMPOSITE table min(ts)/max(ts) route
+        // through the cross-cell merge SCAN, not the _txn shortcut (asserted in
+        // CompositeFactoryCoverageTest), so a stale _txn bound is invisible to it. The stored bound is
+        // checked directly as well -- that is what a missing recompute would corrupt, and what the
+        // writer's own tail bookkeeping and partition pruning read.
+        final StringSink sink = new StringSink();
+        printSql("select min(ts) mn, max(ts) mx from c", sink);
+        TestUtils.assertEquals("mn\tmx\n" + expectedMin + '\t' + expectedMax + '\n', sink);
+
+        engine.releaseInactive();
+        try (TableReader reader = getReader("c")) {
+            final io.questdb.cairo.TimestampDriver driver =
+                    io.questdb.cairo.ColumnType.getTimestampDriver(io.questdb.cairo.ColumnType.TIMESTAMP);
+            Assert.assertEquals("_txn minTimestamp is stale after dropping a boundary cell",
+                    driver.parseFloorLiteral(expectedMin), reader.getMinTimestamp());
+            Assert.assertEquals("_txn maxTimestamp is stale after dropping a boundary cell",
+                    driver.parseFloorLiteral(expectedMax), reader.getMaxTimestamp());
+        }
     }
 
     /**
@@ -267,6 +381,18 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
         }
         insertIntoBoth(sb.toString());
         drainWalQueue();
+    }
+
+    private List<String> listAll(String table, String dayDir) throws IOException {
+        final Path day = tableDir(table).resolve(dayDir);
+        final List<String> out = new ArrayList<>();
+        if (!Files.isDirectory(day)) {
+            return out;
+        }
+        try (Stream<Path> children = Files.list(day)) {
+            children.map(pp -> pp.getFileName().toString()).sorted(Comparator.naturalOrder()).forEach(out::add);
+        }
+        return out;
     }
 
     private List<String> cellDirs(String table, String dayDir) throws IOException {

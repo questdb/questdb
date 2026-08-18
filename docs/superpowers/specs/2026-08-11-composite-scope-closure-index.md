@@ -49,7 +49,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 
 | # | Gate / restriction | Owner spec |
 |---|---|---|
-| 1 | `DROP PARTITION` — **whole-day SUPPORTED 2026-08-18 (1B)**; a cell-qualified `LIST` name still refuses (measured: naming one cell dropped the whole day) | 1 — partition-lifecycle (1C owns per-cell) |
+| 1 | `DROP PARTITION` — **SUPPORTED 2026-08-18**; whole-day in 1B, per-cell (`LIST '<day>/<cell>'`) in 1C | 1 — partition-lifecycle (done) |
 | 2 | `FORCE DROP PARTITION` — **SUPPORTED 2026-08-18 (1D)**; whole days, and its LIST parser already makes a cell-qualified name unreachable | 1 — partition-lifecycle (done) |
 | 3 | `DETACH PARTITION` | 1 — partition-lifecycle |
 | 4 | `ATTACH PARTITION` | 1 — partition-lifecycle |
@@ -176,7 +176,6 @@ composite partitioning does not yet support DEDUP UPSERT KEYS
 composite partitioning does not yet support DETACH PARTITION
 composite partitioning does not yet support DROP COLUMN
 composite partitioning does not yet support DROP INDEX
-composite partitioning does not yet support dropping an individual cell
 composite partitioning does not yet support FORMAT PARQUET
 composite partitioning does not yet support ORDER BY on an indexed symbol column
 composite partitioning does not yet support REINDEX TABLE
@@ -218,12 +217,13 @@ diff /tmp/code.keys /tmp/spec.keys
 ```
 
 Any line in the code set that is not in the spec set is a NEW gate, and the roadmap has a new hole.
-Verified clean 2026-08-18: 35 refusals in code, 35 known keys, empty diff.
+Verified clean 2026-08-18: 34 refusals in code, 34 known keys, empty diff.
 
-The count moved 38 → 37 → 36 → 35 over one working session: 9A deleted the multi-sub-day-interval gate,
+The count moved 38 → 37 → 36 → 35 → 34 over one working session: 9A deleted the multi-sub-day-interval gate,
 1B REPLACED the blanket DROP PARTITION gate with a much narrower cell-qualified one (a swap the count
-alone would have hidden), and 1D removed the TTL and FORCE DROP gates outright. Four of those five changes
-lifted a real restriction rather than discovering one.
+alone would have hidden), and 1D removed the TTL and FORCE DROP gates outright, and 1C removed the
+cell-qualified refusal by implementing what it refused. Five of those six changes lifted a real
+restriction rather than discovering one.
 
 The count held at 37 across sub-project 1B, but one key was REPLACED rather than removed: the blanket
 "does not yet support DROP PARTITION" gave way to the far narrower "does not yet support dropping an

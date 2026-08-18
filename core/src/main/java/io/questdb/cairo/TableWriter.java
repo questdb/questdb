@@ -3881,6 +3881,95 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * SP1C: removes ONE cell of a composite day, leaving its siblings attached.
+     * <p>
+     * The lifecycle spec's rule is that a partition predicate selects CELLS, and that dropping every
+     * cell of a day drops the day. This is the single-cell case; {@link #removePartition(long)} is the
+     * whole-day case and drains every cell. The removal primitives are the ones sub-projects 1B and 1D
+     * built and proved: {@code removeAttachedPartitions(ts, cellKey)} removes exactly one
+     * {@code (ts, cellKey)} record, so a sibling sharing the timestamp cannot be touched.
+     * <p>
+     * Before 1C this shape was refused at the statement, because measurement showed the LIST parser
+     * accepted a cell-qualified name and then dropped the WHOLE day: a three-cell day went to empty.
+     * That is why the refusal existed and why this method must remove exactly one record.
+     */
+    @Override
+    public boolean removePartitionCell(long timestamp, int cellKey) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return false;
+        }
+        if (!isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("dropping an individual cell requires a composite table [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        partitionRemoveCandidates.clear();
+        commit();
+
+        final int rawIndex = txWriter.findAttachedPartitionRawIndexBy(timestamp, cellKey);
+        if (rawIndex < 0) {
+            return false;
+        }
+        final int index = rawIndex / txWriter.getLongsPerAttachedPartition();
+        final long nameTxn = txWriter.getPartitionNameTxn(index);
+
+        // SP1C: a boundary cell carries the table's MIN or MAX, so those bounds must be recomputed --
+        // passing the current ones through leaves _txn pointing at removed data. That is invisible to a
+        // composite min(ts)/max(ts), which routes through the cross-cell merge SCAN rather than the
+        // _txn shortcut, so it must be asserted against the STORED bound (see
+        // testDroppingBoundaryCellsRecomputesMinAndMax). Third instance of this class in one session:
+        // 1B's N1 read the max through a cell-blind path, 1D's read the min from a day container, and
+        // this one did not recompute at all.
+        final int partitionCountBefore = txWriter.getPartitionCount();
+        final boolean removingFirst = index == 0;
+        final boolean removingLast = index == partitionCountBefore - 1;
+        long newMinTimestamp = txWriter.getMinTimestamp();
+        long newMaxTimestamp = txWriter.getMaxTimestamp();
+        if (removingLast && partitionCountBefore > 1) {
+            // the active partition is going: close it before its files are unlinked
+            closeActivePartition(false);
+            final int prevIndex = partitionCountBefore - 2;
+            final long prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
+            final boolean prevIsParquet = txWriter.isPartitionParquet(prevIndex);
+            final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
+            final long prevSize = txWriter.getPartitionSize(prevIndex);
+            try {
+                final StringSink prevCellSink = Misc.getThreadLocalSink();
+                prevCellSink.clear();
+                renderCellSegment(prevCellSink, txWriter.getPartitionCellKey(prevIndex));
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp,
+                        txWriter.getPartitionNameTxn(prevIndex), prevCellSink);
+                readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()),
+                        prevIsParquet, parquetFileSize, prevSize);
+                newMaxTimestamp = attachMaxTimestamp;
+            } finally {
+                path.trimTo(pathSize);
+            }
+        }
+        if (removingFirst && partitionCountBefore > 1) {
+            // readMinTimestamp reads partition index 1, which is exactly the survivor when index 0 goes.
+            // It is cell-aware as of sub-project 1D.
+            newMinTimestamp = readMinTimestamp();
+        }
+
+        txWriter.beginPartitionSizeUpdate();
+        txWriter.removeAttachedPartitions(timestamp, cellKey);
+        txWriter.setMinTimestamp(newMinTimestamp);
+        txWriter.finishPartitionSizeUpdate(newMinTimestamp, newMaxTimestamp);
+        txWriter.bumpTruncateVersion();
+        // Column versions are keyed by DAY. They may only be wiped once the day's LAST cell is gone --
+        // otherwise records still belonging to surviving siblings would be destroyed. 1D hit the same
+        // constraint in forceRemovePartitions and resolved it the same way.
+        if (!txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
+            columnVersionWriter.removePartition(timestamp);
+        }
+        partitionRemoveCandidates.add(timestamp, nameTxn, cellKey);
+
+        commitRemovePartitionOperation();
+        return true;
+    }
+
     @Override
     public boolean removePartition(long timestamp) {
         partitionRemoveCandidates.clear();
