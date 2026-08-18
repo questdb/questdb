@@ -101,6 +101,23 @@ public final class MemoryUsageFormatter {
                 .putAscii(", mem.rss.sampled=").put(Unsafe.getSampledResidentMemUsed())
                 .putAscii(", mem.rss.effective=").put(Unsafe.getEffectiveResidentMemUsed())
                 .putAscii(", rss.physical=").put(Os.getRss())
+                // Memory that is resident and belongs to NEITHER QuestDB's accounting NOR the
+                // JVM heap. Everything needed to compute it was already logged above, but a
+                // reader had to subtract three fields by hand -- and the heap sitting inside
+                // that difference hid the interesting part.
+                //
+                // It exists because a large consumer was found hiding in exactly this gap: a
+                // node with replication enabled held ~118 MiB more than one without, with
+                // byte-identical tags, an unchanged thread count and an unchanged heap. Native
+                // allocations made outside Unsafe -- a Rust runtime's arenas, a C library's
+                // malloc, a direct mmap, a thread stack -- can only ever show up here, because
+                // no tag will ever name them.
+                //
+                // Includes JVM metaspace and code cache, which are not the heap and not
+                // QuestDB's: a few tens of MiB of this is normal and expected. A number far
+                // above that is worth chasing.
+                .putAscii(", mem.unattributed=").put(Math.max(0,
+                        Unsafe.getSampledResidentMemUsed() - memRssAccounted - heapCommitted))
                 .putAscii(", jvm.heap.used=").put(heapUsed)
                 .putAscii(", jvm.heap.committed=").put(heapCommitted)
                 .putAscii(", jvm.heap.max=").put(runtime.maxMemory())
