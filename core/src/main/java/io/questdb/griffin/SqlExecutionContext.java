@@ -291,9 +291,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
-    default void setExpiryReadFilterEnabled(boolean enabled) {
-    }
-
     boolean isParallelFilterEnabled();
 
     boolean isParallelGroupByEnabled();
@@ -356,6 +353,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCancelledFlag(AtomicBoolean cancelled);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    default void setExpiryReadFilterEnabled(boolean enabled) {
+    }
 
     void setIntervalFunctionType(int intervalType);
 

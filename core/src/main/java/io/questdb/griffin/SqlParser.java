@@ -178,6 +178,10 @@ public class SqlParser {
     // so the recursion guard matches on that exact spelling. A case-folding set is unnecessary: the table
     // registry is case-insensitive, so case-distinct sibling tables/views cannot exist in the first place.
     private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
+    // Tables the read filter swapped for a sub-query during this parse. CREATE LIVE VIEW checks
+    // this when its FROM clause no longer holds the plain table the user wrote, so that it can
+    // point at the EXPIRE ROWS policy that got in the way.
+    private final CharSequenceHashSet expiryExpandedTables = new CharSequenceHashSet();
     // The execution context of the current parse, consulted for the PER-TABLE read-filter decision
     // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
     // was invoked without a context; rowExpiryReadFilterEnabled is the decision then.
@@ -2408,6 +2412,17 @@ public class SqlParser {
         // extract base table name from query model
         IQueryModel from = queryModel.getNestedModel() != null ? queryModel.getNestedModel() : queryModel;
         if (from.getTableName() == null) {
+            // The user named one table. If that table carries an EXPIRE ROWS policy, the read
+            // filter has already swapped it for a sub-query, and the check below would blame the
+            // user for a FROM clause they never wrote. Say what actually happened instead.
+            // Refusing is right either way: a live view reads its base raw, so it would take in
+            // the very rows the policy expires.
+            final ExpressionNode fromAlias = from.getAlias();
+            if (fromAlias != null && expiryExpandedTables.contains(unquote(fromAlias.token))) {
+                throw SqlException.$(fromAlias.position, "cannot create a live view over '")
+                        .put(unquote(fromAlias.token))
+                        .put("': it carries an EXPIRE ROWS policy (the view would copy expired rows on refresh)");
+            }
             throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
         }
         builder.setBaseTableName(Chars.toString(from.getTableName()));
@@ -6570,6 +6585,7 @@ public class SqlParser {
                     // viewsBeingCompiled does, so the key survives the nested parse.
                     final String guardKey = Chars.toString(unquotedName);
                     expiringTablesBeingExpanded.add(guardKey);
+                    expiryExpandedTables.add(guardKey);
                     try {
                         expandExpiringTable(model, guardKey, predicate, designatedTimestampColumn, position, sqlParserCallback);
                     } finally {
@@ -7753,6 +7769,7 @@ public class SqlParser {
         // reused parser never carries a stale row-expiry gate/timestamp between compilations.
         rowExpiryReadFilterEnabled = true;
         expiryFilterExecutionContext = null;
+        expiryExpandedTables.clear();
         expiryPolicyTable = null;
         expiryTimestampColumnName = null;
         pendingExpiryReadVersions.clear();

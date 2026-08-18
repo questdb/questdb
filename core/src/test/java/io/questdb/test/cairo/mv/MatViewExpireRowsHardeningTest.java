@@ -812,6 +812,41 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewOverPoliciedViewRejected() throws Exception {
+        // A live view reads its base raw, so a base carrying an EXPIRE ROWS policy would feed it
+        // the very rows the policy expires. That is the same danger that makes a materialized view
+        // over such a base illegal. The statement has to fail and leave no view behind.
+        //
+        // The first live view here is the control. It shows that a materialized view is a fine
+        // base to build on, so the second one can only be failing because of the policy.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv_open AS (SELECT * FROM base)");
+            execute("CREATE MATERIALIZED VIEW mv_policied AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            execute("CREATE LIVE VIEW lv_open FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, v, count(*) OVER (PARTITION BY sym ORDER BY ts "
+                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM mv_open");
+            Assert.assertNotNull("a materialized view must be a legal live view base", engine.getTableTokenIfExists("lv_open"));
+
+            // The position lands on the base table name. By this point the read filter has
+            // swapped that table for a sub-query, but the alias it leaves behind still carries
+            // the offset the name had in the original text.
+            assertExceptionNoLeakCheck(
+                    "CREATE LIVE VIEW lv_blocked FLUSH EVERY 1s START FROM NOW AS "
+                            + "SELECT ts, v, count(*) OVER (PARTITION BY sym ORDER BY ts "
+                            + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM mv_policied",
+                    180,
+                    "cannot create a live view over 'mv_policied': it carries an EXPIRE ROWS policy "
+                            + "(the view would copy expired rows on refresh)"
+            );
+            Assert.assertNull("no live view may survive over a policied base", engine.getTableTokenIfExists("lv_blocked"));
+        });
+    }
+
+    @Test
     public void testCreateViewJoiningPoliciedViewRejected() throws Exception {
         // The no-policied-chains rule covers JOINED tables, not only the base: refresh cannot
         // evaluate a now()-based policy at all, so the chain is rejected up front like a policied

@@ -143,7 +143,6 @@ public class QueryModel implements IQueryModel {
     private boolean forceBackwardScan;
     private boolean isCteModel;
     private boolean isExpiryWindowBarrier;
-    private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
@@ -155,6 +154,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
+    private ExpressionNode lateralCountCoalesceGuard;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
