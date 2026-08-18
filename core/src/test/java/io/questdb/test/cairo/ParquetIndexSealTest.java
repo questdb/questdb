@@ -265,6 +265,122 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * W6-I4: the O3 reseal retires every token the prior footer named, but the
+     * loop that repopulates the footer skips a column whose covering list is
+     * empty, whose column top puts it outside the partition, or whose indexer is
+     * not a {@code SymbolColumnIndexer}. A column skipped by the loop but named
+     * by the prior footer would have its token retired and its pair unlinked
+     * with nothing rebuilt, and its covered values would come back NULL.
+     * <p>
+     * This drives an O3 commit into a parquet partition carrying BOTH a covering
+     * posting index and a non-covering one, so the reseal takes its skip branch
+     * (the non-covering column) and its rebuild branch in the same pass. A token
+     * lost to the skip surfaces here as NULL covered values rather than as an
+     * error, so the covered column is asserted directly.
+     */
+    @Test
+    public void testAnO3ResealDoesNotRetireACoveringTokenItCannotRebuild() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, other SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + TABLE_NAME + " SELECT" +
+                    " dateadd('m', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " 's' || (x % 4)," +
+                    " 'o' || (x % 3)," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(200)");
+            // A later partition, so the indexed one is NOT the last: an O3 write
+            // into the last partition appends instead of merging, the row groups
+            // are never rewritten, and the reseal this test is about never runs.
+            execute("INSERT INTO " + TABLE_NAME + " SELECT" +
+                    " dateadd('m', x::INT, '2024-01-05T00:00:00Z'::TIMESTAMP)," +
+                    " 's' || (x % 4)," +
+                    " 'o' || (x % 3)," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            // Covering: the reseal must rebuild this one.
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            // Non-covering: exercises the empty-covering-list skip in the same pass.
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN other ADD INDEX TYPE POSTING");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // Scoped to the indexed partition: the later partition also holds
+            // 's2' rows, and this test is about what the reseal does to THIS one.
+            // 200 rows, x % 4 == 2 for 50 of them, all with price > 0.
+            assertQuery("select count() from " + TABLE_NAME
+                    + " where sym = 's2' and price > 0 and ts in '" + INDEXED_PARTITION + "'")
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n50\n");
+
+            final long indexTxnBefore;
+            final byte formBefore;
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                final int symCol = reader.getMetadata().getColumnIndex("sym");
+                // The form cache is populated when the partition is opened, and
+                // readers open lazily -- reading it first reports native for a
+                // partition that simply is not open yet.
+                reader.openPartition(0);
+                indexTxnBefore = reader.getPartitionIndexTxn(0, symCol);
+                formBefore = reader.getPartitionIndexForm(0, symCol);
+                Assert.assertEquals(
+                        "the fixture must seal to the parquet form, or there is no token to lose",
+                        PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                        formBefore);
+            }
+
+            // O3: lands before every existing row in the partition, forcing the
+            // merge that rewrites the row groups and triggers the reseal.
+            execute("INSERT INTO " + TABLE_NAME + " VALUES" +
+                    " ('" + INDEXED_PARTITION + "T00:00:00.000001Z', 's2', 'o1', 7.5, 42)");
+            drainWalQueue();
+
+            // Without this the test is vacuous: if the write appended instead of
+            // merging, no reseal ran and the assertions below would pass on an
+            // index nothing ever touched. The footer COUNT is not the signal --
+            // an O3 rewrite lands a new partition directory with a fresh _pm, so
+            // the chain resets and the count can fall. A rebuilt token gets a new
+            // index txn, which is the thing this finding is actually about.
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                final int symCol = reader.getMetadata().getColumnIndex("sym");
+                reader.openPartition(0);
+                final long indexTxnAfter = reader.getPartitionIndexTxn(0, symCol);
+                final byte formAfter = reader.getPartitionIndexForm(0, symCol);
+                Assert.assertTrue(
+                        "the O3 write must actually reseal the partition, or this proves nothing"
+                                + " [indexTxnBefore=" + indexTxnBefore + ", indexTxnAfter=" + indexTxnAfter + ']',
+                        indexTxnAfter != indexTxnBefore
+                );
+                Assert.assertEquals(
+                        "the reseal must republish the covering token, not drop the column to another form"
+                                + " [formBefore=" + formBefore + ", formAfter=" + formAfter + ']',
+                        formBefore,
+                        formAfter
+                );
+            }
+
+            assertQuery("select count() from " + TABLE_NAME
+                    + " where sym = 's2' and price is null and ts in '" + INDEXED_PARTITION + "'")
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+            assertQuery("select count() from " + TABLE_NAME
+                    + " where sym = 's2' and price > 0 and ts in '" + INDEXED_PARTITION + "'")
+                    .inferRandomAccess()
+                    .expectSize()
+                    .returns("count\n51\n");
+        });
+    }
+
+    /**
      * W6-I1: an {@code _pm} chain that nothing is resetting must be reported,
      * not left to grow silently. The O3 rewrite trigger normally resets it; this
      * test disables that trigger -- the only thing that does -- and drives
