@@ -1070,6 +1070,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
+        // SP2 (2026-08-18): the retroactive index-build WALK is now cell-aware -- both sites resolve
+        // per partition INDEX (see setStateForPartitionIndex), so historic partitions no longer test a
+        // phantom day path and the last partition no longer names a directory that does not exist.
+        // That converted the old SILENT NO-OP into a loud failure, which is the cardinal rule's
+        // preferred outcome but not yet a working feature: with the gate lifted, ADD INDEX now reaches
+        // the column read and fails
+        //     "could not read symbol column during indexing [fd=-1, fileOffset=0, bytesToRead=4]" errno=9
+        // i.e. the .d file could not be opened. The remaining suspect is the per-cell column NAME TXN:
+        // getColumnNameTxn(timestamp, columnIndex) resolves by timestamp, which is cellKey-0-only on a
+        // composite table. Gate retained until the column read is cell-aware too -- an ungated failure
+        // that suspends the table is worse than a refusal.
         if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support ADD INDEX [table=")
@@ -9936,7 +9948,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     path.trimTo(pathSize);
-                    setStateForTimestamp(path, timestamp);
+                    // Per-INDEX, so each composite CELL is indexed. Resolving by timestamp built the
+                    // day container path, against which both ff.exists guards below evaluate false --
+                    // which is exactly why ADD INDEX reported success while indexing nothing.
+                    setStateForPartitionIndex(path, i);
 
                     if (ff.exists(path.$())) {
                         final int plen = path.size();
@@ -18293,6 +18308,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param path      path instance to modify
      * @param timestamp to determine the interval for
      */
+    /**
+     * Index-based, cell-aware counterpart of {@link #setStateForTimestamp(Path, long)}.
+     *
+     * <p>{@code setStateForTimestamp} resolves BY TIMESTAMP, through
+     * {@code getPartitionNameTxnByPartitionTimestamp} and the bare 5-arg path overload. Both are
+     * ambiguous on a composite table, where several CELLS share one raw partition timestamp: the
+     * lookup answers for cellKey 0 and the path names the day container rather than a cell directory.
+     * Resolving by INDEX instead is exact, because on a composite table an attached partition entry IS
+     * a cell. For a plain table this returns the same nameTxn and builds the same path.
+     */
+    private long setStateForPartitionIndex(Path path, int partitionIndex) {
+        final long timestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long nameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path, timestampType, partitionBy, timestamp, nameTxn,
+                cellSegmentOrNull(txWriter.getPartitionCellKey(partitionIndex)));
+        return nameTxn;
+    }
+
     private long setStateForTimestamp(Path path, long timestamp) {
         // When partition is created, a txn name must always be set to purge dropped partitions.
         // When partition is created outside O3 merge use `txn-1` as the version
@@ -19561,7 +19594,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long timestamp = txWriter.getLastPartitionTimestamp();
                     if (timestamp != Numbers.LONG_NULL) {
                         path.trimTo(pathSize);
-                        setStateForTimestamp(path, timestamp);
+                        // The last ENTRY, which on a composite table is the last cell of the last day.
+                        // Resolving by timestamp named a directory that does not exist, and
+                        // createIndexFiles then failed with "could not create index file".
+                        setStateForPartitionIndex(path, txWriter.getPartitionCount() - 1);
                         // create index in last partition
                         indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize, indexType);
                     }

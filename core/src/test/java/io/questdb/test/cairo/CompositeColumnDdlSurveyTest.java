@@ -65,11 +65,10 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * per-cell, so this may need only the gate removed — but an index is built by scanning each
      * partition, and a composite partition is a cell.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
-            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
-            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
-            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
-            + " fail outright.")
+    @Ignore("SP2: the index-build WALK is now cell-aware (setStateForPartitionIndex), which turned the"
+            + " old SILENT NO-OP into a loud failure. With the gate lifted ADD INDEX now reaches the"
+            + " column read and fails 'could not read symbol column during indexing [fd=-1]' errno=9."
+            + " Next suspect: getColumnNameTxn(timestamp, columnIndex) resolves cellKey 0 only.")
     @Test(timeout = 60_000)
     public void surveyAddIndex() throws Exception {
         assertMemoryLeak(() -> {
