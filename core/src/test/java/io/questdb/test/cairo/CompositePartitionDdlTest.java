@@ -99,15 +99,20 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
 
             // Day 3 of 5 -- ordinal 2, non-first and non-last.
             execute("alter table p drop partition list '2020-01-03'");
-            execute("alter table c drop partition list '2020-01-03'");
+            // Sub-project 1B Task 0: the refusal moved from the WAL-APPLY side to the STATEMENT.
+            // It used to be accepted here and then suspend the table on apply -- an invariant-6
+            // violation, and the reason this test previously asserted `suspended = true`.
+            try {
+                execute("alter table c drop partition list '2020-01-03'");
+                Assert.fail("DROP PARTITION must be refused at the statement for a routed composite table");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(),
+                        "composite partitioning does not yet support DROP PARTITION");
+            }
             drainWalQueue();
 
-            Assert.assertTrue("c must be suspended by the new DROP PARTITION guard",
+            Assert.assertFalse("a refused statement must NOT suspend the table",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
-            assertQuery("select suspended, errorMessage like '%composite partitioning does not yet support DROP PARTITION%' clearMessage " +
-                    "from wal_tables() where name = 'c'")
-                    .noLeakCheck().noRandomAccess()
-                    .returns("suspended\tclearMessage\ntrue\ttrue\n");
 
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n8\n");
@@ -143,15 +148,20 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
 
             // Day 5 of 6 -- ordinal 4, non-first and non-last.
             execute("alter table p drop partition list '2020-01-05'");
-            execute("alter table c drop partition list '2020-01-05'");
+            // Sub-project 1B Task 0: the refusal moved from the WAL-APPLY side to the STATEMENT.
+            // It used to be accepted here and then suspend the table on apply -- an invariant-6
+            // violation, and the reason this test previously asserted `suspended = true`.
+            try {
+                execute("alter table c drop partition list '2020-01-05'");
+                Assert.fail("DROP PARTITION must be refused at the statement for a routed composite table");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(),
+                        "composite partitioning does not yet support DROP PARTITION");
+            }
             drainWalQueue();
 
-            Assert.assertTrue("c must be suspended by the new DROP PARTITION guard",
+            Assert.assertFalse("a refused statement must NOT suspend the table",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
-            assertQuery("select suspended, errorMessage like '%composite partitioning does not yet support DROP PARTITION%' clearMessage " +
-                    "from wal_tables() where name = 'c'")
-                    .noLeakCheck().noRandomAccess()
-                    .returns("suspended\tclearMessage\ntrue\ttrue\n");
 
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");

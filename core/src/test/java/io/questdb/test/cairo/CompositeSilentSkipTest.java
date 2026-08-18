@@ -105,34 +105,33 @@ public class CompositeSilentSkipTest extends AbstractCairoTest {
             assertNotSuspended();
 
             // The INTERNAL split-fragment squash above is silently skipped. An EXPLICIT
-            // ALTER TABLE ... SQUASH PARTITIONS is a different thing entirely: it is GATED, and the gate
-            // fires ASYNCHRONOUSLY -- execute() returns normally for a WAL table and the refusal lands
-            // when the WAL-apply job runs, suspending the table.
+            // ALTER TABLE ... SQUASH PARTITIONS is a different thing entirely: it is GATED, and as of
+            // sub-project 1B Task 0 the gate fires SYNCHRONOUSLY, at the statement.
             //
-            // That distinction is easy to get wrong in exactly one direction, and this comment is here
-            // because it WAS got wrong: an earlier revision asserted the statement was "accepted" on the
-            // strength of execute() not throwing. execute() not throwing says nothing about an async
-            // gate, and the assertions that followed still passed because a refused squash leaves the
-            // data untouched -- a green test over a suspended table.
-            execute("alter table c squash partitions");
+            // This assertion has now been wrong in BOTH directions, which is why it is spelled out.
+            // First it asserted the statement was "accepted" on the strength of execute() not throwing
+            // -- meaningless against an async gate, and green over a suspended table. Then it asserted
+            // the async suspension, which was accurate but encoded an invariant-6 violation as the
+            // expected behaviour. The refusal now lands where the user typed it.
+            final TableToken token = engine.verifyTableName("c");
+            try {
+                execute("alter table c squash partitions");
+                Assert.fail("explicit SQUASH PARTITIONS must be refused at the statement");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "composite");
+                TestUtils.assertContains(expected.getFlyweightMessage(), "SQUASH PARTITIONS");
+            }
             drainWalQueue();
 
-            final TableToken token = engine.verifyTableName("c");
-            Assert.assertTrue("explicit SQUASH PARTITIONS must be refused by a composite gate",
+            Assert.assertFalse("a statement-time refusal must NOT suspend the table",
                     engine.getTableSequencerAPI().isSuspended(token));
-            final StringSink error = new StringSink();
-            printSql("select errorMessage from wal_tables() where name = 'c'", error);
-            TestUtils.assertContains(error, "composite");
-            TestUtils.assertContains(error, "SQUASH PARTITIONS");
 
             // The refusal must also be CLEAN: the table is still fully readable and still twin-equal,
             // i.e. the gate rejected before mutating anything. Reads are unaffected by suspension --
             // only WAL application is halted.
             //
-            // Note what is NOT done here: "ALTER TABLE c RESUME WAL" does not undo this. Resuming
-            // replays the very transaction that was refused, the gate refuses it again, and the table
-            // suspends again. Recovering means skipping that transaction explicitly, which is an
-            // operator decision, not something this test should assert.
+            // The RESUME WAL note that used to live here is obsolete: nothing is suspended now, so
+            // there is nothing to recover from. That was the whole cost of the async gate.
             assertTwinEquivalence(5);
         });
     }

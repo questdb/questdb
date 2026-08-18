@@ -1,0 +1,148 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo;
+
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * Invariant 6 for the SIX partition-lifecycle DDL operations: a refusal must fire at the statement
+ * that caused it.
+ * <p>
+ * Every one of these gates lives in {@code TableWriter}, which on a WAL table is the <b>apply</b>
+ * side, not the statement side. Measured 2026-08-18 for {@code DROP PARTITION}: the statement
+ * SUCCEEDS, the apply job then throws, and the table is SUSPENDED —
+ * <pre>
+ * C ApplyWal2TableJob job failed, table suspended [table=c~1, seqTxn=2,
+ *   error=... composite partitioning does not yet support DROP PARTITION [table=c]]
+ * </pre>
+ * — so a user who types a currently-unsupported lifecycle DDL gets a suspended table rather than an
+ * error message, and the statement they typed appears to have worked.
+ * <p>
+ * This is the same defect class wave 0 was created to close. Wave 0 fixed {@code SET FORMAT PARQUET}
+ * and the O3 purge and did not reach these six, because the closure index tracks them as
+ * <i>capability</i> gaps owned by sub-project 1 rather than as invariant-6 violations. They are both.
+ * <p>
+ * <b>What each test asserts, and why "it threw" is not enough:</b> the async behaviour also throws —
+ * later, on another thread, after suspending the table. So each test asserts the refusal AND that the
+ * table is still usable afterwards. Only the second half distinguishes a synchronous refusal from a
+ * suspension.
+ */
+public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
+
+    @Test
+    public void testAttachPartitionRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c ATTACH PARTITION LIST '2023-01-01'");
+    }
+
+    @Test
+    public void testDetachPartitionRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c DETACH PARTITION LIST '2023-01-01'");
+    }
+
+    @Test
+    public void testDropPartitionRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c DROP PARTITION LIST '2023-01-01'");
+    }
+
+    @Test
+    public void testForceDropPartitionRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c FORCE DROP PARTITION LIST '2023-01-01'");
+    }
+
+    @Test
+    public void testSquashPartitionsRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c SQUASH PARTITIONS");
+    }
+
+    /**
+     * TTL is the odd one out and the worst of the six: it is not evaluated at the DDL statement but at
+     * every subsequent COMMIT. So setting a TTL on a composite table suspends the table on the next
+     * ordinary INSERT — the user's DDL and the statement that actually breaks are different
+     * statements, and neither is the one that reports the problem.
+     */
+    @Test
+    public void testSetTtlRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c SET TTL 1 DAY");
+    }
+
+    /**
+     * Issues {@code ddl} against a routed composite table and requires BOTH:
+     * <ol>
+     *     <li>it is refused — the statement itself raises the error;</li>
+     *     <li>the table is still usable afterwards, i.e. NOT suspended.</li>
+     * </ol>
+     * The second is the load-bearing half. Asserting only the first would pass against today's async
+     * behaviour, which also raises an error — just on the apply thread, after suspending the table.
+     */
+    private void assertRefusedAtStatement(String ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T05:00:00.000000Z','E1',5.0)");
+            drainWalQueue();
+
+            boolean refused = false;
+            try {
+                execute(ddl);
+            } catch (Throwable expected) {
+                refused = true;
+                TestUtilsBridge.assertMentionsComposite(expected);
+            }
+            // the apply job would suspend the table here if the gate is on the writer side
+            drainWalQueue();
+
+            Assert.assertTrue("statement was accepted rather than refused: " + ddl, refused);
+            Assert.assertFalse("table was SUSPENDED by " + ddl + " -- the refusal fired on the apply"
+                    + " thread, not at the statement (invariant 6)", isSuspended());
+
+            // and it must still be usable: a refused statement must leave the table working
+            execute("INSERT INTO c VALUES ('2023-01-01T09:00:00.000000Z','E2',9.0)");
+            drainWalQueue();
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+        });
+    }
+
+    private boolean isSuspended() throws Exception {
+        final io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+        printSql("select suspended from wal_tables() where name = 'c'", sink);
+        return sink.toString().contains("true");
+    }
+
+    /**
+     * Keeps the assertion about the error text in one place; the six operations use six different
+     * messages but all name composite partitioning.
+     */
+    private static final class TestUtilsBridge {
+        static void assertMentionsComposite(Throwable t) {
+            final String msg = t.getMessage() == null ? "" : t.getMessage();
+            Assert.assertTrue("refusal should name composite partitioning, got: " + msg,
+                    msg.contains("composite partitioning"));
+        }
+    }
+}

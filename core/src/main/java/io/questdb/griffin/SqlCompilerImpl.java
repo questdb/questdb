@@ -1576,6 +1576,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
+    /**
+     * Sub-project 1B Task 0: is this a composite (subpartitioned) table?
+     * <p>
+     * Every partition-lifecycle gate lives in {@code TableWriter}, which on a WAL table is the APPLY
+     * side. Measured 2026-08-18: five of the six lifecycle DDLs were ACCEPTED at the statement and then
+     * suspended the table when the apply job hit the writer gate, so the user saw a working statement
+     * and a broken table instead of an error. This lets the compiler refuse at the statement instead,
+     * which is invariant 6. The writer-side gates STAY as the non-SQL backstop — gates move rather
+     * than vanish, exactly as wave 0's FORMAT PARQUET fix kept its writer guard.
+     * <p>
+     * Returns a boolean rather than throwing, so each caller can throw its OWN message literal. That
+     * matters: the scope-closure audit greps {@code core/src/main} for quoted strings containing
+     * "composite", so a dynamically assembled message would introduce a new audit key. Reusing the
+     * writer-side literals verbatim keeps the key set unchanged.
+     * <p>
+     * {@code TableRecordMetadata} does not expose {@code PartitionSpec}, so a reader is opened purely
+     * for the check — the same idiom as the DEDUP gate and {@code alterTableSetFormat} in this file.
+     * <p>
+     * <b>The predicate is {@code dimCount > 0 AND cellRegistry().size() > 0}, mirroring
+     * {@code TableWriter#isRoutedComposite()} — NOT {@code dimCount > 0} alone.</b> A composite table
+     * that has never received a row has no per-cell physical files, so there is nothing for these
+     * operations to corrupt and gating them is over-broad. The first draft of this method used the
+     * bare dimension count and was caught by
+     * {@code CompositeUnsupportedOpsTest#testGatesDoNotFireOnNeverRoutedEmptyCompositeTable} — the
+     * test that exists for exactly this mistake. {@code isRoutedComposite()}'s own javadoc names
+     * {@code SET TTL} as a case where the over-broad predicate previously caused a WAL suspension and
+     * a silently-no-op DDL.
+     */
+    private boolean isRoutedCompositeTable(TableToken tableToken) {
+        try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
+            return compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0
+                    && compositeCheckReader.getCompositeDictionaries().cellRegistry().size() > 0;
+        }
+    }
+
     private void alterTableDropConvertDetachOrAttachPartition(
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
@@ -1583,6 +1618,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
+        // Sub-project 1B Task 0: refuse at the STATEMENT. Skipped during WAL application, where the
+        // writer-side gate is the backstop and re-checking would only open a reader for nothing.
+        if (!executionContext.isWalApplication() && isRoutedCompositeTable(tableToken)) {
+            switch (action) {
+                case PartitionAction.DROP:
+                    throw SqlException.$(pos, "composite partitioning does not yet support DROP PARTITION [table=")
+                            .put(tableToken.getTableName()).put(']');
+                case PartitionAction.DETACH:
+                    throw SqlException.$(pos, "composite partitioning does not yet support DETACH PARTITION [table=")
+                            .put(tableToken.getTableName()).put(']');
+                case PartitionAction.ATTACH:
+                    throw SqlException.$(pos, "composite partitioning does not yet support ATTACH PARTITION [table=")
+                            .put(tableToken.getTableName()).put(']');
+                default:
+                    // CONVERT TO PARQUET / NATIVE are sub-project 3's gates; left to the writer side
+                    // deliberately rather than gated here on a guess about their eventual shape.
+                    break;
+            }
+        }
         TableReader reader = null;
         if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
             reader = executionContext.getReader(tableToken);
@@ -2860,6 +2914,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
                 if (isPartitionsKeyword(tok)) {
+                    // Sub-project 1B Task 0: refuse at the statement (invariant 6); the writer-side
+                    // gate stays as the non-SQL backstop.
+                    if (isRoutedCompositeTable(tableToken)) {
+                        throw SqlException.$(tableNamePosition, "composite partitioning does not yet support SQUASH PARTITIONS [table=")
+                                .put(tableToken.getTableName()).put(']');
+                    }
                     compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
@@ -5799,6 +5859,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
         try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
             PartitionBy.validateTtlGranularity(metadata.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+        }
+        // Sub-project 1B Task 0: TTL is the worst of the six for invariant 6 -- it is not evaluated at
+        // this DDL but at every subsequent COMMIT, so before this gate a composite table accepted the
+        // TTL and then suspended on the next ordinary INSERT. The user's DDL and the statement that
+        // actually broke were different statements, and neither reported the problem.
+        if (isRoutedCompositeTable(tableToken)) {
+            throw SqlException.$(tableNamePosition, "composite partitioning does not yet support TTL-based partition eviction [table=")
+                    .put(tableToken.getTableName()).put(']');
         }
         final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                 tableNamePosition,
