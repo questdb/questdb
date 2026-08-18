@@ -603,7 +603,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @TestOnly
-    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @Nullable Throwable failure) {
         freeTableNameFunctions(queryModel, failure);
     }
 
