@@ -24,11 +24,17 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -278,6 +284,59 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                         "Sec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
             } finally {
                 freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserIngressServerInfoFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(16);
+            try {
+                int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
+                        buf,
+                        1_048_576
+                );
+                Assert.assertEquals(7, written);
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                Assert.assertEquals(5, frame[1]);
+                Assert.assertEquals(1, frame[2]);
+                Assert.assertEquals(0, frame[3]);
+                Assert.assertEquals(0, frame[4]);
+                Assert.assertEquals(16, frame[5]);
+                Assert.assertEquals(0, frame[6]);
+            } finally {
+                freeBuffer(buf, 16);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserEgressServerInfoCompressionTrailer() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                        buf,
+                        256,
+                        (byte) 1,
+                        DefaultQwpServerInfoProvider.INSTANCE,
+                        0,
+                        true,
+                        (byte) 1,
+                        (byte) 3
+                );
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                int capabilities = ByteBuffer.wrap(frame)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .getInt(24);
+                Assert.assertNotEquals(0, capabilities & QwpEgressMsgKind.CAP_COMPRESSION);
+                Assert.assertEquals(1, frame[written - 2]);
+                Assert.assertEquals(3, frame[written - 1]);
+            } finally {
+                freeBuffer(buf, 256);
             }
         });
     }

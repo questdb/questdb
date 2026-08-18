@@ -160,7 +160,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * bytes for each of cluster_id and node_id. The frame writer truncates each
      * id at the u16 wire cap, so the bound is tight rather than defensive.
      */
-    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 0xFFFF + 0xFFFF;
+    private static final int SERVER_INFO_BODY_MAX_BYTES = 28 + 0xFFFF + 0xFFFF;
     /**
      * Largest WebSocket frame header the server emits for its own frames:
      * 2-byte base + 8-byte extended length (no masking on server-to-client).
@@ -344,6 +344,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // listed, which leaves the wire raw and omits the response header.
         Utf8Sequence acceptEncoding = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
+        boolean browserCompressionNegotiation = false;
+        if (acceptEncoding == null) {
+            acceptEncoding = requestHeader.getUrlParam(
+                    QwpIngressHttpProcessor.URL_PARAM_QWP_ACCEPT_ENCODING);
+            browserCompressionNegotiation = acceptEncoding != null;
+        }
         long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);
         byte negotiatedCodec = QwpEgressCompressionNegotiator.codec(negotiatedCompression);
         byte negotiatedLevel = QwpEgressCompressionNegotiator.level(negotiatedCompression);
@@ -418,7 +424,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 bufferSize - bytesWritten,
                 (byte) negotiatedVersion,
                 engine.getQwpServerInfoProvider(),
-                serverWallNs
+                serverWallNs,
+                browserCompressionNegotiation,
+                negotiatedCodec,
+                effectiveLevel
         );
         if (frameBytes < 0) {
             throw HttpException.instance("egress SERVER_INFO frame does not fit send buffer");
@@ -690,17 +699,22 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      *
      * @return total bytes written, or -1 if {@code bufSize} is too small
      */
-    private static int writeServerInfoFrame(
+    public static int writeServerInfoFrame(
             long bufAddr,
             int bufSize,
             byte qwpVersion,
             QwpServerInfoProvider provider,
-            long serverWallNs
+            long serverWallNs,
+            boolean advertiseCompression,
+            byte compressionCodec,
+            byte compressionLevel
     ) {
-        // 26 bytes covers the fixed body; CAP_ZONE adds another 2 bytes
-        // for the zone_id length prefix, so size for the worst case unconditionally
-        // (a couple of bytes is negligible against the egress send buffer).
-        int minSize = 2 + QwpConstants.HEADER_SIZE + 28;
+        // 26 bytes covers the fixed body; CAP_ZONE adds another 2 bytes for the
+        // zone_id length prefix, and browser compression adds its 2-byte trailer.
+        // Size for the worst case unconditionally (a few bytes are negligible
+        // against the egress send buffer).
+        int compressionTrailerSize = advertiseCompression ? 2 : 0;
+        int minSize = 2 + QwpConstants.HEADER_SIZE + 28 + compressionTrailerSize;
         if (bufSize < minSize) {
             return -1;
         }
@@ -708,13 +722,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long qwpStart = bufAddr + 2;
         long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
                 qwpStart, qwpVersion, (byte) 0, 0, 0);
-        int bodyCap = bufSize - 2 - QwpConstants.HEADER_SIZE;
+        int bodyCap = bufSize - 2 - QwpConstants.HEADER_SIZE - compressionTrailerSize;
+        int capabilities = (provider.getCapabilities() & ~QwpEgressMsgKind.CAP_COMPRESSION)
+                | (advertiseCompression ? QwpEgressMsgKind.CAP_COMPRESSION : 0);
         long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
                 bodyStart,
                 bodyCap,
                 provider.role(),
                 provider.getEpoch(),
-                provider.getCapabilities(),
+                capabilities,
                 serverWallNs,
                 provider.getClusterId(),
                 provider.getNodeId(),
@@ -722,6 +738,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         );
         if (bodyEnd < 0) {
             return -1;
+        }
+        if (advertiseCompression) {
+            Unsafe.putByte(bodyEnd++, compressionCodec);
+            Unsafe.putByte(bodyEnd++, compressionLevel);
         }
         int qwpSize = (int) (bodyEnd - qwpStart);
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;

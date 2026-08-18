@@ -182,6 +182,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // lifetime of this processor) and would otherwise allocate a String and
     // a byte[] on every handshake. Null when the cap collapses to zero,
     // which omits the header entirely.
+    private final int effectiveMaxBatchSize;
     private final byte[] effectiveMaxBatchSizeBytes;
     private final CairoEngine engine;
     // Frames handleWebSocketFrame's discard gate dropped during the current
@@ -211,7 +212,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // sees the payload -- a frame larger than recv-buffer minus the
         // worst-case WebSocket frame header gets closed with code 1009 long
         // before STATUS_PARSE_ERROR can fire.
-        int effectiveMaxBatchSize = Math.min(
+        this.effectiveMaxBatchSize = Math.min(
                 Math.max(0, recvBufferSize - MAX_WS_FRAME_HEADER_BYTES),
                 QwpConstants.DEFAULT_MAX_BATCH_SIZE);
         this.effectiveMaxBatchSizeBytes = effectiveMaxBatchSize > 0
@@ -426,11 +427,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
         boolean durableAckWebSocketProtocolEnabled = durableAckEnabled && durableAckWebSocketProtocolRequested;
+        Utf8Sequence browserHandshake = requestHeader.getUrlParam(
+                QwpIngressHttpProcessor.URL_PARAM_QWP_BROWSER_HANDSHAKE);
+        boolean browserHandshakeRequested = effectiveMaxBatchSize > 0
+                && browserHandshake != null
+                && Utf8s.equalsAscii("v1", browserHandshake);
         byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
 
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolEnabled);
+        if (browserHandshakeRequested) {
+            requiredHandshakeSize += WebSocketFrameWriter.headerSize(5, false) + 5;
+        }
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -460,6 +469,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
+        if (browserHandshakeRequested) {
+            bytesWritten += writeBrowserServerInfoFrame(
+                    bufferAddr + bytesWritten,
+                    effectiveMaxBatchSize
+            );
+        }
         // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
         // from onHeadersReady, so we defer the raw-socket send to
         // onRequestComplete where PISR propagates cleanly into the framework's
@@ -471,6 +486,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // the client waiting on a handshake that never completes.
         state.setPendingHandshakeBytes(bytesWritten);
         state.setHandshakeFlushPending(true);
+    }
+
+    /** Writes the browser-only ingress SERVER_INFO WebSocket frame. */
+    public static int writeBrowserServerInfoFrame(long bufferAddress, int maxBatchSizeBytes) {
+        int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, 5);
+        long payloadAddress = bufferAddress + headerSize;
+        Unsafe.putByte(payloadAddress, QwpConstants.STATUS_SERVER_INFO);
+        Unsafe.putInt(payloadAddress + 1, maxBatchSizeBytes);
+        return headerSize + 5;
     }
 
     @Override
