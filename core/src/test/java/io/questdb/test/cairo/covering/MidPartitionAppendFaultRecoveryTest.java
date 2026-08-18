@@ -104,11 +104,23 @@ public class MidPartitionAppendFaultRecoveryTest extends AbstractCairoTest {
         // Every symbol: what the index scan finds must equal what a scan of the
         // column itself finds. A tail the seal failed to index shows up here as
         // a smaller count, which comparing covered values alone would miss.
-        assertSqlCursors(
-                "SELECT /*+ no_index */ sym, count(*), sum(value) FROM t ORDER BY sym",
-                "SELECT sym, count(*), sum(value) FROM t ORDER BY sym"
-        );
-        // ... and the covered values themselves must match the base column.
+        //
+        // The comparison MUST be per-symbol and filtered. An unfiltered keyed
+        // group-by ignores no_index entirely - verified by EXPLAIN, both sides
+        // compile to the identical vectorized GroupBy over a full PageFrame scan
+        // - so the pair that used to live here compared a plan with itself and
+        // could not fail. With WHERE sym = ? the hint bites: no_index plans an
+        // "Async JIT Filter" full scan, the unhinted side a "CoveringIndex" scan.
+        for (int s = 0; s < 4; s++) {
+            assertSqlCursors(
+                    "SELECT /*+ no_index */ ts, sym, value FROM t WHERE sym = 'S" + s + "' ORDER BY ts",
+                    "SELECT ts, sym, value FROM t WHERE sym = 'S" + s + "' ORDER BY ts"
+            );
+        }
+        // ... and the covered values themselves must match the base column. This
+        // arm stays no_covering deliberately: it drops only the covered read and
+        // keeps the "Index forward scan on: sym", so it isolates a WRONG covered
+        // value from a MISSING posting, which the loop above catches instead.
         assertSqlCursors(
                 "SELECT /*+ no_covering */ ts, sym, value FROM t WHERE sym = 'S1' ORDER BY ts",
                 "SELECT ts, sym, value FROM t WHERE sym = 'S1' ORDER BY ts"

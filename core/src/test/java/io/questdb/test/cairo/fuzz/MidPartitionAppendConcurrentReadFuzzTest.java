@@ -176,17 +176,22 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
                             final String sym = "S" + rrnd.nextInt(symbolCardinality);
                             final long floor = rowFloor.get();
 
-                            // Covered == base at ONE snapshot. SYMMETRIC: a
-                            // one-way EXCEPT only catches rows the covered scan
-                            // invents, not rows it is MISSING - which is exactly
-                            // what an unindexed tail looks like.
+                            // Covered == base at ONE snapshot. SYMMETRIC, and the
+                            // base arm is no_INDEX: a one-way EXCEPT only catches
+                            // rows the covered scan invents, not rows it is
+                            // MISSING, and no_covering would not catch the missing
+                            // ones either - it drops only the covered read and
+                            // keeps the "Index forward scan on: sym" (verified by
+                            // EXPLAIN), so an absent posting disappears from BOTH
+                            // arms. no_index plans a real full scan, which is the
+                            // only arm that can see an unindexed tail.
                             final long diff = scalar(compiler, ctx,
                                     "SELECT count(*) FROM ("
                                             + "((SELECT ts, value FROM t WHERE sym = '" + sym + "')"
                                             + " EXCEPT "
-                                            + "(SELECT /*+ no_covering */ ts, value FROM t WHERE sym = '" + sym + "'))"
+                                            + "(SELECT /*+ no_index */ ts, value FROM t WHERE sym = '" + sym + "'))"
                                             + " UNION ALL "
-                                            + "((SELECT /*+ no_covering */ ts, value FROM t WHERE sym = '" + sym + "')"
+                                            + "((SELECT /*+ no_index */ ts, value FROM t WHERE sym = '" + sym + "')"
                                             + " EXCEPT "
                                             + "(SELECT ts, value FROM t WHERE sym = '" + sym + "')))");
                             if (diff != 0) {
@@ -194,6 +199,10 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
                                         + sym + ": EXCEPT returned " + diff + " rows");
                             }
 
+                            // EXCEPT is set-based, so a DUPLICATED posting is
+                            // invisible above: the extra row collapses into the
+                            // one already there. Counting is duplicate-sensitive
+                            // and closes that half of the oracle.
                             final long total;
                             final long covMax;
                             final long covMin;
@@ -276,6 +285,23 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
 
             Assert.assertNull("concurrent covered reader failed: " + bgError.get(), bgError.get());
             Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+
+            // Duplicate-sensitive, and it belongs HERE rather than in the reader
+            // loop. EXCEPT is set-based, so a posting duplicated by an append
+            // collapses into the row already there and the in-loop diff cannot
+            // see it; a row-by-row cursor comparison can. It cannot run while the
+            // writer is live, though: two arms of one statement are not
+            // guaranteed to share a snapshot - verified by a negative control
+            // where BOTH arms were the identical query and still disagreed by
+            // ~50 rows under concurrent commits. With the readers joined and the
+            // last drain complete, nothing is in flight and the comparison is
+            // exact.
+            for (int s = 0; s < symbolCardinality; s++) {
+                assertSqlCursors(
+                        "SELECT /*+ no_index */ ts, sym, value FROM t WHERE sym = 'S" + s + "' ORDER BY ts",
+                        "SELECT ts, sym, value FROM t WHERE sym = 'S" + s + "' ORDER BY ts"
+                );
+            }
             Assert.assertTrue("the mid-partition append path must fire (appends="
                             + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
                     PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
