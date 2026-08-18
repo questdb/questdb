@@ -16878,12 +16878,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removeColumnFiles(int columnIndex, String columnName, int columnType, byte indexType) {
         PurgingOperator purgingOperator = getPurgingOperator();
+        long lastDayLevelPurged = Long.MIN_VALUE;
         if (PartitionBy.isPartitioned(partitionBy)) {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    // SP2A: this loop already visits every (ts, cellKey) partition -- getPartitionCount
+                    // is per-cell -- but the call carried no cell, so a 3-cell day queued the SAME
+                    // day-level path three times and reached no cell's files. Render the cell here;
+                    // PurgingOperator is in griffin and has no writer to render one itself.
+                    String cellSegment = null;
+                    if (isRoutedComposite()) {
+                        final StringSink cellSink = Misc.getThreadLocalSink();
+                        cellSink.clear();
+                        renderCellSegment(cellSink, txWriter.getPartitionCellKey(i));
+                        cellSegment = cellSink.toString();
+                    }
                     purgingOperator.add(
                             columnIndex,
                             columnName,
@@ -16891,8 +16903,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexType,
                             columnNameTxn,
                             partitionTimestamp,
-                            partitionNameTxn
+                            partitionNameTxn,
+                            cellSegment
                     );
+                    // A composite day container ALSO holds a vestigial day-level copy of each column
+                    // file that nothing reads (recorded in 1C: the container survives its last cell
+                    // because of them). The pre-SP2A day-blind purge happened to delete exactly that
+                    // file and nothing else; redirecting to the cell would otherwise leave it behind,
+                    // trading one leak for another. Queued ONCE per day, not once per cell -- the old
+                    // code queued it once per cell, which is why a 3-cell day produced three identical
+                    // entries.
+                    if (cellSegment != null && partitionTimestamp != lastDayLevelPurged) {
+                        lastDayLevelPurged = partitionTimestamp;
+                        purgingOperator.add(
+                                columnIndex,
+                                columnName,
+                                columnType,
+                                indexType,
+                                columnNameTxn,
+                                partitionTimestamp,
+                                partitionNameTxn
+                        );
+                    }
                 }
             }
         } else {
@@ -16913,6 +16945,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnType,
                     indexType,
                     columnVersionWriter.getSymbolTableNameTxn(columnIndex),
+                    // the symbol table lives at the table root, not in any cell
                     PurgingOperator.TABLE_ROOT_PARTITION,
                     -1
             );

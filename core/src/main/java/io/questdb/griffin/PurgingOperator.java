@@ -38,6 +38,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import org.jetbrains.annotations.Nullable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Transient;
@@ -46,6 +47,14 @@ import io.questdb.tasks.ColumnPurgeTask;
 
 public final class PurgingOperator {
     public static final long TABLE_ROOT_PARTITION = Long.MIN_VALUE + 1;
+    // SP2A: rendered cell segment per queued entry, parallel to cleanupColumnVersions' 4-long groups
+    // (entry i occupies cleanupColumnVersions[i*4 .. i*4+3]; its segment is cellSegments[i]). null for
+    // a plain table, and for the day-level TABLE_ROOT_PARTITION entry.
+    //
+    // A PARALLEL list rather than a wider stride, deliberately: cleanupColumnVersions is reused for
+    // the async-reschedule tail below, which appends its own 4-long entries and hands them to
+    // purgeColumnVersionAsync. Two strides in one list would be a trap for the next reader.
+    private final ObjList<String> cellSegments = new ObjList<>();
     private final LongList cleanupColumnVersions = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
     private final FilesFacade ff;
@@ -63,6 +72,16 @@ public final class PurgingOperator {
         this.ff = configuration.getFilesFacade();
     }
 
+    /**
+     * Day-level overload for callers whose operation is still GATED for composite tables
+     * ({@code CONVERT PARTITION}, {@code DROP INDEX}, {@code UPDATE}, and the two table-root entries).
+     * Passing no cell is correct for them precisely because a composite table cannot reach them.
+     * <p>
+     * <b>If you are enabling one of those operations for composite, do not call this.</b> A day-level
+     * purge on a composite table silently leaves every cell's file on disk -- measured for
+     * {@code DROP COLUMN} before SP2A: {@code E0/px.d}, {@code E1/px.d} and {@code E2/px.d} all
+     * survived while the operation reported success.
+     */
     public void add(
             int columnIndex,
             String columnName,
@@ -72,17 +91,32 @@ public final class PurgingOperator {
             long partitionTimestamp,
             long partitionNameTxn
     ) {
+        add(columnIndex, columnName, columnType, indexType, columnVersion, partitionTimestamp, partitionNameTxn, null);
+    }
+
+    public void add(
+            int columnIndex,
+            String columnName,
+            int columnType,
+            byte indexType,
+            long columnVersion,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            @Nullable String cellSegment
+    ) {
         updateColumnIndexes.add(columnIndex);
         updateColumnIndexes.add(columnType);
         updateColumnIndexes.add(indexType);
         updateColumnIndexes.add(columnNames.size());
         columnNames.add(columnName);
         cleanupColumnVersions.add(columnIndex, columnVersion, partitionTimestamp, partitionNameTxn);
+        cellSegments.add(cellSegment);
     }
 
     public void clear() {
         updateColumnIndexes.clear();
         cleanupColumnVersions.clear();
+        cellSegments.clear();
     }
 
     public void purge(
@@ -127,7 +161,12 @@ public final class PurgingOperator {
                         if (!asyncOnly) {
                             if (partitionTimestamp != TABLE_ROOT_PARTITION) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                                // SP2A: a composite partition is a CELL, so the column files live at
+                                // <day>/<cell>/. The cell-blind form removed only the vestigial
+                                // day-level file and left every cell's behind -- measured: after
+                                // DROP COLUMN, E0/px.d, E1/px.d and E2/px.d all survived.
+                                TableUtils.setPathForNativePartition(path, timestampType, partitionBy,
+                                        partitionTimestamp, partitionNameTxn, cellSegments.getQuick(i / 4));
                                 int pathPartitionLen = path.size();
                                 TableUtils.dFile(path, columnName, columnVersion);
                                 columnPurged = ff.removeQuiet(path.$());
