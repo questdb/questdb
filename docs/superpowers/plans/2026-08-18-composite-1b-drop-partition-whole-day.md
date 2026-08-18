@@ -19,6 +19,12 @@
 - griffin baseline: 24,560 run / 0 failures / 4 known port-9000 errors.
 - **Any test that could hang must carry a JUnit timeout.** One of the three defects here is a confirmed infinite loop; a regression must fail, not wedge CI.
 
+## Task ordering note
+
+Task 0 was added after the plan was written, when Task 1's tests were run for the first time. It comes
+first because without it the other tests cannot fail for their own reasons. The rest of the plan is
+unchanged.
+
 ## The three mechanisms (from the gate comment at `TableWriter:3864`)
 
 All three are already documented in the code and were empirically confirmed during the Plan 4a sweep.
@@ -32,6 +38,57 @@ This plan does not rediscover them; it fixes them.
 
 N3 is the dangerous one: N1 fails loudly and N2 hangs, but N3 silently destroys data. It is listed
 third in the code comment and must be treated first in testing.
+
+---
+
+### Task 0: Make the refusal SYNCHRONOUS — found by running Task 1's tests
+
+**Files:**
+- Modify: `core/src/main/java/io/questdb/griffin/SqlCompilerImpl.java` (or the ALTER validation path)
+- Test: `core/src/test/java/io/questdb/test/cairo/CompositeEarliestRefusalTest.java` (extend — wave 0 owns this file)
+
+**Discovered 2026-08-18, not planned for.** Running Task 1's tests against the current build showed
+they do NOT hit the gate. `ALTER TABLE c DROP PARTITION LIST '2023-01-02'` **succeeds**; the WAL apply
+then throws and suspends the table:
+
+```
+C ApplyWal2TableJob job failed, table suspended [table=c~1, seqTxn=2,
+  error=... composite partitioning does not yet support DROP PARTITION [table=c]]
+```
+
+The composite table silently kept the day (`count=3` where the plain twin had `0`), so the tests
+failed on a twin mismatch rather than on a refusal.
+
+This is precisely the invariant-6 violation **wave 0 existed to fix**, and wave 0 missed it — wave 0
+covered `FORMAT PARQUET` and the O3 purge only. A user who types `DROP PARTITION` on a composite table
+today gets a suspended table, not an error.
+
+It must be fixed **before** Tasks 1–4, for two reasons: the red tests otherwise fail for a confusing
+reason and cannot distinguish N1/N2/N3, and 1C's eventual dimension-constrained refusal would suspend
+rather than refuse.
+
+- [ ] **Step 1: Refuse at the statement**
+
+Mirror wave 0 Task 2's `FORMAT PARQUET` fix: open a reader, check
+`getMetadata().getPartitionSpec().getDimensionCount() > 0`, and throw `SqlException` at the
+statement's position. Keep the `TableWriter` gate as the non-SQL backstop — wave 0 kept its writer-side
+guard for the same reason.
+
+- [ ] **Step 2: Assert the table is NOT suspended afterwards**
+
+The regression that matters: after the refused statement, the table must still be usable. A test that
+only asserts "an exception was thrown" would pass against the async behaviour too, because that also
+throws — just later, on a different thread, after suspending the table. Assert both the refusal AND
+that a subsequent `INSERT` + query still works.
+
+- [ ] **Step 3: Check the other five lifecycle DDLs for the same shape**
+
+`FORCE DROP PARTITION`, `DETACH`, `ATTACH`, `SQUASH`, TTL — every one of these gates lives in
+`TableWriter`, which is the WAL-apply side. If they share the shape they share the defect. Record the
+result per operation; fix the ones in this plan's scope and file the rest for 1C/1D rather than
+silently leaving them.
+
+- [ ] **Step 4: Commit**
 
 ---
 
