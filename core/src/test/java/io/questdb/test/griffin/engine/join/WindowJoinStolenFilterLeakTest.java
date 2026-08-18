@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.FaultInjectedException;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -95,12 +96,6 @@ public class WindowJoinStolenFilterLeakTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private static class FaultInjectedException extends RuntimeException {
-        private FaultInjectedException() {
-            super("injected", null, false, false);
-        }
     }
 
     private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {

@@ -1692,6 +1692,57 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Reports whether a comparison anywhere in the subtree puts a narrow-int leaf DIRECTLY against a
+     * widening floating-point bound, which is the one shape
+     * {@link #markNarrowConstCmpWidenPair} routes to {@link #markNarrowIntCmpFloatConst} - the
+     * marker that emits both an SX_I64 for the leaf and a double immediate for the bound.
+     * <p>
+     * The two halves have to be the two operands of the SAME comparison, so
+     * {@link #hasWideLaneConversionSource} cannot answer this by searching the subtree for each half
+     * on its own. It splits on AND / OR only, so a NOT holds several comparisons in one predicate,
+     * and two independent searches then cross-match a narrow-int leaf from one comparison against a
+     * widening bound from another: {@code not (anint > 1 and adouble > 1.00000003)} pairs
+     * {@code anint} with {@code 1.00000003}. {@link #markNarrowConstCmpWidenPair} never marks that
+     * pair, so the filter emits no conversion at all, yet the gate answered {@code true} - which
+     * suppressed the mixed-size detector, and with it the short-circuit path, for nothing. The
+     * backend runs the same scalar loop either way (the hint stays mixed-size), so the chain paid an
+     * evaluation of every conjunct on every row and lost {@link #sortPredicates} reordering, and
+     * bought no vectorization back.
+     * <p>
+     * Restricting the walk to the pairing keeps this method on the safe side of
+     * {@link #hasWideLaneConversionSource}'s asymmetry. Answering {@code false} where a conversion IS
+     * emitted lets a short-circuit opcode reach the wide-lane guard, so the narrowing only removes
+     * answers the marker itself cannot produce: the pairing test below is the marker's own.
+     */
+    private boolean hasNarrowIntCmpWideningConstPair(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        // The two node shapes markNarrowConstCmpWidenNode hands to markNarrowConstCmpWidenPair: a
+        // binary comparison, and the single-value IN form, which keeps key and element in lhs / rhs.
+        final boolean isPairShape = (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && isComparisonToken(node.token))
+                || (node.type == ExpressionNode.FUNCTION
+                && SqlKeywords.isInKeyword(node.token)
+                && node.args.size() == 0);
+        if (isPairShape
+                && ((isNarrowIntLeaf(node.lhs) && isNarrowIntCmpWideningConst(node.rhs))
+                || (isNarrowIntLeaf(node.rhs) && isNarrowIntCmpWideningConst(node.lhs)))) {
+            return true;
+        }
+        if (hasNarrowIntCmpWideningConstPair(node.lhs) || hasNarrowIntCmpWideningConstPair(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasNarrowIntCmpWideningConstPair(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Reports whether the tree carries the ingredients a wide-lane conversion is built from, so
      * {@code false} proves that serializing it cannot set {@link #hasEmittedWideLaneConversion}.
      * <p>
@@ -1708,7 +1759,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Answering per predicate matches the granularity the width machinery works at: AND / OR delimit
      * predicates ({@link #isTopLevelOperation} accepts NOT, IN and the comparison operators, never
      * AND / OR), and every mark set is recomputed per predicate.
-     * A NOT subtree is one predicate, so this does not recurse into it.
+     * A NOT subtree is one predicate, so this does not recurse into it - which is why the narrow-int
+     * source asks {@link #hasNarrowIntCmpWideningConstPair} for a comparison holding both halves,
+     * rather than searching the predicate for each half on its own.
      * <p>
      * Erring towards {@code true} only preserves the previous behaviour, so anything uncertain
      * belongs on the {@code true} side. Should this ever answer {@code false} for a filter that does
@@ -1724,14 +1777,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
             return hasWideLaneConversionSource(node.lhs) || hasWideLaneConversionSource(node.rhs);
         }
-        // Within one predicate a conversion has exactly two sources. markFloatCmpConst fires for an
-        // F4 leaf against a constant that no 32-bit float reproduces, and maybeEmitI64Widening
+        // Within one predicate a conversion has exactly three sources. markFloatCmpConst fires for
+        // an F4 leaf against a constant that no 32-bit float reproduces; maybeEmitI64Widening
         // sign-extends a leaf but returns early unless that leaf is emitted at I1 / I2 / I4 width -
-        // so it needs both a narrow leaf to widen and a 64-bit operand to widen it towards.
+        // so it needs both a narrow leaf to widen and a 64-bit operand to widen it towards; and
+        // markNarrowIntCmpFloatConst does BOTH of those for a narrow-int leaf against a widening
+        // floating-point bound, a pairing whose peer is neither an F4 leaf nor a 64-bit operand.
+        //
+        // The third source asks hasNarrowIntCmpWideningConstPair rather than searching for its two
+        // halves separately: markNarrowConstCmpWidenPair marks them only as the two operands of one
+        // comparison, and a NOT puts several comparisons in one predicate, so independent searches
+        // cross-match halves that never meet. The first two keep their subtree-wide form - that is
+        // the behaviour they shipped with, and tightening them here is a separate question.
+        //
+        // Only the leaf routes count. maybeWidenCmpConstOperand also fills i64WidenLeaves - for the
+        // arithmetic-subtree spelling of the same bound - but it adds the CONSTANT alone, and
+        // maybeEmitI64Widening runs from serializeColumn / serializeBindVariable only, never for a
+        // constant. That marking emits no conversion at all; it leaves i64WidenLeaves non-empty,
+        // which is what makes visit() force the scalar mode the short-circuit path expects.
         return (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_LEAF)
                 && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST))
                 || (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_NARROW_INT_LEAF)
-                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_I8_OPERAND));
+                && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_I8_OPERAND))
+                || hasNarrowIntCmpWideningConstPair(node);
     }
 
     /**

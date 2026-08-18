@@ -6200,9 +6200,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                 // Negative wrap: every row passes; wrongly pruned on HEAD from the other side.
                 assertNativeMatchesPartialParquet("c6 > (2649::SHORT * (965_823)::INT)", "c6\n1\n2\n");
 
-                // Controls: the wrapped constant excludes every row (pass on HEAD too).
+                // Controls: the wrapped constant excludes every row (pass on HEAD too). The
+                // parquet side of the fixture is one converted partition holding one row, so its
+                // single row group is the only prunable one - and an unsatisfiable bound must
+                // prune it. Without this the differential is decline-blind: a pushdown that
+                // refuses the shape outright scans that group in full, still agrees with the
+                // all-native tn, and silently degrades the fix to "pruning off".
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
                 assertNativeMatchesPartialParquet("c6 > (-2649::SHORT * (965_823)::INT)", "c6\n");
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
                 assertNativeMatchesPartialParquet("c6 < (2649::SHORT * (965_823)::INT)", "c6\n");
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 execute("DROP TABLE tn");
                 execute("DROP TABLE tp");

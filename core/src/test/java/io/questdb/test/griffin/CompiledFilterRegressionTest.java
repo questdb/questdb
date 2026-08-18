@@ -737,9 +737,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertQueryNotNullNoLeakCheck("x where i8 > (1_000_000 * 1_000_000) / 7");
             assertQueryNotNullNoLeakCheck("x where i16 > (1_000_000 * 1_000_000) / 7");
             assertQueryNotNullNoLeakCheck("x where i32 > (1_000_000 * 1_000_000) / 7");
-            // LONG column reads full long width via DivInt#getLong = 142_857_142_857;
-            // no i64 row reaches it, and the I8 fold path already agreed here.
-            assertQueryNullableNoLeakCheck("x where i64 > (1_000_000 * 1_000_000) / 7");
+            // The LONG comparison reads the SAME INT-width fold, not a long-width one: DivInt
+            // is an IntFunction, so FunctionParser#functionToConstant0 folds the subtree to
+            // IntConstant(-103_911_424) and IntFunction#getLong sign-extends that wrap onto the
+            // i64 lane. Every i64 row (>= -99) exceeds it, so this line pins rows exactly like
+            // its narrow siblings; a revert to a long-width fold (142_857_142_857) returns none.
+            assertQueryNotNullNoLeakCheck("x where i64 > (1_000_000 * 1_000_000) / 7");
         });
     }
 
@@ -1053,7 +1056,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(ddl);
             // -1.04e17 wraps to +1_699_321_072 at INT width; no BYTE exceeds it.
-            assertQueryNullableNoLeakCheck("x where i8 > -286_452 * (-952_151 * -382_988)");
+            assertQueryEmptyNoLeakCheck("x where i8 > -286_452 * (-952_151 * -382_988)");
             // Symmetric: +1.04e17 wraps to -1_699_321_072, below every BYTE.
             assertQueryNotNullNoLeakCheck("x where i8 > 286_452 * (952_151 * 382_988)");
         });
@@ -1070,7 +1073,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(ddl);
             // Wraps to +1_699_321_072: no INT row exceeds it.
-            assertQueryNullableNoLeakCheck("x where i32 > -286_452 * (-952_151 * -382_988)");
+            assertQueryEmptyNoLeakCheck("x where i32 > -286_452 * (-952_151 * -382_988)");
             // Wraps to -1_699_321_072: below every INT row.
             assertQueryNotNullNoLeakCheck("x where i32 > 286_452 * (952_151 * 382_988)");
         });
@@ -1089,7 +1092,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(ddl);
             // Wraps to +1_699_321_072: no i64 row (they lie in [-99, 414]) exceeds it.
-            assertQueryNullableNoLeakCheck("x where i64 > -286_452 * (-952_151 * -382_988)");
+            assertQueryEmptyNoLeakCheck("x where i64 > -286_452 * (-952_151 * -382_988)");
             // Wraps to -1_699_321_072: below every i64 row.
             assertQueryNotNullNoLeakCheck("x where i64 > 286_452 * (952_151 * 382_988)");
         });
@@ -1105,7 +1108,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(ddl);
             // Wraps to +1_699_321_072: no SHORT row exceeds it.
-            assertQueryNullableNoLeakCheck("x where i16 > -286_452 * (-952_151 * -382_988)");
+            assertQueryEmptyNoLeakCheck("x where i16 > -286_452 * (-952_151 * -382_988)");
             // Wraps to -1_699_321_072: below every SHORT row.
             assertQueryNotNullNoLeakCheck("x where i16 > 286_452 * (952_151 * 382_988)");
         });
@@ -1130,10 +1133,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertQueryNotNullNoLeakCheck("x where i64 > -1_000_000_000_000 / 1");
             // Unary minus over an overflowing product: the inner fold wraps to -1_699_321_072 and
             // the minus makes it +1_699_321_072, which no i64 row (they lie in [-99, 414]) exceeds.
-            assertQueryNullableNoLeakCheck("x where i64 > -(286_452 * (-952_151 * -382_988))");
+            assertQueryEmptyNoLeakCheck("x where i64 > -(286_452 * (-952_151 * -382_988))");
             // The same constant against a BYTE column gives the same answer, because the column no
             // longer decides the constant's width.
-            assertQueryNullableNoLeakCheck("x where i8 > -(286_452 * (-952_151 * -382_988))");
+            assertQueryEmptyNoLeakCheck("x where i8 > -(286_452 * (-952_151 * -382_988))");
         });
     }
 
@@ -3453,6 +3456,45 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntColumnVsFloatingPointConstantInMixedWidthChain() throws Exception {
+        // The pairing in testNarrowIntColumnVsFloatingPointConstant, chained with a conjunct of a
+        // DIFFERENT width. The mixed INT / LONG widths send the chain through the scalar-mode
+        // detector, which serialize() runs only when hasWideLaneConversionSource() proves no
+        // conversion can be emitted. That predicate modelled the F4-leaf source and the
+        // narrow-leaf-vs-64-bit-operand source, not this third one, so the chain took the
+        // short-circuit path, tripped its own wide-lane guard, and SqlCodeGenerator turned the
+        // resulting SqlException into a Java-filter fallback: the rows stayed right and the
+        // compiled filter disappeared. assertJitScalarAndVectorMatchJava asserts the compiled
+        // filter IS used in both JIT modes, so it pins the fallback itself.
+        assertMemoryLeak(() -> {
+            execute("create table zm as (select" +
+                    " cast(case when x = 1 then 1 when x = 2 then 16_777_217 else 5 end as int) i," +
+                    " cast(5 as long) l," +
+                    " cast(2.0 as double) d," +
+                    " cast(x as int) rn," +
+                    " timestamp_sequence(0, 1_000_000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // (float) 16777217 is 16777216, so only the double-width comparison keeps row 2.
+            assertJitScalarAndVectorMatchJava("select rn from zm where i > 16777216.0 and l = 5 and rn <= 3", "rn\n2\n");
+            // The OR spelling rides the same gate. l = 6 matches nothing, so the bound decides.
+            assertJitScalarAndVectorMatchJava("select rn from zm where i > 16777216.0 or l = 6", "rn\n2\n");
+            // A DOUBLE sibling mixes the widths the same way a LONG one does. 1.00000003 has no
+            // exact float; rounded to 1.0f it would drop the row holding 1.
+            assertJitScalarAndVectorMatchJava("select rn from zm where i < 1.00000003 and d > 1.5", "rn\n1\n");
+            // Negating the conjunct keeps the pairing inside one predicate.
+            assertJitScalarAndVectorMatchJava("select rn from zm where not (i > 16777216.0) and l = 5 and rn <= 3", "rn\n1\n3\n");
+
+            // Control: an arithmetic subtree widens only its CONSTANT, emits no SX_I64, and so is
+            // not a conversion source - the chain keeps its scalar short-circuit path and must
+            // still compile and agree.
+            assertJitScalarAndVectorMatchJava("select rn from zm where i + 0 > 16777216.0 and l = 5 and rn <= 3", "rn\n2\n");
+            // Control: a bound whose rounding cannot reach any INT row is not a source either.
+            assertJitScalarAndVectorMatchJava("select rn from zm where i > 1.1 and l = 5 and rn <= 3", "rn\n2\n3\n");
+        });
+    }
+
+    @Test
     public void testNonFiniteConstantArithmeticMatchesJava() throws Exception {
         // FunctionParser folds every constant subtree bottom-up through
         // DoubleConstant#newInstance, which maps +/-Infinity and NaN onto the NULL
@@ -4228,6 +4270,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * No-leak-check counterpart of {@link #assertQueryNullable} for the shapes whose CORRECT
+     * answer is no rows - an INT-width constant fold that wraps onto a bound no column value can
+     * exceed. A helper that only cross-checks the two engines against each other asserts nothing
+     * at all about the row count, so a regression both engines share - a partial revert of the
+     * INT-width fold that restores the un-wrapped LONG bound on the JIT and the Java filter alike -
+     * leaves it trivially in parity and green. This pins the empty result on top of the same
+     * scalar/vectorized parity and count() cross-checks.
+     */
+    private void assertQueryEmptyNoLeakCheck(CharSequence query) throws SqlException {
+        long count = runQuery(query);
+        Assert.assertEquals("query is expected to return no rows: " + query, 0, count);
+        assertJitQuery(query, true);
+        assertJitCountQuery("select count() from " + query, count);
+    }
+
     private void assertQueryNotNull(CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(query, ddl, false);
     }
@@ -4260,17 +4318,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private void assertQueryNullable(CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(query, ddl, true);
-    }
-
-    /**
-     * No-leak-check counterpart of {@link #assertQueryNullable}; intended for
-     * sharing a single DDL across multiple query assertions inside one
-     * {@code assertMemoryLeak} block.
-     */
-    private void assertQueryNullableNoLeakCheck(CharSequence query) throws SqlException {
-        long count = runQuery(query);
-        assertJitQuery(query, true);
-        assertJitCountQuery("select count() from " + query, count);
     }
 
     // Rows in a CursorPrinter.println() dump, which always emits one header line first.

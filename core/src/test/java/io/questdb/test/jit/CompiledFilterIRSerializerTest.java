@@ -1172,6 +1172,110 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNarrowIntCmpFloatConstInMixedWidthChain() throws Exception {
+        // A narrow-int leaf against a widening floating-point bound emits BOTH an SX_I64 and a
+        // double constant, so it is a wide-lane conversion source exactly as an F4 leaf against
+        // such a bound is. hasWideLaneConversionSource() modelled only those two pairs, so a chain
+        // pairing this one with a differently-sized sibling ran the mixed-size detector, took the
+        // short-circuit path, and then tripped that path's own wide-lane guard - declining JIT for
+        // a filter master compiled. The sibling is 8 bytes wide on purpose: against a 4-byte one
+        // the sizes match and the detector could not fire whatever the gate answered.
+        int options = serialize("anint > 16777216.0 and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(&&)(ret)");
+        assertOptionsHint("narrow-int float bound AND long conjunct", options, OptionsHint.WIDE_LANE);
+
+        // OR chains ride the same gate.
+        options = serialize("anint > 16777216.0 or along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(||)(ret)");
+        assertOptionsHint("narrow-int float bound OR long conjunct", options, OptionsHint.WIDE_LANE);
+
+        // A DOUBLE sibling mixes the widths the same way a LONG one does.
+        options = serialize("anint < 1.00000003 and adouble > 1.5", false, false, false);
+        assertIR("(f64 1.5D)(f64 adouble)(>)(f64 1.00000003D)(i32 anint)(sx_i64)(<)(&&)(ret)");
+        assertOptionsHint("narrow-int float bound AND double conjunct", options, OptionsHint.WIDE_LANE);
+
+        // Wrapping the conjunct in NOT keeps the pairing inside one predicate, so it must resolve
+        // the same way.
+        options = serialize("not (anint > 16777216.0) and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(!)(&&)(ret)");
+        assertOptionsHint("negated narrow-int float bound AND long conjunct", options, OptionsHint.WIDE_LANE);
+
+        // Forced scalar mode never enters wide-lane mode, so it keeps the short-circuit path - and
+        // the sign extension that the scalar backend implements for every narrow width.
+        options = serialize("anint > 16777216.0 and along = 5", true, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(&&_sc)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(ret)");
+        assertOptionsHint("forced scalar narrow-int float bound", options, OptionsHint.SCALAR);
+
+        // Control: only the CONSTANT widens for an arithmetic subtree (maybeWidenCmpConstOperand),
+        // and a widened constant emits no SX_I64, so no conversion reaches the backend and the
+        // chain must keep its short-circuit path and its scalar hint.
+        options = serialize("anint + 0 > 16777216.0 and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(&&_sc)(f64 1.6777216E7D)(i32 0L)(i32 anint)(+)(>)(ret)");
+        assertOptionsHint("narrow-int arithmetic float bound AND long conjunct", options, OptionsHint.SCALAR);
+
+        // Control: a bound whose rounding cannot reach any INT row is not a conversion source at
+        // all, so this chain must keep short-circuiting too.
+        options = serialize("anint > 1.1 and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(&&_sc)(f32 1.100000023841858D)(i32 anint)(>)(ret)");
+        assertOptionsHint("exact-enough float bound AND long conjunct", options, OptionsHint.MIXED_SIZES);
+    }
+
+    @Test
+    public void testNarrowIntCmpFloatConstUnderNotKeepsShortCircuit() throws Exception {
+        // Control first: the narrow-int leaf and the widening bound ARE the two operands of the one
+        // comparison the NOT wraps, so markNarrowConstCmpWidenPair really does route them to
+        // markNarrowIntCmpFloatConst and the IR carries the sx_i64 it emits. The gate must keep
+        // answering true here, or the chain takes the short-circuit path and the wide-lane guard in
+        // serializePredicatesAndSc declines JIT for a filter that compiles.
+        int options = serialize("not (anint > 16777216.0) and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(!)(&&)(ret)");
+        assertOptionsHint("paired halves under NOT", options, OptionsHint.WIDE_LANE);
+
+        // hasWideLaneConversionSource() treats a NOT subtree as ONE predicate, so searching it for a
+        // narrow-int leaf and for a widening floating-point bound INDEPENDENTLY matches anint from
+        // the FIRST comparison against 1.00000003 from the SECOND. Those two are never the operands
+        // of one comparison, so markNarrowConstCmpWidenPair never marks them and the filter emits no
+        // conversion at all - note the absence of sx_i64 below. Suppressing the mixed-size detector
+        // for that non-conversion costs the chain its short-circuit path, which evaluates every
+        // conjunct on every scanned row, and its sortPredicates reordering, and buys nothing: the
+        // hint stays MIXED_SIZES, and compiler.cpp runs the same scalar loop either way.
+        options = serialize("not (anint > 1 and adouble > 1.00000003) and anint < 100", false, false, false);
+        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertOptionsHint("cross-comparison halves under NOT, AND chain", options, OptionsHint.MIXED_SIZES);
+
+        // OR chains ride the same gate.
+        options = serialize("not (anint > 1 and adouble > 1.00000003) or anint < 100", false, false, false);
+        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(||_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertOptionsHint("cross-comparison halves under NOT, OR chain", options, OptionsHint.MIXED_SIZES);
+
+        // A NOT over OR holds the two halves in one predicate exactly as a NOT over AND does.
+        options = serialize("not (anint > 1 or adouble > 1.00000003) and anint < 100", false, false, false);
+        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(||)(!)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertOptionsHint("cross-comparison halves under NOT over OR", options, OptionsHint.MIXED_SIZES);
+
+        // An 8-byte sibling mixes the widths the same way the 4-byte one does.
+        options = serialize("not (anint > 1 and adouble > 1.00000003) and along < 100", false, false, false);
+        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(&&_sc)(i64 100L)(i64 along)(<)(ret)");
+        assertOptionsHint("cross-comparison halves under NOT, long sibling", options, OptionsHint.MIXED_SIZES);
+
+        // Forced scalar mode never enters wide-lane mode, so the gate is not consulted at all and
+        // the chain keeps its short-circuit path whichever way the pairing resolves.
+        options = serialize("not (anint > 1 and adouble > 1.00000003) and anint < 100", true, false, false);
+        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertOptionsHint("cross-comparison halves under NOT, forced scalar", options, OptionsHint.SCALAR);
+
+        // Control, the direction that is dangerous rather than merely slow: the NOT wraps a genuine
+        // pair AND an unrelated sibling comparison, so the walk has to find the pair among the
+        // comparisons rather than give up once the subtree holds more than one. Were the gate to
+        // answer false here, the mixed widths (4-byte anint against 8-byte along / adouble) would
+        // put the chain on the short-circuit path, where serializePredicatesAndSc's wide-lane guard
+        // rejects the sx_i64 below and declines JIT for the whole filter.
+        options = serialize("not (anint > 16777216.0 and adouble > 1.5) and along = 5", false, false, false);
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.5D)(f64 adouble)(>)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(&&)(!)(&&)(ret)");
+        assertOptionsHint("paired halves under NOT beside a sibling comparison", options, OptionsHint.WIDE_LANE);
+    }
+
+    @Test
     public void testNegatedArithmeticalExpression() throws Exception {
         serialize("-(anint + 42) = -10");
         assertIR("(i32 -10L)(i32 42L)(i32 anint)(+)(neg)(=)(ret)");

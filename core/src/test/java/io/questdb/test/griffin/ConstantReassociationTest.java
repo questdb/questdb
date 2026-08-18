@@ -260,24 +260,6 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLongPairWrappingToLongNullIsNotReassociated() throws Exception {
-        // A LONG (or INT+LONG) constant pair whose LONG-width fold lands exactly on the
-        // LONG_NULL sentinel (-2^63) must not be regrouped: col op (C1 op C2) = col op
-        // LONG_NULL poisons every row to NULL, while the left-associative form keeps the
-        // real wrapped value. The INT-width fold rejects LONG-range / L-suffixed literals, so
-        // LONG pairs stay in source order because a row-dependent intermediate may hit LONG_NULL.
-
-        // 9_223_372_036_854_775_807 + 1 wraps to -2^63 == LONG_NULL
-        assertReassociationNoOp("l + 9_223_372_036_854_775_807 + 1");
-        // L-suffixed operands fold the same way: 9_223_372_036_854_775_806L + 2L -> LONG_NULL
-        assertReassociationNoOp("l + 9_223_372_036_854_775_806L + 2L");
-
-        // A non-sentinel LONG pair also stays in source order because a row-dependent
-        // intermediate can still hit LONG_NULL.
-        assertReassociationNoOp("l + 9_000_000_000_000_000_000 + 100");
-    }
-
-    @Test
     public void testLongNullOperandUnderUnmodeledOperatorIsNotReassociated() throws Exception {
         // CHARACTERIZATION, not pinned semantics. applyLongFold returns LONG_NULL for a LONG_NULL
         // operand BEFORE it inspects the operator, so a constant subtree rooted at an operator the
@@ -305,6 +287,24 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
         // Contrast: drop the sentinel and the identical shape regroups today.
         assertReassociation("b and 1 = 5 and 1 = 6", "b and (1 = 5 and 1 = 6)");
+    }
+
+    @Test
+    public void testLongPairWrappingToLongNullIsNotReassociated() throws Exception {
+        // A LONG (or INT+LONG) constant pair whose LONG-width fold lands exactly on the
+        // LONG_NULL sentinel (-2^63) must not be regrouped: col op (C1 op C2) = col op
+        // LONG_NULL poisons every row to NULL, while the left-associative form keeps the
+        // real wrapped value. The INT-width fold rejects LONG-range / L-suffixed literals, so
+        // LONG pairs stay in source order because a row-dependent intermediate may hit LONG_NULL.
+
+        // 9_223_372_036_854_775_807 + 1 wraps to -2^63 == LONG_NULL
+        assertReassociationNoOp("l + 9_223_372_036_854_775_807 + 1");
+        // L-suffixed operands fold the same way: 9_223_372_036_854_775_806L + 2L -> LONG_NULL
+        assertReassociationNoOp("l + 9_223_372_036_854_775_806L + 2L");
+
+        // A non-sentinel LONG pair also stays in source order because a row-dependent
+        // intermediate can still hit LONG_NULL.
+        assertReassociationNoOp("l + 9_000_000_000_000_000_000 + 100");
     }
 
     @Test

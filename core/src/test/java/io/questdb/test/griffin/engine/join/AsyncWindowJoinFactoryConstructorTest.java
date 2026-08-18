@@ -29,14 +29,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
@@ -47,8 +45,9 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.NativeFilter;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -433,15 +432,6 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
         }
     }
 
-    private static class FaultInjectedException extends RuntimeException {
-        private final FaultPoint faultPoint;
-
-        private FaultInjectedException(FaultPoint faultPoint) {
-            super("injected failure at " + faultPoint);
-            this.faultPoint = faultPoint;
-        }
-    }
-
     private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {
         private final FaultPoint faultPoint;
 
@@ -464,43 +454,6 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
                 throw new FaultInjectedException(faultPoint);
             }
             return super.getSqlAsOfJoinLookAhead();
-        }
-    }
-
-    /**
-     * A filter that holds native memory, so dropping it fails the leak check, and counts its closes, so
-     * closing it twice fails an assertion instead of silently double-freeing.
-     */
-    private static class NativeFilter extends BooleanFunction {
-        private static final long SIZE = 64;
-        private int closeCount;
-        private long ptr;
-
-        private NativeFilter() {
-            ptr = Unsafe.malloc(SIZE, MemoryTag.NATIVE_DEFAULT);
-        }
-
-        @Override
-        public void close() {
-            closeCount++;
-            if (ptr != 0) {
-                ptr = Unsafe.free(ptr, SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return true;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("NativeFilter");
         }
     }
 }
