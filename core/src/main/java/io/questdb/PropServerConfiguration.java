@@ -1912,7 +1912,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.partitionChecksumEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_ENABLED, true);
             this.partitionChecksumStrict = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_STRICT, false);
-            this.partitionChecksumScrubBytesPerSecond = getLong(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND, 50 * Numbers.SIZE_1MB);
+            this.partitionChecksumScrubBytesPerSecond = getLong(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND, 0);
             this.partitionChecksumBlockSize = getIntSize(properties, env, PropertyKey.CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE, Numbers.SIZE_1MB);
             if (partitionChecksumBlockSize <= 0 || Integer.bitCount(partitionChecksumBlockSize) != 1) {
                 // The block index is derived by division. A non-power-of-two silently changes which

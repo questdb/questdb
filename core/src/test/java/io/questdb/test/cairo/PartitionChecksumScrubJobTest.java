@@ -63,6 +63,56 @@ public class PartitionChecksumScrubJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCondemnedPartitionFailsOnlyTheQueriesTouchingIt() throws Exception {
+        // The verdict has to reach the read path, and it has to be SCOPED. A registry that condemns a
+        // partition but never fails a query is decoration; one that fails the whole table is just
+        // suspension with extra steps.
+        assertMemoryLeak(() -> {
+            createSealed("s5");
+            engine.getCorruptPartitionRegistry().clear();
+            final File dir = partitionDir("s5", "2024-01-01");
+            flipByteInFirstCoveredFile(dir);
+
+            new PartitionChecksumScrubJob(engine).runFully();
+            Assert.assertFalse("precondition: the scrub must have condemned it",
+                    engine.getCorruptPartitionRegistry().isEmpty());
+
+            engine.releaseInactive();
+            try {
+                sumV("s5", "where ts < '2024-01-02'");
+                Assert.fail("a query touching the condemned partition must fail");
+            } catch (io.questdb.cairo.CairoException e) {
+                io.questdb.test.tools.TestUtils.assertContains(
+                        e.getFlyweightMessage(), "failed checksum verification");
+            }
+
+            // ... and the healthy partition still answers.
+            Assert.assertEquals(99L, sumV("s5", "where ts >= '2024-01-02'"));
+        });
+    }
+
+    @Test
+    public void testClearingTheVerdictRestoresTheQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createSealed("s6");
+            engine.getCorruptPartitionRegistry().clear();
+            final File dir = partitionDir("s6", "2024-01-01");
+            engine.getCorruptPartitionRegistry().condemn(
+                    engine.verifyTableName("s6"), dir.getName(), "synthetic");
+            engine.releaseInactive();
+            try {
+                sumV("s6", "");
+                Assert.fail("expected the verdict to fail the query");
+            } catch (io.questdb.cairo.CairoException ignored) {
+            }
+
+            engine.getCorruptPartitionRegistry().clear(engine.verifyTableName("s6"), dir.getName());
+            engine.releaseInactive();
+            Assert.assertEquals(165L, sumV("s6", ""));
+        });
+    }
+
+    @Test
     public void testHealthyTableProducesNoVerdict() throws Exception {
         // Negative control for the test above. Also asserts the job really hashed bytes: without that
         // this passes against a job that does nothing at all.
@@ -114,6 +164,16 @@ public class PartitionChecksumScrubJobTest extends AbstractCairoTest {
             Assert.assertTrue("a vanished file is not corruption",
                     engine.getCorruptPartitionRegistry().isEmpty());
         });
+    }
+
+    private long sumV(String table, String where) {
+        try (io.questdb.cairo.sql.RecordCursorFactory f = select("select sum(v) from " + table + " " + where)) {
+            try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                return c.hasNext() ? c.getRecord().getLong(0) : 0L;
+            }
+        } catch (io.questdb.griffin.SqlException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void createSealed(String table) throws Exception {

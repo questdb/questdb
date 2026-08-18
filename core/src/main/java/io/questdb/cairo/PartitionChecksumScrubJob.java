@@ -143,6 +143,26 @@ public class PartitionChecksumScrubJob extends SynchronizedJob {
         return spent;
     }
 
+    /**
+     * Second opinion on a mismatch, from a sidecar re-read from disk.
+     * <p>
+     * Returns false -- no verdict -- when the generation moved (the partition was re-sealed, so the
+     * bytes changed legitimately) or when the re-check passes. A false positive here takes a healthy
+     * partition offline, so the burden of proof sits on the accusation, not on the data.
+     */
+    private boolean confirmMismatch(java.io.File dir, Path data, int entryIndex, long generationBefore) {
+        try (Path chk = new Path(); PartitionChecksumSidecar fresh = new PartitionChecksumSidecar()) {
+            chk.of(dir.getAbsolutePath()).concat(PartitionChecksumSidecar.FILE_NAME);
+            fresh.of(ff, chk, configuration.getPartitionChecksumBlockSize());
+            if (fresh.coverage() != ChecksumTrailer.PRESENT_OK || fresh.generation() != generationBefore) {
+                return false;
+            }
+            return fresh.verifyFile(ff, data.$(), entryIndex) == ChecksumTrailer.MISMATCH;
+        } catch (Throwable th) {
+            return false;
+        }
+    }
+
     private long scrubPartition(TableToken token, java.io.File dir, PartitionChecksumSidecar sidecar, long budget) {
         long spent = 0;
         try (Path chk = new Path(); Path data = new Path()) {
@@ -160,14 +180,24 @@ public class PartitionChecksumScrubJob extends SynchronizedJob {
                 if (len < 0) {
                     continue; // vanished under us: a purge racing the scrub is not corruption
                 }
+                final long generationBefore = sidecar.generation();
                 final int verdict = sidecar.verifyFile(ff, data.$(), i);
                 spent += Math.min(len, sidecar.fileLength(i));
                 if (verdict == ChecksumTrailer.MISMATCH) {
-                    engine.getCorruptPartitionRegistry().condemn(
-                            token,
-                            dir.getName(),
-                            sidecar.fileName(i) + " block " + sidecar.lastMismatchBlock()
-                    );
+                    // A mismatch is NOT yet a verdict. The scrub reads the sidecar and the data at
+                    // different instants and holds no lock, so a partition rewritten in between
+                    // mismatches for entirely healthy reasons -- registering the job in the shared
+                    // worker pool made O3Test condemn eight healthy partitions this way. Corroborate
+                    // against a freshly-read sidecar and require the generation to be unchanged: if
+                    // the partition was re-sealed under us, the bytes changed legitimately and there
+                    // is nothing to report.
+                    final String detail = sidecar.fileName(i) + " block " + sidecar.lastMismatchBlock();
+                    if (confirmMismatch(dir, data, i, generationBefore)) {
+                        engine.getCorruptPartitionRegistry().condemn(token, dir.getName(), detail);
+                    } else {
+                        LOG.info().$("checksum mismatch not corroborated, partition changed under the scrub [path=")
+                                .$(dir.getAbsolutePath()).I$();
+                    }
                     break; // one verdict per partition is enough to fail its queries
                 }
             }

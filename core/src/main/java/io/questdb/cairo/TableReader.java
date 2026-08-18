@@ -82,6 +82,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
     private final PartitionChecksumSidecar checksumSidecar = new PartitionChecksumSidecar();
+    private CorruptPartitionRegistry corruptPartitionRegistry;
     private final int dbRootSize;
     private final FilesFacade ff;
     private final int id;
@@ -127,7 +128,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             CairoConfiguration configuration,
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardFactory) {
-        this(id, configuration, tableToken, scoreboardFactory, null, null);
+        this(id, configuration, tableToken, scoreboardFactory, null, null, null);
     }
 
     // Don't forget to change TableReader srcReader overload when changing this constructor.
@@ -137,9 +138,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
-            @Nullable PartitionOverwriteControl partitionOverwriteControl
+            @Nullable PartitionOverwriteControl partitionOverwriteControl,
+            @Nullable CorruptPartitionRegistry corruptPartitionRegistry
     ) {
         this.id = id;
+        this.corruptPartitionRegistry = corruptPartitionRegistry;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -188,10 +191,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             TableReader srcReader,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
-            @Nullable PartitionOverwriteControl partitionOverwriteControl
+            @Nullable PartitionOverwriteControl partitionOverwriteControl,
+            @Nullable CorruptPartitionRegistry corruptPartitionRegistry
     ) {
         assert srcReader.isOpen() && srcReader.isActive();
         this.id = id;
+        this.corruptPartitionRegistry = corruptPartitionRegistry;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -1449,11 +1454,32 @@ public class TableReader implements Closeable, SymbolTableSource {
      * generation, and those blocks are simply uncovered. A file that is ABSENT is also normal -- a
      * dropped or purged column -- and must not fail the read.
      */
+    /** Last path segment: the partition directory name, which is how verdicts are keyed. */
+    private static CharSequence partitionDirNameOf(Path partitionPath) {
+        final String full = partitionPath.toString();
+        final int slash = full.lastIndexOf(io.questdb.std.Files.SEPARATOR);
+        return slash < 0 ? full : full.substring(slash + 1);
+    }
+
     private void verifyPartitionStructure(Path partitionPath) {
         if (!configuration.isPartitionChecksumEnabled()) {
             return;
         }
         final int plen = partitionPath.size();
+        // A partition the scrub condemned must fail the queries that TOUCH it, and only those -- the
+        // rest of the table stays readable. Checked before the structural work: there is nothing to
+        // learn from a partition already known bad.
+        if (corruptPartitionRegistry != null && !corruptPartitionRegistry.isEmpty()) {
+            final CharSequence dirName = partitionDirNameOf(partitionPath);
+            final String reason = corruptPartitionRegistry.reasonFor(tableToken, dirName);
+            if (reason != null) {
+                throw CairoException.critical(0)
+                        .put("partition failed checksum verification [table=").put(tableToken.getTableName())
+                        .put(", partition=").put(dirName)
+                        .put(", detail=").put(reason)
+                        .put(']');
+            }
+        }
         try {
             partitionPath.concat(PartitionChecksumSidecar.FILE_NAME);
             checksumSidecar.of(ff, partitionPath, configuration.getPartitionChecksumBlockSize());

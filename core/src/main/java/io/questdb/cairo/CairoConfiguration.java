@@ -677,10 +677,19 @@ public interface CairoConfiguration {
     }
 
     /**
-     * Bytes per second the background checksum scrub may hash. 0 disables the scrub.
+     * Bytes per second the background checksum scrub may hash. 0 disables the scrub, and 0 is the
+     * DEFAULT.
+     * <p>
+     * The scrub holds no lock and reads a partition's sidecar and its data at different instants, so a
+     * partition rewritten in between mismatches for entirely healthy reasons. Enabling it by default
+     * made O3Test condemn eight healthy partitions. The job now corroborates every mismatch against a
+     * freshly-read sidecar and requires the generation to be unchanged, which narrows that window but
+     * does not close it -- a lock-free scan of files another thread may rewrite cannot be made sound
+     * by re-reading alone. Until it is properly serialised against the writer, detection here is
+     * OPT-IN: a false positive takes a healthy partition offline, which is worse than not scrubbing.
      */
     default long getPartitionChecksumScrubBytesPerSecond() {
-        return 50 * 1024 * 1024L;
+        return 0;
     }
 
     /**
