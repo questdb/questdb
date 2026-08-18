@@ -223,6 +223,25 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * The FILTERED counterpart of the day-group ordering defect. The unfiltered path goes through
+     * CompositeMergePartitionRecordCursor; a WHERE on the designated timestamp routes through the
+     * INTERVAL cursors instead, whose 9A day-run helpers (forwardRunEnd / backwardRunStart) define a
+     * run by RAW timestamp equality -- the same premise that a split fragment violates. If the interval
+     * cursors share the defect, this fails exactly as the unfiltered case did.
+     */
+    @Test(timeout = 60_000)
+    public void testFilteredScanOrderOnAFragmentedTable() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeCellDay();
+            forceSplit();
+            Assert.assertEquals("precondition: a fragment exists", 1, fragmentDirs("c").size());
+            assertTwinEqual(" WHERE ts >= '2023-01-01T00:00:00.000000Z' AND ts < '2023-01-02T00:00:00.000000Z'");
+        });
+    }
+
+    /**
      * PREMISE CHECK for the backward-scan defect: is the trigger really "a split fragment", or is it
      * "cells whose timestamps interleave"? No fragment here at all -- two cells, each holding rows on
      * BOTH sides of the other's rows. A backward walk over partition entries can only produce ts-DESC
