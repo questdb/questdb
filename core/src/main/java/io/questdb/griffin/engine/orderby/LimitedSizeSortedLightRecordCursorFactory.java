@@ -178,7 +178,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex, rankMaps);
         }
         chain.updateLimits(isFirstN, limit);
-        ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
+        ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
     }
 
     @Override
@@ -274,8 +274,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         if (isInitialized()) {
             if (chain != null && cursor instanceof DynamicLimitCursor) {
                 computeLimits(baseCursor, executionContext);
+                // The cursor implementation was picked once, off the first execution's isFirstN;
+                // it has to re-gate any first-N-only behaviour on the value we just re-derived.
                 chain.updateLimits(isFirstN, limit);
-                ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
+                ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
             }
             return;
         }

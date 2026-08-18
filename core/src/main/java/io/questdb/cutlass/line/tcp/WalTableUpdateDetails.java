@@ -56,6 +56,14 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // in QwpIngressUpgradeProcessor.handleBinaryMessage refuses every later data frame on
     // the connection and no re-seeded TUD is ever built for it.
     private long lastReportedSeqTxn;
+    /**
+     * Sequencer transaction this table's writer was last checked for pending
+     * structure changes at. {@link Long#MIN_VALUE} forces the first check.
+     * <p>
+     * Read and written from the QWP ingest path only, which is single-threaded
+     * per cache, so it needs no synchronisation.
+     */
+    private long lastStructureCheckSeqTxn = Long.MIN_VALUE;
 
     public WalTableUpdateDetails(
             CairoEngine engine,
@@ -85,6 +93,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return lastReportedSeqTxn;
     }
 
+    public long getLastStructureCheckSeqTxn() {
+        return lastStructureCheckSeqTxn;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
@@ -92,5 +104,9 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
 
     public void setLastReportedSeqTxn(long seqTxn) {
         this.lastReportedSeqTxn = seqTxn;
+    }
+
+    public void setLastStructureCheckSeqTxn(long seqTxn) {
+        lastStructureCheckSeqTxn = seqTxn;
     }
 }

@@ -1447,6 +1447,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
                     return new CastCharToSymbolFunctionFactory.Func(function);
+                } else if (ColumnType.isDecimal(toType)) {
+                    return CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
                 break;
             case ColumnType.IPv4:

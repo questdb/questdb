@@ -1961,9 +1961,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+    private boolean reloadColumnVersion(long columnVersion) {
         if (columnVersionReader.getVersion() != columnVersion) {
-            columnVersionReader.readSafe(clock, deadline);
+            // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take.
+            columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
         }
         return columnVersionReader.getVersion() == columnVersion;
     }
@@ -2018,7 +2019,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
-                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
+                !reloadColumnVersion(txFile.getColumnVersion())
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
