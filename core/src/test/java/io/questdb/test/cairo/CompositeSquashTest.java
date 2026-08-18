@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -271,9 +272,6 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * than a comment so the defect cannot be lost, per this suite's own history of a backward cursor
      * that "shipped broken for a while precisely because the tests only ever read forward".
      */
-    @Ignore("PRE-EXISTING DEFECT (not 1E): composite Frame backward scan starts in the wrong cell when a"
-            + " day holds both sibling cells and a split fragment. Forward scan and count() are correct."
-            + " Un-ignore as the acceptance test when the backward frame walk is made fragment-aware.")
     @Test(timeout = 60_000)
     public void testBackwardScanAgreesOnAFragmentedTableWithoutAnySquash() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);

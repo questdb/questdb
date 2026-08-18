@@ -195,7 +195,8 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
             }
         }
         // The pulledXxx scratch holds this day group's first frame (either the buffered look-ahead or a
-        // fresh pull). All frames of one day share the same partition timestamp.
+        // fresh pull). pulledTs is the day's calendar FLOOR (see pullFrame), so a split fragment of this
+        // day groups with it rather than being mistaken for the next day.
         final long dayTs = pulledTs;
         int currentPartitionIndex = pulledPartitionIndex;
         CellIter cell = acquireCell();
@@ -243,7 +244,16 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
         frameCount++;
         pulledPartitionIndex = frame.getPartitionIndex();
         pulledFrameSize = frame.getPartitionHi() - frame.getPartitionLo();
-        pulledTs = reader.getPartitionTimestampByIndex(pulledPartitionIndex);
+        // The CALENDAR FLOOR, not the raw partition timestamp -- this value exists only to decide which
+        // frames belong to the same day group, and a SPLIT FRAGMENT of a day carries a different raw
+        // timestamp while belonging to that same day. Grouping on the raw value closed the day group as
+        // soon as a fragment appeared, emitting the fragment as its own group, which broke global
+        // timestamp order in BOTH directions (measured 2026-08-18: `ORDER BY ts` on a 3-cell day with one
+        // fragment returned 01:00, 21:00, 22:00, 10:00, 20:00). The fragment is simply one more iterator
+        // in the day's heap, which is exactly what the merge below already knows how to handle.
+        pulledTs = reader.getTxFile().getLogicalPartitionTimestamp(
+                reader.getPartitionTimestampByIndex(pulledPartitionIndex)
+        );
         return true;
     }
 
