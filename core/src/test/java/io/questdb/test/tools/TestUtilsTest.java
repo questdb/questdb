@@ -27,6 +27,7 @@ package io.questdb.test.tools;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,6 +39,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class TestUtilsTest extends AbstractCairoTest {
+
+    @Test
+    public void testAssertAsciiCompliance() {
+        TestUtils.assertAsciiCompliance(null);
+        TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{'a'}, true));
+        TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{'a'}, false));
+
+        Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true))
+        );
+    }
 
     @Test
     public void testAssertReverseLinesEqual() {
