@@ -3887,11 +3887,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support DROP PARTITION [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // SP1B: whole-day DROP PARTITION is now cell-correct for composite (N1/N2/N3 fixed plus the
+        // day-container housekeeping), so this no longer refuses. The SQL layer refuses the one shape
+        // that is still wrong -- a cell-qualified LIST name, which dropped the WHOLE day (measured).
 
         // commit changes, there may be uncommitted rows of any partition
         commit();
@@ -13995,6 +13993,65 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Spec 5.1 housekeeping: once a composite day's LAST cell directory is gone, the shared day
+     * container is an empty directory that nothing will ever reclaim — a plain table leaves no such
+     * artifact, so composite would drift from its twin on disk.
+     * <p>
+     * <b>Two independent guards, both required.</b> This runs in the same routine as the N3 collapse
+     * mechanism the {@code removePartition} gate comment describes, and {@code ff.rmdir} is
+     * RECURSIVE — an unguarded call here could delete live sibling cells. So the container is removed
+     * only when:
+     * <ol>
+     *     <li>{@code _txn} has no attached partition left at this timestamp, for ANY cellKey
+     *     ({@code hasAnyAttachedPartitionForTimestamp}, not the cellKey-0 form); and</li>
+     *     <li>the directory is physically empty — every entry enumerated, dots excluded.</li>
+     * </ol>
+     * Either guard alone would be insufficient: (1) can hold while an older cell VERSION directory is
+     * still on disk awaiting purge, and (2) can hold transiently for a day that is still attached.
+     * A directory that fails either check is left alone and reclaimed by the async purge as before.
+     */
+    private void removeEmptyDayContainer(long timestamp) {
+        if (txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
+            return;
+        }
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, timestamp, -1L, null);
+        other.$();
+        if (!ff.exists(other.$()) || !isDirectoryEmpty(other)) {
+            return;
+        }
+        if (ff.rmdir(other)) {
+            LOG.info().$("removed empty composite day container [path=").$substr(pathRootSize, other).I$();
+        } else {
+            LOG.info().$("could not remove empty composite day container, leaving for async purge [path=")
+                    .$substr(pathRootSize, other).$(", errno=").$(ff.errno()).I$();
+        }
+    }
+
+    /**
+     * True when {@code dirPath} holds no entries other than {@code .} and {@code ..}. Deliberately
+     * counts FILES as well as directories: an emptiness guard in front of a recursive delete must not
+     * treat a stray file as "empty".
+     */
+    private boolean isDirectoryEmpty(Path dirPath) {
+        final long findPtr = ff.findFirst(dirPath.$());
+        if (findPtr <= 0) {
+            // unreadable or genuinely empty -- treat as NOT empty rather than risk a recursive delete
+            return findPtr == 0;
+        }
+        try {
+            do {
+                if (Files.notDots(ff.findName(findPtr))) {
+                    return false;
+                }
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
+        return true;
+    }
+
     private void processPartitionRemoveCandidates0(int n) {
         boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
         // When a backup checkpoint is in progress, defer partition removal to async purge.
@@ -14048,6 +14105,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", errno=").$(ff.errno())
                                 .I$();
                         scheduleAsyncPurge = true;
+                    } else if (composite) {
+                        removeEmptyDayContainer(timestamp);
                     }
                 } else {
                     scheduleAsyncPurge = true;

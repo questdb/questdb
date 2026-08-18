@@ -49,7 +49,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 
 | # | Gate / restriction | Owner spec |
 |---|---|---|
-| 1 | `DROP PARTITION` | 1 — partition-lifecycle |
+| 1 | `DROP PARTITION` — **whole-day SUPPORTED 2026-08-18 (1B)**; a cell-qualified `LIST` name still refuses (measured: naming one cell dropped the whole day) | 1 — partition-lifecycle (1C owns per-cell) |
 | 2 | `FORCE DROP PARTITION` | 1 — partition-lifecycle |
 | 3 | `DETACH PARTITION` | 1 — partition-lifecycle |
 | 4 | `ATTACH PARTITION` | 1 — partition-lifecycle |
@@ -176,7 +176,7 @@ composite partitioning does not yet support DEDUP UPSERT KEYS
 composite partitioning does not yet support DETACH PARTITION
 composite partitioning does not yet support DROP COLUMN
 composite partitioning does not yet support DROP INDEX
-composite partitioning does not yet support DROP PARTITION
+composite partitioning does not yet support dropping an individual cell
 composite partitioning does not yet support FORCE DROP PARTITION
 composite partitioning does not yet support FORMAT PARQUET
 composite partitioning does not yet support ORDER BY on an indexed symbol column
@@ -220,7 +220,13 @@ diff /tmp/code.keys /tmp/spec.keys
 ```
 
 Any line in the code set that is not in the spec set is a NEW gate, and the roadmap has a new hole.
-Verified clean 2026-08-17: 37 refusals in code, 37 known keys, empty diff.
+Verified clean 2026-08-18: 37 refusals in code, 37 known keys, empty diff.
+
+The count held at 37 across sub-project 1B, but one key was REPLACED rather than removed: the blanket
+"does not yet support DROP PARTITION" gave way to the far narrower "does not yet support dropping an
+individual cell". Whole-day DROP PARTITION now works on a composite table; only the shape that would
+destroy unnamed data still refuses. A stable count can hide a real change, which is why the swap is
+recorded here.
 
 The count went 38 -> 37 when sub-project 9A deleted the multi-sub-day-interval gate. That is the
 first key this project has removed by LIFTING a restriction rather than by discovering one; every

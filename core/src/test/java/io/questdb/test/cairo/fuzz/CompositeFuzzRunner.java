@@ -659,7 +659,12 @@ public class CompositeFuzzRunner {
         m.put(FuzzDropColumnOperation.class, Support.GATED);
         m.put(FuzzRenameColumnOperation.class, Support.GATED);
         m.put(FuzzChangeColumnTypeOperation.class, Support.GATED);
-        m.put(FuzzDropPartitionOperation.class, Support.GATED);
+        // SP1B: whole-day DROP PARTITION is supported on a composite table as of 2026-08-18, and
+        // FuzzDropPartitionOperation emits the WHERE form with timestamp bounds only
+        // ("WHERE ts > 'X' AND ts < 'Y'"), which is inherently whole-day -- the drop predicate's
+        // metadata exposes no dimension column, so it cannot name a cell. The one shape still refused
+        // (a cell-qualified LIST name) is not reachable from this generator.
+        m.put(FuzzDropPartitionOperation.class, Support.SUPPORTED);
         m.put(FuzzConvertPartitionToParquetOperation.class, Support.GATED);
         m.put(FuzzConvertPartitionToNativeOperation.class, Support.GATED);
         m.put(FuzzSetTtlOperation.class, Support.GATED);

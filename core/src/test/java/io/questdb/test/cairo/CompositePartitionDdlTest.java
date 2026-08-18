@@ -99,20 +99,18 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
 
             // Day 3 of 5 -- ordinal 2, non-first and non-last.
             execute("alter table p drop partition list '2020-01-03'");
-            // Sub-project 1B Task 0: the refusal moved from the WAL-APPLY side to the STATEMENT.
-            // It used to be accepted here and then suspend the table on apply -- an invariant-6
-            // violation, and the reason this test previously asserted `suspended = true`.
-            try {
-                execute("alter table c drop partition list '2020-01-03'");
-                Assert.fail("DROP PARTITION must be refused at the statement for a routed composite table");
-            } catch (SqlException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(),
-                        "composite partitioning does not yet support DROP PARTITION");
-            }
+            // Sub-project 1B: whole-day DROP PARTITION now WORKS on a composite table, so this test
+            // returns to the assertion it was originally written for -- stride-correct equivalence
+            // with the plain twin. It spent one revision asserting the WAL-apply suspension and
+            // another asserting the statement-time refusal; both were scaffolding around a gate that
+            // no longer exists for this shape.
+            execute("alter table c drop partition list '2020-01-03'");
             drainWalQueue();
 
-            Assert.assertFalse("a refused statement must NOT suspend the table",
+            Assert.assertFalse("a supported drop must not suspend the table",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            assertSqlCursors("select ts, exchange, px from p order by ts, exchange",
+                    "select ts, exchange, px from c order by ts, exchange");
 
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n8\n");
@@ -148,20 +146,18 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
 
             // Day 5 of 6 -- ordinal 4, non-first and non-last.
             execute("alter table p drop partition list '2020-01-05'");
-            // Sub-project 1B Task 0: the refusal moved from the WAL-APPLY side to the STATEMENT.
-            // It used to be accepted here and then suspend the table on apply -- an invariant-6
-            // violation, and the reason this test previously asserted `suspended = true`.
-            try {
-                execute("alter table c drop partition list '2020-01-05'");
-                Assert.fail("DROP PARTITION must be refused at the statement for a routed composite table");
-            } catch (SqlException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(),
-                        "composite partitioning does not yet support DROP PARTITION");
-            }
+            // Sub-project 1B: whole-day DROP PARTITION now WORKS on a composite table, so this test
+            // returns to the assertion it was originally written for -- stride-correct equivalence
+            // with the plain twin. It spent one revision asserting the WAL-apply suspension and
+            // another asserting the statement-time refusal; both were scaffolding around a gate that
+            // no longer exists for this shape.
+            execute("alter table c drop partition list '2020-01-05'");
             drainWalQueue();
 
-            Assert.assertFalse("a refused statement must NOT suspend the table",
+            Assert.assertFalse("a supported drop must not suspend the table",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            assertSqlCursors("select ts, exchange, px from p order by ts, exchange",
+                    "select ts, exchange, px from c order by ts, exchange");
 
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");

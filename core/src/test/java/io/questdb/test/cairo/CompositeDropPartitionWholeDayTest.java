@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.griffin.SqlException;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -69,9 +71,6 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * The acceptance test: dropping a whole middle day must leave the composite table agreeing with
      * its plain twin, and must remove the day's directory from disk.
      */
-    @Ignore("SP1B: DROP PARTITION is still gated. N1 and N2 are FIXED; what remains is spec 5.1"
-            + " housekeeping -- the emptied day CONTAINER directory is left on disk. Rows already"
-            + " match the plain twin. Un-ignore when the gate is narrowed.")
     @Test(timeout = 60_000)
     public void testDropWholeDayMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -93,9 +92,6 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * resolving the new tail's bounds cell-blind. Also asserts the row-count identity the spec calls
      * for, since the tail is where transient/fixed accounting is decided.
      */
-    @Ignore("SP1B: DROP PARTITION is still gated. N1 and N2 are FIXED; what remains is spec 5.1"
-            + " housekeeping -- the emptied day CONTAINER directory is left on disk. Rows already"
-            + " match the plain twin. Un-ignore when the gate is narrowed.")
     @Test(timeout = 60_000)
     public void testDropActivePartitionTail() throws Exception {
         assertMemoryLeak(() -> {
@@ -119,9 +115,6 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * N2: the infinite loop. A day with THREE cells; dropping it must terminate. The timeout is the
      * assertion — a regression here wedges CI rather than failing it, so it must fail fast instead.
      */
-    @Ignore("SP1B: DROP PARTITION is still gated. N1 and N2 are FIXED; what remains is spec 5.1"
-            + " housekeeping -- the emptied day CONTAINER directory is left on disk. Rows already"
-            + " match the plain twin. Un-ignore when the gate is narrowed.")
     @Test(timeout = 60_000)
     public void testDropDayWithMultipleCellsTerminates() throws Exception {
         assertMemoryLeak(() -> {
@@ -142,9 +135,6 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * neighbours with every row and every cell directory intact. If the unlink collapses to the shared
      * day container, this is what catches it.
      */
-    @Ignore("SP1B: DROP PARTITION is still gated. N1 and N2 are FIXED; what remains is spec 5.1"
-            + " housekeeping -- the emptied day CONTAINER directory is left on disk. Rows already"
-            + " match the plain twin. Un-ignore when the gate is narrowed.")
     @Test(timeout = 60_000)
     public void testDropDayDoesNotTouchSiblingDays() throws Exception {
         assertMemoryLeak(() -> {
@@ -167,6 +157,95 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
                     cellsBefore1.size(), cellDirs("c", "2023-01-01").size());
             Assert.assertEquals("dropping day 2 must not remove day 3's cells",
                     cellsBefore3.size(), cellDirs("c", "2023-01-03").size());
+        });
+    }
+
+    /**
+     * The adversarial N3 case: a day whose cells are a MIXTURE of nameTxn states.
+     * <p>
+     * The gate comment says the unlink can collapse to the shared day container "depending on which
+     * cell's nameTxn happens to be the initial -1 sentinel". A freshly-seeded cell IS that sentinel —
+     * it appears on disk as {@code <day>/E0} with no {@code .txn} suffix, gaining {@code E0.<txn>}
+     * only once rewritten. So a day where EVERY cell was written exactly once (as
+     * {@link #testDropDayDoesNotTouchSiblingDays()} builds) is uniform, and may not exercise the
+     * branch at all.
+     * <p>
+     * This builds the mixture deliberately: day 2's E0 is rewritten out-of-order so it carries a real
+     * nameTxn, while E1 and E2 keep the sentinel. Dropping day 2 must still leave days 1 and 3 whole.
+     */
+    @Test(timeout = 60_000)
+    public void testDropDayWithMixedNameTxnStatesDoesNotTouchSiblings() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeMultiCellDays();
+
+            // rewrite ONLY day 2's E0, so that cell leaves the -1 sentinel and its siblings do not
+            insertIntoBoth("('2023-01-02T00:30:00.000000Z','E0',99.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final List<String> day2Cells = cellDirs("c", "2023-01-02");
+            boolean sawSentinel = false;
+            boolean sawVersioned = false;
+            for (String cell : day2Cells) {
+                if (cell.indexOf('.') < 0) {
+                    sawSentinel = true;
+                } else {
+                    sawVersioned = true;
+                }
+            }
+            Assert.assertTrue("setup is vacuous unless day 2 mixes sentinel and versioned cells: "
+                    + day2Cells, sawSentinel && sawVersioned);
+
+            final int cells1 = cellDirs("c", "2023-01-01").size();
+            final int cells3 = cellDirs("c", "2023-01-03").size();
+
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-02'");
+            execute("ALTER TABLE p DROP PARTITION LIST '2023-01-02'");
+            drainWalQueue();
+
+            assertTwinEqual("");
+            Assert.assertEquals("sibling day 1 lost cells", cells1, cellDirs("c", "2023-01-01").size());
+            Assert.assertEquals("sibling day 3 lost cells", cells3, cellDirs("c", "2023-01-03").size());
+            Assert.assertFalse("the emptied day container must be gone",
+                    dayDirs("c").contains("2023-01-02"));
+        });
+    }
+
+    /**
+     * The shape that stays refused, and why whole-day DROP could not simply un-gate.
+     * <p>
+     * MEASURED before this guard existed: {@code DROP PARTITION LIST '2023-01-01/E0'} — naming ONE
+     * cell — dropped the ENTIRE day. A table holding E0/E1/E2 went to empty. That is the alternative
+     * the lifecycle spec rejects outright: a destructive statement must not do visibly more than it
+     * names. Per-cell removal is sub-project 1C; until then the shape is refused at the statement.
+     * <p>
+     * The WHERE form needs no such test: its predicate compiles against metadata exposing only the
+     * designated timestamp, so {@code WHERE exch = 'E0'} fails with "Invalid column: exch" — verified
+     * by probe. Only LIST can name a cell.
+     */
+    @Test(timeout = 60_000)
+    public void testCellQualifiedDropIsRefusedAndChangesNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeMultiCellDays();
+
+            try {
+                execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
+                Assert.fail("dropping an individual cell must be refused until sub-project 1C");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(),
+                        "composite partitioning does not yet support dropping an individual cell");
+            }
+            drainWalQueue();
+
+            // the refusal must be CLEAN: nothing dropped, nothing suspended
+            Assert.assertFalse("a refused statement must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            Assert.assertEquals("no cell may be removed by a refused statement",
+                    3, cellDirs("c", "2023-01-01").size());
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n9\n");
         });
     }
 

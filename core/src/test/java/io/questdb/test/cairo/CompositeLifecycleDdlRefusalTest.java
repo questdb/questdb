@@ -63,9 +63,14 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
         assertRefusedAtStatement("ALTER TABLE c DETACH PARTITION LIST '2023-01-01'");
     }
 
+    /**
+     * Whole-day {@code DROP PARTITION} became SUPPORTED in sub-project 1B, so the operation this test
+     * originally covered is no longer refused at all. What is still refused — and what invariant 6
+     * applies to now — is a cell-qualified name.
+     */
     @Test
-    public void testDropPartitionRefusesAtTheStatement() throws Exception {
-        assertRefusedAtStatement("ALTER TABLE c DROP PARTITION LIST '2023-01-01'");
+    public void testDropIndividualCellRefusesAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c DROP PARTITION LIST '2023-01-01/E0'");
     }
 
     @Test

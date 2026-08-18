@@ -54,14 +54,20 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
     // real routed composite table.
     // ------------------------------------------------------------------------------------------
 
+    /**
+     * Sub-project 1B made WHOLE-DAY {@code DROP PARTITION} work on a composite table, so the blanket
+     * gate this test used to assert is gone. What remains gated is the one shape that would destroy
+     * data the statement did not name: a CELL-QUALIFIED list entry. Measured before the guard existed
+     * — {@code DROP PARTITION LIST '<day>/E0'} took a three-cell day to empty.
+     */
     @Test
-    public void testDropPartitionGated() throws Exception {
+    public void testDropIndividualCellGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
             assertCompositeGateFires(
-                    "alter table c drop partition list '2020-01-01'",
+                    "alter table c drop partition list '2020-01-01/E0'",
                     "c",
-                    "composite partitioning does not yet support DROP PARTITION");
+                    "composite partitioning does not yet support dropping an individual cell");
         });
     }
 

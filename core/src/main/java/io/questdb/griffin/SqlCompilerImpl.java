@@ -1604,6 +1604,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * {@code SET TTL} as a case where the over-broad predicate previously caused a WAL suspension and
      * a silently-no-op DDL.
      */
+    /**
+     * Refuses {@code DROP PARTITION LIST '<day>/<cell>'} on a composite table.
+     * <p>
+     * MEASURED 2026-08-18, and the reason whole-day DROP could not simply un-gate: naming a single
+     * cell dropped the ENTIRE day. A table holding E0/E1/E2 for one day went to EMPTY after
+     * {@code DROP PARTITION LIST '2023-01-01/E0'}. That is the alternative the lifecycle spec
+     * explicitly rejects — "a destructive statement must not do visibly more than it names" — so the
+     * shape stays refused until sub-project 1C implements per-cell removal.
+     * <p>
+     * The WHERE form needs no equivalent guard: its predicate compiles against metadata exposing only
+     * the designated timestamp, so {@code WHERE exch = 'E0'} fails with "Invalid column: exch". Only
+     * the LIST form can name a cell today.
+     */
+    private void refuseCellQualifiedPartitionName(TableToken tableToken, CharSequence partitionName, int position) throws SqlException {
+        if (Chars.indexOf(partitionName, '/') < 0) {
+            return;
+        }
+        if (isRoutedCompositeTable(tableToken)) {
+            throw SqlException.$(position, "composite partitioning does not yet support dropping an individual cell [table=")
+                    .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+        }
+    }
+
     private boolean isRoutedCompositeTable(TableToken tableToken) {
         try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
             return compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0
@@ -1623,8 +1646,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!executionContext.isWalApplication() && isRoutedCompositeTable(tableToken)) {
             switch (action) {
                 case PartitionAction.DROP:
-                    throw SqlException.$(pos, "composite partitioning does not yet support DROP PARTITION [table=")
-                            .put(tableToken.getTableName()).put(']');
+                    // SP1B: whole-day DROP PARTITION is SUPPORTED on a composite table. A
+                    // CELL-QUALIFIED name is not, and is refused per-name below (see
+                    // refuseCellQualifiedPartitionName) rather than here, because the WHERE form
+                    // cannot express one at all: its predicate metadata exposes only the designated
+                    // timestamp, so "WHERE exch = 'E0'" fails with "Invalid column: exch".
+                    break;
                 case PartitionAction.DETACH:
                     throw SqlException.$(pos, "composite partitioning does not yet support DETACH PARTITION [table=")
                             .put(tableToken.getTableName()).put(']');
@@ -1758,6 +1785,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             final CharSequence partitionName = unquote(tok); // potentially a full timestamp, or part of it
             final int lastPosition = lexer.lastTokenPosition();
+            // SP1B: refuse a CELL-QUALIFIED name at the statement. reader == null is exactly
+            // statement-time compilation for a WAL table (see the comment below), and composite
+            // requires WAL, so this is the user-facing compile. During WAL application reader != null
+            // and the check is skipped -- the statement-time refusal means apply is never reached,
+            // and the writer-side gate remains the backstop for non-SQL paths.
+            if (action == PartitionAction.DROP && reader == null) {
+                refuseCellQualifiedPartitionName(tableToken, partitionName, lastPosition);
+            }
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
