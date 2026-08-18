@@ -123,8 +123,9 @@ stages:
           MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
           # Budget for the WHOLE RUN, measured from job start -- not for the loop step alone. The previous
           # version budgeted only the loop, so the template's own pass was spent "for free" and the job blew
-          # its ceiling. 50m keeps a run inside the hourly cadence (~2m setup + ~10m first pass + ~2
-          # iterations). MIN_ITERATION_MINUTES is the conservative length of the LONGEST iteration measured
+          # its ceiling. 50m fits ~2m setup + the template's own pass + ONE iteration -- the
+          # pass measures ~20m on the agent, not the ~10m originally assumed, which is why a second
+          # iteration never starts and the phase is chosen per RUN rather than per iteration. MIN_ITERATION_MINUTES is the conservative length of the LONGEST iteration measured
           # on the CI agent (crash package ~26m; ordinary fuzz ~12m) so the loop never starts one it cannot
           # finish inside the budget.
           TOTAL_RUN_MINUTES: 50
@@ -168,11 +169,24 @@ stages:
               # lets an iteration begin with a second to spare and run to the job timeout -- which reports
               # as a hard-killed red that looks like a test failure.
               min_iter=$(( MIN_ITERATION_MINUTES * 60 ))
+              # Which family this RUN fuzzes. Alternating per ITERATION does not work: a run only ever
+              # fits ONE iteration (the template's own pass takes ~20m of the 50m budget, leaving ~28m
+              # against a 27m minimum), and that iteration is always number 2 -- even -- so the loop
+              # picked ordinary-fuzz every single time and the adaptive crash sweeps were NEVER soaked.
+              # They ran only in the 01:00 nightly, which is precisely the coverage this branch needs
+              # most. Measured on build 262546: "soak iteration 2 (ordinary-fuzz), 28m budget left".
+              #
+              # Alternate on the scheduled hour instead: the cron fires at 02,04,...,22, so (hour/2)%2
+              # flips every run. A badly delayed start can repeat a phase; that is acceptable because
+              # both phases now run many times a day, and it degrades to "some extra ordinary-fuzz",
+              # never to "no crash sweeps".
+              phase=$(( ( $(date -u +%H) / 2 ) % 2 ))
+              echo "run phase=$phase ($([ $phase -eq 0 ] && echo ordinary-fuzz || echo adaptive-crash-sweeps) first)"
               iter=1
               rc=0
               while [ $(( budget - ( $(date +%s) - start ) )) -ge "$min_iter" ]; do
                 iter=$((iter + 1))
-                if [ $((iter % 2)) -eq 0 ]; then
+                if [ $(( (iter + phase) % 2 )) -eq 0 ]; then
                   inc='%regex[.*Fuzz.*class]'; what='ordinary-fuzz'
                 else
                   inc='**/cairo/crash/*.java'; what='adaptive-crash-sweeps'
