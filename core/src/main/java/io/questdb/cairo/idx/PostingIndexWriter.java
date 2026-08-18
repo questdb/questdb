@@ -476,9 +476,14 @@ public class PostingIndexWriter implements IndexWriter {
                     // by whichever instance extended the region last. Never trim
                     // below it. This mirrors of(), which already refuses to trust
                     // the reported file length for the same reason.
-                    long publishedRegionLimit = chain.peekRegionLimit(keyMem);
-                    if (publishedRegionLimit > liveSize) {
-                        liveSize = publishedRegionLimit;
+                    // initKeyMemory() can leave the first 4 KiB header page mapped
+                    // when allocating the second page fails. Do not enter the
+                    // two-page seqlock reader until the live mapping covers both.
+                    if (keyMem.size() >= KEY_FILE_RESERVED) {
+                        long publishedRegionLimit = chain.peekRegionLimit(keyMem);
+                        if (publishedRegionLimit > liveSize) {
+                            liveSize = publishedRegionLimit;
+                        }
                     }
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;

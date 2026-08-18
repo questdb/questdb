@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.idx;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -33,11 +35,17 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,6 +61,65 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * header, so a damaged header must degrade to a logged no-trim, not to a throw.
  */
 public class PostingIndexWriterCloseContractTest extends AbstractCairoTest {
+
+    @Test
+    public void testCloseSkipsHeaderReadAfterRollbackAllocationFailure() throws Exception {
+        final RollbackAllocateFailingFacade failingFf = new RollbackAllocateFailingFacade();
+        final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public long getDataIndexKeyAppendPageSize() {
+                return PostingIndexUtils.PAGE_SIZE;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return failingFf;
+            }
+        };
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        LogFactory.getLog(PostingIndexWriterCloseContractTest.class)
+                .advisory().$("posting close short mapping test started").$();
+        capture.waitFor("posting close short mapping test started");
+        try {
+            assertMemoryLeak(failingFf, () -> {
+                final String name = "posting_close_short_mapping";
+                String failureMessage = null;
+                int suppressedCount = -1;
+                try (Path path = new Path().of(testConfiguration.getDbRoot());
+                     PostingIndexWriter writer = new PostingIndexWriter(
+                             testConfiguration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    writer.add(1, 0);
+                    writer.setMaxValue(0);
+                    writer.commit();
+
+                    failingFf.arm();
+                    writer.rollbackConditionally(0);
+                    Assert.fail("rollback must propagate the injected allocation failure");
+                } catch (CairoException e) {
+                    failureMessage = e.getFlyweightMessage().toString();
+                    suppressedCount = e.getSuppressed().length;
+                } finally {
+                    failingFf.disarm();
+                }
+
+                Assert.assertNotNull("rollback must preserve its allocation failure", failureMessage);
+                Assert.assertTrue(failureMessage, failureMessage.contains("No space left"));
+                Assert.assertEquals("close must not mask the allocation failure", 0, suppressedCount);
+                Assert.assertEquals("the injected allocation must run exactly once", 1, failingFf.getFailureCount());
+                Assert.assertEquals(
+                        "allocation failure must leave the live .pk mapping shorter than the two-page header",
+                        PostingIndexUtils.PAGE_SIZE,
+                        failingFf.getLastPkMapSize()
+                );
+            });
+
+            capture.drain();
+            capture.assertNotLogged("posting index close could not size the .pk trim");
+        } finally {
+            capture.stop();
+        }
+    }
 
     @Test
     public void testCloseDoesNotTruncateWhenHeaderIsUnreadable() throws Exception {
@@ -185,6 +252,91 @@ public class PostingIndexWriterCloseContractTest extends AbstractCairoTest {
             mem.putLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, saved[1]);
         } finally {
             mem.close(false);
+        }
+    }
+
+    private static final class RollbackAllocateFailingFacade extends TestFilesFacadeImpl {
+        private boolean isArmed;
+        private int failureCount;
+        private long lastPkMapSize;
+        private long pkFd = -1;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (isArmed && fd == pkFd) {
+                isArmed = false;
+                failureCount++;
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            if (fd == pkFd) {
+                pkFd = -1;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long length(long fd) {
+            if (isArmed && fd == pkFd) {
+                return PostingIndexUtils.PAGE_SIZE;
+            }
+            return super.length(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long address = super.mmap(fd, len, offset, flags, memoryTag);
+            if (fd == pkFd && address != -1) {
+                lastPkMapSize = len;
+            }
+            return address;
+        }
+
+        @Override
+        public long mremap(
+                long fd,
+                long addr,
+                long previousSize,
+                long newSize,
+                long offset,
+                int mode,
+                int memoryTag
+        ) {
+            final long address = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (fd == pkFd && address != -1) {
+                lastPkMapSize = newSize;
+            }
+            return address;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd != -1 && Utf8s.endsWithAscii(name, ".pk")) {
+                pkFd = fd;
+            }
+            return fd;
+        }
+
+        void arm() {
+            failureCount = 0;
+            isArmed = true;
+        }
+
+        void disarm() {
+            isArmed = false;
+        }
+
+        int getFailureCount() {
+            return failureCount;
+        }
+
+        long getLastPkMapSize() {
+            return lastPkMapSize;
         }
     }
 }

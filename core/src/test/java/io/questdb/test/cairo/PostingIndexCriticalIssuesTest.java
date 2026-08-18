@@ -112,32 +112,94 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseDoesNotTruncateChainAppendedByAnotherWriter() throws Exception {
+    public void testCloseDoesNotTruncateV3ChainAppendedByAnotherWriter() throws Exception {
         // A row-less squash target opens as a fresh frame index while the table
         // indexer can still hold the same previously empty .pk open. The frame
-        // writer publishes the first chain entry; the stale table writer must
-        // not truncate that entry when configureFollowerAndWriter closes it.
+        // writer publishes the first covering chain entry, raising the file to
+        // format V3; the stale table writer must not truncate that entry when
+        // configureFollowerAndWriter closes it.
         assertMemoryLeak(() -> {
             final String name = "posting_stale_close";
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                final long publishedRegionLimit;
+                int commitCount = 1;
+                int expectedHeadGenCount = 0;
                 PostingIndexWriter staleWriter = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
                 try {
-                    try (PostingIndexWriter appendWriter = new PostingIndexWriter(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                        appendWriter.add(1, 0);
-                        appendWriter.setMaxValue(0);
-                        appendWriter.commit();
+                    final long staleMapSize = rawFf.length(PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    while (PostingIndexUtils.KEY_FILE_RESERVED
+                            + PostingIndexChainEntry.entrySize(commitCount, 1) <= staleMapSize) {
+                        commitCount++;
                     }
+
+                    final long fakeColBytes = (long) commitCount * Long.BYTES;
+                    final long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                        try (PostingIndexWriter appendWriter = new PostingIndexWriter(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                            appendWriter.configureCovering(
+                                    new long[]{fakeColAddr},
+                                    new long[]{0L},
+                                    new int[]{3},
+                                    new int[]{1},
+                                    new int[]{ColumnType.LONG},
+                                    1
+                            );
+                            for (int i = 0; i < commitCount; i++) {
+                                appendWriter.add(1, i);
+                                appendWriter.setMaxValue(i);
+                                appendWriter.commit();
+                            }
+                            expectedHeadGenCount = appendWriter.getGenCount();
+                        }
+                    } finally {
+                        Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                    }
+
+                    final LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(
+                            rawFf,
+                            keyFile,
+                            rawFf.getPageSize(),
+                            rawFf.length(keyFile),
+                            MemoryTag.MMAP_DEFAULT,
+                            0
+                    )) {
+                        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                        Assert.assertTrue(
+                                "the covering writer must publish a readable chain header",
+                                PostingIndexChainHeader.readUnderSeqlock(pk, header)
+                        );
+                        Assert.assertEquals(
+                                "a real de-aliased covering entry must raise the .pk to format V3",
+                                PostingIndexUtils.V3_FORMAT_VERSION,
+                                header.formatVersion
+                        );
+                        publishedRegionLimit = header.regionLimit;
+                    }
+                    Assert.assertTrue(
+                            "the V3 chain must grow beyond the stale writer's mapped file extent",
+                            publishedRegionLimit > staleMapSize
+                    );
                 } finally {
                     staleWriter.close();
                 }
 
+                Assert.assertTrue(
+                        "stale close must not truncate the V3 chain below its published region limit",
+                        rawFf.length(PostingIndexUtils.keyFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) >= publishedRegionLimit
+                );
                 try (PostingIndexWriter reopenedWriter = new PostingIndexWriter(configuration)) {
                     reopenedWriter.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                    Assert.assertEquals(0, reopenedWriter.getMaxValue());
-                    Assert.assertEquals(1, reopenedWriter.getGenCount());
+                    Assert.assertEquals(commitCount - 1L, reopenedWriter.getMaxValue());
+                    Assert.assertEquals(expectedHeadGenCount, reopenedWriter.getGenCount());
                 }
             }
         });

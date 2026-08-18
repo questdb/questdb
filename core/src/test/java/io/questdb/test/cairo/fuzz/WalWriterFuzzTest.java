@@ -1022,7 +1022,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                         + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
                 final long postSeqEnd = super.readNonNegativeLong(fd, pageOffset
                         + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END);
-                if (formatVersion == PostingIndexUtils.V2_FORMAT_VERSION
+                if (PostingIndexUtils.isSupportedFormatVersion(formatVersion)
                         && regionLimit >= PostingIndexUtils.KEY_FILE_RESERVED
                         && postSeqStart == expectedSeq
                         && postSeqEnd == expectedSeq) {
