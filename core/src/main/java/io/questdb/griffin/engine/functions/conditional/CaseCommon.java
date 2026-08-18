@@ -345,7 +345,6 @@ public class CaseCommon {
         constructors.extendAndSet(LONG128, (position, picker, args, returnType) -> new Long128CaseFunction(picker, args));
         constructors.extendAndSet(UUID, (position, picker, args, returnType) -> new UuidCaseFunction(picker, args));
         constructors.extendAndSet(IPv4, (position, picker, args, returnType) -> new IPv4CaseFunction(picker, args));
-        constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL8, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL16, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL32, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));

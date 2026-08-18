@@ -24,6 +24,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -32,6 +33,9 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -55,6 +59,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -95,7 +100,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     public static final int INCLUDE_GROUPS = 1 << 4;
     public static final int INCLUDE_SERVICE_ACCOUNTS = 1 << 5;
     public static final int INCLUDE_PERMISSIONS = 1 << 6;
-    public static final int INCLUDE_SCHEMA = INCLUDE_TABLES | INCLUDE_VIEWS | INCLUDE_MATERIALIZED_VIEWS;
+    public static final int INCLUDE_LIVE_VIEWS = 1 << 7;
+    public static final int INCLUDE_SCHEMA = INCLUDE_TABLES | INCLUDE_VIEWS | INCLUDE_MATERIALIZED_VIEWS | INCLUDE_LIVE_VIEWS;
     public static final int INCLUDE_ACL = INCLUDE_USERS | INCLUDE_GROUPS | INCLUDE_SERVICE_ACCOUNTS | INCLUDE_PERMISSIONS;
     public static final int INCLUDE_ALL = INCLUDE_SCHEMA | INCLUDE_ACL;
     private static final Log LOG = LogFactory.getLog(ShowCreateDatabaseRecordCursorFactory.class);
@@ -103,8 +109,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private static final Comparator<TableToken> TABLE_NAME_COMPARATOR =
             (a, b) -> a.getTableName().compareTo(b.getTableName());
     protected final int includeMask;
-    private final ShowCreateDatabaseCursor cursor = new ShowCreateDatabaseCursor();
     private final TableTokenCollector tableTokenCollector = new TableTokenCollector();
+    private ShowCreateDatabaseCursor cursor = new ShowCreateDatabaseCursor();
 
     public ShowCreateDatabaseRecordCursorFactory(int includeMask) {
         super(METADATA);
@@ -128,8 +134,16 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateDatabaseCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     // emitted after the object DDL; no-op in OSS, overridden in ent to add GRANT/ADD USER/ASSUME
@@ -150,6 +164,10 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
     // has no per-object source position, so it passes 0. An object dropped between collection and emit
     // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
+    protected RecordCursorFactory liveViewFactory(TableToken token) {
+        return new ShowCreateLiveViewRecordCursorFactory(token, 0);
+    }
+
     protected RecordCursorFactory matViewFactory(TableToken token) {
         return new ShowCreateMatViewRecordCursorFactory(token, 0);
     }
@@ -165,6 +183,9 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private static int categoryBit(TableToken token) {
         if (token.isMatView()) {
             return INCLUDE_MATERIALIZED_VIEWS;
+        }
+        if (token.isLiveView()) {
+            return INCLUDE_LIVE_VIEWS;
         }
         if (token.isView()) {
             return INCLUDE_VIEWS;
@@ -311,6 +332,24 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     ) {
         if (token.isMatView()) {
             collectMatViewDependencies(token, engine, executionContext, out);
+        } else if (token.isLiveView()) {
+            // a live view reads exactly one base table; emit it first so the
+            // CREATE LIVE VIEW replays. Prefer the runtime definition, but fall
+            // back to the on-disk _lv when the instance is a state-unreadable
+            // stub with no runtime definition. Emission always rereads _lv, so
+            // without the fallback dependency ordering would disagree with what
+            // is emitted and an alphabetically earlier view could be emitted
+            // before its base, making the dump unreplayable.
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(token.getTableName());
+            final CharSequence baseTableName = instance != null && instance.getDefinition() != null
+                    ? instance.getDefinition().getBaseTableName()
+                    : readLiveViewBaseTableNameFromDisk(token, engine);
+            if (baseTableName != null) {
+                final TableToken base = engine.getTableTokenIfExists(baseTableName);
+                if (base != null) {
+                    out.add(base);
+                }
+            }
         } else if (token.isView()) {
             final ViewDefinition definition = engine.getViewGraph().getViewDefinition(token);
             if (definition != null) {
@@ -335,7 +374,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             SqlExecutionContext executionContext,
             ObjList<TableToken> out
     ) {
-        final MatViewDefinition definition = engine.getMatViewGraph().getViewDefinition(matView);
+        final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(matView);
         if (definition == null) {
             return;
         }
@@ -391,10 +430,35 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         if (token.isMatView()) {
             return matViewFactory(token);
         }
+        if (token.isLiveView()) {
+            return liveViewFactory(token);
+        }
         if (token.isView()) {
             return viewFactory(token);
         }
         return tableFactory(token);
+    }
+
+    // Reads a live view's base table name directly from its on-disk _lv, mirroring the
+    // emission path (ShowCreateLiveViewRecordCursorFactory). Used when the runtime
+    // definition is unavailable - e.g. a state-unreadable stub whose _lv is still intact -
+    // so dependency ordering stays in lock-step with what emission rereads. Returns null
+    // (degrading to no dependency edge) when the _lv cannot be read; cancellation and
+    // timeouts still abort the dump.
+    private CharSequence readLiveViewBaseTableNameFromDisk(TableToken token, CairoEngine engine) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration)
+        ) {
+            path.of(configuration.getDbRoot());
+            return LiveViewDefinition.readBaseTableName(reader, path, path.size(), token);
+        } catch (CairoException e) {
+            if (e.isInterruption() || e.isCancellation()) {
+                throw e;
+            }
+            return null;
+        }
     }
 
     private void topoEmit(

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
@@ -120,9 +121,11 @@ public class MaxDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 int initialBufferSize,
                 int timestampIdx,
                 TimestampComparator comparator,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, dequeMemory, initialBufferSize, timestampIdx, comparator, name);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, dequeMemory, initialBufferSize, timestampIdx, comparator, name, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -143,9 +146,11 @@ public class MaxDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 TimestampComparator comparator,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, dequeMemory, comparator, name);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, dequeMemory, comparator, name, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -201,8 +206,11 @@ public class MaxDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
                                    RecordSink partitionBySink,
                                    Function arg,
                                    TimestampComparator comparator,
-                                   String name) {
-            super(map, partitionByRecord, partitionBySink, arg, comparator, name);
+                                   String name,
+                                   ColumnTypes partitionByKeyTypes,
+                                   boolean liveView,
+                                   CairoConfiguration configuration) {
+            super(map, partitionByRecord, partitionBySink, arg, comparator, name, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override

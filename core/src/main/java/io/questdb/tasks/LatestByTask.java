@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -34,8 +35,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
 public class LatestByTask implements QuietCloseable, Mutable {
-    // Single sequential scan; no LRU caching needed across frames.
-    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(0L);
+    private final PageFrameMemoryPool frameMemoryPool;
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
@@ -52,6 +52,11 @@ public class LatestByTask implements QuietCloseable, Mutable {
     private long valueBaseAddress;
     private int valueBlockCapacity;
     private long valuesMemorySize;
+
+    public LatestByTask(CairoConfiguration configuration) {
+        // Single sequential scan; no LRU caching needed across frames.
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
+    }
 
     @Override
     public void clear() {

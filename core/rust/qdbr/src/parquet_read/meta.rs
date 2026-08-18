@@ -1,152 +1,16 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
-use crate::parquet::qdb_metadata::{ParquetFieldId, QdbMeta, QDB_META_KEY};
+use crate::parquet::qdb_metadata::{extract_qdb_meta, QdbMeta};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use nonmax::NonMaxU32;
-use parquet2::metadata::{ColumnDescriptor, FileMetaData};
+use parquet2::metadata::ColumnDescriptor;
 use parquet2::read::read_metadata_with_size;
-use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
-use parquet2::schema::types::{GroupConvertedType, GroupLogicalType, ParquetType};
-use parquet2::schema::types::{
-    IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
-};
 use parquet2::schema::Repetition;
-use qdb_core::col_type::{
-    encode_array_type, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_parquet_meta::convert::resolve_column_id;
 use std::io::{Read, Seek};
 
-/// Extract the questdb-specific metadata from the parquet file metadata.
-/// Error if the JSON is not valid or the version is not supported.
-/// Returns `None` if the metadata is not present.
-pub(crate) fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMeta>> {
-    let Some(key_value_meta) = file_metadata.key_value_metadata.as_ref() else {
-        return Ok(None);
-    };
-    let Some(questdb_key_value) = key_value_meta.iter().find(|kv| kv.key == QDB_META_KEY) else {
-        return Ok(None);
-    };
-    let Some(json) = questdb_key_value.value.as_deref() else {
-        return Ok(None);
-    };
-    let qdb_meta = QdbMeta::deserialize(json)?;
-    Ok(Some(qdb_meta))
-}
-
-/// Infers a QuestDB `ColumnType` from a parquet `ColumnDescriptor`'s
-/// physical type, logical type, and converted type.
-///
-/// Used when QuestDB-specific metadata (`QdbMeta`) is absent — i.e. for
-/// external parquet files not written by QuestDB.
-pub fn infer_column_type(column: &ColumnDescriptor) -> Option<ColumnType> {
-    match (
-        column.descriptor.primitive_type.physical_type,
-        column.descriptor.primitive_type.logical_type,
-        column.descriptor.primitive_type.converted_type,
-    ) {
-        (
-            PhysicalType::Int64,
-            Some(Timestamp {
-                unit: TimeUnit::Microseconds,
-                is_adjusted_to_utc: _,
-            }),
-            _,
-        ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
-        (
-            PhysicalType::Int64,
-            Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
-            _,
-        ) => Some(ColumnType::new(
-            ColumnTypeTag::Timestamp,
-            QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-        )),
-        (
-            PhysicalType::Int64,
-            Some(Timestamp {
-                unit: TimeUnit::Milliseconds,
-                is_adjusted_to_utc: _,
-            }),
-            _,
-        ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
-        (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-        | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-            ColumnType::new_decimal(precision as u8, scale as u8)
-        }
-        (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
-            Some(ColumnType::new(ColumnTypeTag::Int, 0))
-        }
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-            ColumnType::new_decimal(precision as u8, scale as u8)
-        }
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
-        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
-            Some(ColumnType::new(ColumnTypeTag::Short, 0))
-        }
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
-        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
-            Some(ColumnType::new(ColumnTypeTag::Byte, 0))
-        }
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
-        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
-            Some(ColumnType::new(ColumnTypeTag::Date, 0))
-        }
-        (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
-        (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
-        (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {
-            Some(array_type) => Some(array_type),
-            None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
-        },
-        (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
-        (
-            PhysicalType::FixedLenByteArray(_),
-            Some(PrimitiveLogicalType::Decimal(precision, scale)),
-            _,
-        )
-        | (
-            PhysicalType::FixedLenByteArray(_),
-            _,
-            Some(PrimitiveConvertedType::Decimal(precision, scale)),
-        ) => ColumnType::new_decimal(precision as u8, scale as u8),
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-            ColumnType::new_decimal(precision as u8, scale as u8)
-        }
-        (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
-            Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
-        }
-        (PhysicalType::FixedLenByteArray(16), _, _) => {
-            Some(ColumnType::new(ColumnTypeTag::Long128, 0))
-        }
-        (PhysicalType::FixedLenByteArray(32), _, _) => {
-            Some(ColumnType::new(ColumnTypeTag::Long256, 0))
-        }
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
-        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
-            Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
-        }
-        (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
-        (PhysicalType::Int96, _, None) => Some(ColumnType::new(
-            ColumnTypeTag::Timestamp,
-            QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-        )),
-        (_, _, _) => None,
-    }
-}
-
-/// Resolves a column's QuestDB id, preferring the authoritative id carried in
-/// `QdbMeta` (the table writer index) over the Parquet `field_id`.
-///
-/// QuestDB stamps both with the same value, but external (non-QuestDB) parquet
-/// has no `QdbMeta` id, so it falls back to the `field_id`. A negative `QdbMeta`
-/// id counts as absent. Returns -1 when neither source supplies an id.
-pub(crate) fn resolve_column_id(
-    qdb_id: Option<ParquetFieldId>,
-    field_id: Option<ParquetFieldId>,
-) -> ParquetFieldId {
-    qdb_id.filter(|&id| id >= 0).or(field_id).unwrap_or(-1)
-}
+pub use qdb_parquet_meta::infer_column_type;
 
 impl ParquetDecoder {
     pub fn read<R: Read + Seek>(
@@ -315,59 +179,6 @@ impl ParquetDecoder {
     }
 }
 
-// The expected layout is described here:
-// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
-// Yet, some software derives from the above layout, so the actual check can't be strict.
-// Known to work with DuckDB's list of doubles.
-fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
-    let mut cur_type;
-    // First check the root field.
-    match base_type {
-        ParquetType::GroupType {
-            field_info: _,
-            logical_type,
-            converted_type,
-            fields,
-        } => {
-            let is_list = *converted_type == Some(GroupConvertedType::List)
-                || *logical_type == Some(GroupLogicalType::List);
-            if !is_list || fields.len() != 1 {
-                return None;
-            }
-            cur_type = &fields[0];
-        }
-        ParquetType::PrimitiveType(_) => {
-            return None;
-        }
-    };
-
-    // Next, count repeated LIST sub-types.
-    let mut dim = 0;
-    loop {
-        match cur_type {
-            ParquetType::PrimitiveType(_) => {
-                break;
-            }
-            ParquetType::GroupType {
-                field_info,
-                logical_type: _,
-                converted_type: _,
-                fields,
-            } => {
-                if fields.len() != 1 {
-                    return None;
-                }
-                if field_info.repetition == Repetition::Repeated {
-                    dim += 1;
-                }
-                cur_type = &fields[0];
-            }
-        }
-    }
-
-    encode_array_type(ColumnTypeTag::Double, dim).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -394,7 +205,7 @@ mod tests {
 
     #[test]
     fn resolve_column_id_prefers_qdb_meta_then_field_id() {
-        use super::resolve_column_id;
+        use crate::parquet_read::meta::resolve_column_id;
         // A non-negative QdbMeta id always wins over the parquet field_id.
         assert_eq!(resolve_column_id(Some(7), Some(3)), 7);
         assert_eq!(resolve_column_id(Some(5), None), 5);

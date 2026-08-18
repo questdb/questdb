@@ -356,7 +356,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 createTableOperation.getAugmentedColumnMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
-            final CharSequence columnName = qc.getName();
+            // Key the column-model map by the clean display name, matching the factory metadata names
+            // (CreateTableOperation resolves these verbatim). toColumnName is identity for ordinary
+            // names, so only a quote-protected alias (operator token / dotted) is affected - without
+            // this its index/dedup/cast/symbol-capacity defs would silently miss downstream.
+            final CharSequence columnName = SqlUtil.toColumnName(qc.getName());
             final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
             model.setColumnNamePos(qc.getAst().position);
             model.setColumnType(ColumnType.UNDEFINED);
@@ -395,6 +399,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (!baseTableToken.isWal()) {
             throw SqlException.$(baseTableNamePosition, "base table has to be WAL enabled");
         }
+        if (baseTableToken.isLiveView()) {
+            // A live view is implicitly WAL, so it slips past the isWal() gate above. Reject it for
+            // the same reason CREATE LIVE VIEW rejects live-on-live: a mat view refreshes through
+            // the apply pipeline that does not support an LV base, and its refresh reads the LV
+            // through LiveViewRecordCursorFactory, which unions the un-flushed tier - so it could
+            // materialise rows no LV WAL txn covers yet and record a lastRefreshBaseTxn behind them.
+            throw SqlException.$(baseTableNamePosition,
+                    "live views are not allowed as base tables [name=").put(baseTableName).put(']');
+        }
 
         // Find sampling interval.
         CharSequence intervalExpr = null;
@@ -415,13 +428,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 intervalExpr = intervalNode.token;
                 intervalPos = intervalNode.position;
                 if (timestamp == null) {
-                    createTableOperation.setTimestampColumnName(Chars.toString(queryColumn.getName()));
+                    // Clean name: the persisted designated-timestamp name is resolved verbatim against
+                    // factory metadata downstream, and the model map is keyed clean (see above). Compute
+                    // it once - toColumnName re-scans the alias and allocates a String on each call.
+                    final String tsName = SqlUtil.toColumnName(queryColumn.getName());
+                    createTableOperation.setTimestampColumnName(tsName);
                     createTableOperation.setTimestampColumnNamePosition(ast.position);
-                    final CreateTableColumnModel timestampModel = createColumnModelMap.get(queryColumn.getName());
+                    final CreateTableColumnModel timestampModel = createColumnModelMap.get(tsName);
                     if (timestampModel == null) {
                         throw SqlException.position(selectTextPosition)
                                 .put("TIMESTAMP column does not exist or not present in select list [name=")
-                                .put(queryColumn.getName()).put(']');
+                                .put(tsName).put(']');
                     }
                 }
             }
@@ -429,6 +446,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // We haven't found timestamp_floor() in SELECT.
         if (intervalExpr == null) {
+            if (timestamp != null) {
+                // The designated timestamp column was already confirmed present in the select
+                // list above, but the query has neither a SAMPLE BY nor a GROUP BY
+                // timestamp_floor(...), so no sampling interval could be inferred. Point the
+                // user at the two supported forms instead of claiming the column is missing.
+                throw SqlException.position(selectTextPosition)
+                        .put("materialized view query requires a sampling interval, use SAMPLE BY or GROUP BY timestamp_floor() [name=")
+                        .put(timestamp).put(']');
+            }
             throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
         }
 
@@ -445,9 +471,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                    final CreateTableColumnModel columnModel = createColumnModelMap.get(column.getName());
+                    final String columnName = SqlUtil.toColumnName(column.getName());
+                    final CreateTableColumnModel columnModel = createColumnModelMap.get(columnName);
                     if (columnModel == null) {
-                        throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
+                        throw SqlException.$(0, "missing column [name=").put(columnName).put(']');
                     }
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
                 }

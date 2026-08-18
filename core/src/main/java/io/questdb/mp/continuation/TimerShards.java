@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
 
@@ -75,6 +77,10 @@ public final class TimerShards {
     private final DelayHeap<DelayedFireable>[] shards;
     private final String threadNamePrefix;
     private final Thread[] threads;
+    private volatile boolean hasTimedOutThread;
+    @TestOnly
+    @Nullable
+    private volatile Runnable joinThreadsHook;
     private volatile boolean running;
 
     @SuppressWarnings("unchecked")
@@ -134,6 +140,11 @@ public final class TimerShards {
         }
     }
 
+    @TestOnly
+    public void setJoinThreadsHook(@Nullable Runnable hook) {
+        this.joinThreadsHook = hook;
+    }
+
     /**
      * Drains every shard and invokes {@link DelayedFireable#shutdown()} on each entry.
      * Halts the timer threads. Idempotent. Must run while worker pools are still
@@ -189,6 +200,7 @@ public final class TimerShards {
         if (running) {
             return;
         }
+        hasTimedOutThread = false;
         running = true;
         for (int i = 0; i < shards.length; i++) {
             final DelayHeap<DelayedFireable> shard = shards[i];
@@ -199,33 +211,79 @@ public final class TimerShards {
         }
     }
 
-    private void joinThreadsQuietly() {
-        for (int i = 0; i < threads.length; i++) {
-            Thread t = threads[i];
-            if (t == null) {
-                continue;
+    private synchronized void joinThreadsQuietly() {
+        final Runnable hook = joinThreadsHook;
+        if (hook != null) {
+            hook.run();
+        }
+        boolean isInterrupted = Thread.interrupted();
+        try {
+            if (hasTimedOutThread) {
+                hasTimedOutThread = false;
+                for (int i = 0; i < threads.length; i++) {
+                    final Thread t = threads[i];
+                    if (t != null) {
+                        if (t.isAlive()) {
+                            hasTimedOutThread = true;
+                        } else {
+                            threads[i] = null;
+                        }
+                    }
+                }
+                return;
             }
-            try {
-                t.join(2_000);
-            } catch (InterruptedException ie) {
+            for (int i = 0; i < threads.length; i++) {
+                Thread t = threads[i];
+                if (t == null) {
+                    continue;
+                }
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                while (t.isAlive()) {
+                    final long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) {
+                        break;
+                    }
+                    try {
+                        t.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                    } catch (InterruptedException ie) {
+                        isInterrupted = true;
+                    }
+                }
+                if (t.isAlive()) {
+                    hasTimedOutThread = true;
+                } else {
+                    threads[i] = null;
+                }
+            }
+        } finally {
+            if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
-            threads[i] = null;
         }
     }
 
     private void runShard(DelayHeap<DelayedFireable> shard) {
         CarrierIdentity.bind();
+        boolean isInterrupted = false;
         try {
             while (running) {
                 try {
                     DelayedFireable e = shard.take();
-                    if (e == PoisonSentinel.INSTANCE || !running) {
+                    if (e == PoisonSentinel.INSTANCE) {
+                        return;
+                    }
+                    if (!running) {
+                        // shutdown() flipped running after take() already removed e from the
+                        // heap, so its drain snapshot will never see e. Fire e's shutdown hook
+                        // here instead of dropping it, otherwise the continuation bound to e is
+                        // never resumed and its context (and socket fd) leaks. We are the sole
+                        // owner post-take(), so this is exactly one terminal call.
+                        e.shutdown();
                         return;
                     }
                     e.expire();
                 } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    isInterrupted = true;
                     if (!running) {
                         return;
                     }
@@ -236,7 +294,13 @@ public final class TimerShards {
         } finally {
             // Release the CarrierLocal row pinned to this shard thread's id so
             // it does not survive across engine restarts in long-running JVMs.
-            CarrierIdentity.unbind();
+            try {
+                CarrierIdentity.unbind();
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 

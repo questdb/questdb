@@ -112,15 +112,6 @@ public class TextPlanSink extends BasePlanSink {
     public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
         clear();
         this.executionContext = executionContext;
-        if (executionContext.getBindVariableService() == null) {//web console
-            this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
-            this.attrIndent = "&nbsp;&nbsp;";
-            this.sink = htmlSink;
-        } else { // pg wire
-            this.childIndent = "    ";
-            this.attrIndent = "  ";
-            this.sink = textSink;
-        }
 
         if (factory != null) {
             factoryStack.push(factory);

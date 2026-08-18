@@ -58,6 +58,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -393,6 +394,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean supportsPageFrameCursor() {
         return singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null;
+    }
+
+    /**
+     * Only the multi-key (IN-list) merge materializes covered columns eagerly into the
+     * frame buffers, so its raw page addresses are directly readable. Single-key
+     * ({@code sym = 'x'}) frame production is metadata-only — the covered columns are
+     * decoded on the async reduce workers and the raw addresses are placeholders — so a
+     * DIRECT_PAGE_FRAME parquet reader would export all-null covered columns. Reporting
+     * false routes the single-key parquet export through the row-wise cursor path, which
+     * decodes the covered columns the same way the query path does.
+     */
+    @Override
+    public boolean producesMaterializedPageFrames() {
+        return multiKeyPageFrameCursor != null;
     }
 
     @Override
@@ -1423,7 +1438,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 chunkBase = 0;
             }
 
-            final int count = (int) Math.min((long) rowCap, total - chunkBase);
+            final int count = (int) Math.min(rowCap, total - chunkBase);
             if (count <= 0) {
                 // This (key, partition) is exhausted. Clear resume state; the caller
                 // advances to the next partition.
@@ -1450,7 +1465,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // cache exactly as the traverse's natural-exhaustion putCacheEntries
                 // would, BEFORE the pipeline freezes the reader and dispatches workers.
                 // No-op for single-gen-dense; gated on multi-gen + sparse inside.
-                reader.populateCacheForKey(key, clampedMax);
+                reader.populateCacheForKey(key);
             }
 
             final long nextBase = chunkBase + count;
@@ -1806,9 +1821,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public ArrayView getArray(int col, int columnType) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                return cursor.getCoveredArray(includeIdx, columnType);
+                ArrayView array = cursor.getCoveredArray(includeIdx, columnType);
+                if (array != null) {
+                    return array;
+                }
+                // The sidecar reader returns a Java null when the sidecar it would read is not
+                // there to be read - a tombstoned or not-yet-opened slot publishes a zero end
+                // offset. That is a NULL array's worth of information, so hand out a NULL
+                // ArrayView, not nothing: getArray() has callers that dereference it straight
+                // away (PGUtils, the record sinks), and they have no null to check.
             }
-            return null;
+            return ArrayConstant.NULL;
         }
 
         @Override
@@ -2386,10 +2409,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // state persists across nextImpl() calls so a partition that exceeds
         // maxRowsPerFrame resumes in the next frame.
         private int mergePartitionIndex = -1;
-        // Base row range of the partition currently being merged. Carried onto
-        // each emitted frame (Task 6 surface); persists across nextImpl()
-        // re-entry alongside mergePartitionIndex.
-        private long mergeRowHi;
         private long mergeRowLo;
 
         MultiKeyCoveringPageFrameCursor(
@@ -2549,7 +2568,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             framePartitionFormat = partFrame.getPartitionFormat();
             framePostingReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
             mergeRowLo = rowLo;
-            mergeRowHi = rowHi;
+            // Base row range of the partition currently being merged. Carried onto
+            // each emitted frame (Task 6 surface); persists across nextImpl()
+            // re-entry alongside mergePartitionIndex.
             boolean any = false;
             for (int i = 0; i < n; i++) {
                 CoveringRowCursor c = openForwardCoveringCursor(

@@ -108,9 +108,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
-    // Assertion-only stamp of the thread that last checked out a cursor; see
-    // assertStampOperatingThread() / assertSameOperatingThread().
-    private long assertOperatingThreadId = -1L;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -135,6 +132,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     // compares against pinnedTableTxn to force a re-pick on pin change even
     // when the chain seqlock has not advanced.
     private long lastPickedPinnedTxn = Long.MIN_VALUE;
+    // Id of the thread that last checked a cursor out of this reader; see
+    // isOperatingThread() / stampOperatingThread().
+    private long operatingThreadId = -1L;
     private long partitionTimestamp;
     private long partitionTxn;
     // Strict-pin: the table txn this reader is pinned at via the scoreboard.
@@ -523,12 +523,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * SAME {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
      * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
      *
-     * @param key             column key (>= 0)
-     * @param maxValueClamped inclusive clamp the cursor uses; reserved for symmetry with
-     *                        {@link #selectKthMatch} — the cache predicate is value-independent,
-     *                        so it does not currently affect which gens are cached
+     * @param key column key (>= 0)
      */
-    public void populateCacheForKey(int key, long maxValueClamped) {
+    public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;
         }
@@ -1292,7 +1289,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
             // headerScratch.formatVersion is populated regardless of pick
             // outcome (read under seqlock at the start of the picker).
-            if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            if (!PostingIndexUtils.isSupportedFormatVersion(headerScratch.formatVersion)) {
                 throw CairoException.critical(0)
                         .put("Unsupported Posting index version: ").put(headerScratch.formatVersion);
             }
@@ -1301,7 +1298,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // Fill staging gen-dir snapshot from the picked entry's payload.
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
-                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset);
+                final int snapshotGenCount = genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
                 // Re-validate the chain header seqlock. extendHead mutates the
                 // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
                 // aligned stores and republishes the header. Without this
@@ -1316,6 +1313,51 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     }
                     Os.pause();
                     continue;
+                }
+                // Close the ENTRY-level seqlock. PostingIndexChainEntry.read()
+                // latches GEN_COUNT first behind a loadFence, which rules out
+                // "new GEN_COUNT with old payload". It does NOT rule out the
+                // reverse: an entry rewritten in place with a SMALLER GEN_COUNT
+                // (a seal/recreate reusing the same chain offset) leaves our
+                // latched GEN_COUNT too large, so the gen-dir we just walked
+                // mixes the new incarnation's leading slots with the previous
+                // one's stale tail. extendHead mutates the entry BEFORE the
+                // publish() that bumps the chain header, so the outer seqlock
+                // above cannot see it either. Re-read GEN_COUNT and retry on any
+                // change -- this is the release half of the entry protocol.
+                Unsafe.loadFence();
+                if (keyMem.getInt(entryScratch.offset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT) != entryScratch.genCount) {
+                    if (clock.getTicks() > deadline) {
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
+                        return;
+                    }
+                    Os.pause();
+                    continue;
+                }
+                // Both seqlocks held across snapshotMetadata, so the gen-dir we
+                // walked is a single self-consistent entry version. A drop in
+                // the TXN_AT_SEAL sequence is therefore not a torn read but
+                // corruption at rest: a GEN_COUNT covering a gen-dir slot that
+                // was never validly written (historically, a .pk truncated below
+                // its published regionLimit -- see PostingIndexWriter.close()).
+                //
+                // Fail the read rather than serving the monotonic prefix. The
+                // unpublished slot reads as TXN_AT_SEAL=0 / SIZE=0 /
+                // KEY_COUNT=0, so silently truncating to the prefix returns a
+                // partial index scan -- wrong rows, no signal.
+                if (snapshotGenCount < entryScratch.genCount) {
+                    LOG.critical().$(INDEX_CORRUPT)
+                            .$(" [reason=gen-dir TXN_AT_SEAL not monotonic, entryOffset=").$(entryScratch.offset)
+                            .$(", genCount=").$(entryScratch.genCount)
+                            .$(", publishedGenCount=").$(snapshotGenCount)
+                            .$(", sealTxn=").$(entryScratch.sealTxn)
+                            .$(']').$();
+                    throw CairoException.critical(0)
+                            .put(INDEX_CORRUPT)
+                            .put(" [reason=gen-dir TXN_AT_SEAL not monotonic, entryOffset=").put(entryScratch.offset)
+                            .put(", genCount=").put(entryScratch.genCount)
+                            .put(", publishedGenCount=").put(snapshotGenCount)
+                            .put(']');
                 }
                 genLookup.commitSnapshot();
                 genLookup.invalidateCache();
@@ -1332,9 +1374,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // active snapshot. Slots are zero-padded to coverCount so
                 // callers can read them by includeIdx without bounds checks.
                 sidecarFileEndOffsets.clear();
-                sidecarFileEndOffsets.setPos(coverCount);
+                // Use the entry's OWN authoritative cover count where it exceeds
+                // the reader's live .pci coverCount (which can be transiently 0
+                // mid covering-config): a format-1 entry carries its footer for its
+                // packed coverCount, so covered reads stay robust instead of
+                // returning NULL. Equal in the steady state.
+                final int effCoverCount = Math.max(coverCount, entryScratch.coverCount);
+                sidecarFileEndOffsets.setPos(effCoverCount);
                 int picked = entryScratch.coverFileEndOffsets.size();
-                for (int c = 0; c < coverCount; c++) {
+                for (int c = 0; c < effCoverCount; c++) {
                     sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
                 }
                 this.lastPickedPinnedTxn = this.pinnedTableTxn;
@@ -1360,7 +1408,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 sidecarFileEndOffsets.setQuick(c, 0L);
             }
             // Reset gen lookup to an empty staging snapshot and promote it.
-            genLookup.snapshotMetadata(keyMem, 0, 0L);
+            genLookup.snapshotMetadata(keyMem, 0, 0L, PostingIndexUtils.COVERING_FORMAT_LEGACY, 0);
             genLookup.commitSnapshot();
             genLookup.invalidateCache();
             this.lastPickedPinnedTxn = this.pinnedTableTxn;
@@ -1710,27 +1758,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
     }
 
-    // Single-owner tripwire (assertion-only). A posting reader and its pooled
-    // cursors are driven by exactly one thread at a time: the thread that owns the
-    // enclosing TableReader between pool acquire/release. getCursor() stamps that
-    // thread via assertStampOperatingThread() and every cursor close() checks it
-    // here. A posting cursor whose close() runs after the reader was released to the
-    // pool and re-acquired by another thread -- the lifecycle hazard that
-    // CoveringIndexRecordCursorFactory.CoveringCursor.close() avoids by freeing the
-    // row cursor BEFORE the frame cursor -- trips this assert instead of silently
-    // re-pooling into / racing a concurrently-reloaded reader. Never relied upon for
-    // correctness: the isOpen() guard in each cursor close() is the actual leak
-    // mitigation, and this stamp is only written under -ea.
-    protected boolean assertSameOperatingThread() {
-        final long owner = assertOperatingThreadId;
-        return owner == -1L || owner == Thread.currentThread().threadId();
-    }
-
-    protected boolean assertStampOperatingThread() {
-        assertOperatingThreadId = Thread.currentThread().threadId();
-        return true;
-    }
-
     /**
      * Single-threaded warm-up so the reader can later be read concurrently by N worker
      * cursors without any of them mutating shared state. For each key, drives a full cursor
@@ -1759,13 +1786,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         // the genLookup cache is only committed (putCacheEntries) when the gen walk
         // reaches its end, so we must not stop early. Closing the cursor returns it
         // to the reader's free list, which is safe because warming is single-threaded.
-        RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns);
-        try {
+        try (RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns)) {
             while (cursor.hasNext()) {
                 cursor.next();
             }
-        } finally {
-            cursor.close();
         }
     }
 
@@ -1803,6 +1827,36 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
+    // Single-owner pooling gate. One logical owner at a time drives a posting
+    // reader and its pooled cursors, but that owner is not pinned to one OS
+    // thread: suspendable queries (HTTP exports, pgwire fragments) migrate the
+    // connection -- and the TableReader it holds -- across worker threads
+    // between fragments, with the event loop serializing the handoff. A cursor
+    // checked out on one worker can therefore legitimately close on another.
+    // getCursor() records its thread via stampOperatingThread(); each cursor
+    // close() consults this method (via AbstractCoveringCursor.canRepool) to
+    // decide whether re-pooling is safe -- "isOpen() then freeCursors.add(this)"
+    // is a non-atomic check-then-act on a plain ObjList, so it must stay
+    // serialized with getCursor() on the stamping thread. Off-thread closes
+    // skip the pool and free the cursor-local buffers directly, which touches
+    // no reader-shared state.
+    //
+    // This gate is defense-in-depth, not a concurrency primitive. The field is
+    // a plain long: a stale closer (a cursor that outlives its reader's
+    // release to the reader pool) can still pass the gate by closing on the
+    // original stamping thread before the new owner's first getCursor()
+    // re-stamps, and even after a re-stamp the JMM lets the stale closer read
+    // its own older stamp. Correctness for the pooled-reader case relies on
+    // every close path freeing row cursors BEFORE the frame cursor releases
+    // the TableReader (CoveringIndexRecordCursorFactory.CoveringCursor.close(),
+    // closePendingCursor(), closeMergeCursors()); the gate merely narrows the
+    // window when that ordering is broken. Making the field volatile would fix
+    // only the visibility half, not the before-re-stamp timing, so it stays
+    // plain.
+    protected boolean isOperatingThread() {
+        return operatingThreadId == Thread.currentThread().threadId();
+    }
+
     protected void openRequiredSidecars(int[] requiredCoverColumns) {
         if (coverCount == 0) {
             return;
@@ -1835,6 +1889,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 coveredAvailable[c] = sidecarMems.getQuick(c).getFd() != -1;
             }
         }
+    }
+
+    protected void stampOperatingThread() {
+        operatingThreadId = Thread.currentThread().threadId();
     }
 
     // -ea-only invariant check used by the frozen no-op path of openRequiredSidecars:
@@ -1881,6 +1939,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected long[] fsstOffsetsAddrs;
         protected long[] fsstOffsetsCapacities;
         protected boolean isCurrentGenDense;
+        // True while this cursor sits in its reader's free-cursor pool; the
+        // pooling close() sets it, the getCursor() pop clears it.
+        protected boolean isPooled;
         protected long[] keyBlockAddrs;
         protected int requestedKey;
         protected int sealedGenKeyCount;
@@ -2945,6 +3006,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 keyBlockAddrs[c] = mem.addressOf(keyBlockStart);
             }
             cachedKeyBlockStride = stride;
+        }
+
+        // Single place that decides whether close() may return this cursor to
+        // its reader's free-cursor pool; see isOperatingThread() for why the
+        // operating-thread term is load-bearing. Every cursor close() must
+        // route its pooling branch through this gate -- a close that bypasses
+        // it re-introduces the unsynchronized freeCursors mutation off the
+        // stamping thread.
+        protected final boolean canRepool(int poolSize) {
+            return !isPooled && isOperatingThread() && isOpen() && poolSize < MAX_CACHED_FREE_CURSORS;
         }
 
         protected void closeCoveringResources() {

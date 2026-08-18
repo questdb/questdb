@@ -817,16 +817,16 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Disposition: attachment; filename="questdb-query-0.csv"\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                01ed\r
+                ed\r
                 "QUERY PLAN"\r
                 "VirtualRecord"\r
-                "&nbsp;&nbsp;functions: [1]"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan"\r
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x"\r
+                "  functions: [1]"\r
+                "    Async Filter workers: 2"\r
+                "      limit: 1"\r
+                "      filter: (systimestamp()<f and f<0)"\r
+                "        PageFrame"\r
+                "            Row forward scan"\r
+                "            Frame forward scan on: x"\r
                 \r
                 00\r
                 \r
@@ -931,17 +931,17 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                0288\r
+                0188\r
                 {"query":"explain select 1 from x where f>systimestamp() and f<0 limit 1","columns":[{"name":"QUERY PLAN","type":"STRING"}],\
                 "timestamp":-1,"dataset":\
                 [["VirtualRecord"],\
-                ["&nbsp;&nbsp;functions: [1]"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan"],\
-                ["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x"]],\
+                ["  functions: [1]"],\
+                ["    Async Filter workers: 2"],\
+                ["      limit: 1"],\
+                ["      filter: (systimestamp()<f and f<0)"],\
+                ["        PageFrame"],\
+                ["            Row forward scan"],\
+                ["            Frame forward scan on: x"]],\
                 "count":8}\r
                 00\r
                 \r
@@ -4035,6 +4035,35 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonQueryPivotProtectedColumnNames() throws Exception {
+        // Pivot values the compiler wraps in protective quotes internally - operator tokens
+        // ('in', 'and') and dotted names ('FNCL 2.5', the exact shape reported in #6471) - must
+        // surface clean column names in the JSON /exec response the web console renders, with no
+        // embedded double quotes (regression - the quotes used to leak into the headers).
+        getSimpleTester().run((_, _) -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table data (grp int, cat string, val int)");
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into data values (1,'in',10),(1,'and',20),(2,'in',30),(2,'and',40)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp\"," +
+                            "\"columns\":[{\"name\":\"grp\",\"type\":\"INT\"},{\"name\":\"in\",\"type\":\"LONG\"},{\"name\":\"and\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1,\"dataset\":[[1,10,20],[2,30,40]],\"count\":2}",
+                    "data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp"
+            );
+
+            // Dotted pivot values are quote-protected to keep the optimiser from splitting them at the
+            // dot; the JSON headers must be the clean 'FNCL 2.5' / 'FNCL 3.0', not the protective
+            // quotes escaped into the name - the exact #6471 web-console symptom.
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into data values (1,'FNCL 2.5',10),(1,'FNCL 3.0',20),(2,'FNCL 2.5',30),(2,'FNCL 3.0',40)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp\"," +
+                            "\"columns\":[{\"name\":\"grp\",\"type\":\"INT\"},{\"name\":\"FNCL 2.5\",\"type\":\"LONG\"},{\"name\":\"FNCL 3.0\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1,\"dataset\":[[1,10,20],[2,30,40]],\"count\":2}",
+                    "data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp"
+            );
+        });
+    }
+
+    @Test
     public void testJsonQueryPreTouchEnabledForFilteredQueryWithHint() throws Exception {
         testJsonQuery(10, "GET /query?query=" + urlEncodeQuery("select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'") + " HTTP/1.1\r\n" + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
                 HTTP/1.1 200 OK\r
@@ -6752,18 +6781,18 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Disposition: attachment; filename="questdb-query-0.csv"\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                0c22\r
+                0be6\r
                 "a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t"\r
                 80,24814,-727724771,8920866532787660373,"-169665660-01-09T01:58:28.119Z","-51129-02-11T06:38:29.397464Z",,,"EHNRX","ZSX",false,,c2593f82-b430-328d-84a0-9f29df637e38,"}龘и\uDA89\uDFA4~","7","3052","530317703","179044593759294347","98399337010491937706565460457433196947","6405843072573126210386902420367591046213403285949680201448978767689938183093"\r
-                -71,-3567,-66297136,2968650253814730084,"-231836758-02-14T08:10:07.514Z",,,0.18769708157331322,"MYICC","ZOU",false,,ba37e200-ad5b-17cd-ada0-0dc8b85c1bc8,"V1Ѓَᯤ","44","-4377","852921272","626590012581323602",null,"5529561289279261760767987457144935562697534666056683925016328180559980534226"\r
-                -123,27519,1060917944,2235053888582262602,"55828815-02-25T03:11:11.430Z",,0.031670213,0.8940917126581895,"ZXIOV",,false,,bb56ab77-cffe-0a89-4aed-11c72256a80c,,null,"1447","454820511","437331957970287246","12688325603499971133061441136240591465","4956831448100563804018397292451668549587120831177703368353630421437101174985"\r
-                115,-12397,-593242882,8009040003356908243,,"-55010-06-04T03:22:23.429515Z",0.021189213,0.10527282622013212,"BEZGH",,true,,2accfc7a-b9ae-2e0b-5825-a545d3d3e2bd,"맄 Ԡ阷l",null,null,null,null,"43963866222630195039321520511182845016","5780744389761475945393525205748813959675032514762631049695154769015567784032"\r
-                106,24860,-147343840,-6716055087713781882,"281415397-11-08T13:24:17.591Z","193881-08-09T09:56:32.106540Z",,,"USZMZ",,false,,c23d0fe1-08be-331a-e7d3-56cb104e507a,"&J""G~","-1","6471","689798930",null,"30828858387888281526408967246092184105","7367833097437692202048830806440017684702038867044549697852893200307372011800"\r
-                -50,-17313,1440049547,,,,0.7419701,,"RGOON",,true,,,,"-5","3378","634938379","463832009795858033",null,"4840867788353140028978169722381705843263236416228513732245497440068709281969"\r
-                50,-21417,-1728988006,5804262091839668360,"-134025637-08-22T00:30:40.459Z","225267-03-12T12:24:10.327247Z",0.82339567,0.7665029914376952,"GPUHH","UGG",false,,b21ebf27-d20c-0c5b-a58b-9151b05d3357,"·ă堝ᢣ΄",null,"5342","141028884","261700233985485037","37310256374757273797964154860871749141","7764385218277204932930872140044853313057627215982097880965270785503904519068"\r
-                -108,20409,705091880,6785355388782691241,"-37575265-08-17T21:43:57.164Z","218384-07-07T23:32:59.752449Z",,0.34224858614452547,"TEQOD","ZEI",true,,b5b1fff1-9077-ef62-b86e-5919a6655475,,"9",null,null,null,null,"188257581751534344546546622513252262638572764711847625372665632176852949217"\r
-                114,-23493,1706748911,,"266635509-11-09T23:44:23.497Z","-269518-11-13T21:46:30.461179Z",0.87669086,0.3058008320091107,"UPDHH",,false,,86b95adc-451c-c000-2f87-2563b25ea913,,"1","-5174","34870849",null,"50229839182839142494448192703840143160","665201130115915069731057209247604050053711832589914458633412948426309297439"\r
-                -61,9007,1175408560,-5681974977924344056,,,0.37303334,0.734728770956117,"LUHLI","YBT",true,,6a10f5a3-5fa4-76fd-c125-0f6e6e2992d6,,"-60","-231","116429939","413493756873094929",null,"1233358033134573228130657383547649754189467735668594675015689657749495929165"\r
+                -71,-3567,-66297136,2968650253814730084,"-231836758-02-14T08:10:07.514Z",,,0.18769708157331322,"MYICC","ZOU",false,,ba37e200-ad5b-17cd-ada0-0dc8b85c1bc8,"V1Ѓَᯤ","44","-4377","852921272","626590012581323602",,"5529561289279261760767987457144935562697534666056683925016328180559980534226"\r
+                -123,27519,1060917944,2235053888582262602,"55828815-02-25T03:11:11.430Z",,0.031670213,0.8940917126581895,"ZXIOV",,false,,bb56ab77-cffe-0a89-4aed-11c72256a80c,,,"1447","454820511","437331957970287246","12688325603499971133061441136240591465","4956831448100563804018397292451668549587120831177703368353630421437101174985"\r
+                115,-12397,-593242882,8009040003356908243,,"-55010-06-04T03:22:23.429515Z",0.021189213,0.10527282622013212,"BEZGH",,true,,2accfc7a-b9ae-2e0b-5825-a545d3d3e2bd,"맄 Ԡ阷l",,,,,"43963866222630195039321520511182845016","5780744389761475945393525205748813959675032514762631049695154769015567784032"\r
+                106,24860,-147343840,-6716055087713781882,"281415397-11-08T13:24:17.591Z","193881-08-09T09:56:32.106540Z",,,"USZMZ",,false,,c23d0fe1-08be-331a-e7d3-56cb104e507a,"&J""G~","-1","6471","689798930",,"30828858387888281526408967246092184105","7367833097437692202048830806440017684702038867044549697852893200307372011800"\r
+                -50,-17313,1440049547,,,,0.7419701,,"RGOON",,true,,,,"-5","3378","634938379","463832009795858033",,"4840867788353140028978169722381705843263236416228513732245497440068709281969"\r
+                50,-21417,-1728988006,5804262091839668360,"-134025637-08-22T00:30:40.459Z","225267-03-12T12:24:10.327247Z",0.82339567,0.7665029914376952,"GPUHH","UGG",false,,b21ebf27-d20c-0c5b-a58b-9151b05d3357,"·ă堝ᢣ΄",,"5342","141028884","261700233985485037","37310256374757273797964154860871749141","7764385218277204932930872140044853313057627215982097880965270785503904519068"\r
+                -108,20409,705091880,6785355388782691241,"-37575265-08-17T21:43:57.164Z","218384-07-07T23:32:59.752449Z",,0.34224858614452547,"TEQOD","ZEI",true,,b5b1fff1-9077-ef62-b86e-5919a6655475,,"9",,,,,"188257581751534344546546622513252262638572764711847625372665632176852949217"\r
+                114,-23493,1706748911,,"266635509-11-09T23:44:23.497Z","-269518-11-13T21:46:30.461179Z",0.87669086,0.3058008320091107,"UPDHH",,false,,86b95adc-451c-c000-2f87-2563b25ea913,,"1","-5174","34870849",,"50229839182839142494448192703840143160","665201130115915069731057209247604050053711832589914458633412948426309297439"\r
+                -61,9007,1175408560,-5681974977924344056,,,0.37303334,0.734728770956117,"LUHLI","YBT",true,,6a10f5a3-5fa4-76fd-c125-0f6e6e2992d6,,"-60","-231","116429939","413493756873094929",,"1233358033134573228130657383547649754189467735668594675015689657749495929165"\r
                 \r
                 00\r
                 \r
@@ -7420,7 +7449,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, false, true);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, TableToken.Type.TABLE, false, false, false, true);
         try (
                 TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
@@ -7931,8 +7960,7 @@ public class IODispatcherTest extends AbstractTest {
                             do {
                                 dispatcher.run();
                                 dispatcher.processIOQueue(requestProcessor);
-                                // We can't use Os.pause() here since we rely on thread interrupts.
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                             } while (!isInterrupted());
                         } finally {
                             Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);

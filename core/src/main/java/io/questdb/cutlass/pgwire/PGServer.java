@@ -45,7 +45,6 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjectFactory;
@@ -233,8 +232,7 @@ public class PGServer implements Closeable {
                     () -> {
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                 engine,
-                                configuration.getCircuitBreakerConfiguration(),
-                                MemoryTag.NATIVE_CB5
+                                configuration.getCircuitBreakerConfiguration()
                         );
                         PGConnectionContext pgConnectionContext = new PGConnectionContext(
                                 engine,

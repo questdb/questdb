@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -81,6 +84,62 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                         break;
                     }
                     offset++;
+                }
+            }
+        }
+
+        @Override
+        public void computeKeyedBatch(
+                PageFrameMemoryRecord record,
+                FlyweightPackedMapValue mapValue,
+                long baseValueAddr,
+                long batchAddr,
+                long rowCount,
+                long baseRowId
+        ) {
+            // setEmpty pre-seeds rowId = LONG_NULL and value = IPv4_NULL. Null input is
+            // skipped; non-null input wins when the stored value is still null or has a
+            // later rowId. The inherited FirstIPv4 override compares rowIds alone, which
+            // both stores a leading NULL and then refuses to replace it.
+            final long rowIdOffset = mapValue.getOffset(valueIndex);
+            final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
+            // Fast path: arg is a direct IPv4 column with data on the current frame.
+            // Zero page address means a column top; fall through to the record-based path.
+            final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+            if (argAddr != 0) {
+                for (long i = 0; i < rowCount; i++) {
+                    final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                    final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                    final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
+                    // Mirror computeFirst semantics on new entries (write through even for
+                    // null values) so the state matches what the per-row path produces.
+                    if (value != Numbers.IPv4_NULL || Map.isNewBatchEntry(encoded)) {
+                        final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                        final long rowId = baseRowId + rowIndex;
+                        final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                        if (existingValue == Numbers.IPv4_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                            Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                            Unsafe.putInt(entryBase + valueColumnOffset, value);
+                        }
+                    }
+                }
+            } else {
+                for (long i = 0; i < rowCount; i++) {
+                    final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                    final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                    record.setRowIndex(rowIndex);
+                    final int value = arg.getIPv4(record);
+                    // Mirror computeFirst semantics on new entries (write through even for
+                    // null values) so the state matches what the per-row path produces.
+                    if (value != Numbers.IPv4_NULL || Map.isNewBatchEntry(encoded)) {
+                        final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                        final long rowId = baseRowId + rowIndex;
+                        final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                        if (existingValue == Numbers.IPv4_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                            Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                            Unsafe.putInt(entryBase + valueColumnOffset, value);
+                        }
+                    }
                 }
             }
         }

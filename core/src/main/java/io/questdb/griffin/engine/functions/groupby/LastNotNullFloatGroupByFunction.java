@@ -50,7 +50,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putFloat(valueIndex + 1, value);
                     }
@@ -79,7 +79,9 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            for (long i = 0; i < rowCount; i++) {
+            // Backwards: last-wins, so a forward scan would rewrite a key's entry for every later
+            // non-null row. See GroupByFunction.computeKeyedBatch().
+            for (long i = rowCount - 1; i >= 0; i--) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
@@ -96,7 +98,8 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
                 }
             }
         } else {
-            for (long i = 0; i < rowCount; i++) {
+            // Backwards for the same last-wins reason as the direct-column path above.
+            for (long i = rowCount - 1; i >= 0; i--) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);

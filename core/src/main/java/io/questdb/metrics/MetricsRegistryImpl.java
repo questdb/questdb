@@ -26,6 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Holds the set of scrape {@link Target}s and renders them into Prometheus format.
@@ -55,6 +56,14 @@ public class MetricsRegistryImpl implements MetricsRegistry {
             next[current.length] = target;
             targets = next;
         }
+    }
+
+    /**
+     * No OSS caller; downstream (enterprise) target-leak tests are the consumers.
+     */
+    @TestOnly
+    public int getTargetCount() {
+        return targets.length;
     }
 
     @Override

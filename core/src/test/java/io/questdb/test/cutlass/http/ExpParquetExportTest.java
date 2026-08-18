@@ -29,10 +29,15 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -64,6 +69,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
@@ -371,6 +377,29 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "{\"version\":1,\"schema\":[{\"column_type\":6,\"column_top\":0,\"id\":0}]}",
                             params
                     );
+                });
+    }
+
+    @Test
+    public void testExpCsvExportPivotProtectedColumnNames() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE data (grp INT, cat STRING, val INT)", sqlExecutionContext);
+                    engine.execute("INSERT INTO data VALUES (1,'in',10),(1,'and',20),(2,'in',30),(2,'and',40)", sqlExecutionContext);
+
+                    // Operator-token pivot columns are quote-protected internally; the CSV export
+                    // must emit clean, ordinary CSV-quoted headers ("in","and"), not the protective
+                    // quotes escaped into the name ("""in""","""and""") - a regression for the leak.
+                    String expectedCsv = """
+                            "grp","in","and"\r
+                            1,10,20\r
+                            2,30,40\r
+                            """;
+
+                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                    params.put("query", "data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp");
+                    params.put("format", "csv");
+                    testHttpClient.assertGet("/exp", expectedCsv, params, null, null);
                 });
     }
 
@@ -964,6 +993,16 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportClearsTaskBeforeTrackerCursor() throws Exception {
+        assertParquetExportTaskClosesBeforeTrackerCursor(false);
+    }
+
+    @Test
+    public void testParquetExportClosesTaskBeforeTrackerCursor() throws Exception {
+        assertParquetExportTaskClosesBeforeTrackerCursor(true);
+    }
+
+    @Test
     public void testParquetExportCompressionCode() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1261,7 +1300,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
             )) {
@@ -1274,7 +1313,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
@@ -1376,9 +1415,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.HTTP_MIN_ENABLED.getPropertyPath(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestExpLimit),
                     PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestJsonLimit)
             )) {
@@ -1979,6 +2018,194 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFramePostingIndexCoveringScanMultiWorker() throws Exception {
+        // Regression for "posting index cursor closed off the reader's owning thread"
+        // (AssertionError under -ea). A POSTING-indexed covering scan (symbol IN (...))
+        // exported as parquet drives the MultiKeyCoveringPageFrameCursor. On a multi-worker
+        // HTTP server the export streams across worker threads and
+        // HttpConnectionContext.reset() closes the page-frame cursor on a worker other than
+        // the one that opened the posting index cursor. Cursor.close() used to assert
+        // same-thread and abort the close, leaking the reader; it now detects the off-thread
+        // close via AbstractPostingIndexReader.isOperatingThread() and releases the cursor's
+        // buffers directly instead of re-pooling. getExportTester() pins workerCount=1,
+        // which hides the migration; this test uses several workers so the close can land
+        // off the operating thread. The builder is hand-rolled rather than chained off
+        // getExportTester() because the helper also injects randomized 1-1024-byte forced
+        // send/recv fragmentation (documented slow on Mac/Windows), which this 300k-row,
+        // 4-client test cannot afford; the fixed 2048-byte send buffer already fragments
+        // the stream enough to force suspend/resume migrations.
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(4)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withSendBufferSize(2048)
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export")
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE deriv (
+                                symbol SYMBOL INDEX TYPE POSTING INCLUDE (open, high, low, close, volume, timestamp),
+                                open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE,
+                                timestamp TIMESTAMP
+                            ) TIMESTAMP(timestamp) PARTITION BY MONTH""", sqlExecutionContext);
+                    // 8 symbols spread over several monthly partitions; enough rows that the
+                    // parquet stream fragments and resumes across workers.
+                    engine.execute("""
+                            INSERT INTO deriv
+                            SELECT 'S' || (x % 8),
+                                rnd_double(), rnd_double(), rnd_double(), rnd_double(), rnd_double(),
+                                timestamp_sequence('2025-01-01T00:00:00.000000Z', 60_000_000L)
+                            FROM long_sequence(300_000)""", sqlExecutionContext);
+
+                    final String query = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
+                            "WHERE symbol IN ('S0','S1','S2','S3','S4','S5','S6','S7')";
+
+                    final int threadCount = 4;
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final AtomicInteger successCount = new AtomicInteger();
+                    final AtomicInteger errorCount = new AtomicInteger();
+                    final Thread[] threads = new Thread[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", query)
+                                        .query("fmt", "parquet")
+                                        .query("filename", "posting_covering_" + threadId);
+                                try (var respHeaders = req.send()) {
+                                    respHeaders.await();
+                                    TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                    respHeaders.getResponse().discard();
+                                    successCount.incrementAndGet();
+                                }
+                            } catch (Throwable e) {
+                                errorCount.incrementAndGet();
+                                LOG.error().$("export client failed: ").$(e).$();
+                            } finally {
+                                Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    Assert.assertEquals("Expected no failed parquet exports", 0, errorCount.get());
+                    Assert.assertEquals("Expected all parquet exports to succeed", threadCount, successCount.get());
+
+                    // The concurrent phase proves the connections survive; this phase
+                    // proves the exported bytes and the plans. The IN list drives
+                    // MultiKeyCoveringPageFrameCursor and the single literal drives
+                    // SingleKeyCoveringPageFrameCursor -- both park partially-drained
+                    // posting cursors across fragments, and on a multi-worker server a
+                    // single /exp request is enough for the parquet copy to close them
+                    // off the operating thread.
+                    final String singleKeyQuery = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
+                            "WHERE symbol = 'S3'";
+                    final String[] verifyQueries = {query, singleKeyQuery};
+                    final StringSink planSink = new StringSink();
+                    for (String verifyQuery : verifyQueries) {
+                        planSink.clear();
+                        TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + verifyQuery, planSink);
+                        TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+                    }
+                    try (
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
+                    ) {
+                        for (int i = 0; i < verifyQueries.length; i++) {
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp")
+                                    .query("query", verifyQueries[i])
+                                    .query("fmt", "parquet");
+                            sink.clear();
+                            testHttpClient.reqToSink(req, sink, null, null, null, null);
+                            assertParquetMatchesQuery(
+                                    engine,
+                                    sqlExecutionContext,
+                                    sink,
+                                    verifyQueries[i],
+                                    "posting_covering_verify_" + i + ".parquet"
+                            );
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportCoveringScanShapes() throws Exception {
+        // Regression for covering scans exporting all-null covered columns to parquet. A
+        // single-key scan (sym = 'x') produces metadata-only page frames -- covered columns are
+        // decoded on the async reduce workers -- so every zero-copy export route that reads raw
+        // frame addresses (DIRECT_PAGE_FRAME and PAGE_FRAME_BACKED) shipped placeholders. Each
+        // shape below reaches a different route: a bare projection with a computed column reaches
+        // PAGE_FRAME_BACKED, a query through a view reaches it via StaleViewCheckFactory (whose
+        // getBaseFactory() skips its own base), and a var-size covered column falls to
+        // CURSOR_BASED. The multi-key (IN-list) merge materializes eagerly and stays on
+        // DIRECT_PAGE_FRAME -- exercised here with a var-size covered column, the shape most
+        // likely to hide a latent eager-materialization gap. All must match the source query.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE deriv (
+                                symbol SYMBOL INDEX TYPE POSTING INCLUDE (open, note, timestamp),
+                                open DOUBLE, note VARCHAR,
+                                timestamp TIMESTAMP
+                            ) TIMESTAMP(timestamp) PARTITION BY MONTH""", sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO deriv
+                            SELECT 'S' || (x % 8), rnd_double(), rnd_varchar(1, 20, 1),
+                                timestamp_sequence('2025-01-01T00:00:00.000000Z', 3_600_000_000L)
+                            FROM long_sequence(20_000)""", sqlExecutionContext);
+                    engine.execute("CREATE VIEW deriv_v AS SELECT timestamp, symbol, open, note FROM deriv", sqlExecutionContext);
+
+                    final String[] queries = {
+                            // single-key projection with a computed column over the covering scan -> PAGE_FRAME_BACKED
+                            "SELECT symbol, open + 1 AS o FROM deriv WHERE symbol = 'S3'",
+                            // single-key query through a view -> StaleViewCheckFactory wraps the covering scan directly
+                            "SELECT timestamp, symbol, open, note FROM deriv_v WHERE symbol = 'S3'",
+                            // single-key var-size covered column -> CURSOR_BASED
+                            "SELECT symbol, note FROM deriv WHERE symbol = 'S3'",
+                            // multi-key var-size covered column -> DIRECT_PAGE_FRAME (eager merge)
+                            "SELECT timestamp, symbol, note FROM deriv WHERE symbol IN ('S1', 'S3')",
+                    };
+                    try (
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
+                    ) {
+                        final StringSink planSink = new StringSink();
+                        for (int i = 0; i < queries.length; i++) {
+                            planSink.clear();
+                            TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + queries[i], planSink);
+                            TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp")
+                                    .query("query", queries[i])
+                                    .query("fmt", "parquet");
+                            sink.clear();
+                            testHttpClient.reqToSink(req, sink, null, null, null, null);
+                            assertParquetMatchesQuery(
+                                    engine,
+                                    sqlExecutionContext,
+                                    sink,
+                                    queries[i],
+                                    "covering_shape_" + i + ".parquet"
+                            );
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2062,12 +2289,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
-                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(fragmentation),
                     PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), exportRoot
             )) {
                 serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
@@ -2370,6 +2597,87 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 TestUtils.assertEquals(expectedSink, actualSink);
             }
         }
+    }
+
+    private void assertParquetExportTaskClosesBeforeTrackerCursor(boolean closeState) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicBoolean taskCleanupCalled = new AtomicBoolean();
+            final AtomicBoolean trackerCursorClosed = new AtomicBoolean();
+            try (ExportQueryProcessorState state = new ExportQueryProcessorState(null, null)) {
+                state.setTaskAndCursorForTest(
+                        new CopyExportRequestTask() {
+                            @Override
+                            public void clear() {
+                                onTaskCleanup();
+                                super.clear();
+                            }
+
+                            @Override
+                            public void close() {
+                                onTaskCleanup();
+                                super.close();
+                            }
+
+                            private void onTaskCleanup() {
+                                if (taskCleanupCalled.compareAndSet(false, true)) {
+                                    Assert.assertFalse(
+                                            "export task must close before its tracker cursor closes",
+                                            trackerCursorClosed.get()
+                                    );
+                                }
+                            }
+                        },
+                        new NoRandomAccessRecordCursor() {
+                            @Override
+                            public void close() {
+                                trackerCursorClosed.set(true);
+                            }
+
+                            @Override
+                            public Record getRecord() {
+                                return null;
+                            }
+
+                            @Override
+                            public SymbolTable getSymbolTable(int columnIndex) {
+                                return null;
+                            }
+
+                            @Override
+                            public boolean hasNext() {
+                                return false;
+                            }
+
+                            @Override
+                            public SymbolTable newSymbolTable(int columnIndex) {
+                                return null;
+                            }
+
+                            @Override
+                            public long preComputedStateSize() {
+                                return 0;
+                            }
+
+                            @Override
+                            public long size() {
+                                return 0;
+                            }
+
+                            @Override
+                            public void toTop() {
+                            }
+                        }
+                );
+
+                if (closeState) {
+                    state.close();
+                } else {
+                    state.clear();
+                }
+                Assert.assertTrue("export task cleanup callback must run", taskCleanupCalled.get());
+                Assert.assertTrue("tracker cursor must close during state cleanup", trackerCursorClosed.get());
+            }
+        });
     }
 
     private void assertParquetMatchesQuery(

@@ -407,6 +407,43 @@ public class MergeUnionAllTest extends AbstractCairoTest {
         });
     }
 
+    // A column that is SYMBOL on every branch is widened to STRING inside the union and cast back
+    // to SYMBOL above it. The merge path must join that chain like the plain concat path does,
+    // otherwise an ordered UNION ALL reports STRING where the unordered one reports SYMBOL.
+    @Test
+    public void testSymbolColumnsAreReSymbolisedOnMergePath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (sym symbol, px double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table b (sym symbol, px double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into a values ('x', 10.0, 1), ('y', 20.0, 3)");
+            execute("insert into b values ('x', 30.0, 2), ('z', 40.0, 4)");
+
+            assertQuery("select * from ((select * from a) union all (select * from b)) order by ts")
+                    .withPlanContaining("Union All Merge")
+                    .withPlanNotContaining("Encode sort")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sym\tpx\tts
+                            x\t10.0\t1970-01-01T00:00:00.000001Z
+                            x\t30.0\t1970-01-01T00:00:00.000002Z
+                            y\t20.0\t1970-01-01T00:00:00.000003Z
+                            z\t40.0\t1970-01-01T00:00:00.000004Z
+                            """);
+
+            // the merge path must report the same column type as the plain concat path
+            assertQuery("select typeOf(sym) t from ((select * from a) union all (select * from b)) order by ts limit 1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("t\nSYMBOL\n");
+            assertQuery("select typeOf(sym) t from (select sym from a union all select sym from b) limit 1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("t\nSYMBOL\n");
+        });
+    }
+
     @Test
     public void testTiesPreserveABeforeB() throws Exception {
         assertMemoryLeak(() -> {

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -606,8 +607,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // error. Mirrors the catch in {@link #handleQueryRequest}.
             state.getBatchBuffer().rollbackCurrentBatch();
             state.endStreaming();
+            byte status = mapErrorStatusAndMark(t);
             try {
-                sendQueryError(context, state, failedRequestId, mapErrorStatus(t),
+                sendQueryError(context, state, failedRequestId, status,
                         t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
             } catch (PeerDisconnectedException | PeerIsSlowToReadException sendFail) {
                 throw sendFail;
@@ -750,13 +752,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * resetting the dict mid-stream would invalidate ids referenced by
      * in-flight RESULT_BATCH frames.
      */
-    private void applyCacheResetForUpcomingQuery(
+    private boolean applyCacheResetForUpcomingQuery(
             HttpConnectionContext context,
-            QwpEgressProcessorState state
+            QwpEgressProcessorState state,
+            boolean forceDictReset
     ) {
-        byte resetMask = state.computeCacheResetMask();
+        byte resetMask = state.computeCacheResetMask(forceDictReset);
         if (resetMask == 0) {
-            return;
+            return false;
         }
         state.applyCacheReset(resetMask);
         // OR-merge rather than overwrite: an earlier query may have staged
@@ -773,6 +776,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         LOG.debug().$("Egress cache reset staged [fd=").$(context.getFd())
                 .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
                 .I$();
+        return true;
     }
 
     /**
@@ -906,6 +910,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             case CompiledQuery.CREATE_TABLE:
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
             case CompiledQuery.CREATE_MAT_VIEW:
+            case CompiledQuery.CREATE_LIVE_VIEW:
             case CompiledQuery.CREATE_VIEW: {
                 try (
                         Operation op = cq.getOperation();
@@ -1086,9 +1091,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // client's next delta symbol section fails to decode.
                 state.getBatchBuffer().rollbackCurrentBatch();
                 state.endStreaming();
+                byte status = mapErrorStatusAndMark(t);
                 try {
-                    sendQueryError(context, state, targetRequestId, mapErrorStatus(t),
+                    sendQueryError(context, state, targetRequestId, status,
                             t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+                } catch (PeerDisconnectedException | PeerIsSlowToReadException sendFail) {
+                    throw sendFail;
                 } catch (Throwable ignored) {
                 }
             }
@@ -1149,8 +1157,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         RecordCursor cursor = null;
         PageFrameCursor pageFrameCursor = null;
         try {
+            // Seed requestId before decoding so a decode failure (e.g. a malformed
+            // query_flags trailer) still reports the right id instead of 0.
+            if (length >= 9) {
+                requestId = Unsafe.getLong(payload + 1);
+            }
             decoder.decodeQueryRequest(payload, length, state.getBindVariableService());
             requestId = decoder.requestId;
+            boolean forceDictReset = (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0;
             metrics.markQueryStarted();
             // Check connection-scoped cache caps BEFORE processing the new
             // query. If any soft cap is over, apply the matching local reset
@@ -1161,20 +1175,26 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // apply here -- between queries, not between batches -- guarantees
             // the reset fires at a clean frame boundary and never interleaves
             // with a RESULT_BATCH already staged in the response buffer.
-            applyCacheResetForUpcomingQuery(context, state);
+            boolean cacheResetApplied = applyCacheResetForUpcomingQuery(context, state, forceDictReset);
             LOG.info().$("Egress QUERY_REQUEST [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", sqlLen=").$(decoder.sql.length()).I$();
 
             SqlExecutionContextImpl sqlCtx = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            circuitBreaker.resetTimer();
             sqlCtx.with(
                     context.getSecurityContext(),
                     state.getBindVariableService(),
                     null,
                     context.getFd(),
-                    null
+                    circuitBreaker.of(context.getFd())
             );
             sqlCtx.initNow();
+            // The breaker is shared with the plain-HTTP processors that may have served this
+            // connection before the upgrade; /exec and /exp set per-statement timeouts on it,
+            // so reset to the default, matching JsonQueryProcessor.
+            circuitBreaker.resetMaxTimeToDefault();
 
             // Bounded retry loop: a factory returned by the compile cache may have a
             // stale TableReader reference if the table was dropped+recreated after
@@ -1208,6 +1228,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             // cached: they mutate state and can't be reused as plans.
                             if (!isStreamingType(type, cq)) {
                                 executeNonSelect(context, state, sqlCtx, cq, requestId);
+                                // A non-SELECT never streams, so it misses the scratch shrink
+                                // beginStreaming owns. Run it here when this query reset the dict.
+                                if (cacheResetApplied) {
+                                    state.getBatchBuffer().resetForNewQuery();
+                                }
                                 return;
                             }
                             factory = cq.getRecordCursorFactory();
@@ -1315,12 +1340,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 Misc.free(pageFrameCursor);
                 Misc.free(factory);
             }
-            byte status = mapErrorStatus(e);
-            if (status == QwpConstants.STATUS_CANCELLED) {
-                metrics.markQueryCancelled();
-            } else {
-                metrics.markQueryErrored();
-            }
+            byte status = mapErrorStatusAndMark(e);
             try {
                 sendQueryError(context, state, requestId, status,
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
@@ -1364,6 +1384,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             default -> LOG.debug().$("Egress unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
+    }
+
+    private byte mapErrorStatusAndMark(Throwable e) {
+        byte status = mapErrorStatus(e);
+        if (status == QwpConstants.STATUS_CANCELLED) {
+            metrics.markQueryCancelled();
+        } else {
+            metrics.markQueryErrored();
+        }
+        return status;
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
@@ -1835,6 +1865,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // batchBuffer; the only difference is how we walk rows.
         final boolean isPageFrame = state.isStreamingPageFrame();
         final RecordCursor cursor = isPageFrame ? null : state.getStreamingCursor();
+        final NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
 
         while (true) {
             // Test-only: when the global counter is armed, fire a simulated
@@ -1870,6 +1901,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 sendQueryError(context, state, requestId, QwpConstants.STATUS_CANCELLED, "cancelled by client");
                 return;
             }
+            // The page-frame path never consults the breaker inside the SQL layer; this
+            // between-batch check is the only timeout/disconnect enforcement it gets.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Credit-limited streams park when the client-advertised budget hits
             // zero. The next CREDIT frame replenishes via handleCredit and
             // re-enters streamResults to continue.
@@ -1879,6 +1913,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", batchSeq=").$(state.getStreamingBatchSeq())
                         .I$();
                 state.markStreamingCreditSuspended();
+                metrics.markStreamingCreditSuspended();
                 return;
             }
             // beginBatch wires the columnDefs + symbol-table source onto the
