@@ -58,10 +58,35 @@ name `E0/px.d`, `E1/px.d`, `E2/px.d`.
 
 - [ ] **Step 2: Add cellKey to the queue entry**
 
-`partitionRemoveCandidates` already carries `(timestamp, nameTxn, cellKey)` triples — Plan 4b threaded
-cellKey through that queue across 15 sites. Follow that precedent rather than inventing a second
-convention. A plain table passes `cellKey = 0` and the rendered segment is `null`, which keeps its
-paths byte-identical.
+> **ANSWERED 2026-08-18, and it makes this step WRONG AS WRITTEN.** The prerequisite check found the
+> column-purge queue is **not** in-memory only: `ColumnPurgeJob` persists entries into a real system
+> table, `sys.column_versions_purge_log`, with an explicit positional schema —
+> `column_name symbol(2), columnType int(5), table_partition_by int(6), column_version long(8),
+> partition_timestamp timestamp(9), partition_name_txn long(10)`, `partition by MONTH BYPASS WAL`.
+> There is no cellKey column.
+>
+> So adding one is a **persisted schema change to a system table shared with plain tables**, and rows
+> written by an older build are read back by a newer one — the hazard 1C hit in `AlterOperation`,
+> where the answer was a new command code rather than a wider payload. The
+> `partitionRemoveCandidates` precedent cited below does **not** transfer: that queue is purely
+> in-memory.
+>
+> Three options, to be decided with evidence:
+> 1. add a cellKey column to the purge-log table and treat absent values as day-level — a schema
+>    migration on a `BYPASS WAL` system table;
+> 2. encode the cell into an existing field such as `partition_name_txn` — **rejected on sight**: it
+>    overloads a field whose meaning plain tables depend on;
+> 3. purge a composite table's column files **synchronously** at drop time and never enqueue them,
+>    leaving the async log untouched. Narrower, and plausibly correct: a cell's files have the same
+>    reader-visibility constraints as its partition, and `processPartitionRemoveCandidates` already
+>    handles those cell-aware.
+>
+> Option 3 is the one this plan did not consider and currently looks strongest. Establish which is
+> right before writing code — the same discipline that turned 1B from "lift the gate" into "narrow the
+> gate".
+
+`partitionRemoveCandidates` carries `(timestamp, nameTxn, cellKey)` triples in memory — cited here as
+the shape of a cell-aware queue, NOT as a precedent for widening a persisted one.
 
 - [ ] **Step 3: `removeColumnFiles` passes the cell**
 
