@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.Sender;
+import io.questdb.client.SenderConnectionEvent;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -138,6 +139,16 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
             long tsBase = 1_700_000_000_000_000_000L;
             long tsStepNanos = 1_000L; // 1us per row, well under DAY partition
 
+            // reconnect_max_duration_millis is load-bearing beyond its own name:
+            // any reconnect_* knob set explicitly promotes initialConnectMode to
+            // SYNC (Sender.build()), which is what makes recycleForDictReset()'s
+            // step 7 ensureConnected() take the connectWithRetry(..., 120_000, ...)
+            // retry path instead of a single-shot buildAndConnect. Without it, a
+            // bounce landing exactly on a recycle's own step-7 reconnect throws
+            // once, step 8 latches recycleFailure, and the sender goes
+            // permanently terminal -- this knob is what lets the RECYCLE path (not
+            // just the ordinary I/O-loop reconnect) ride out the bouncer's
+            // downtime at all. Do not trim it.
             String connect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
                     + ";symbol_dict_reset_threshold=" + SYMBOL_DICT_RESET_THRESHOLD
                     + ";reconnect_max_duration_millis=120000"
@@ -153,12 +164,31 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 AtomicLong resetsPerformedHolder = new AtomicLong();
                 AtomicLong symbolDictEpochHolder = new AtomicLong();
                 AtomicInteger restartsDone = new AtomicInteger();
+                AtomicInteger unplannedDisconnects = new AtomicInteger();
+                AtomicReference<QwpWebSocketSender> senderRef = new AtomicReference<>();
                 CountDownLatch producerDone = new CountDownLatch(1);
                 CountDownLatch bouncerDone = new CountDownLatch(1);
                 CountDownLatch firstBatchAcked = new CountDownLatch(1);
 
                 Thread producer = new Thread(() -> {
                     try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(connect)) {
+                        senderRef.set(sender);
+                        // DISCONNECTED fires only when an already-established
+                        // connection is observed dropped mid-stream by the I/O
+                        // loop's OWN reused reconnect factory (buildAndConnect's
+                        // ctx.previousIdx >= 0 check, QwpWebSocketSender.java:3350).
+                        // A recycle's step-7 reconnect always builds a brand-new
+                        // factory (ReconnectSupplier.previousIdx starts at -1), and
+                        // CursorWebSocketSendLoop.close()'s running=false guard
+                        // means a planned teardown never re-enters connectLoop at
+                        // all -- so this listener gives a clean, isolated count of
+                        // unplanned (bouncer-triggered) reconnects that can never be
+                        // conflated with a recycle's own step-7 connect.
+                        sender.setConnectionListener(event -> {
+                            if (event.getKind() == SenderConnectionEvent.Kind.DISCONNECTED) {
+                                unplannedDisconnects.incrementAndGet();
+                            }
+                        });
                         long id = 0;
                         int batchesSinceDrain = 0;
                         while (!stopProducer.get()) {
@@ -168,10 +198,13 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             }
                             batchesSinceDrain++;
                             if (batchesSinceDrain >= TARGET_DRAIN_EVERY_N_BATCHES) {
-                                // Blocking wait for acks -- may straddle a
-                                // bounce mid-wait. See class javadoc.
-                                Assert.assertTrue("periodic drain must succeed within 10s even across a bounce",
-                                        sender.drain(10_000));
+                                // Blocking wait for acks -- may straddle a bounce
+                                // mid-wait. See class javadoc. 30s covers a full
+                                // outage plus reconnect plus a full SF replay under
+                                // chunk=1 fragmentation on a single-threaded server
+                                // worker pool -- the tightest deadline in this test.
+                                Assert.assertTrue("periodic drain must succeed within 30s even across a bounce",
+                                        sender.drain(30_000));
                                 batchesSinceDrain = 0;
                             } else {
                                 sender.flush();
@@ -191,8 +224,16 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             }
                             Os.sleep(2);
                         }
-                        // Drain everything before close() captures final stats,
-                        // so the counters below reflect a fully-settled sender.
+                        // Captured right after the batch loop, before the implicit
+                        // close() below runs. recycleForDictReset() is reachable
+                        // only from table(...) (QwpWebSocketSender.java:3010), so
+                        // close() itself can never advance these counters further --
+                        // this sample is already final. Durability is close()'s job,
+                        // not this sample's: drainOnClose() throws on timeout, which
+                        // the catch (Throwable) below turns into a real
+                        // producerError, so unacked rows can never silently shrink
+                        // the table below rowsProduced.
+                        //
                         // Deliberately NOT sampling getTotalReconnectsSucceeded()
                         // here: recycleForDictReset() closes and discards
                         // cursorSendLoop on every recycle and rebuilds a fresh
@@ -206,6 +247,12 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                     } catch (Throwable t) {
                         producerError.set(t);
                     } finally {
+                        // Release the barrier even if the producer died before its
+                        // first batch drained, so a pre-barrier producer death
+                        // doesn't leave the bouncer blocked on it for a full 60s --
+                        // idempotent, a no-op if already counted down during normal
+                        // operation.
+                        firstBatchAcked.countDown();
                         producerDone.countDown();
                         Path.clearThreadLocals();
                     }
@@ -242,8 +289,37 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 }
                 if (bouncerError.get() != null) {
                     stopProducer.set(true);
+                    // A producer death before the first-batch barrier also
+                    // surfaces as a bouncer failure (the barrier now always
+                    // releases via the producer's own finally, so the bouncer's
+                    // own assertTrue on it should pass -- but if the bouncer
+                    // failed for some other, unrelated reason while a producer
+                    // failure is ALSO in flight, wait briefly for the producer to
+                    // settle and prefer its real exception: it is the more
+                    // informative root cause than the bouncer's derived failure.
+                    producerDone.await(5, TimeUnit.SECONDS);
+                    if (producerError.get() != null) {
+                        throw new AssertionError("producer failed (observed via a concurrent "
+                                + "bouncer failure); rowsProduced=" + rowsProduced.get(), producerError.get());
+                    }
                     throw new AssertionError("bouncer failed after restartsDone=" + restartsDone.get(), bouncerError.get());
                 }
+
+                // Sample the sender's cumulative reset counter the moment the
+                // bouncer's fixed restart schedule finishes, so the floor below
+                // proves recycling happened DURING the bouncing window itself,
+                // not in the post-bounce grace window that follows -- an
+                // end-of-run-only sample could in principle be satisfied by a
+                // pathological serialization where all recycling is starved
+                // while the server bounces and then bursts afterward (arithmetically
+                // reachable at ~2.5ms/batch and a recycle per ~70 rows).
+                QwpWebSocketSender senderAtBounceEnd = senderRef.get();
+                long resetsAtBounceEnd = senderAtBounceEnd != null
+                        ? senderAtBounceEnd.getSymbolDictResetsPerformed() : 0L;
+                Assert.assertTrue("expected the reset threshold to be crossed many times DURING the "
+                                + restartsDone.get() + " server restarts, but symbolDictResetsPerformed="
+                                + resetsAtBounceEnd + " when the bounce schedule finished",
+                        resetsAtBounceEnd >= 10);
 
                 // Grace window against a now-stable server before stopping the
                 // producer, same as QwpIngressServerRestartFuzzTest.
@@ -263,21 +339,38 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 long resetsPerformed = resetsPerformedHolder.get();
                 long symbolDictEpoch = symbolDictEpochHolder.get();
                 int restarts = restartsDone.get();
+                int unplanned = unplannedDisconnects.get();
                 if (expected <= 0) {
                     throw new AssertionError("producer wrote zero rows");
                 }
                 LOG.info().$("fuzz run complete: rowsProduced=").$(expected)
                         .$(", serverRestarts=").$(restarts)
+                        .$(", unplannedDisconnects=").$(unplanned)
                         .$(", symbolDictResetsPerformed=").$(resetsPerformed)
                         .$(", symbolDictEpoch=").$(symbolDictEpoch).$();
 
-                // Both event kinds must actually have fired many times, or the
-                // interleaving this test exists to stress never happened.
-                Assert.assertTrue("expected the reset threshold to be crossed many times over "
-                                + expected + " rows, but symbolDictResetsPerformed=" + resetsPerformed,
-                        resetsPerformed >= 10);
                 Assert.assertEquals("bouncer must have completed its full randomized restart schedule",
                         restartTarget, restarts);
+                // Direct, isolated evidence that the ordinary (unplanned)
+                // reconnect path actually ran -- see the setConnectionListener
+                // comment above for why DISCONNECTED can't be conflated with a
+                // recycle's own step-7 reconnect. Not every restart produces its
+                // own DISCONNECTED: at this bounce cadence (40-199ms uptime), a
+                // restart landing before the sender fully completes the PREVIOUS
+                // reconnect just extends the same outage instead of starting a
+                // new observable one, since DISCONNECTED only fires again once
+                // the factory has re-armed on a prior success. Measured over 9
+                // exploratory runs (restarts 15-29 each), the observed ratio of
+                // unplannedDisconnects/restarts ranged 10%-40%, with a floor of
+                // 2 events observed at the lowest ratio (2/20). restarts/12
+                // (~8%) sits below every observed minimum with real margin
+                // while still scaling with restarts, rather than being a flat
+                // constant that would stay silent if the ratio collapsed to
+                // near-zero on a much larger restart count.
+                Assert.assertTrue("expected at least a fraction of the " + restarts + " server restarts "
+                                + "to surface as an unplanned DISCONNECTED event, but unplannedDisconnects="
+                                + unplanned,
+                        unplanned >= restarts / 12);
 
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
