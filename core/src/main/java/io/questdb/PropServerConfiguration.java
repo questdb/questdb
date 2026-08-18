@@ -58,6 +58,7 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -155,6 +156,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
     // (CHAIN_VALUE_SIZE 12); window.store sizes buffers via store/RECORD_SIZE (widest 40) and the
     // RecordArray index page (store >> 4), so it needs >= 64.
+    // small.map and join.metadata size OrderedMap heaps, whose constructor rejects any page that
+    // cannot fit one key plus its values, naming the property as it does so. That minimum is
+    // query-dependent, and a page above it but below a query's entry still works - the map grows on
+    // demand - so this floor stays at the map's own structural bound (it asserts heapSize > 3) and
+    // leaves the query-dependent part to the per-query check. A wider floor would reject page sizes
+    // that run every query they are configured for. Both properties take the one number, since it
+    // comes from the one structure.
+    private static final int MIN_MAP_PAGE_SIZE = 4;
     private static final int MIN_SORT_KEY_PAGE_SIZE = 64;
     private static final int MIN_VALUE_HEAP_PAGE_SIZE = 12;
     private static final int MIN_WINDOW_STORE_PAGE_SIZE = 64;
@@ -1656,6 +1665,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
             this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, MIN_MAP_PAGE_SIZE);
+            validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
@@ -1669,6 +1680,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // is instead clamped at 1 below.
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, this.sqlSortKeyPageSize, MIN_SORT_KEY_PAGE_SIZE);
+            validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, this.sqlSortKeyPageSize, CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
             this.sqlSortKeyMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, this.sqlSortKeyPageSize));
             warnIfMaxBytesBelowPageSize(properties, env,
@@ -1678,6 +1690,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSortEncodedParallelThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 1_024_000);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
+            validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize, CompressedOffsets.MAX_ALIGNED4_HEAP_SIZE);
             this.sqlSortLightValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, this.sqlSortLightValuePageSize));
             warnIfMaxBytesBelowPageSize(properties, env,
@@ -1687,6 +1700,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, this.sqlHashJoinLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 64);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
@@ -1711,6 +1725,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
             this.postingSealPurgeOutboxMax = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX, 8192);
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
+            // join.metadata sizes the second OrderedMap built off a configured page, so it takes the
+            // same floor as small.map. Below four bytes the map's own assertion fires while SQL
+            // compilation builds join metadata, which turns a configuration mistake into an
+            // AssertionError from the compiler instead of a startup error naming the property.
+            validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, this.sqlJoinMetadataPageSize, MIN_MAP_PAGE_SIZE);
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
@@ -2681,6 +2700,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    // A heap addressed by compressed offsets cannot exceed what 32 bits reach, and its initial page
+    // is allocated before any growth guard runs, so a page above that ceiling truncates the offset of
+    // everything in the top of the heap and silently aliases entries. Reject it at startup naming the
+    // key; the owning constructors carry the same guard for embedded callers that read no property
+    // file. Only the three properties parsed with getLongSize() need this - every other page size
+    // here goes through getIntSize() and so cannot exceed 2GB, well under either ceiling.
+    private static void validatePageSizeAtMost(ConfigPropertyKey key, long pageSize, long maxPageSize) throws ServerConfigurationException {
+        if (pageSize > maxPageSize) {
+            throw ServerConfigurationException.forInvalidKey(
+                    key.getPropertyPath(),
+                    "page size " + pageSize + " is above the maximum of " + maxPageSize + " bytes"
+            );
+        }
+    }
+
     private void configureFiberPools(
             Properties properties,
             @Nullable Map<String, String> env
@@ -3538,17 +3572,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         private int fiberMaxLiveCount;
         private int fiberMountBudget = WorkerPoolConfiguration.super.getFiberMountBudget();
         private int fiberRetainedCount;
-
-        protected PropFiberWorkerPoolConfiguration() {
-        }
-
-        protected PropFiberWorkerPoolConfiguration(WorkerPoolConfiguration configuration) {
-            configureFiber(
-                    configuration.getFiberMaxLiveCount(),
-                    configuration.getFiberMountBudget(),
-                    configuration.getFiberRetainedCount()
-            );
-        }
 
         @Override
         public int getFiberMaxLiveCount() {
@@ -6109,13 +6132,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration extends PropFiberWorkerPoolConfiguration implements HttpFullFatServerConfiguration {
-
-        public PropHttpServerConfiguration() {
-        }
-
-        public PropHttpServerConfiguration(WorkerPoolConfiguration configuration) {
-            super(configuration);
-        }
 
         @Override
         public long getAcceptLoopTimeout() {
