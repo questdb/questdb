@@ -21962,6 +21962,146 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowOrderByEqualToModelOrderByIsDismissed() throws Exception {
+        // The true branch of the same comparison testWindowOrderByLongerThanModelOrderBy drives from
+        // the other side: the window's ORDER BY matches the model's term for term, so the sort the
+        // base already performed is dismissed rather than repeated. Both generation paths consume
+        // that decision, and each shows it in the plan - the streaming path only survives with the
+        // order dismissed, and the cached path files the function under unorderedFunctions.
+        //
+        // Two ORDER BY terms, not one, is what makes the assertions test the comparison rather than
+        // the designated-timestamp fallback sitting under it: that fallback fires only for a single
+        // window term. The base is a SortedSymbolIndex scan, which is both the leaf that reports it
+        // followed the order-by advice - the comparison's own guard - and one that zeroes the
+        // timestamp index, so the fallback has nothing to match on either.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                      TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO tab VALUES
+                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+
+            // row_number() is zero-pass, so with the order dismissed the generator keeps the query on
+            // the streaming Window factory. Stop dismissing and it gives up on streaming and emits
+            // CachedWindow instead, which is what the plan pins.
+            assertQuery("""
+                    SELECT sym, l, row_number() OVER (ORDER BY sym, ts) AS rn FROM tab
+                    WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Window
+                                  functions: [row_number()]
+                                    SortedSymbolIndex
+                                        Index forward scan on: sym
+                                          symbolOrder: asc
+                                        Interval forward scan on: tab
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            sym\tl\trn
+                            a\t1\t1
+                            a\t3\t2
+                            b\t2\t3
+                            b\t4\t4
+                            """);
+
+            // A second window column whose ORDER BY does not match takes the streaming path off the
+            // table for the whole query, so the second copy of the comparison settles both columns
+            // instead. The matching one is dismissed and lands in unorderedFunctions; the mismatched
+            // one keeps its own [l] sort key. The rows are identical either way, which is why the
+            // plan is the assertion that earns this case its keep.
+            assertQuery("""
+                    SELECT sym, l, row_number() OVER (ORDER BY sym, ts) AS rn,
+                           avg(l) OVER (ORDER BY l) AS mean
+                    FROM tab WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("SelectedRecord\n" +
+                            (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            "      orderedFunctions: [[l] => [avg(l) over (rows between unbounded preceding and current row)]]\n" +
+                            "      unorderedFunctions: [row_number()]\n" +
+                            "        SortedSymbolIndex\n" +
+                            "            Index forward scan on: sym\n" +
+                            "              symbolOrder: asc\n" +
+                            "            Interval forward scan on: tab\n" +
+                            "              intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T23:59:59.999999Z\")]\n")
+                    .returns("""
+                            sym\tl\trn\tmean
+                            a\t1\t1\t1.0
+                            a\t3\t2\t2.0
+                            b\t2\t3\t1.5
+                            b\t4\t4\t2.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowOrderByLongerThanModelOrderBy() throws Exception {
+        // When the base factory follows order-by advice, the generator compares the window's
+        // ORDER BY against the model's term by term. It bounded that loop on the window's size
+        // while indexing the model's key list, so a window ORDER BY with more terms than the
+        // model's read past the end and threw a raw ArrayIndexOutOfBoundsException out of the
+        // compiler. The two lists are independent, so a longer window order simply cannot match.
+        //
+        // The generator carries the same comparison twice and both copies had it. The first is
+        // evaluated for every window column before the pass-count check, so before the fix both
+        // queries below threw there. The second is reached because a non-dismissed order also
+        // rules out the streaming path, so the generator falls through to the cached one and
+        // re-evaluates the same comparison: reverting only that copy makes both queries throw
+        // again, at the second site.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
+                      TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO tab VALUES
+                      ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                      ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                      ('a', 3, '2024-01-01T00:00:02.000000Z'),
+                      ('b', 4, '2024-01-01T00:00:03.000000Z')""");
+
+            // Both queries reach both copies, so neither one covers a site the other misses. The
+            // plan assertion is what earns them their keep: without it the test would still pass
+            // if a query silently stopped taking the CachedWindow path the guard lives on.
+            assertQuery("""
+                    SELECT sym, l, rank() OVER (ORDER BY sym, ts, l) AS rnk FROM tab
+                    WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            sym\tl\trnk
+                            a\t1\t1
+                            a\t3\t2
+                            b\t2\t3
+                            b\t4\t4
+                            """);
+
+            // A one-pass frame function alongside the two-pass rank(): the first copy runs before
+            // the pass-count check, so the two shapes enter it from different sides.
+            assertQuery("""
+                    SELECT sym, l, avg(l) OVER (ORDER BY sym, ts, l) AS mean FROM tab
+                    WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            sym\tl\tmean
+                            a\t1\t1.0
+                            a\t3\t2.0
+                            b\t2\t2.0
+                            b\t4\t2.5
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowRank() throws Exception {
         // Test rank() window function with ties
         assertQuery("SELECT val, rank() OVER (ORDER BY val) AS rnk FROM x")

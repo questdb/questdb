@@ -22,14 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.orderby;
+package io.questdb.test.griffin.engine.orderby;
 
-public interface DynamicLimitCursor {
-    /**
-     * Re-binds the selection for the next execution of a cached factory. Every argument is
-     * re-derived per execution, so an implementation must not cache any of them across
-     * executions - in particular {@code isFirstN} flips when a bind variable changes the
-     * limit's sign, and any first-N-only optimisation has to be re-gated on it here.
-     */
-    void updateLimits(boolean isFirstN, long limit, long skipFirst, long skipLast);
+import io.questdb.cairo.sql.Record;
+
+/**
+ * Minimal single-column record shared by the tree-chain tests. Its row id doubles as its
+ * position in the backing {@link TestRecordCursor}.
+ */
+class SingleLongRecord implements Record {
+    long position;
+    long value;
+
+    @Override
+    public long getLong(int col) {
+        return value;
+    }
+
+    @Override
+    public long getRowId() {
+        return position;
+    }
 }
