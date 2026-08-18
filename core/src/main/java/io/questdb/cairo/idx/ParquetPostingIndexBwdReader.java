@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 /**
@@ -37,16 +38,24 @@ import io.questdb.std.Unsafe;
  * Serves a key's postings in descending {@code row_id} order.
  */
 public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexReader {
-    private final BwdCursor cursor = new BwdCursor();
+    /**
+     * @see ParquetPostingIndexFwdReader
+     */
+    private final ObjList<BwdCursor> cursors = new ObjList<>();
+    private final ObjList<BwdCursor> freeCursors = new ObjList<>();
 
     /**
-     * Frees the pooled cursor's decode buffers alongside the reader's mappings.
-     * Detached cursors are the worker's to close -- they are handed out one per
-     * call and never returned here.
+     * Frees every pooled cursor's decode buffers alongside the reader's
+     * mappings. Detached cursors are the worker's to close -- they are handed
+     * out one per call and never returned here.
      */
     @Override
     public void close() {
-        cursor.freeResources();
+        for (int i = 0, n = cursors.size(); i < n; i++) {
+            cursors.getQuick(i).freeResources();
+        }
+        cursors.clear();
+        freeCursors.clear();
         super.close();
     }
 
@@ -70,8 +79,22 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
-        cursor.of(key, minValue, maxValue, null);
-        return cursor;
+        return getCursor(key, minValue, maxValue, null);
+    }
+
+    /**
+     * @see ParquetPostingIndexFwdReader#getCursor(int, long, long, int[])
+     */
+    private BwdCursor nextCursor() {
+        final BwdCursor c;
+        if (freeCursors.size() > 0) {
+            c = freeCursors.popLast();
+            c.pooled = false;
+        } else {
+            c = new BwdCursor();
+            cursors.add(c);
+        }
+        return c;
     }
 
     /**
@@ -79,8 +102,15 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
      */
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
-        cursor.of(key, minValue, maxValue, requiredCoverColumns);
-        return cursor;
+        final BwdCursor c = nextCursor();
+        try {
+            c.of(key, minValue, maxValue, requiredCoverColumns);
+        } catch (Throwable th) {
+            c.pooled = true;
+            freeCursors.add(c);
+            throw th;
+        }
+        return c;
     }
 
     /**
@@ -112,6 +142,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long rowIdPtr;
         private long rowLo;
         private boolean detached;
+        private boolean pooled;
         private int[] requiredCoverColumns;
         private long rowInGroup;
 
@@ -125,6 +156,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 freeResources();
             } else {
                 rowGroupBuffers.close();
+                if (!pooled) {
+                    pooled = true;
+                    freeCursors.add(this);
+                }
             }
             keyIdPtr = 0;
             rowIdPtr = 0;

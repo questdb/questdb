@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 /**
@@ -37,16 +38,26 @@ import io.questdb.std.Unsafe;
  * Serves a key's postings in ascending {@code row_id} order.
  */
 public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexReader {
-    private final FwdCursor cursor = new FwdCursor();
+    /**
+     * Every pooled cursor this reader has handed out, free or checked out, so
+     * that close() releases them all without depending on a caller having
+     * returned them.
+     */
+    private final ObjList<FwdCursor> cursors = new ObjList<>();
+    private final ObjList<FwdCursor> freeCursors = new ObjList<>();
 
     /**
-     * Frees the pooled cursor's decode buffers alongside the reader's mappings.
-     * Detached cursors are the worker's to close -- they are handed out one per
-     * call and never returned here.
+     * Frees every pooled cursor's decode buffers alongside the reader's
+     * mappings. Detached cursors are the worker's to close -- they are handed
+     * out one per call and never returned here.
      */
     @Override
     public void close() {
-        cursor.freeResources();
+        for (int i = 0, n = cursors.size(); i < n; i++) {
+            cursors.getQuick(i).freeResources();
+        }
+        cursors.clear();
+        freeCursors.clear();
         super.close();
     }
 
@@ -70,8 +81,31 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
-        cursor.of(key, minValue, maxValue, null);
-        return cursor;
+        return getCursor(key, minValue, maxValue, null);
+    }
+
+    /**
+     * Draws a cursor from the free list, or builds one.
+     * <p>
+     * A reader serves MORE THAN ONE cursor at a time, so a single instance
+     * re-{@code of()}-ed per call is not enough: {@code CoveringIndexRecordCursorFactory}
+     * asks for the next key's cursor BEFORE freeing the one it is holding
+     * ({@code tryOpenKey}, {@code findLatestRow}), and an interval scan hands
+     * the same partition -- so the same reader -- to that loop more than once.
+     * With one instance the second call resets the first mid-iteration and the
+     * subsequent free closes the cursor just handed out. Both native readers
+     * pool for the same reason.
+     */
+    private FwdCursor nextCursor() {
+        final FwdCursor c;
+        if (freeCursors.size() > 0) {
+            c = freeCursors.popLast();
+            c.pooled = false;
+        } else {
+            c = new FwdCursor();
+            cursors.add(c);
+        }
+        return c;
     }
 
     /**
@@ -85,8 +119,17 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
      */
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
-        cursor.of(key, minValue, maxValue, requiredCoverColumns);
-        return cursor;
+        final FwdCursor c = nextCursor();
+        try {
+            c.of(key, minValue, maxValue, requiredCoverColumns);
+        } catch (Throwable th) {
+            // Popped from the pool but not yet owned by the caller, so nothing
+            // else would ever return it.
+            c.pooled = true;
+            freeCursors.add(c);
+            throw th;
+        }
+        return c;
     }
 
     /**
@@ -125,6 +168,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private long rowIdPtr;
         private long rowLo;
         private boolean detached;
+        private boolean pooled;
         private int[] requiredCoverColumns;
         private long rowInGroup;
 
@@ -143,6 +187,13 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 freeResources();
             } else {
                 rowGroupBuffers.close();
+                if (!pooled) {
+                    // Guarded so a double close cannot put one cursor on the
+                    // free list twice and have two callers handed the same
+                    // instance.
+                    pooled = true;
+                    freeCursors.add(this);
+                }
             }
             keyIdPtr = 0;
             rowIdPtr = 0;

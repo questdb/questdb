@@ -390,6 +390,93 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Two cursors drawn from ONE reader must each walk their own answer.
+     * <p>
+     * This is not hypothetical. {@code CoveringIndexRecordCursorFactory} asks a
+     * reader for the next key's cursor BEFORE freeing the one it is holding --
+     * {@code tryOpenKey} and {@code findLatestRow} both call {@code getCursor}
+     * and only then {@code Misc.free(currentRowCursor)} -- and an interval scan
+     * hands the same partition, and so the same reader, to that loop more than
+     * once. A reader with a single re-{@code of()}-ed instance answers both
+     * calls with the same object: the second call resets the first's traversal
+     * mid-iteration, and the free that follows closes the cursor just handed
+     * out.
+     * <p>
+     * The first cursor is deliberately left part-walked across the second
+     * cursor's whole life, because a reset is invisible to a test that drains
+     * them one after the other.
+     */
+    @Test
+    public void testTwoCursorsFromOneReaderDoNotShareTraversalState() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int keyA = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+                final int keyB = reader.getSymbolMapReader(columnIndex).keyOf("s7") + 1;
+                Assert.assertNotEquals("the fixture needs two distinct keys", keyA, keyB);
+                final IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+
+                final LongList expectedA = new LongList();
+                try (RowCursor c = indexReader.getCursor(keyA, 0, Long.MAX_VALUE)) {
+                    while (c.hasNext()) {
+                        expectedA.add(c.next());
+                    }
+                }
+                final LongList expectedB = new LongList();
+                try (RowCursor c = indexReader.getCursor(keyB, 0, Long.MAX_VALUE)) {
+                    while (c.hasNext()) {
+                        expectedB.add(c.next());
+                    }
+                }
+                Assert.assertTrue("both keys must have postings", expectedA.size() > 8 && expectedB.size() > 8);
+
+                final LongList actualA = new LongList();
+                try (RowCursor a = indexReader.getCursor(keyA, 0, Long.MAX_VALUE)) {
+                    Assert.assertTrue(a.hasNext());
+                    actualA.add(a.next());
+                    Assert.assertTrue(a.hasNext());
+                    actualA.add(a.next());
+
+                    final LongList actualB = new LongList();
+                    try (RowCursor b = indexReader.getCursor(keyB, 0, Long.MAX_VALUE)) {
+                        while (b.hasNext()) {
+                            actualB.add(b.next());
+                        }
+                    }
+                    Assert.assertEquals("the second cursor's answer changed", expectedB.size(), actualB.size());
+                    for (int i = 0, n = expectedB.size(); i < n; i++) {
+                        Assert.assertEquals(expectedB.getQuick(i), actualB.getQuick(i));
+                    }
+
+                    while (a.hasNext()) {
+                        actualA.add(a.next());
+                    }
+                }
+                Assert.assertEquals(
+                        "the first cursor was reset by the second", expectedA.size(), actualA.size()
+                );
+                for (int i = 0, n = expectedA.size(); i < n; i++) {
+                    Assert.assertEquals(
+                            "the first cursor's row id changed at " + i,
+                            expectedA.getQuick(i), actualA.getQuick(i)
+                    );
+                }
+                // Asserted last, and on purpose: identity is the mechanism, the
+                // corrupted sequences above are the symptom, and a control that
+                // trips on the mechanism first proves only that the mechanism
+                // changed.
+                try (
+                        RowCursor a = indexReader.getCursor(keyA, 0, Long.MAX_VALUE);
+                        RowCursor b = indexReader.getCursor(keyB, 0, Long.MAX_VALUE)
+                ) {
+                    Assert.assertNotSame("a second cursor must not be the first one back again", a, b);
+                }
+            }
+        });
+    }
+
+    /**
      * Closing the READER must release everything the reader owns, including the
      * key probe its pooled cursor created.
      * <p>
