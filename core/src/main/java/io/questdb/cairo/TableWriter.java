@@ -350,6 +350,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // long" advisory over this writer's whole lifetime. The chain is expected
     // to stay short -- the O3 rewrite trigger resets it -- so this should stay
     // 0 outside a configuration that disables or greatly raises that trigger.
+    private long pmChainWalkCount;
     private long pmChainWarnCount;
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -2753,6 +2754,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Exposed so a test can assert the warning fired without coupling to its
      * message wording.
      */
+    /**
+     * How many times this writer walked the {@code _pm} chain to size it.
+     * Exposed so a test can assert the size gate keeps the walk off the
+     * common path -- the walk is O(the chain) and the chain grows by one
+     * footer per publish.
+     */
+    @TestOnly
+    public long getPmChainWalkCount() {
+        return pmChainWalkCount;
+    }
+
     @TestOnly
     public long getPmChainWarnCount() {
         return pmChainWarnCount;
@@ -12501,6 +12513,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetMetaSize = 0;
         long resultPtr = 0;
         long fd = -1;
+        // Committed _pm size after the append, used below to decide whether a
+        // chain walk is even possible. Hoisted so it outlives the try.
+        long publishedParquetMetaFileSize = 0;
         try {
             openParquetMetadataOrThrow(path, plen, parquetFileSize);
             parquetMetaAddr = parquetMetaReader.getAddr();
@@ -12614,6 +12629,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
             final long dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
             final long newParquetMetaFileSize = ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr);
+            publishedParquetMetaFileSize = newParquetMetaFileSize;
 
             path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
             fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
@@ -12657,18 +12673,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetIndexRetiredColumnIds.clear();
             path.trimTo(pathSize);
         }
-        // The append above is already durable (fsynced when sync is enabled),
-        // so re-reading the _pm here sees it. Reopen rather than reuse
-        // parquetMetaReader's now-cleared mapping: that mapping predates the
-        // footer just written and cannot see it.
-        final int footerCount = countPmChainFooters(plen);
-        if (footerCount > MAX_UNWARNED_PM_FOOTERS) {
-            LOG.advisory().$("parquet metadata chain is long and nothing is resetting it [table=")
-                    .$(tableToken).$(", partition=").$ts(partitionTimestamp)
-                    .$(", footers=").$(footerCount)
-                    .$("]; the O3 rewrite trigger normally resets it -- check "
-                            + "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio and .max.bytes").I$();
-            pmChainWarnCount++;
+        // Every footer occupies at least ParquetMetaFileReader.FOOTER_MIN_SIZE
+        // bytes, so a _pm this small cannot hold more than
+        // MAX_UNWARNED_PM_FOOTERS of them however the bytes are divided up.
+        // Checking the size first keeps the common case free: the walk is O(the
+        // chain), the chain grows by one footer per publish, so walking on every
+        // publish would make publishing a partition quadratic in its own publish
+        // count -- and worst on exactly the unbounded chain this warns about. On
+        // defaults the O3 rewrite trigger keeps the file far below the bound and
+        // the walk never runs at all.
+        if (publishedParquetMetaFileSize > (long) MAX_UNWARNED_PM_FOOTERS * ParquetMetaFileReader.FOOTER_MIN_SIZE) {
+            // The append above is already durable (fsynced when sync is enabled),
+            // so re-reading the _pm here sees it. Reopen rather than reuse
+            // parquetMetaReader's now-cleared mapping: that mapping predates the
+            // footer just written and cannot see it.
+            warnIfPmChainIsUnbounded(plen, partitionTimestamp);
         }
         // The _pm changed under a partition whose name txn, row count and
         // data.parquet size are all unchanged, so nothing else in the _txn tells
@@ -15818,6 +15837,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Walks the {@code _pm} chain and warns if it is longer than
+     * {@link #MAX_UNWARNED_PM_FOOTERS}. Only call this when the file is big
+     * enough to hold that many footers -- the walk is O(the chain), and the
+     * chain grows by one footer per publish.
+     */
+    private void warnIfPmChainIsUnbounded(int plen, long partitionTimestamp) {
+        final int footerCount = countPmChainFooters(plen);
+        if (footerCount > MAX_UNWARNED_PM_FOOTERS) {
+            LOG.advisory().$("parquet metadata chain is long and nothing is resetting it [table=")
+                    .$(tableToken).$(", partition=").$ts(partitionTimestamp)
+                    .$(", footers=").$(footerCount)
+                    .$("]; the O3 rewrite trigger normally resets it -- check "
+                            + "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio and .max.bytes").I$();
+            pmChainWarnCount++;
+        }
+    }
+
+    /**
      * Counts every footer on the partition's {@code _pm} chain, walking fresh
      * from the physical tail with the same {@code resolveLastFooter} /
      * {@code resolvePrevFooter} pair {@link #readPublishedParquetIndexTokens}'s
@@ -15831,6 +15868,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * for anything that must not under- or over-report.
      */
     private int countPmChainFooters(int plen) {
+        pmChainWalkCount++;
         path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
         long addr = 0;
         long fileSize = 0;

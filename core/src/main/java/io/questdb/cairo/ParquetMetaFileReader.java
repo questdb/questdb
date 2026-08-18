@@ -133,6 +133,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COVERING_INDEX_TXN_OFF = 4;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
     private static final int FOOTER_FIXED_SIZE = 40;
+    // Smallest a footer can be: the fixed part, no row group entries and no
+    // feature sections, then CRC32 and FOOTER_LENGTH. Used to bound how many
+    // footers a _pm of a given size can possibly hold without walking it.
+    public static final int FOOTER_MIN_SIZE = FOOTER_FIXED_SIZE + Integer.BYTES + Integer.BYTES;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     // Footer offsets (relative to footer start)
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;

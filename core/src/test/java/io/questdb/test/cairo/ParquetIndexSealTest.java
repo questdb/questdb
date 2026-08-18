@@ -228,6 +228,43 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * The chain-length warning must not cost anything on the path that never
+     * triggers it. Sizing the chain means walking it, the walk is O(the chain),
+     * and the chain gains a footer per publish -- so walking on every publish
+     * would make publishing quadratic in a partition's own publish count, and
+     * would be slowest on exactly the unbounded chain the warning is about.
+     * <p>
+     * A footer cannot be smaller than {@code FOOTER_MIN_SIZE}, so a {@code _pm}
+     * below {@code MAX_UNWARNED_PM_FOOTERS * FOOTER_MIN_SIZE} bytes cannot hold
+     * enough footers to warrant a walk however its bytes are divided up. This
+     * asserts the walk count stays at zero across publishes on default settings.
+     * Without the size gate this is 20, one per publish.
+     */
+    @Test
+    public void testSizingTheChainCostsNothingOnTheCommonPath() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO " + TABLE_NAME
+                        + " VALUES ('" + INDEXED_PARTITION + "T00:00:00.00000" + (i % 9 + 1) + "Z', 's7', 1.5, 9)");
+                drainWalQueue();
+            }
+            try (TableWriter writer = engine.getWriter(engine.verifyTableName(TABLE_NAME), "test")) {
+                Assert.assertTrue(
+                        "the fixture must actually publish, or a zero walk count proves nothing",
+                        writer.getPmChainWarnCount() == 0
+                );
+                Assert.assertEquals(
+                        "a _pm too small to hold the threshold must never be walked",
+                        0,
+                        writer.getPmChainWalkCount()
+                );
+            }
+        });
+    }
+
+    /**
      * W6-I1: an {@code _pm} chain that nothing is resetting must be reported,
      * not left to grow silently. The O3 rewrite trigger normally resets it; this
      * test disables that trigger -- the only thing that does -- and drives
