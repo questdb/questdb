@@ -52,6 +52,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Reads a covering index that was sealed into a partition's
@@ -87,8 +88,18 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                     + " ALTER TABLE <table> CONVERT PARTITION TO NATIVE LIST '<partition>'";
     protected final IndexMetaFileReader imReader = new IndexMetaFileReader();
     protected long columnTop;
-    protected long decodedRowCount;
-    protected long decodedRowGroupCount;
+    /**
+     * Pruning instrumentation, and shared by every cursor this reader serves.
+     * <p>
+     * Atomic because {@code getDetachedCursor} hands N workers N cursors over
+     * ONE reader and they decode concurrently: a plain {@code long++} is a
+     * read-modify-write, so a lost update UNDER-reports the decode. That
+     * direction matters -- these two counters are exactly what the pruning
+     * assertions read, so a lost update makes a pruning test pass by losing the
+     * evidence rather than by pruning.
+     */
+    protected final AtomicLong decodedRowCount = new AtomicLong();
+    protected final AtomicLong decodedRowGroupCount = new AtomicLong();
     protected long indexTxn = -1;
     protected long partitionTimestamp;
     protected long pidxAddr;
@@ -121,7 +132,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * assertion passes on warm-up while the skip misses entirely.
      */
     public long getDecodedRowGroupCount() {
-        return decodedRowGroupCount;
+        return decodedRowGroupCount.get();
     }
 
     /**
@@ -135,7 +146,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * it would make the metric measure the probe rather than the saving.
      */
     public long getDecodedRowCount() {
-        return decodedRowCount;
+        return decodedRowCount.get();
     }
 
     /**
@@ -222,7 +233,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * where it is merely visited.
      */
     protected void onRowGroupDecoded() {
-        decodedRowGroupCount++;
+        decodedRowGroupCount.incrementAndGet();
     }
 
     /**
@@ -230,8 +241,8 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      *             key's slice of the group rather than the whole group.
      */
     protected void onRowGroupDecoded(long rows) {
-        decodedRowGroupCount++;
-        decodedRowCount += rows;
+        decodedRowGroupCount.incrementAndGet();
+        decodedRowCount.addAndGet(rows);
     }
 
     /**
@@ -1036,8 +1047,8 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         this.columnTop = columnTop;
         this.partitionTimestamp = partitionTimestamp;
         this.indexTxn = indexTxn;
-        this.decodedRowGroupCount = 0;
-        this.decodedRowCount = 0;
+        this.decodedRowGroupCount.set(0);
+        this.decodedRowCount.set(0);
         this.imFileSize = imFileSize;
         final int plen = path.size();
         try {

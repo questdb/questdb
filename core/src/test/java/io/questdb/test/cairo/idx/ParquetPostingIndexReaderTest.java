@@ -517,6 +517,90 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The pruning instrumentation must count every decode N concurrent detached
+     * cursors perform, not most of them.
+     * <p>
+     * {@code decodedRowGroupCount} and {@code decodedRowCount} are reader state
+     * written by every cursor, and {@code getDetachedCursor} exists precisely so
+     * that N workers can decode over ONE reader at once. A plain {@code long++}
+     * is a read-modify-write, so concurrent decodes lose updates -- and they
+     * lose them DOWNWARDS, which is the dangerous direction: these two counters
+     * are what the pruning assertions read, so an under-count makes a pruning
+     * test pass by destroying its own evidence rather than by pruning.
+     * <p>
+     * Each worker walks the identical cursor, so the expected totals are exact
+     * multiples of the serial one rather than a bound.
+     */
+    @Test
+    public void testConcurrentDetachedDecodesAreAllCounted() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+                final AbstractParquetPostingIndexReader indexReader =
+                        (AbstractParquetPostingIndexReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+
+                // One serial pass establishes what a single walk costs.
+                final long groupsBefore = indexReader.getDecodedRowGroupCount();
+                final long rowsBefore = indexReader.getDecodedRowCount();
+                try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, null)) {
+                    while (c.hasNext()) {
+                        c.next();
+                    }
+                }
+                final long groupsPerWalk = indexReader.getDecodedRowGroupCount() - groupsBefore;
+                final long rowsPerWalk = indexReader.getDecodedRowCount() - rowsBefore;
+                Assert.assertTrue("a walk must decode something", groupsPerWalk > 0 && rowsPerWalk > 0);
+
+                final int workers = 8;
+                final int repeats = 40;
+                final long groupsAtStart = indexReader.getDecodedRowGroupCount();
+                final long rowsAtStart = indexReader.getDecodedRowCount();
+                indexReader.setFrozen(true);
+                final CountDownLatch start = new CountDownLatch(1);
+                final CountDownLatch done = new CountDownLatch(workers);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                for (int w = 0; w < workers; w++) {
+                    new Thread(() -> {
+                        try {
+                            start.await();
+                            for (int i = 0; i < repeats; i++) {
+                                try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, null)) {
+                                    while (c.hasNext()) {
+                                        c.next();
+                                    }
+                                }
+                            }
+                        } catch (Throwable th) {
+                            failure.compareAndSet(null, th);
+                        } finally {
+                            done.countDown();
+                        }
+                    }).start();
+                }
+                start.countDown();
+                Assert.assertTrue("workers did not finish", done.await(120, TimeUnit.SECONDS));
+                indexReader.setFrozen(false);
+                if (failure.get() != null) {
+                    throw new AssertionError(failure.get());
+                }
+
+                Assert.assertEquals(
+                        "row group decodes were lost",
+                        groupsAtStart + (long) workers * repeats * groupsPerWalk,
+                        indexReader.getDecodedRowGroupCount()
+                );
+                Assert.assertEquals(
+                        "decoded rows were lost",
+                        rowsAtStart + (long) workers * repeats * rowsPerWalk,
+                        indexReader.getDecodedRowCount()
+                );
+            }
+        });
+    }
+
+    /**
      * N detached cursors over ONE frozen reader must each return the whole
      * answer, concurrently.
      * <p>
