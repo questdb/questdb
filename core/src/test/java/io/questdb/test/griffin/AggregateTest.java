@@ -65,6 +65,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class AggregateTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -1798,6 +1799,63 @@ public class AggregateTest extends AbstractCairoTest {
             String sql = "select distinct count, count1 from (select x1, count(*), count(*) from tab group by x1)";
             assertQuery(sql).ddl(ddl).expectSize().returns("count\tcount1\n1\t1\n");
         });
+    }
+
+    // A throw raised while a POOL WORKER aggregates a frame must fail the query. Before the
+    // AsyncQueryErrorState hand-off, GroupByVectorAggregateJob logged and swallowed it, the done
+    // latch still counted down, and the owner merged the rostis and returned an aggregate that
+    // silently omitted that frame's rows.
+    @Test
+    public void testRostiWorkerAggregationErrorFailsQuery() throws Exception {
+        final String workerFailureMessage = "injected worker aggregation failure";
+        // Small frames so the owner publishes many entries and the pool actually gets work;
+        // at the 1M default the whole table becomes a single task the owner runs itself.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+
+        final AtomicReference<Thread> ownerThread = new AtomicReference<>();
+        final AtomicInteger workerFailures = new AtomicInteger();
+        final RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                super.updateMemoryUsage(pRosti, oldSize);
+                if (Thread.currentThread() != ownerThread.get()) {
+                    // Only a pool worker ever fails, so a surfaced error can only have travelled
+                    // through the worker hand-off, never the owner's own work-stealing path -
+                    // that path already propagated before this change and would not pin it.
+                    workerFailures.incrementAndGet();
+                    throw CairoException.nonCritical().put(workerFailureMessage);
+                }
+                // The owner reaches this only by work-stealing. Yield to the pool so the first
+                // recorded error is a worker's; if no worker ever runs an entry, the assertion at
+                // the end fails loudly instead of the test passing vacuously.
+                final long deadlineMillis = System.currentTimeMillis() + 10_000;
+                while (workerFailures.get() == 0 && System.currentTimeMillis() < deadlineMillis) {
+                    Os.sleep(1);
+                }
+            }
+        };
+
+        executeWithPool(
+                4, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler _, SqlExecutionContext sqlExecutionContext, String _) -> {
+                    ownerThread.set(Thread.currentThread());
+                    engine.execute(
+                            "create table tab as (select cast(x % 16 as int) i, x l from long_sequence(100000))",
+                            sqlExecutionContext
+                    );
+                    try (RecordCursorFactory factory = engine.select("select i, sum(l) from tab group by i", sqlExecutionContext)) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                                // Drain the whole cursor; a partial aggregate must not be reachable.
+                            }
+                            Assert.fail("worker aggregation failure did not fail the query");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), workerFailureMessage);
+                        }
+                    }
+                    Assert.assertTrue("no pool worker ran a vector aggregate entry", workerFailures.get() > 0);
+                }
+        );
     }
 
     @Test

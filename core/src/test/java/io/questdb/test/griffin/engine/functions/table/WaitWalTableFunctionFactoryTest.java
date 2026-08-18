@@ -206,16 +206,21 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalUpdateRejectsLiveWalProgress() throws Exception {
-        execute("""
-                CREATE TABLE update_tab (ts TIMESTAMP, v LONG)
-                TIMESTAMP(ts) PARTITION BY DAY WAL
-                """);
-        final String sql = "UPDATE update_tab SET v = v + 1 WHERE wait_wal_table('update_tab')";
-        assertException(
-                sql,
-                sql.indexOf("wait_wal_table"),
-                "UPDATE cannot require live WAL progress"
-        );
+        // Leak-checked like its two non-WAL siblings: this is the variant that reaches furthest
+        // into generateUpdate, so it is the one that exercises the recordCursorFactory.close()
+        // on the rejection path.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE update_tab (ts TIMESTAMP, v LONG)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            final String sql = "UPDATE update_tab SET v = v + 1 WHERE wait_wal_table('update_tab')";
+            assertException(
+                    sql,
+                    sql.indexOf("wait_wal_table"),
+                    "UPDATE cannot require live WAL progress"
+            );
+        });
     }
 
     private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {

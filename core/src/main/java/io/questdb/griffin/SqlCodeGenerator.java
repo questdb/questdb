@@ -4764,8 +4764,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // adopts them, this catch owns their rollback as well as the derived resources below.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
             final boolean parallelHorizonJoinEnabled = executionContext.isParallelHorizonJoinEnabled();
-            supportsParallelism = parallelHorizonJoinEnabled
-                    && masterFactory.supportsPageFrameCursor();
+            supportsParallelism = parallelHorizonJoinEnabled && masterFactory.supportsPageFrameCursor();
 
             // Check if filter stealing is possible, but delay the actual stealing until
             // after the parallelism check. If parallelism gets downgraded (e.g., due to
@@ -7286,8 +7285,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 canStealFilter = !masterFactory.supportsPageFrameCursor()
                         && masterFactory.supportsFilterStealing()
                         && masterFactory.getBaseFactory().supportsPageFrameCursor();
-                supportsParallelism = masterFactory.supportsPageFrameCursor()
-                        || canStealFilter;
+                supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
             }
 
             // validateBothTimestamps() already checks this before we get here
@@ -7296,8 +7294,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
-                final RecordCursorFactory slaveFactory = slaveFactories.getQuick(s);
-                if (!slaveFactory.supportsTimeFrameCursor()) {
+                if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
                             .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
@@ -7944,8 +7941,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // preserved. See io.questdb.cairo.sql.RecordCursorFactory
                                 // for the default methods and the per-wrapper overrides.
                                 final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
-                                if (parallelTopKEnabled
-                                        && canReachPageFrameLeafForTopK(recordCursorFactory)) {
+                                if (parallelTopKEnabled && canReachPageFrameLeafForTopK(recordCursorFactory)) {
                                     final RecordCursorFactory projectionWrapper = recordCursorFactory.canPeelForTopK()
                                             ? recordCursorFactory : null;
                                     final RecordCursorFactory filterFactory = projectionWrapper != null
@@ -9380,7 +9376,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata baseMetadata = factory.getMetadata();
 
             boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
-            // The vectorized (Rosti) group-by cannot use lazy type conversion.
+            // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
+            // type-cast guard and no row-wise fallback, so it cannot read a column decoded
+            // in its pre-conversion source type. Let the guarded Async group-by handle those.
             boolean canVectorize = !factory.hasParquetConvertedColumns(executionContext);
             // Inspect model for possibility of vector aggregate intrinsics.
             if (canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
@@ -9571,8 +9569,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntHashSet filterUsedColumnIndexes = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (!supportsParallelism
-                        && factory.supportsFilterStealing()) {
+                if (!supportsParallelism && factory.supportsFilterStealing()) {
                     RecordCursorFactory filterFactory = factory;
                     factory = factory.getBaseFactory();
                     assert factory.supportsPageFrameCursor();

@@ -72,8 +72,21 @@ public class WorkerPoolConfigurationWrapperTest {
         final Thread register = new Thread(() -> {
             try {
                 wrapper.setFiberConfigurationListener((maxLiveCount, retainedCount, mountBudget) -> {
-                    Assert.assertTrue(retainedCount <= maxLiveCount);
-                    callbackCount.incrementAndGet();
+                    // Call 1 carries the delegate the registration had already read when
+                    // setDelegate landed; call 2 must carry the newer one, which is the
+                    // property under test.
+                    final int call = callbackCount.incrementAndGet();
+                    if (call == 1) {
+                        Assert.assertEquals(3, maxLiveCount);
+                        Assert.assertEquals(2, retainedCount);
+                        Assert.assertEquals(1, mountBudget);
+                    } else if (call == 2) {
+                        Assert.assertEquals(6, maxLiveCount);
+                        Assert.assertEquals(5, retainedCount);
+                        Assert.assertEquals(4, mountBudget);
+                    } else {
+                        Assert.fail("unexpected callback [call=" + call + ']');
+                    }
                     lastMaxLiveCount.set(maxLiveCount);
                 });
             } catch (Throwable th) {

@@ -43,6 +43,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
@@ -733,14 +735,21 @@ public class FiberRuntimeTest {
     public void testFreeFiberDoesNotRetainCompletedTask() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
-            final WeakReference<OneShotTask> taskRef = launchAndForget(runtime);
+            final ReferenceQueue<OneShotTask> taskQueue = new ReferenceQueue<>();
+            final WeakReference<OneShotTask> taskRef = launchAndForget(runtime, taskQueue);
 
-            for (int i = 0; i < 100 && taskRef.get() != null; i++) {
+            // Wait on the reference queue rather than polling ref.get(): the queue hands off from
+            // the reference processor, so a collector that clears the referent concurrently is
+            // observed without a sleep-calibrated race. System.gc() is still only a hint, hence
+            // the retry loop and the explicit message.
+            Reference<? extends OneShotTask> collected = null;
+            for (int i = 0; i < 20 && collected == null; i++) {
                 System.gc();
-                Thread.sleep(10);
+                collected = taskQueue.remove(500);
             }
 
-            Assert.assertNull(taskRef.get());
+            Assert.assertNotNull("completed task was still reachable from the free fiber", collected);
+            Assert.assertSame(taskRef, collected);
             close(runtime);
         });
     }
@@ -1280,12 +1289,15 @@ public class FiberRuntimeTest {
         runtime.setRunQueueDepthForTesting(runtime.getRunQueueCapacity());
     }
 
-    private static WeakReference<OneShotTask> launchAndForget(FiberRuntime runtime) {
+    private static WeakReference<OneShotTask> launchAndForget(
+            FiberRuntime runtime,
+            ReferenceQueue<OneShotTask> queue
+    ) {
         final OneShotTask task = new OneShotTask();
         Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
         Assert.assertEquals(1, runtime.drain(1));
         Assert.assertTrue(task.isDone());
-        return new WeakReference<>(task);
+        return new WeakReference<>(task, queue);
     }
 
     private static long measureWaitAllocation(

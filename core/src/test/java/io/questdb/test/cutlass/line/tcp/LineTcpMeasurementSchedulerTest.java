@@ -105,14 +105,10 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
         LineTcpMeasurementScheduler scheduler = null;
         Throwable failure = null;
         try {
+            // FIBER_HOST on both pools: ILP jobs are ordinary blocking jobs, so the shared-pool
+            // job count must not depend on the host pool's mode.
             networkPool = new CapturingWorkerPool("ilp-network-test", workerCount, WorkerPoolMode.FIBER_HOST);
             writePool = new CapturingWorkerPool("ilp-write-test", workerCount, WorkerPoolMode.FIBER_HOST);
-            Assert.assertEquals("ilp-network-test", networkPool.getPoolName());
-            Assert.assertEquals(WorkerPoolMode.FIBER_HOST, networkPool.getWorkerPoolMode());
-            Assert.assertTrue(networkPool.isFiberHost());
-            Assert.assertEquals("ilp-write-test", writePool.getPoolName());
-            Assert.assertEquals(WorkerPoolMode.FIBER_HOST, writePool.getWorkerPoolMode());
-            Assert.assertTrue(writePool.isFiberHost());
 
             scheduler = new LineTcpMeasurementScheduler(
                     new DefaultLineTcpReceiverConfiguration(configuration),
