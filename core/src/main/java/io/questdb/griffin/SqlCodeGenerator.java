@@ -1259,6 +1259,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Both the streaming and the cached window path decide whether the model's ORDER BY already
+    // delivers the window's. They used to carry hand-copied loops, which is how one of the two came
+    // to index the key list past its end; one implementation now serves both call sites.
+    private static boolean canDismissWindowOrder(LowerCaseCharSequenceIntHashMap orderHash, WindowExpression windowExpr) {
+        // Reads the window order's length here rather than taking it as a parameter: the bug this
+        // method exists to prevent was a length that disagreed with the list it indexed, and a
+        // caller-supplied one is the same hazard one step removed.
+        final int windowOrderSize = windowExpr.getOrderBy().size();
+        // The loop walks both orders positionally and indexes keys(), so bound on keys().size().
+        // A window order longer than the model's asks for a finer sort than the model delivers and
+        // could not be dismissed anyway.
+        if (windowOrderSize == 0 || windowOrderSize > orderHash.keys().size()) {
+            return false;
+        }
+        for (int j = 0; j < windowOrderSize; j++) {
+            ExpressionNode node = windowExpr.getOrderBy().getQuick(j);
+            int direction = windowExpr.getOrderByDirection().getQuick(j);
+            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j))
+                    || orderHash.get(node.token) != direction) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Cheap structural predicate for the parallel top-K gate. Returns true when
     // the outer factory, or a single projection wrapper above it, can reach a
     // page-frame leaf that feeds AsyncTopKRecordCursorFactory. The unified
@@ -10160,22 +10185,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // analyze order by clause on the current model and optimise out
                     // order by on window function if it matches the one on the model
                     final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                    boolean dismissOrder = false;
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
-                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
-                        dismissOrder = true;
-                        for (int j = 0; j < osz; j++) {
-                            ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = ac.getOrderByDirection().getQuick(j);
-                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                    orderHash.get(node.token) != direction) {
-                                dismissOrder = false;
-                                break;
-                            }
-                        }
-                    }
+                    boolean dismissOrder = base.followedOrderByAdvice() && canDismissWindowOrder(orderHash, ac);
                     if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
@@ -10505,22 +10518,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // analyze order by clause on the current model and optimise out
                     // order by on window function if it matches the one on the model
                     final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                    boolean dismissOrder = false;
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
-                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
-                        dismissOrder = true;
-                        for (int j = 0; j < osz; j++) {
-                            ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = ac.getOrderByDirection().getQuick(j);
-                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j))
-                                    || orderHash.get(node.token) != direction) {
-                                dismissOrder = false;
-                                break;
-                            }
-                        }
-                    }
+                    boolean dismissOrder = base.followedOrderByAdvice() && canDismissWindowOrder(orderHash, ac);
                     if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
