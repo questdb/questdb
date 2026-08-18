@@ -81,12 +81,12 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMidPartitionAppendDifferentialFuzz() throws Exception {
-        runDifferential(generateRandom(LOG), false);
+        runDifferential(generateRandom(LOG), false, false);
     }
 
     @Test
     public void testMidPartitionAppendDifferentialFuzzRegression() throws Exception {
-        runDifferential(generateRandom(LOG, 0x51e3d7a9c4b206L, 0x1f8c62b0da3945L), false);
+        runDifferential(generateRandom(LOG, 0x51e3d7a9c4b206L, 0x1f8c62b0da3945L), false, false);
     }
 
     /**
@@ -99,25 +99,70 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
      */
     @Test
     public void testDedupDifferentialFuzz() throws Exception {
-        runDifferential(generateRandom(LOG), true);
+        runDifferential(generateRandom(LOG), true, false);
     }
 
     @Test
     public void testDedupDifferentialFuzzRegression() throws Exception {
-        runDifferential(generateRandom(LOG, 0x2f70c81a9b3e56L, 0x4c19d7e0af6231L), true);
+        runDifferential(generateRandom(LOG, 0x2f70c81a9b3e56L, 0x4c19d7e0af6231L), true, false);
     }
 
-    private void applyStream(String table, List<Op> ops, int symbolCardinality) throws Exception {
+    /**
+     * Var-size covered columns (STRING and VARCHAR). Every other test here covers
+     * only fixed-width DOUBLE, but the append path publishes an INCREMENTAL
+     * covered fragment: it hands the aux (index) addresses and mapped sizes to
+     * writeSidecarGenData and appends a slice, where the reseal it replaces
+     * rewrote the sidecar wholesale. The offset arithmetic for the incremental
+     * case is therefore genuinely different code, and it was the largest piece of
+     * new write logic with no coverage. Both var-size layouts are included
+     * because STRING and VARCHAR do not share an aux representation.
+     */
+    @Test
+    public void testMidPartitionAppendDifferentialFuzzVarSize() throws Exception {
+        runDifferential(generateRandom(LOG), false, true);
+    }
+
+    /**
+     * Both axes at once: DEDUP routes the last partition's appends through O3 as
+     * well, so this is the only arm where the var-size incremental fragment is
+     * published on that route rather than the mid-partition one.
+     */
+    @Test
+    public void testDedupDifferentialFuzzVarSize() throws Exception {
+        runDifferential(generateRandom(LOG), true, true);
+    }
+
+    @Test
+    public void testMidPartitionAppendDifferentialFuzzVarSizeRegression() throws Exception {
+        runDifferential(generateRandom(LOG, 0x2c9b41f7e05a83L, 0x6d13ea82c4f507L), false, true);
+    }
+
+    private void applyStream(String table, List<Op> ops, int symbolCardinality, boolean varSize) throws Exception {
         for (int i = 0, n = ops.size(); i < n; i++) {
             Op op = ops.get(i);
             if (op.truncate) {
                 execute("TRUNCATE TABLE " + table);
             } else {
                 final String valueExpr = "(" + op.v0 + " + x)::DOUBLE";
+                // Lengths must VARY (and include NULL and empty), or every aux
+                // offset is uniform and an incremental-offset error still lines up.
+                // Three length classes plus the digit-count drift of the id, so
+                // consecutive rows differ in width; the empty-string class shares
+                // an offset with its neighbour, which is where an off-by-one in
+                // the incremental aux write shows up.
+                final String pad = "CASE WHEN ((" + op.v0 + " + x) % 3) = 0 THEN 'aaaaaaaaaaaaaaaaaaaa'"
+                        + " WHEN ((" + op.v0 + " + x) % 3) = 1 THEN 'bb' ELSE '' END";
+                final String varCols = varSize
+                        ? ", CASE WHEN ((" + op.v0 + " + x) % " + op.nullMod + ") = 1 THEN cast(NULL AS STRING)"
+                        + " ELSE (" + pad + ") || (" + op.v0 + " + x)::STRING END AS s"
+                        + ", CASE WHEN ((" + op.v0 + " + x) % " + op.nullMod + ") = 2 THEN cast(NULL AS VARCHAR)"
+                        + " ELSE (('\u00e9' || (" + pad + ")) || (" + op.v0 + " + x)::STRING)::VARCHAR END AS v"
+                        : "";
                 execute("INSERT INTO " + table
                         + " SELECT (" + op.startTs + " + x * " + op.step + ")::TIMESTAMP AS ts,"
                         + " 'S' || ((" + op.v0 + " + x) % " + symbolCardinality + ") AS sym,"
                         + " CASE WHEN ((" + op.v0 + " + x) % " + op.nullMod + ") = 0 THEN cast(NULL AS DOUBLE) ELSE " + valueExpr + " END AS value"
+                        + varCols
                         + " FROM long_sequence(" + op.rows + ")");
             }
             if (op.drainAfter) {
@@ -126,17 +171,18 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void assertTablesIdentical(int symbolCardinality) throws Exception {
+    private void assertTablesIdentical(int symbolCardinality, boolean varSize) throws Exception {
+        final String cols = varSize ? "ts, sym, value, s, v" : "ts, sym, value";
         assertSqlCursors(
-                "SELECT ts, sym, value FROM reseal ORDER BY ts, sym, value",
-                "SELECT ts, sym, value FROM append ORDER BY ts, sym, value"
+                "SELECT " + cols + " FROM reseal ORDER BY ts, sym, value",
+                "SELECT " + cols + " FROM append ORDER BY ts, sym, value"
         );
         for (int s = 0; s < symbolCardinality; s++) {
             final String sym = "S" + s;
             // Covered reads through the covering index, per symbol.
             assertSqlCursors(
-                    "SELECT ts, sym, value FROM reseal WHERE sym = '" + sym + "' ORDER BY value",
-                    "SELECT ts, sym, value FROM append WHERE sym = '" + sym + "' ORDER BY value"
+                    "SELECT " + cols + " FROM reseal WHERE sym = '" + sym + "' ORDER BY value",
+                    "SELECT " + cols + " FROM append WHERE sym = '" + sym + "' ORDER BY value"
             );
             assertSqlCursors(
                     "SELECT ts, sym FROM reseal WHERE sym = '" + sym + "' AND value IS NULL ORDER BY ts",
@@ -222,7 +268,7 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
         PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
-    private void runDifferential(Rnd rnd, boolean dedup) throws Exception {
+    private void runDifferential(Rnd rnd, boolean dedup, boolean varSize) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 134_217_728);
         setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 134_217_728);
@@ -232,23 +278,25 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
 
         assertMemoryLeak(() -> {
             final String dedupClause = dedup ? " DEDUP UPSERT KEYS(ts, sym)" : "";
-            execute("CREATE TABLE reseal (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
-            execute("CREATE TABLE append (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
+            final String schema = varSize
+                    ? " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value, s, v),"
+                    + " value DOUBLE, s STRING, v VARCHAR)"
+                    : " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)";
+            execute("CREATE TABLE reseal" + schema + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
+            execute("CREATE TABLE append" + schema + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
             drainWalQueue();
 
             // Replay 1: append path FORCED OFF -> index in O3 + full reseal.
             PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
             resetCoveringCounters();
-            applyStream("reseal", ops, symbolCardinality);
+            applyStream("reseal", ops, symbolCardinality, varSize);
             final long resealRuns = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
             final long resealAppends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
 
             // Replay 2: append path ACTIVE.
             PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
             resetCoveringCounters();
-            applyStream("append", ops, symbolCardinality);
+            applyStream("append", ops, symbolCardinality, varSize);
             final long appendRuns = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
             final long appendAppends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
 
@@ -256,7 +304,7 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
             Assert.assertFalse("append suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("append")));
 
             // THE proof: identical results regardless of path.
-            assertTablesIdentical(symbolCardinality);
+            assertTablesIdentical(symbolCardinality, varSize);
 
             // ... and the two runs really did take different paths.
             Assert.assertEquals("forced-off run must never take the append path", 0, resealAppends);

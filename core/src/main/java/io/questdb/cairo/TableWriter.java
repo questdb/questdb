@@ -7407,6 +7407,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriterMetrics().incrementO3Commits();
         } finally {
             o3FinishInFlight = false;
+            // The sweep clears its own deferral records, but it does not run at
+            // all when o3InError is set - and the O3 workers may already have
+            // recorded a deferral before a later partition's task threw. Clearing
+            // here as well keeps the set scoped to exactly one commit whether or
+            // not the sweep ran. A carried-over entry is only a cost bug (it
+            // forces the rebuild branch for an unrelated partition; canAppendCovered
+            // never consults the set), but the invariant is cheaper to hold than
+            // to reason about.
+            clearO3CoveringDeferredPartitions();
         }
     }
 
@@ -13999,6 +14008,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Did an O3 worker leave THIS partition's covering index to this sweep?
         // Read once: the workers have all joined (asserted above), so the set is
         // stable for the rest of the call.
+        // Keyed by partition, consumed per column. With two covering columns in
+        // one partition where only one defers - the other's first rows land in
+        // this very append, so its columnTop is not below the pre-append size -
+        // the non-deferred column is pushed onto the rebuild branch too. Cost
+        // only, never wrong, and it does not persist: once both columns have rows
+        // in the partition, both defer.
         final boolean indexDeferredToSeal;
         synchronized (o3CoveringDeferredPartitions) {
             indexDeferredToSeal = o3CoveringDeferredPartitions.contains(partitionTimestamp);
@@ -14253,6 +14268,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // returns below would otherwise carry a stale partition into the next
             // commit, and a throw must not leave one behind either. A retried
             // commit re-dispatches O3, which re-adds whatever it defers again.
+            // This does NOT cover the case where the sweep is skipped altogether
+            // (o3InError) - finishO3Commit's own finally clears the set for that.
             clearO3CoveringDeferredPartitions();
         }
     }

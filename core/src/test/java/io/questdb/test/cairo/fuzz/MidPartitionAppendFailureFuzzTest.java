@@ -248,6 +248,13 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
             }
             skipRound[i] = rnd.nextInt(3);
         }
+        int armed = 0;
+        for (boolean a : armRound) {
+            if (a) {
+                armed++;
+            }
+        }
+        final int armedRounds = armed;
 
         assertMemoryLeak(faultFf, () -> {
             final String dedupClause = dedup ? " DEDUP UPSERT KEYS(ts, sym)" : "";
@@ -292,10 +299,17 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
             // Localise a divergence before comparing against the control: is the
             // covering table's INDEX short (rows the index scan cannot find) or
             // is its DATA short (rows never applied)?
-            assertSqlCursors(
-                    "SELECT /*+ no_index */ sym, count(*) FROM t ORDER BY sym",
-                    "SELECT sym, count(*) FROM t ORDER BY sym"
-            );
+            //
+            // Filtered and per-symbol, because an unfiltered keyed group-by
+            // ignores no_index: both sides compile to the same vectorized GroupBy
+            // over a full scan (verified by EXPLAIN), so the unfiltered form
+            // compared a plan with itself and could never localise anything.
+            for (int s = 0; s < symbolCardinality; s++) {
+                assertSqlCursors(
+                        "SELECT /*+ no_index */ ts, sym, value FROM t WHERE sym = 'S" + s + "' ORDER BY ts",
+                        "SELECT ts, sym, value FROM t WHERE sym = 'S" + s + "' ORDER BY ts"
+                );
+            }
             assertSqlCursors("SELECT count() FROM ctl", "SELECT count() FROM t");
 
             assertCoveredMatchesControl(symbolCardinality);
@@ -304,6 +318,20 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
                 Assert.assertTrue("the mid-partition append path must be exercised (appends="
                                 + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
                         PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
+            }
+
+            // Without this the run silently degrades into the no-fault control:
+            // arming is only an intent, and every match is by file name, so a
+            // rename or a mode that never reaches its callsite would leave the
+            // whole crash-safety premise untested while everything above stays
+            // green. Require a real fraction of the armed rounds to have fired,
+            // not merely one - a single fire would satisfy ">0" while the other
+            // modes were all inert (which is exactly how the MODE_READ latch bug
+            // hid).
+            if (injectFaults) {
+                Assert.assertTrue("faults were armed but never fired (armed=" + armedRounds
+                                + ", fired=" + faultFf.fired() + ')',
+                        faultFf.fired() >= Math.max(1, armedRounds / 4));
             }
         });
     }
@@ -328,6 +356,7 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
     // Seeded one-shot fault injector over the covering table's index files.
     // Versioned seal files carry a .{txn} suffix, so match on "contains".
     private static final class FaultFilesFacade extends TestFilesFacadeImpl {
+        private final java.util.concurrent.atomic.AtomicInteger firedCount = new java.util.concurrent.atomic.AtomicInteger();
         private volatile boolean armed = false;
         private volatile int mode;
         private volatile int skip;
@@ -347,10 +376,23 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
             this.targetFd = -1;
         }
 
+        // Arming is not firing. Every arm site below can silently fail to match -
+        // a renamed file, a mode that never reaches its callsite, a stale latch -
+        // and the run then degrades into the no-fault control while still passing
+        // every assertion. Count the fires so that cannot happen unnoticed.
+        void fire() {
+            firedCount.incrementAndGet();
+            disarm();
+        }
+
+        int fired() {
+            return firedCount.get();
+        }
+
         @Override
         public boolean allocate(long fd, long size) {
             if (armed && mode == MODE_ALLOC && fd == targetFd && targetFd >= 0) {
-                disarm();
+                fire();
                 return false;
             }
             return super.allocate(fd, size);
@@ -359,7 +401,7 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
         @Override
         public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
             if (armed && mode == MODE_MMAP && fd == targetFd && targetFd >= 0) {
-                disarm();
+                fire();
                 return -1;
             }
             return super.mmap(fd, len, offset, flags, memoryTag);
@@ -373,7 +415,7 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
         public long openRO(LPSZ name) {
             if (armed && matches(name)) {
                 if (mode == MODE_OPEN && skip-- <= 0) {
-                    disarm();
+                    fire();
                     return -1;
                 }
                 if (mode == MODE_READ && targetFd < 0 && skip-- <= 0) {
@@ -392,10 +434,16 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
             if (armed && matches(name)) {
                 if (mode == MODE_OPEN) {
                     if (skip-- <= 0) {
-                        disarm();
+                        fire();
                         return -1;
                     }
-                } else if (targetFd < 0 && skip-- <= 0) {
+                } else if ((mode == MODE_MMAP || mode == MODE_ALLOC) && targetFd < 0 && skip-- <= 0) {
+                    // Restricted to the mmap/alloc modes. Latching here for
+                    // MODE_READ too meant the writer's own openRW of sym.d (which
+                    // happens long before the seal's openRO) claimed the latch,
+                    // openRO's MODE_READ branch was then skipped, and the read
+                    // fault could no longer fire - so the SymbolColumnIndexer
+                    // short-read path was armed far more often than it was hit.
                     long fd = super.openRW(name, opts);
                     if (fd >= 0) {
                         targetFd = fd;
@@ -420,7 +468,7 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
         @Override
         public long read(long fd, long buf, long len, long offset) {
             if (armed && mode == MODE_READ && fd == targetFd && targetFd >= 0) {
-                disarm();
+                fire();
                 return -1;
             }
             return super.read(fd, buf, len, offset);

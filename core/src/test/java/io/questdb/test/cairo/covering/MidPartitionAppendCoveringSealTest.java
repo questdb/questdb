@@ -69,6 +69,9 @@ public class MidPartitionAppendCoveringSealTest extends AbstractCairoTest {
     @After
     public void disableCoveringCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
+        // Static kill-switch: a test that sets it and throws before restoring it
+        // would silently disable the append path for every test that runs after.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     /**
@@ -213,9 +216,16 @@ public class MidPartitionAppendCoveringSealTest extends AbstractCairoTest {
             seedMidPartition();
             final long seedTxn = headTxnAtSeal();
 
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             appendToMidPartition();
             final long afterAppendTxn = headTxnAtSeal();
 
+            // Pin the path FIRST. The reseal rotates the head every commit, so
+            // txnAtSeal advances there too and the assertion below is green even
+            // with the append path switched off - i.e. it would pass without ever
+            // exercising the in-place extend whose semantics it exists to pin.
+            Assert.assertEquals("every commit must take the mid-partition append path",
+                    COMMITS, PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get());
             Assert.assertTrue("head txnAtSeal must advance with in-place appends [seed=" + seedTxn
                             + ", afterAppends=" + afterAppendTxn + ']',
                     afterAppendTxn > seedTxn);
