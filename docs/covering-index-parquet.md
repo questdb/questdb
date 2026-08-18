@@ -44,6 +44,37 @@ The native `.pk` / `.pv` / `.pc*` chain is **not** written for such a partition.
 
 Source: `ParquetIndexSeal.java:107,115`.
 
+## Read performance
+
+**The Parquet form is currently slower to read than the native one.** Measured
+on 400k rows in one partition, 16 distinct keys, covered columns
+`price DOUBLE` + `qty LONG`, median of 20 iterations after 5 warm-up, both arms
+holding identical data in a Parquet partition so the index form is the only
+difference:
+
+| Query shape | Native | Parquet | Ratio |
+| --- | --- | --- | --- |
+| `count()` on a hot key (metadata only) | 535 us | 3800 us | 6.7-7.1x |
+| covered gather, hot key | 927 us | 6142 us | 5.1-6.6x |
+| covered gather, cold key (pruning) | 408 us | 735 us | 1.6-1.8x |
+
+Three runs agree on the direction and on the cold-key ratio. The hot-key
+gather moved between 6.63x and 5.09x across runs, so treat these as ranges.
+
+So the feature trades read latency for portability: the index travels with the
+partition into cold storage, replication and S3, and reads cost more. Enable it
+where that trade is the one you want, not by default -- which is why the
+default is `native`.
+
+Reproduce with:
+
+```
+mvn -pl core -Pbuild-rust-library -Dtest='ParquetCoveringIndexBenchTest' \
+    -DfailIfNoSpecifiedTests=false -Dquestdb.bench=true test
+```
+
+Source: `ParquetCoveringIndexBenchTest.java`.
+
 ## Covered column restrictions
 
 `INCLUDE (...)` columns must be fixed-width. The seal refuses var-size and
