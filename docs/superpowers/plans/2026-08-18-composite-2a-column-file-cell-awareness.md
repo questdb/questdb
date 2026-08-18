@@ -143,10 +143,22 @@ the partition's nameTxn, so a pinned reader can still need the old column file w
 current. Routing column cleanup through the partition purge would delete files a live reader needs:
 strictly worse than the leak.
 
-So the route is (a): add a cellKey column to `sys.column_versions_purge_log` and make the positional
-reads tolerate its absence on a pre-existing table. That is a migration for a `BYPASS WAL` system
-table shared with plain tables, and should be planned as its own piece of work rather than folded into
-a column-DDL task.
+**Verified further, and the route now depends on a PRODUCT DECISION.** Enumerating every producer of
+a new column generation shows all of them — `changeColumnType`, `renameColumn`, `ConvertOperatorImpl`,
+`UpdateOperatorImpl` — are ALREADY GATED for composite (`addColumn` mints a generation for a new
+column and supersedes nothing). So the `UPDATE` counterexample cannot occur on a composite table
+today, and option (d) is correct **as long as those gates stay shut**.
+
+That is a conditional correctness argument, and sub-project 4 exists to implement `UPDATE`. The day it
+lands, a purge routed through the partition queue silently gains the ability to delete a column file a
+pinned reader still needs — nothing fails loudly, and the assumption lives in a comment.
+
+- **If `UPDATE` is BANNED permanently for composite:** take (d). Correct by specification, no
+  migration, and the assumption is checkable in one place.
+- **If `UPDATE` is merely DEFERRED:** take (a) and pay for the migration, because (d) would be
+  correct-until-someone-ships-sub-project-4.
+
+See `.superpowers/sdd/sp2a-task-2-decision.md` for the full table.
 
 - [ ] **Step 3: Fix the reached site(s) per that decision**
 
