@@ -12,6 +12,20 @@
 > squash is cell-aware. The lifecycle spec lists DETACH and ATTACH as independent items; that
 > ordering constraint is not in it.
 
+**Entry points, mapped 2026-08-18.** `squashPartitionForce` is a single gate point covering
+`squashPartitions()` (the explicit ALTER), `detachPartition`, `convertPartitionNativeToParquet`,
+`preparePartitionForParquetConversion`, `switchNativePartitionWithParquet` and
+`squashAllPartitionsIntoOne`. The automatic path is different: `housekeep` calls
+`squashSplitPartitions` **directly**, which is why it skips rather than throws. Two entry points, two
+behaviours — do not assume one gate covers both.
+
+**Root cause, from `squashPartitionForce`'s own comment:** the forward scan decides whether the NEXT
+attached entry is a split sibling purely by calendar-FLOOR equality
+(`getLogicalPartitionTimestamp`) — but two CELLS of one day share the exact same RAW timestamp, so a
+sibling cell is indistinguishable from a true split fragment by that check. Misidentifying one
+triggers a cross-cell merge through paths built with the bare 5-arg overload, which correspond to no
+real directory.
+
 **Architecture:** Measured 2026-08-18 with `CAIRO_O3_PARTITION_SPLIT_MIN_SIZE = 1`. A composite table **does** split, and the fragment is itself cell-structured:
 
 ```
@@ -28,10 +42,21 @@ So squashing a composite table is a merge of cells **across two containers** —
 | Path | Today | Consequence |
 |---|---|---|
 | `ALTER TABLE … SQUASH PARTITIONS` | refused at the statement (1B Task 0) | user sees a clear error |
-| automatic split-fragment squash during commit | **silent skip** (closure index, silent-skips table) | fragments accumulate with no refusal visible anywhere |
+| automatic split-fragment squash during commit | **deliberate skip**, logged at INFO | fragment COUNT grows; read performance degrades |
 
-The silent skip is the more important of the two. A user who never types `SQUASH` still accumulates
-fragments, and nothing tells them.
+> **Correction to this plan's first draft.** It called the automatic skip "the more important of the
+> two" and implied it was a defect. Reading `squashSplitPartitions`' own rationale shows it is a
+> reasoned decision, and the reasoning is sound: *"skipping this housekeeping step causes no wrong
+> answers and no data loss — each split fragment remains an independently valid, fully queryable
+> physical partition; the only cost is not consolidating fragment COUNT for read-performance"*, and
+> throwing instead *"would suspend an otherwise healthy, high-volume composite table's ordinary
+> commits purely because of a size threshold"*.
+>
+> That is a **performance and operability** residual, not a correctness one — a different class from
+> the leaks and silent no-ops found elsewhere in this project, and it is logged rather than silent to
+> the operator. It still needs fixing (unbounded fragment growth on a high-volume table is exactly why
+> squash exists), but it does not outrank the explicit gate on correctness grounds, and the skip is
+> the right behaviour until the merge is cell-aware.
 
 ## Global Constraints
 
@@ -106,9 +131,11 @@ timestamp, and the directory physically empty, because `ff.rmdir` is recursive.
 - Modify: `core/src/main/java/io/questdb/griffin/SqlCompilerImpl.java` (the statement-time refusal from 1B Task 0)
 - Modify: `docs/superpowers/specs/2026-08-11-composite-scope-closure-index.md` (gate #5 and the silent-skips table)
 
-- [ ] **Step 1: Remove the silent skip FIRST, and prove fragments stop accumulating**
+- [ ] **Step 1: Remove the skip and prove fragments stop accumulating**
 
-The skip is the real defect; the loud gate is merely an inconvenience.
+Ordering between this and the explicit gate is a judgement call, not a correctness one — see the
+correction above. Removing the skip is what delivers the operational benefit (bounded fragment count);
+lifting the explicit gate is what unblocks `DETACH`.
 
 - [ ] **Step 2: Then lift the explicit gate, with both tests green**
 
