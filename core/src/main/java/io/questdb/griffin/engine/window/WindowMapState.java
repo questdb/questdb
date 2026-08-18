@@ -161,6 +161,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
     private final int unorderedMapMaxEntrySize;
+
     private WindowMapState(
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,

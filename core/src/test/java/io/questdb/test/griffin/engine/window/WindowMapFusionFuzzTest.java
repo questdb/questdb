@@ -624,8 +624,8 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             final String call = isSkipEnabledGroupRequired
                     ? SKIP_ENABLED_WHOLE_PARTITION_CALLS[o]
                     : frameKinds[w] != FRAME_WHOLE_PARTITION && rnd.nextInt(8) == 0
-                            ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
-                            : calls[rnd.nextInt(calls.length)];
+                      ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
+                      : calls[rnd.nextInt(calls.length)];
             sql.append(", ").append(call).append(" over ");
             if (rnd.nextBoolean()) {
                 sql.append('w').append(w);
