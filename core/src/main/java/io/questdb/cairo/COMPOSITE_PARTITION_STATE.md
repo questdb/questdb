@@ -287,6 +287,78 @@ O3 WORKER thread inside `executeCompositePlan`, and whether `IndexBuilder`/`Rebu
 invoke from there (as opposed to the writer's own single thread, its only caller today) needs checking
 before wiring it in.
 
+### 27. A day rollover in the same commit that promotes the old day silently truncated it - FOUND AND FIXED
+
+A WAL commit that both merge-appends the still-active last partition into a composite one AND lands rows
+past midnight in a brand-new later partition - the ordinary shape of a batch that happens to cross a day
+boundary - moved `txWriter`'s last-partition pointer to the new day before `columns[]` ever learned the old
+day went composite. `o3ConsumePartitionUpdateSink`'s per-partition loop already excluded a composite entry
+from every closing branch (`!isComposite` in its guard), on the assumption that `finishO3Commit` would
+retire `columns[]` safely once `isLastPartitionAppendBlocked()` caught it - but that check asks about
+`txWriter`'s CURRENT last partition, which by then was the new day, not composite. `finishO3Commit` took
+the ordinary `openPartition` branch instead, and `TableWriter.openColumnFiles`'s plain `MemoryMA.of()`
+reuse closed `columns[]`'s stale mapping of the OLD day first - `MemoryCMARWImpl.openFile` calls `close()`
+before opening the new file, and that close truncates to `columns[]`'s own tracked append offset (page
+rounded), which was the old day's row count from BEFORE the merge-append ran. Every row the composite frame
+executor wrote past that offset - the whole point of the merge - was silently discarded from the FILE;
+the geometry it had just published kept claiming the larger `E` regardless, since nothing tells it its own
+file fell short.
+
+The corruption throws nothing at the time. Only a LATER commit or read that maps the partition against that
+claim notices - `DebugUtils.assertCompositeTimestampColumnLength`, called from
+`O3PartitionJob.processCompositePartition`, is what turns it into a clean `CairoException` instead of a
+SIGBUS, one commit after the one at fault: `WalWriterFuzzTest#testWalWriteManyTablesInOrder` -> "composite
+timestamp column file too short". At small scale the corruption can go unnoticed entirely: truncating to a
+page-rounded stale offset that happens to still cover `E` loses no bytes, which is why a minimal repro needs
+the stale offset and `E` to straddle an OS page (512 rows for an 8-byte column) before either the length
+check or a row-content diff will catch it.
+
+Fixed in the sink loop instead of `finishO3Commit`: `o3ConsumePartitionUpdateSink` already computes
+`isComposite` PER PARTITION ENTRY, before `txWriter`'s last-partition pointer moves - so it is the earliest
+point that knows the truth, regardless of whether a later entry in the SAME commit also creates a new day.
+The loop's `isComposite` branch now closes `columns[]` without truncating (`closeActivePartition(false)`)
+as soon as an entry that WAS the pre-commit last partition turns out composite. Reduced to
+`O3CompositePartitionTest#testMergeAppendAcrossDayRolloverInSameCommit`.
+
+### 28. Dropping the last partition backdated a column onto its composite predecessor at the wrong top - FOUND AND FIXED
+
+`WalWriterFuzzTest#testWalWriteRollbackHeavy` intermittently threw `DebugUtils.assertCompositePlanColumnLength`'s
+"composite plan undergrew a column file" from an O3 worker thread, always on a partition several commits
+past its last real write to the failing column - never on the commit that first touches it. Two independent
+catches, different tables and columns each time (`columnIndex=15/columnTop=100/e=583` and
+`columnIndex=19/columnTop=202/e=557`), both composite.
+
+`ColumnVersionWriter.replaceInitialPartitionRecords(lastPartitionTimestamp, rowCount)` runs whenever the
+table's last partition is dropped (`TableWriter.dropPartitionByExactTimestamp`, an `ALTER TABLE ... DROP
+PARTITION` on the active partition) or fully removed by a replace-range commit
+(`o3ConsumePartitionUpdateSink`'s `removedIsLast` branch). For every column whose `COL_TOP_DEFAULT_PARTITION`
+marker still points at the partition that just went away, it retargets the marker at the new last partition
+and - if that partition has no explicit top of its own yet - backdates one there with `upsert(...,
+rowCount)`, "as if the column was added there". Both callers passed a LIVE row count
+(`txWriter.getTransientRowCount()` / `txWriter.getPartitionSize(...)`). When the partition being promoted to
+last is itself COMPOSITE, live rows undercounts its files by the size of its dead space, so the backdated
+top lands INSIDE that dead space instead of at the partition's true end - indistinguishable from a column
+that has real, unwritten data sitting above its top, which is exactly what the composite executor's
+end-of-plan length check exists to catch on the next commit that touches the column.
+
+The same live-rows-for-`E` confusion already fixed in `openNewColumnFiles` (section entry above, uses
+`getGeometry().getE(...)` when composite), in the OTHER `trimPartitionColumnTops` call site (guarded with
+`!isComposite`), and in `ConvertOperatorImpl` (`Math.max(partitionSize, partitionPhysicalRowCount)`) -
+`replaceInitialPartitionRecords`'s two callers were the one place left still doing it. Fixed by passing
+`getPartitionFileRowCountByTimestamp(...)` / `getPartitionFileRowCount(...)` instead of the raw live count at
+both call sites, and by skipping the adjacent, previously-unguarded `trimPartitionColumnTops` call in the
+`removedIsLast` branch when the promoted partition is composite - trimming a valid top down with a live
+count would have corrupted it the same way, just silently instead of throwing.
+
+Not reducible to a fixed-seed regression test: replaying the exact `Rnd` seed from a caught crash against the
+pre-fix code passed cleanly 5 times in a row. The trigger is a real timing window - which O3 worker thread's
+partition task the writer's sink-consumption loop drains first - not something the seed alone pins down, so
+no dedicated test was added; the existing fuzz suite already hits this at roughly 1 run in 15-20 of
+`testWalWriteRollbackHeavy` and will keep exercising it. Root-caused by a temporary ring buffer recording
+every `ColumnVersionWriter.upsert()` call (timestamp, columnIndex, columnTop, caller), dumped from the
+assertion on failure - static reading alone did not find this call site because every OTHER `upsert()` caller
+checked out clean.
+
 ## Known gaps
 
 - **Var-size columns can still read or write short on a composite partition.** See section 25. Caught as a

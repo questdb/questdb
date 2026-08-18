@@ -1508,7 +1508,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * siblings also scan.
      */
     public long getPartitionFileRowCount(int partitionIndex) {
-        return Math.max(getPartitionSize(partitionIndex), getPartitionPhysicalRowCount(partitionIndex));
+        if (!txWriter.isPartitionComposite(partitionIndex)) {
+            return txWriter.getPartitionSize(partitionIndex);
+        }
+        return getGeometry().getE(partitionIndex);
     }
 
     /**
@@ -6641,7 +6644,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
-            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            // A column backdated onto the new last partition needs a top at its PHYSICAL extent, not its
+            // live row count: the two differ for a COMPOSITE partition, whose dead space still has to be
+            // skipped by a column that never wrote into it. getTransientRowCount() is the live count and
+            // silently undersizes the top there, leaving the composite executor expecting real bytes in a
+            // range nothing ever wrote.
+            columnVersionWriter.replaceInitialPartitionRecords(
+                    txWriter.getLastPartitionTimestamp(),
+                    getPartitionFileRowCountByTimestamp(txWriter.getLastPartitionTimestamp())
+            );
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);
@@ -8523,12 +8534,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 int newLastPartitionIndex = partIndex - 1;
                                 long newLastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(newLastPartitionIndex);
                                 long newLastPartitionSize = txWriter.getPartitionSize(newLastPartitionIndex);
-                                columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
+                                // A column backdated onto the new last partition needs a top at its PHYSICAL
+                                // extent, not its live row count: the two differ for a COMPOSITE partition,
+                                // whose dead space still has to be skipped by a column that never wrote into
+                                // it. newLastPartitionSize is the live count and silently undersizes the top
+                                // there, leaving the composite executor expecting real bytes in a range
+                                // nothing ever wrote.
+                                columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, getPartitionFileRowCount(newLastPartitionIndex));
 
                                 // If a split partition is removed, it may leave the previous partition
                                 // with column top sticking out of the partition size.
                                 // This "sticking out" is not handled if it is the last partition.
-                                o3ConsumePartitionUpdateSink_trimPartitionColumnTops(newLastPartitionTimestamp, newLastPartitionSize);
+                                //
+                                // A composite directory is excluded, same as the other trim call site above:
+                                // its live row count is not its files' extent, so trimming against it would
+                                // cut a valid top down to a number the directory's files never shrank to match.
+                                if (!txWriter.isPartitionComposite(newLastPartitionIndex)) {
+                                    o3ConsumePartitionUpdateSink_trimPartitionColumnTops(newLastPartitionTimestamp, newLastPartitionSize);
+                                }
                             } else {
                                 // All partitions are removed
                                 columnVersionWriter.truncate();
