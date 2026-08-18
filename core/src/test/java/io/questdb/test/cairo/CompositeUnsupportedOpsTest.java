@@ -178,7 +178,9 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
             assertCompositeGateFires(
                     "alter table c alter column note type symbol",
                     "c",
-                    "composite partitioning does not yet support ALTER COLUMN TYPE");
+                    // The SYMBOL-conversion gate fires before the general one for this column, and its message is
+                    // the more specific of the two -- assert what actually reaches the user.
+                    "ALTER COLUMN TYPE SYMBOL is not yet supported on composite-partitioned tables");
         });
     }
 
@@ -331,14 +333,29 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * committed to metadata -- a worse failure shape than most gates in this sweep (a partial
      * metadata-vs-files split, not just a clean rejection). Confirmed reachable.
      */
+    /**
+     * SP2 (2026-08-18): RENAME COLUMN is no longer gated. Asserts the rename is REAL -- the new name
+     * reads back and the old one is gone -- rather than that the statement merely did not throw. The
+     * defect it replaces was exactly that shape: metadata renamed while every cell's file kept the old
+     * name, so the next read failed with "file does not exist: <cell>/price.d".
+     */
     @Test
-    public void testRenameColumnGated() throws Exception {
+    public void testRenameColumnWorks() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c rename column px to px2",
-                    "c",
-                    "composite partitioning does not yet support RENAME COLUMN");
+            execute("alter table c rename column px to price");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            // reads back under the NEW name, which is what the old defect broke
+            printSql("select price from c");
+            TestUtils.assertContains(sink, "price");
+            // and the old name is gone from metadata
+            try {
+                printSql("select px from c");
+                Assert.fail("old column name must no longer resolve");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "Invalid column");
+            }
         });
     }
 

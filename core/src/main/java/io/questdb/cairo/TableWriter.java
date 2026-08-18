@@ -1543,11 +1543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support ALTER COLUMN TYPE [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
+        
 
         // Same interner slot-order hazard as addColumn(): converting to SYMBOL creates a brand-new
         // SymbolMapWriter that createSymbolMapWriter() appends after the composite interners, which
@@ -1566,6 +1562,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(tableToken.getTableName()).put(", column=").put(columnName)
                         .put(", partition=").put(utf8Sink).put(']');
             }
+        }
+
+        // SP2 (2026-08-18): gate RETAINED with a measured cause. With it lifted, ALTER COLUMN TYPE
+        // fails "could not open, file does not exist: <day>/px.d" -- ConvertOperatorImpl resolves
+        // the column files at the DAY container, not the cell directory. Unlike the other column
+        // DDLs fixed in SP2, its paths are threaded through parallel conversion tasks from several
+        // call sites, so making it cell-aware is a change in that class rather than a per-call fix.
+        if (isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support ALTER COLUMN TYPE [table=")
+                    .put(tableToken.getTableName()).put(']');
         }
 
         ConvertOperatorImpl convertOperator = getConvertOperator();
@@ -4129,11 +4136,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support RENAME COLUMN [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
+        
 
         LOG.info().$("renaming column '").$safe(columnName).$('[')
                 .$(ColumnType.nameOf(type)).$("]' to '").$safe(newName)
@@ -9794,16 +9797,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Link files in each partition.
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
-                    if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
-                        long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                        columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
+                    // Per-CELL, like every other column-file walk: on a composite table several cells
+                    // share one raw partition timestamp, so the 2-arg lookups answer for cellKey 0 and
+                    // the files linked (or not linked) belong to the wrong cell. Measured before this:
+                    // RENAME COLUMN updated metadata and left every cell's file under the OLD name, so
+                    // the next read failed with "could not open, file does not exist: <cell>/price.d.1".
+                    final int cellKey = txWriter.getPartitionCellKey(i);
+                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
+                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn, cellKey);
+                    if (columnVersionWriter.getRecordIndex(partitionTimestamp, cellKey, columnIndex) > -1L) {
+                        long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
+                        columnVersionWriter.upsert(partitionTimestamp, cellKey, columnIndex, newColumnNameTxn, columnTop);
                     }
                 }
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn, 0);
                 long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
@@ -9852,9 +9861,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, byte indexType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
-        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, byte indexType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn, int cellKey) {
+        // Both paths carry the owning cell. Rendered once and copied into each Path by the call, so the
+        // shared thread-local sink is safe here.
+        final CharSequence cellSegment = cellSegmentOrNull(cellKey);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegmentOrNull(cellKey));
         int plen = path.size();
         linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, newColumnNameTxn));
         if (ColumnType.isVarSize(columnType)) {
@@ -9878,7 +9890,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
+        final CharSequence purgeCell = cellSegmentOrNull(cellKey);
+        purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn,
+                purgeCell == null ? null : purgeCell.toString());
     }
 
     private void hardLinkAndPurgeSymbolTableFiles(
