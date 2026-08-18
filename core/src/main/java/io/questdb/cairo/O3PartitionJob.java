@@ -3367,8 +3367,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // the predicate so this can never skip a column the sweep would
                 // then ignore (which would silently lose the appended rows).
                 final boolean isIndexed = metadata.isColumnIndexed(i)
-                        && !(isOpenColumnModeForAppend(openColumnMode)
-                        && openColumnMode != OPEN_NEW_PARTITION_FOR_APPEND
+                        // Spelled out rather than "every append mode except NEW": a
+                        // future append mode added to isOpenColumnModeForAppend would
+                        // otherwise be opted into deferral silently, which fails open.
+                        && !((openColumnMode == OPEN_MID_PARTITION_FOR_APPEND
+                        || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND)
                         && tableWriter.isCoveredAppendSealedByWriter(i, partitionTimestamp, srcDataMax));
                 final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
                 final byte indexType = metadata.getColumnIndexType(i);

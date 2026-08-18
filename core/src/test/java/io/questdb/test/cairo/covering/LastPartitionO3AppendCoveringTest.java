@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -61,6 +63,7 @@ public class LastPartitionO3AppendCoveringTest extends AbstractCairoTest {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_PENDING_DECLINE_COUNT.set(0);
     }
 
     @After
@@ -116,6 +119,65 @@ public class LastPartitionO3AppendCoveringTest extends AbstractCairoTest {
             }
             assertNotSuspended();
             assertCoveredMatchesControl();
+        });
+    }
+
+    /**
+     * The O3PartitionJob half of the deferral (the merge-collapses-to-append
+     * degradation that yields OPEN_LAST_PARTITION_FOR_APPEND) is a DIFFERENT
+     * production path from the writer's inline append branch, and the other tests
+     * here all take the inline one. Route A requires the batch to start strictly
+     * after the partition max under dedup, so a batch whose first row repeats the
+     * max timestamp is refused by it and goes through the merge instead - where
+     * dedup drops the duplicate and the merge collapses to an append.
+     */
+    @Test
+    public void testDedupMergeCollapseTakesAppendPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(true);
+            PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
+
+            for (int c = 0; c < COMMITS; c++) {
+                final long base = SEED_ROWS + (long) c * ROWS_PER_COMMIT;
+                // first row repeats the current max timestamp (a real duplicate),
+                // the rest extend past it
+                insertBoth(base - 1, ROWS_PER_COMMIT + 1);
+                drainWalQueue();
+            }
+
+            assertNotSuspended();
+            assertCoveredMatchesControl();
+            Assert.assertTrue("the merge-collapse route must reach the covered append path (appends="
+                            + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
+        });
+    }
+
+    /**
+     * Deferred compaction has to actually fire on this route too: at the shipped
+     * threshold COMMITS would never reach it, so this would otherwise prove only
+     * that nothing happened. Also checks the superseded files are reclaimed once
+     * the purge job runs.
+     */
+    @Test
+    public void testLastPartitionAppendCompactsAndReclaims() throws Exception {
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 3);
+        assertMemoryLeak(() -> {
+            createTables(true);
+            appendAndAssert();
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                for (int i = 0; i < 64 && purgeJob.run(); i++) {
+                    // drain
+                }
+            }
+            assertCoveredMatchesControl();
+            // The guard that protects the live indexer's unflushed entries must not
+            // be silently firing: if it is, this route is falling back to the
+            // rebuild and the append path is not being exercised at all.
+            Assert.assertEquals("covered append declined for pending entries",
+                    0, PostingIndexWriter.COVERING_SEAL_APPEND_PENDING_DECLINE_COUNT.get());
         });
     }
 

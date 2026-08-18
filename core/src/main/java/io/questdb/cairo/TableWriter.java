@@ -103,6 +103,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
@@ -267,6 +268,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // monitor: O3 workers add concurrently, the sweep reads single-threaded
     // after they join.
     private final LongHashSet o3CoveringDeferredPartitions = new LongHashSet();
+    // Columns whose posting indexer still held unflushed add() calls when the seal
+    // sweep STARTED. Snapshotted there rather than read per partition: the sweep
+    // reopens each partition's indexer in turn, and that reopen (of() -> close())
+    // drops pending entries without flushing them - so by the time a later
+    // partition is sealed the state the guard needs to see is already gone.
+    private final IntHashSet o3PendingIndexersAtSweepStart = new IntHashSet();
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final int o3ColumnMemorySize;
     private final ObjList<MemoryCR> o3ColumnOverrides;
@@ -10279,12 +10286,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final CharSequence columnName = metadata.getColumnName(i);
                             // Same deferral as the O3 worker path: a COVERING posting
                             // index is maintained by the trailing seal instead, from
-                            // FINAL column data. Here that is a correctness gain as
-                            // well as a cost one - the covered fragment this route
-                            // writes during the copy phase is speculative, because
-                            // the indexed column's task can run before the covered
-                            // column's own append lands, and it is the trailing
-                            // rebuildSidecars that repairs it today.
+                            // FINAL column data. The fragment this route writes during
+                            // the copy phase is speculative - the indexed column's task
+                            // can run before the covered column's own append lands - and
+                            // the trailing rebuildSidecars is what repairs it. That
+                            // repair is not observable today (the speculative entry is
+                            // tagged getTxn()+1 and is superseded before the commit
+                            // lands), so this removes a wasted write and the reseal it
+                            // silently required, rather than fixing a live defect.
                             final boolean deferCovered = isCoveredAppendSealedByWriter(i, partitionTimestamp, srcDataMax);
                             final int indexBlockCapacity = !deferCovered && metadata.isColumnIndexed(i)
                                     ? metadata.getIndexValueBlockCapacity(i)
@@ -14035,12 +14044,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     int coverCount = coveringCols.size();
 
-                    // Read BEFORE configureFollowerAndWriter: its of() calls close(),
-                    // which releases resources without flushing pending add()s. Any
-                    // pending entry means the persisted chain is not the whole
-                    // truth, so the tail append must not be trusted to complete it.
-                    final boolean hadPendingEntries = indexer.getWriter() instanceof PostingIndexWriter pending
-                            && pending.hasPendingEntries();
+                    // From the pre-sweep snapshot, NOT from the live writer: by the
+                    // time a later partition is sealed, an earlier partition's
+                    // configureFollowerAndWriter -> of() -> close() has already
+                    // dropped the pending entries this needs to see, so reading it
+                    // here would return false in exactly the multi-partition commit
+                    // where it matters. A pending entry means the persisted chain is
+                    // not the whole truth (close() discards it without flushing,
+                    // while setMaxValue has already advanced the head), so the tail
+                    // append must not be trusted to complete it.
+                    final boolean hadPendingEntries = o3PendingIndexersAtSweepStart.contains(colIdx);
                     try {
                         mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
 
@@ -14058,6 +14071,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
                         indexer.mergeTentativeIntoActiveIfAny();
+                        if (hadPendingEntries && PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
+                            PostingIndexWriter.COVERING_SEAL_APPEND_PENDING_DECLINE_COUNT.incrementAndGet();
+                        }
                         final boolean appendCovered = !hadPendingEntries
                                 && canAppendCovered(indexer, canSkipRebuild, appendFromRow, partitionSize, txWriter.getTxn());
                         if (appendCovered) {
@@ -14228,14 +14244,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void sealPostingIndexesForO3Partitions() {
         assert o3PartitionUpdRemaining.get() == 0 : "posting seal sweep ran with O3 partition workers in flight";
+        snapshotPendingPostingIndexers();
         try {
             sealPostingIndexesForO3Partitions0();
         } finally {
+            o3PendingIndexersAtSweepStart.clear();
             // Consume the deferral records here, not inside the sweep: the early
             // returns below would otherwise carry a stale partition into the next
             // commit, and a throw must not leave one behind either. A retried
             // commit re-dispatches O3, which re-adds whatever it defers again.
             clearO3CoveringDeferredPartitions();
+        }
+    }
+
+    /**
+     * Record which posting indexers hold unflushed add() calls before the sweep
+     * touches any of them. Read per column afterwards: a writer that still had
+     * pending entries cannot have its persisted chain treated as the whole truth,
+     * because the sweep's own reopen discards them (close() does not flush).
+     */
+    private void snapshotPendingPostingIndexers() {
+        o3PendingIndexersAtSweepStart.clear();
+        for (int i = 0, n = indexers.size(); i < n; i++) {
+            ColumnIndexer indexer = indexers.getQuick(i);
+            if (indexer != null
+                    && indexer.getWriter() instanceof PostingIndexWriter piw
+                    && piw.hasPendingEntries()) {
+                o3PendingIndexersAtSweepStart.add(i);
+            }
         }
     }
 

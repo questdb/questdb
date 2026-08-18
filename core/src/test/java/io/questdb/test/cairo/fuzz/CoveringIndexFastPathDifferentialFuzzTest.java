@@ -253,6 +253,13 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
             Assert.assertTrue("neither run may reseal more than the stream's merges require"
                             + " (fastReseals=" + fastReseals + ", o3Reseals=" + o3Reseals + ")",
                     fastReseals <= o3Reseals);
+            // The stream's out-of-order dips are genuine merges, so SOME reseal must
+            // still happen in at least one arm. Without this, both counts being zero
+            // - a covered append wrongly taken on a commit that needed a rebuild -
+            // would satisfy the comparison above.
+            Assert.assertTrue("the stream's merges must still reseal somewhere"
+                            + " (fastReseals=" + fastReseals + ", o3Reseals=" + o3Reseals + ")",
+                    o3Reseals > 0 || fastReseals > 0);
         });
     }
 }

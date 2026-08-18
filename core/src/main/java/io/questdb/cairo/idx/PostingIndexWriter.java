@@ -147,6 +147,13 @@ public class PostingIndexWriter implements IndexWriter {
     // COVERING_COUNTERS_ENABLED like the others.
     @TestOnly
     public static final java.util.concurrent.atomic.AtomicLong COVERING_SEAL_APPEND_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly: number of times the seal DECLINED the covered append because the
+    // writer still held unflushed add() calls. Without a counter that branch is
+    // unobservable, so nothing can tell its presence from its absence - and it
+    // guards a silent-row-loss case (close() drops pending entries). Tests assert
+    // it stays 0; if a workload ever trips it, that assertion is how we find out.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_SEAL_APPEND_PENDING_DECLINE_COUNT = new java.util.concurrent.atomic.AtomicLong();
     // @TestOnly: how many times TableWriter.tryFastAppendInOrderBlock actually
     // committed a block. Distinct from COVERING_FASTLAG_COMMIT_COUNT, which counts
     // the SHARED fast-lag covered publish that the pre-existing single-txn path
@@ -1005,18 +1012,6 @@ public class PostingIndexWriter implements IndexWriter {
      * decide what is already indexed must instead treat it as untrustworthy and
      * rebuild.
      */
-    /**
-     * True when the writer holds {@code add()} calls that have not been flushed
-     * to a generation yet. {@code close()} deliberately does NOT flush them, so
-     * any caller about to reopen this writer (which the seal does, via
-     * configureFollowerAndWriter) would drop them. A caller that relies on the
-     * persisted chain being the whole truth must therefore refuse to do so while
-     * this is true.
-     */
-    public boolean hasPendingEntries() {
-        return hasPendingData;
-    }
-
     public long getHeadTxnAtSeal() {
         if (!keyMem.isOpen() || !chain.hasHead()) {
             return -1L;
@@ -1046,6 +1041,18 @@ public class PostingIndexWriter implements IndexWriter {
      * a fresh format-1 entry, migrating the head; subsequent block-applies see a
      * format-1 head and fast-path. Cheap: one mapped int read.
      */
+    /**
+     * True when the writer holds {@code add()} calls that have not been flushed
+     * to a generation yet. {@code close()} deliberately does NOT flush them, so
+     * any caller about to reopen this writer (which the seal does, via
+     * configureFollowerAndWriter) would drop them. A caller that relies on the
+     * persisted chain being the whole truth must therefore refuse to do so while
+     * this is true.
+     */
+    public boolean hasPendingEntries() {
+        return hasPendingData;
+    }
+
     public boolean isHeadCoveringFormatLegacy() {
         // Self-contained property of the on-disk head entry (independent of the
         // writer's live coverCount, which may be unconfigured at gate time): a

@@ -251,11 +251,22 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
                             // (1) Covered == base at ONE snapshot: single statement, both
                             // branches share the reader txn -> any covered fragment that
                             // disagrees with the base column produces a non-empty diff.
+                            // The base arm is no_INDEX, not no_covering, and the diff is
+                            // SYMMETRIC. no_covering only disables the covered read and
+                            // leaves the index scan in place, so a posting that is
+                            // MISSING drops the row from both arms and a one-way diff
+                            // stays 0 - which is precisely what an unindexed tail looks
+                            // like. Proven by mutation: breaking the seal's rebuild
+                            // fallback left the old oracle green and fails this one.
                             final long diff = scalar(compiler, ctx,
                                     "SELECT count(*) FROM ("
-                                            + "(SELECT ts, value FROM t WHERE sym = '" + sym + "')"
+                                            + "((SELECT ts, value FROM t WHERE sym = '" + sym + "')"
                                             + " EXCEPT "
-                                            + "(SELECT /*+ no_covering */ ts, value FROM t WHERE sym = '" + sym + "'))");
+                                            + "(SELECT /*+ no_index */ ts, value FROM t WHERE sym = '" + sym + "'))"
+                                            + " UNION ALL "
+                                            + "((SELECT /*+ no_index */ ts, value FROM t WHERE sym = '" + sym + "')"
+                                            + " EXCEPT "
+                                            + "(SELECT ts, value FROM t WHERE sym = '" + sym + "')))");
                             if (diff != 0) {
                                 throw new AssertionError("covered read disagrees with base column at snapshot for "
                                         + sym + ": EXCEPT returned " + diff + " rows");
