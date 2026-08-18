@@ -59,6 +59,19 @@ public final class RowExpiryUtil {
     public static final long DEFAULT_CLEANUP_INTERVAL_MICROS = 3_600_000_000L;
 
     /**
+     * {@code materialized_views().expire_enforcement} value for a policy the cleanup job reclaims disk for:
+     * every read hides the expired rows AND the background job eventually deletes them from disk.
+     */
+    public static final String ENFORCEMENT_FILTER_AND_RECLAIM = "FILTER_AND_RECLAIM";
+
+    /**
+     * {@code materialized_views().expire_enforcement} value for a policy the cleanup job skips: every read
+     * hides the expired rows, but they keep occupying disk until a full refresh rebuilds the view. See
+     * {@link #isReclaimingPolicy}.
+     */
+    public static final String ENFORCEMENT_FILTER_ONLY = "FILTER_ONLY";
+
+    /**
      * Synthetic boolean column name used by the projection-CASE read filter / cleanup for window and keep-by
      * policies: the inner projection computes {@code CASE WHEN (<pred>) THEN false ELSE true END} as this
      * column and the outer query filters on it. Unlikely to collide with a real user column.
@@ -189,6 +202,30 @@ public final class RowExpiryUtil {
      */
     public static boolean isKeepLatest(CharSequence stored) {
         return hasMode(stored, MODE_KEEP_LATEST);
+    }
+
+    /**
+     * True when the background cleanup job frees disk space for {@code stored}, i.e. the policy is both
+     * scalar (see {@link #isStructuralPolicy}) and monotonic ({@code isMonotonicPredicate}: a row expired
+     * now stays expired). A policy that fails either half stays query-correct - the read filter hides its
+     * expired rows on every read - but its rows keep occupying disk until a full refresh rebuilds the view.
+     * This is the single rule behind the cleanup job's skip, the DDL advisory and the
+     * {@code expire_enforcement} column of {@code materialized_views()}.
+     */
+    public static boolean isReclaimingPolicy(CharSequence stored, boolean isMonotonicPredicate) {
+        return isMonotonicPredicate && !isStructuralPolicy(stored);
+    }
+
+    /**
+     * True if {@code stored} is an encoded KEEP LATEST, KEEP [N] HIGHEST/LOWEST or window-function policy,
+     * i.e. one whose keep-verdict depends on the other rows in the view rather than on the row alone. A
+     * later refresh can remove or replace the current winner and make an older row visible again, so
+     * physical cleanup skips these modes: once it has deleted that older row, an incremental refresh cannot
+     * reconstruct it. The check reads the encoded text alone, so callers holding no metadata (and no
+     * compiler) can ask it.
+     */
+    public static boolean isStructuralPolicy(CharSequence stored) {
+        return isKeepLatest(stored) || isKeepBy(stored) || isWindow(stored);
     }
 
     /**

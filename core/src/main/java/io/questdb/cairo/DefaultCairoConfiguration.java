@@ -1761,7 +1761,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isRowExpiryEnabled() {
+    public boolean isRowExpiryCleanupEnabled() {
         return true;
     }
 

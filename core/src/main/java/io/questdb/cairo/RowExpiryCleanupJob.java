@@ -146,7 +146,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private SqlExecutionContextImpl sqlExecutionContext;
 
     public static boolean assignToPool(WorkerPool workerPool, CairoEngine engine) {
-        if (!engine.getConfiguration().isRowExpiryEnabled()) {
+        if (!engine.getConfiguration().isRowExpiryCleanupEnabled()) {
             return false;
         }
         final RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine);
@@ -181,7 +181,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * Reclamation requires <b>monotonic</b> expiry: a row classified as expired now must stay expired. A
      * non-monotonic policy, including every structural KEEP/window mode, returns early WITHOUT reclaiming.
      * The read filter stays authoritative for visibility, so such a policy is query-correct but accrues
-     * physical residue until a full refresh. See {@link SqlCompiler#isExpiryCleanupMonotonic}.
+     * physical residue until a full refresh. See {@link SqlCompiler#isExpiryCleanupReclaiming}.
      */
     public boolean cleanupTable(TableToken tableToken, String predicate) {
         isLastCleanupFailed = false;
@@ -216,8 +216,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final String tableName = tableToken.getTableName();
         // Structural KEEP and raw window policies can reveal an older row after a later materialized-view
         // refresh removes the current winner. Preserve their physical history until cleanup has a
-        // deletion-aware rebuild mechanism.
-        if (RowExpiryUtil.isKeepLatest(predicate) || RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+        // deletion-aware rebuild mechanism. The check reads the encoded policy alone, so it runs before this
+        // sweep borrows a reader or a compiler; the monotonicity half of the same rule is applied below.
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
             return false;
         }
 
@@ -340,7 +341,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             sqlExecutionContext, metadata, predicate, timestampColumnName);
                 } catch (SqlException e) {
                     // A predicate that fails to classify is treated as non-monotonic: skip reclamation and let
-                    // the read filter stay authoritative (mirrors isExpiryCleanupMonotonic's swallow-and-skip).
+                    // the read filter stay authoritative (mirrors isExpiryCleanupReclaiming's swallow-and-skip).
                     return false;
                 }
             }
@@ -351,7 +352,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // show again as time advances. The read filter stays authoritative for correctness; here we simply
         // skip disk reclamation for this policy. Monotonic clock-free predicates and "ts < now()"-style
         // thresholds proceed normally.
-        if (!isCleanupMonotonic) {
+        if (!RowExpiryUtil.isReclaimingPolicy(predicate, isCleanupMonotonic)) {
             return false;
         }
 

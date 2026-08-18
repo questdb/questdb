@@ -682,7 +682,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
-    public boolean isExpiryCleanupMonotonic(
+    public boolean isExpiryCleanupReclaiming(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate
@@ -690,25 +690,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (predicate == null) {
             return false;
         }
-        // KEEP LATEST / KEEP [N] HIGHEST/LOWEST are not safe for physical cleanup. A materialized-view
-        // refresh can remove or replace the current winner, making an older row visible again. Once cleanup
-        // has physically deleted that fallback from another timestamp range, an incremental refresh cannot
-        // reconstruct it without a full historical rebuild.
-        if (RowExpiryUtil.isKeepLatest(predicate) || RowExpiryUtil.isKeepBy(predicate)) {
-            return false;
-        }
-        // An arbitrary window predicate is not necessarily monotonic even when it is clock-free: adding a row
-        // can change another row's rank, aggregate, or frame result and make a previously expired row visible
-        // again. Skip physical cleanup for raw windows unless a future implementation can prove the specific
-        // window expression monotonic.
-        if (RowExpiryUtil.isWindow(predicate)) {
+        // A structural policy (KEEP LATEST, KEEP [N] HIGHEST/LOWEST, window) never reclaims, and its encoded
+        // text is not a scalar expression the classifier below could bind. Answer from the encoding alone.
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
             return false;
         }
         // Bind and classify the scalar expression once. Structural threshold recognition is unit-independent,
         // so TIMESTAMP_NS designated columns and symmetric `T > ts` forms receive the same monotonicity proof
         // as microsecond `ts < T`; the numeric micros threshold remains a separate partition-bounds fast path.
         try {
-            return validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, 0).isMonotonic();
+            final ExpiryValidationResult classification =
+                    validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, 0);
+            return RowExpiryUtil.isReclaimingPolicy(predicate, classification.isMonotonic());
         } catch (SqlException e) {
             return false;
         }
@@ -6489,7 +6482,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
         }
-        warnIfNonMonotonicExpiry(validationResult, tableToken.getTableName());
+        warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
         final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
@@ -6590,21 +6583,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
         }
-        warnIfNonMonotonicExpiry(validationResult, createTableOp.getTableName());
+        warnIfExpiryKeepsDisk(validationResult, predicate, createTableOp.getTableName());
     }
 
     /**
-     * Logs an advisory when an EXPIRE ROWS policy is non-monotonic — query-correct (the read filter is
-     * authoritative) but its disk will NOT be reclaimed by the background cleanup job (cleanup is skipped to
-     * avoid deleting a row a later read would show; see {@link #isExpiryCleanupMonotonic}). The caller reuses
-     * the classification returned by validation, so this advisory does not compile the expression again.
+     * Logs an advisory when the background cleanup job will not free disk space for this EXPIRE ROWS policy:
+     * a structural KEEP/window mode, or a non-monotonic scalar predicate. Such a policy is query-correct (the
+     * read filter is authoritative) but its expired rows keep occupying disk, because cleanup skips a policy
+     * whose rows a later read may have to show again ({@link RowExpiryUtil#isReclaimingPolicy}). The caller
+     * reuses the classification returned by validation, so this advisory does not compile the expression
+     * again. {@code materialized_views().expire_enforcement} reports the same verdict per view.
      */
-    private void warnIfNonMonotonicExpiry(
+    private void warnIfExpiryKeepsDisk(
             ExpiryValidationResult validationResult,
+            CharSequence predicate,
             CharSequence objectName
     ) {
-        if (!validationResult.isMonotonic()) {
-            LOG.advisory().$("EXPIRE ROWS policy is non-monotonic; reads stay correct but physical cleanup is skipped (disk is not reclaimed) [view=")
+        if (!RowExpiryUtil.isReclaimingPolicy(predicate, validationResult.isMonotonic())) {
+            LOG.advisory().$("EXPIRE ROWS policy hides rows without reclaiming disk; reads stay correct but physical cleanup is skipped [view=")
                     .$safe(objectName).I$();
         }
     }

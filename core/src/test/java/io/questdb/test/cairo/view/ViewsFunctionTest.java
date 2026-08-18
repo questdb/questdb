@@ -70,17 +70,18 @@ public class ViewsFunctionTest extends AbstractViewTest {
             execute("create materialized view mv_no_policy as (select * from base)");
             drainWalAndMatViewQueues();
 
-            assertQuery("select expire_clause, expire_cleanup_every from materialized_views() where view_name = 'mv'")
+            // A clock-free scalar predicate is monotonic, so the cleanup job frees disk for this policy.
+            assertQuery("select expire_clause, expire_cleanup_every, expire_enforcement from materialized_views() where view_name = 'mv'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("expire_clause\texpire_cleanup_every\n" +
-                            "v < 2.0\t30m\n");
+                    .returns("expire_clause\texpire_cleanup_every\texpire_enforcement\n" +
+                            "v < 2.0\t30m\tFILTER_AND_RECLAIM\n");
 
-            assertQuery("select expire_clause, expire_cleanup_every from materialized_views() where view_name = 'mv_no_policy'")
+            assertQuery("select expire_clause, expire_cleanup_every, expire_enforcement from materialized_views() where view_name = 'mv_no_policy'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("expire_clause\texpire_cleanup_every\n" +
-                            "\t\n");
+                    .returns("expire_clause\texpire_cleanup_every\texpire_enforcement\n" +
+                            "\t\t\n");
         });
     }
 

@@ -62,6 +62,7 @@ import org.junit.Test;
  */
 public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
+    private static final long DEC_25 = 1_703_462_400_000_000L; // 2023-12-25T00:00:00Z
     private static final long FEB_10 = 1_707_523_200_000_000L; // 2024-02-10T00:00:00Z
     private static final long JAN_10 = 1_704_844_800_000_000L; // 2024-01-10T00:00:00Z
     private static final long JAN_25 = 1_706_140_800_000_000L; // 2024-01-25T00:00:00Z
@@ -333,7 +334,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             }
 
             // A subquery predicate is never treated as safe for physical cleanup: the expression parse
-            // rejects it up front (it runs without a query model), and isExpiryCleanupMonotonic maps
+            // rejects it up front (it runs without a query model), and isExpiryCleanupReclaiming maps
             // the rejection to non-monotonic, so the cleanup job skips such a policy. The classifier
             // also checks for QUERY nodes itself, covering a subquery that ever got past the parse.
             execute("CREATE TABLE blk (s SYMBOL)");
@@ -349,7 +350,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
                 }
-                Assert.assertFalse("subquery predicate must never classify monotonic", compiler.isExpiryCleanupMonotonic(
+                Assert.assertFalse("subquery predicate must never classify monotonic", compiler.isExpiryCleanupReclaiming(
                         sqlExecutionContext, metadata, "s IN (SELECT s FROM blk)"));
             }
 
@@ -360,7 +361,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             ) {
                 Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
                         sqlExecutionContext, metadata, "now() > ts", 0).isMonotonic());
-                Assert.assertTrue(compiler.isExpiryCleanupMonotonic(
+                Assert.assertTrue(compiler.isExpiryCleanupReclaiming(
                         sqlExecutionContext, metadata, "now() > ts"));
             }
         });
@@ -599,6 +600,60 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
                     .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nA\t9.0\nB\t8.0\n");
+        });
+    }
+
+    @Test
+    public void testExpireEnforcementMatchesCleanupBehaviour() throws Exception {
+        // materialized_views().expire_enforcement must report what the cleanup job really does with each
+        // policy mode, so both are asserted in one pass: the label on its own agrees with any implementation.
+        // The clock sits before every row, so "ts > now()" expires all four of them - a cleanup that treated
+        // the mode as reclaiming would empty the view, and its FILTER_ONLY verdict is what keeps them.
+        record Policy(String clause, String enforcement, String partitionsAndRows, boolean isReclaiming) {
+        }
+        final Policy[] policies = {
+                new Policy("", "", "4\t4", false),
+                new Policy("EXPIRE ROWS WHEN ts < '2024-01-03T00:00:00.000000Z'", "FILTER_AND_RECLAIM", "2\t2", true),
+                new Policy("EXPIRE ROWS WHEN ts > now()", "FILTER_ONLY", "4\t4", false),
+                new Policy("EXPIRE ROWS KEEP LATEST PARTITION BY k", "FILTER_ONLY", "4\t4", false),
+                new Policy("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k", "FILTER_ONLY", "4\t4", false),
+                new Policy("EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)", "FILTER_ONLY", "4\t4", false),
+        };
+        assertMemoryLeak(() -> {
+            setCurrentMicros(DEC_25);
+            for (Policy policy : policies) {
+                execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO base VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('A', 2.0, '2024-01-02T00:00:00.000000Z'),
+                        ('B', 3.0, '2024-01-03T00:00:00.000000Z'),
+                        ('B', 4.0, '2024-01-04T00:00:00.000000Z')""");
+                drainWalAndMatViewQueues();
+                execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " + policy.clause());
+                drainWalAndMatViewQueues();
+
+                assertQuery("SELECT expire_enforcement FROM materialized_views() WHERE view_name = 'mv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("expire_enforcement\n" + policy.enforcement() + "\n");
+
+                Assert.assertEquals(
+                        "cleanup must free disk exactly for a FILTER_AND_RECLAIM policy [clause=" + policy.clause() + ']',
+                        policy.isReclaiming(),
+                        runCleanup("mv")
+                );
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("p\tr\n" + policy.partitionsAndRows() + "\n");
+
+                execute("DROP MATERIALIZED VIEW mv");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
         });
     }
 
@@ -1217,12 +1272,12 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     public void testOperationalKillSwitchControlsPoolOwnership() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 1)) {
-                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_ENABLED, "false");
+                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_CLEANUP_ENABLED, "false");
                 Assert.assertFalse(RowExpiryCleanupJob.assignToPool(pool, engine));
                 Assert.assertEquals(0, pool.getAssignedJobCount());
                 Assert.assertEquals(0, pool.getFreeOnExitJobCount());
 
-                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_ENABLED, "true");
+                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_CLEANUP_ENABLED, "true");
                 Assert.assertTrue(RowExpiryCleanupJob.assignToPool(pool, engine));
                 Assert.assertEquals(1, pool.getAssignedJobCount());
                 Assert.assertEquals(1, pool.getFreeOnExitJobCount());

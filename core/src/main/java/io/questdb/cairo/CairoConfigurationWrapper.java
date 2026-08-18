@@ -1785,8 +1785,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isRowExpiryEnabled() {
-        return getDelegate().isRowExpiryEnabled();
+    public boolean isRowExpiryCleanupEnabled() {
+        return getDelegate().isRowExpiryCleanupEnabled();
     }
 
     @Override

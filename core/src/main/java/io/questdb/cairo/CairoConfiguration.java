@@ -1278,7 +1278,7 @@ public interface CairoConfiguration {
      * read-time filter still hides expired rows), but the background row-expiry cleanup job is not
      * scheduled, so no rows are ever physically reclaimed.
      */
-    boolean isRowExpiryEnabled();
+    boolean isRowExpiryCleanupEnabled();
 
     // Test-only seam, with no backing production property: always true in a running server, so
     // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a

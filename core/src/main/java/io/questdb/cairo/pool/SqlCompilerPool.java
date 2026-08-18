@@ -163,8 +163,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public boolean isExpiryCleanupMonotonic(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate) {
-            return delegate.isExpiryCleanupMonotonic(executionContext, metadata, predicate);
+        public boolean isExpiryCleanupReclaiming(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate) {
+            return delegate.isExpiryCleanupReclaiming(executionContext, metadata, predicate);
         }
 
         @Override

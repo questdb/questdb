@@ -72,12 +72,12 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     );
 
     /**
-     * Returns true when the EXPIRE ROWS policy {@code predicate} is <b>monotonic</b>, i.e. safe for the
-     * background cleanup job to physically reclaim: a row it classifies as expired now can never re-enter the
-     * keep-set. Eligible scalar {@code WHEN} predicates are monotonic when they are clock-free or reduce to a
-     * designated-timestamp threshold ({@code ts < now()} / {@code ts <= T}). Structural KEEP and raw window
-     * policies are not safe: a later materialized-view refresh can remove a winner and reveal an older fallback
-     * that cleanup had physically deleted. A scalar predicate that references a non-deterministic clock in a
+     * Returns true when the background cleanup job frees disk space for the EXPIRE ROWS policy
+     * {@code predicate}, i.e. when physical deletion is safe: a row it classifies as expired now can never
+     * re-enter the keep-set. Eligible scalar {@code WHEN} predicates qualify when they are clock-free or
+     * reduce to a designated-timestamp threshold ({@code ts < now()} / {@code ts <= T}). Structural KEEP and
+     * raw window policies do not: a later materialized-view refresh can remove a winner and reveal an older
+     * fallback that cleanup had physically deleted. A scalar predicate that references a non-deterministic clock in a
      * non-threshold position (e.g. {@code ts > now()}) is also not monotonic because it can un-expire rows as
      * time advances.
      * <p>
@@ -86,7 +86,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code metadata} is
      * used to bind scalar predicates.
      */
-    boolean isExpiryCleanupMonotonic(
+    boolean isExpiryCleanupReclaiming(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate
