@@ -242,10 +242,10 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                 final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
                         ? SuspensionScope.getSupplementalCancellationSignalGeneration()
                         : CancellationBinding.NO_GENERATION;
-                if (isFiberSuspendable) {
-                    frameSequence.enterReducerCancellationScope();
-                }
                 try {
+                    if (isFiberSuspendable) {
+                        frameSequence.enterReducerCancellationScope();
+                    }
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
                             .$(", id=").$(frameSequence.getId())

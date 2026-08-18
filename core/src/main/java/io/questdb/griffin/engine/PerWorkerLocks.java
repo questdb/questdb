@@ -90,7 +90,8 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     }
 
     /**
-     * Acquires a slot for the given worker, spinning until one frees up. A successful acquire must be
+     * Acquires a slot for the given worker: a mounted fiber parks until one frees up, other callers
+     * spin. A successful acquire must be
      * paired with a {@link #releaseSlot(int)} in a finally: there is no reset here, and an atom
      * outlives the query that borrowed it, so a slot leaked on an error path stays lost for as long
      * as the owning factory sits in the SQL cache. Once every slot has leaked, each later execution

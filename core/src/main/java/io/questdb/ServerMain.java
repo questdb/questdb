@@ -86,6 +86,7 @@ import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
     private static final int SHUTDOWN_CLOSE_ATTEMPTS = 3;
+    private static final long SHUTDOWN_LOG_FLUSH_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(5);
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CairoEngine engine;
@@ -570,7 +571,7 @@ public class ServerMain implements Closeable {
                 }
                 if (isServerClosed) {
                     try {
-                        LogFactory.closeInstanceWithin(Math.max(1, shutdownDeadline - System.nanoTime()));
+                        LogFactory.closeInstanceWithin(Math.max(SHUTDOWN_LOG_FLUSH_TIMEOUT_NANOS, shutdownDeadline - System.nanoTime()));
                     } catch (Throwable th) {
                         printStackTraceSafely(th);
                     }

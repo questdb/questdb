@@ -289,6 +289,9 @@ public class WorkerPool implements Closeable {
      * Halts the pool using an absolute {@link System#nanoTime()} deadline for shutdown waits.
      * When a wait reaches the deadline, shutdown has begun but the pool retains resources that a
      * live worker or fiber may still access. The caller may retry with another deadline.
+     * The deadline bounds this call's return, not thread termination: a fiber-host pool's
+     * non-daemon workers keep running until the fiber runtime drains, so a timed-out halt can
+     * leave them alive past the deadline and keep the JVM from exiting.
      *
      * @param deadlineNanos absolute deadline for shutdown waits
      * @return true when the pool released all owned resources, false when it retained its live

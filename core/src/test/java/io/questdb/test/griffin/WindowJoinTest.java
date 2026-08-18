@@ -3746,34 +3746,37 @@ public class WindowJoinTest extends AbstractCairoTest {
                 }
             }
             assertQuery("""
-                    SELECT t.sym, string_agg(p.sym::string, ',') agg, count_distinct(p.sym::string) cd
+                    SELECT t.price, string_agg(p.price::string, ',') agg, count_distinct(p.price::string) cd
                     FROM trades t
                     WINDOW JOIN prices p
                     ON (t.sym = p.sym)
                     RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
                     EXCLUDE PREVAILING
-                    WHERE t.sym = 'NFLX'
+                    WHERE t.sym = 'TSLA'
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            sym\tagg\tcd
-                            NFLX\tNFLX\t1
+                            price\tagg\tcd
+                            400.0\t399.5,400.5\t2
+                            401.0\t400.5\t1
+                            402.0\t401.5\t1
                             """);
             assertQuery("""
-                    SELECT t.sym, string_distinct_agg(p.sym::string, ',') agg, approx_percentile(p.price, 0.5) ap
+                    SELECT t.price, string_distinct_agg(p.sym::string, ',') agg, approx_percentile(p.price, 0.5) ap
                     FROM trades t
                     WINDOW JOIN prices p
-                    ON (t.sym = p.sym)
                     RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
                     EXCLUDE PREVAILING
-                    WHERE t.sym = 'NFLX'
+                    WHERE t.sym = 'TSLA'
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            sym\tagg\tap
-                            NFLX\tNFLX\t672.0
+                            price\tagg\tap
+                            400.0\tTSLA,AMZN\t400.0
+                            401.0\tTSLA,AMZN\t496.0
+                            402.0\tTSLA,AMZN,META\t496.0
                             """);
         });
     }

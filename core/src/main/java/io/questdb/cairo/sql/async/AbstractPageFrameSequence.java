@@ -59,16 +59,20 @@ abstract class AbstractPageFrameSequence {
     }
 
     public void cancel(int reason) {
+        cancelIfChanged(reason);
+    }
+
+    boolean cancelIfChanged(int reason) {
         while (true) {
             final int current = cancelReason.get();
             if (!isCancelReasonTransitionAllowed(current, reason)) {
-                return;
+                return false;
             }
             if (cancelReason.compareAndSet(current, reason)) {
                 if (reason != SqlExecutionCircuitBreaker.STATE_OK) {
                     cancellationSignal.cancel();
                 }
-                return;
+                return true;
             }
         }
     }

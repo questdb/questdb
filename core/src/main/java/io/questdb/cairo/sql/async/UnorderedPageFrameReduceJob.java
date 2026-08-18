@@ -177,10 +177,10 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                     final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
                             ? SuspensionScope.getSupplementalCancellationSignalGeneration()
                             : CancellationBinding.NO_GENERATION;
-                    if (isFiberSuspendable) {
-                        frameSequence.enterReducerCancellationScope();
-                    }
                     try {
+                        if (isFiberSuspendable) {
+                            frameSequence.enterReducerCancellationScope();
+                        }
                         if (frameSequence.isActive()) {
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
                             reduce(

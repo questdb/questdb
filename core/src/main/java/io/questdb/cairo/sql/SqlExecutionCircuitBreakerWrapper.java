@@ -67,6 +67,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.checkIfTrippedNoThrottle();
     }
 
+    public void clear() {
+        networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
+        delegate = networkSqlExecutionCircuitBreaker;
+    }
+
     @Override
     public void clearCancelledFlag(AtomicBoolean expected) {
         delegate.clearCancelledFlag(expected);
@@ -75,11 +80,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
         delegate.clearCancelledFlag(expected, expectedGeneration);
-    }
-
-    public void clear() {
-        networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
-        delegate = networkSqlExecutionCircuitBreaker;
     }
 
     @Override

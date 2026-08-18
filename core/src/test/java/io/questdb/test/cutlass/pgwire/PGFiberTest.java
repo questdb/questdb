@@ -70,6 +70,11 @@ public class PGFiberTest extends BasePGTest {
                 public WorkerPoolMode getWorkerPoolMode() {
                     return WorkerPoolMode.FIBER_HOST;
                 }
+
+                @Override
+                public boolean isFiberEnabled() {
+                    return true;
+                }
             };
             try (
                     PGServer server = createPGServer(conf);
@@ -103,7 +108,12 @@ public class PGFiberTest extends BasePGTest {
     @Test
     public void testQueriesRunOnPooledFibers() throws Exception {
         assertMemoryLeak(() -> {
-            final PGConfiguration conf = new Port0PGConfiguration(-1);
+            final PGConfiguration conf = new Port0PGConfiguration(-1) {
+                @Override
+                public boolean isFiberEnabled() {
+                    return true;
+                }
+            };
             try (
                     PGServer server = createPGServer(conf);
                     WorkerPool workerPool = server.getWorkerPool()
@@ -195,6 +205,11 @@ public class PGFiberTest extends BasePGTest {
                 @Override
                 public int getFiberRetainedCount() {
                     return 1;
+                }
+
+                @Override
+                public boolean isFiberEnabled() {
+                    return true;
                 }
             };
             try (

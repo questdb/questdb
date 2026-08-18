@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 
 
 public class Port0PGConfiguration extends DefaultPGConfiguration {
@@ -62,5 +64,10 @@ public class Port0PGConfiguration extends DefaultPGConfiguration {
     @Override
     public Rnd getRandom() {
         return new Rnd();
+    }
+
+    @Override
+    public boolean isFiberEnabled() {
+        return TestUtils.getWorkerPoolMode() == WorkerPoolMode.FIBER_HOST;
     }
 }

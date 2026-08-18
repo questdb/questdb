@@ -565,7 +565,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                if (frameSequence.cancelIfChanged(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
+                    LOG.info().$("cancelling in-flight query, dispatcher is quiescing [frameSequenceId=")
+                            .$(frameSequence.getId()).I$();
+                }
                 try {
                     subSeq.done(cursor);
                 } finally {
@@ -604,7 +607,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 subSeq.done(cursor);
                 signalProgress(frameSequence);
                 if (frameSequenceId == frameSequence.getId()) {
-                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                    if (frameSequence.cancelIfChanged(SqlExecutionCircuitBreaker.STATE_CANCELLED)) {
+                        LOG.info().$("cancelling in-flight query, dispatcher is quiescing [frameSequenceId=")
+                                .$(frameSequenceId).I$();
+                    }
                     frameSequence.getDoneLatch().countDown();
                 }
             } else {

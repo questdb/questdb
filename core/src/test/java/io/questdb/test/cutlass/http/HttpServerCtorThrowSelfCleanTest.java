@@ -59,6 +59,7 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
             HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
                     .withBaseDir(root)
                     .withFactoryProvider(DefaultFactoryProvider.INSTANCE)
+                    .withFiberEnabled(true)
                     .withNetwork(new BindFailingNetworkFacade())
                     .build(new DefaultTestCairoConfiguration(root));
             for (WorkerPoolMode workerPoolMode : WorkerPoolMode.values()) {
@@ -87,6 +88,7 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
                 final AtomicInteger closeCount = new AtomicInteger();
                 final HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
                         .withBaseDir(root)
+                        .withFiberEnabled(true)
                         .withPort(0)
                         .build(new DefaultTestCairoConfiguration(root));
                 try (
@@ -139,6 +141,7 @@ public class HttpServerCtorThrowSelfCleanTest extends AbstractCairoTest {
                 final AtomicInteger failingFactoryCalls = new AtomicInteger();
                 final HttpServerConfiguration configuration = new HttpServerConfigurationBuilder()
                         .withBaseDir(root)
+                        .withFiberEnabled(true)
                         .withPort(0)
                         .build(new DefaultTestCairoConfiguration(root));
                 try (
