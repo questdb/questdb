@@ -12657,6 +12657,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetIndexRetiredColumnIds.clear();
             path.trimTo(pathSize);
         }
+        // The append above is already durable (fsynced when sync is enabled),
+        // so re-reading the _pm here sees it. Reopen rather than reuse
+        // parquetMetaReader's now-cleared mapping: that mapping predates the
+        // footer just written and cannot see it.
+        final int footerCount = countPmChainFooters(plen);
+        if (footerCount > MAX_UNWARNED_PM_FOOTERS) {
+            LOG.advisory().$("parquet metadata chain is long and nothing is resetting it [table=")
+                    .$(tableToken).$(", partition=").$ts(partitionTimestamp)
+                    .$(", footers=").$(footerCount)
+                    .$("]; the O3 rewrite trigger normally resets it -- check "
+                            + "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio and .max.bytes").I$();
+            pmChainWarnCount++;
+        }
         // The _pm changed under a partition whose name txn, row count and
         // data.parquet size are all unchanged, so nothing else in the _txn tells
         // a reader to drop the mapping it took at open time. Without this bump
@@ -15804,6 +15817,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return parquetSweepTokensResolved && isAboveEveryPublishedIndexTxn(columnId, indexTxn);
     }
 
+    /**
+     * Counts every footer on the partition's {@code _pm} chain, walking fresh
+     * from the physical tail with the same {@code resolveLastFooter} /
+     * {@code resolvePrevFooter} pair {@link #readPublishedParquetIndexTokens}'s
+     * {@code walkChain} union uses. Reopens the file rather than reusing
+     * {@link #parquetMetaReader}'s existing mapping, which -- when called from
+     * {@link #publishParquetIndexTokens} -- predates the footer that call just
+     * appended.
+     * <p>
+     * Returns 0 if the {@code _pm} cannot be read. Called once per publish
+     * purely to size the chain-length advisory; the count itself is not used
+     * for anything that must not under- or over-report.
+     */
+    private int countPmChainFooters(int plen) {
+        path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+        long addr = 0;
+        long fileSize = 0;
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0 || !parquetMetaReader.resolveLastFooter()) {
+                return 0;
+            }
+            fileSize = parquetMetaReader.getFileSize();
+            int footers = 0;
+            do {
+                footers++;
+            } while (parquetMetaReader.resolvePrevFooter());
+            return footers;
+        } finally {
+            // capture BEFORE clear(), which zeroes it -- the early-return path
+            // above (resolveLastFooter() failed) leaves the try body's own
+            // fileSize assignment unreached.
+            if (addr != 0) {
+                fileSize = fileSize == 0 ? parquetMetaReader.getFileSize() : fileSize;
+            }
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+        }
+    }
 
     /**
      * Reads the partition's published {@code _pm} covering-index tokens into
