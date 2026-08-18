@@ -345,7 +345,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // absence from an updated table-wide maxTimestamp the way section 21 already made it learn a
         // dropped piece's absence from minTimestamp. Declining here leaves the known gap where it already
         // was rather than trading it for a wrong maxTimestamp assert failure.
-        final boolean replaceDropEligible = tableWriter.isCommitReplaceMode() && !isLastPartition && o3TimestampLo <= o3TimestampHi;
         int actionCount = processCompositePartition(
                 pathToTable,
                 partitionIndex,
@@ -358,8 +357,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ctx.bounds,
                 ctx.cuts,
                 ctx.actions,
-                replaceDropEligible ? o3TimestampLo : 1,
-                replaceDropEligible ? o3TimestampHi : 0
+                o3TimestampLo,
+                o3TimestampHi
         );
 
         // The cuts above already made every piece sit fully inside or fully outside [o3TimestampLo,
@@ -372,22 +371,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // computeActions assigned them from this piece's routing range - drops the pieceIndex reference
         // and writes only the incoming rows, leaving the piece's old bytes as dead space the same way a
         // genuine DROP does.
-        if (replaceDropEligible) {
-            for (int i = 0; i < actionCount; i++) {
-                final O3CompositeMergeStrategy.Action action = ctx.actions.getQuick(i);
-                if (action.type != O3CompositeMergeStrategy.ActionType.KEEP && action.type != O3CompositeMergeStrategy.ActionType.MERGE) {
-                    continue;
-                }
-                final long pieceTsLo = O3CompositeMergeStrategy.getTsLo(ctx.bounds, action.pieceIndex);
-                final long pieceTsHi = O3CompositeMergeStrategy.getTsHi(ctx.bounds, action.pieceIndex);
-                if (pieceTsHi == Numbers.LONG_NULL || pieceTsLo < o3TimestampLo || pieceTsHi > o3TimestampHi) {
-                    continue;
-                }
-                if (action.type == O3CompositeMergeStrategy.ActionType.KEEP) {
-                    action.setDrop(action.pieceIndex);
-                } else {
-                    action.setNewPiece(action.o3Lo, action.o3Hi);
-                }
+        for (int i = 0; i < actionCount; i++) {
+            final O3CompositeMergeStrategy.Action action = ctx.actions.getQuick(i);
+            if (action.type != O3CompositeMergeStrategy.ActionType.KEEP && action.type != O3CompositeMergeStrategy.ActionType.MERGE) {
+                continue;
+            }
+            final long pieceTsLo = O3CompositeMergeStrategy.getTsLo(ctx.bounds, action.pieceIndex);
+            final long pieceTsHi = O3CompositeMergeStrategy.getTsHi(ctx.bounds, action.pieceIndex);
+            if (pieceTsHi == Numbers.LONG_NULL || pieceTsLo < o3TimestampLo || pieceTsHi > o3TimestampHi) {
+                continue;
+            }
+            if (action.type == O3CompositeMergeStrategy.ActionType.KEEP) {
+                action.setDrop(action.pieceIndex);
+            } else {
+                action.setNewPiece(action.o3Lo, action.o3Hi);
             }
         }
 
