@@ -581,6 +581,20 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * Binds this cursor's decoder to the reader's parquet mapping. The
          * mapping is immutable while the reader is bound, so every cursor may
          * hold its own decoder over the same bytes.
+         * <p>
+         * <b>Each cursor parses the footer itself, deliberately.</b>
+         * {@code ParquetFileDecoder.of(ParquetFileDecoder)} exists to share one
+         * parse -- a shallow copy keeping its own decode context -- and a
+         * reader-owned source decoder fits here, since a frozen reader outlives
+         * every cursor it serves. It was written and measured: binding a
+         * detached cursor and taking its first step over a 400k-row index cost
+         * 1096 ns/cursor parsing per cursor against 1150 ns/cursor sharing one
+         * parse, so sharing is not faster at this footer size. It was reverted
+         * rather than kept, because what it does buy is a lifetime coupling
+         * between the reader's decoder and every cursor's, plus a synchronized
+         * lazy init on the very path getDetachedCursor serves from N workers --
+         * real cost against an unobservable saving. Revisit only with a
+         * measurement showing the parse matters.
          */
         protected ParquetFileDecoder decoder() {
             if (!decoderBound) {
