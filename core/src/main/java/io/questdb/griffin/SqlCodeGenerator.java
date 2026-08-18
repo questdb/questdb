@@ -335,6 +335,7 @@ import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.MergeUnionAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.MergeUnionAllRecordCursorFactoryBuilder;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
@@ -548,6 +549,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    private boolean isGeneratingUnionAllOperand;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -1285,7 +1287,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private static boolean canMergeUnionAll(
+    private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
+        if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
+            mergeFactory.prepareCursor();
+        }
+    }
+
+    private boolean canMergeUnionAll(
             IQueryModel model,
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
@@ -7285,22 +7293,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata mergeMetadata,
             @Nullable IntList symbolUnionColumns
     ) throws SqlException {
-        final RecordCursorFactory mergeFactory = new MergeUnionAllRecordCursorFactory(
+        final MergeUnionAllRecordCursorFactory mergeFactory = MergeUnionAllRecordCursorFactoryBuilder.build(
                 mergeMetadata,
                 factoryA,
+                model.getModelPosition(),
                 factoryB,
+                model.getUnionModel().getModelPosition(),
                 castFunctionsA,
                 castFunctionsB,
-                mergeMetadata.getTimestampIndex(),
-                factoryA.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                factoryA.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                symbolUnionColumns,
+                (toMetadata, fromMetadata, modelPosition) -> generateCastFunctions(
+                        executionContext,
+                        toMetadata,
+                        fromMetadata,
+                        modelPosition
+                )
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), mergeFactory, executionContext, symbolUnionColumns);
         }
-        // The merge keeps the designated timestamp, and maybeResymboliseUnion propagates it along
-        // with followedOrderByAdvice() and getScanDirection(), so re-symbolising the tail of the
-        // chain does not cost the ordering that let generateOrderBy drop the sort.
+        // An inner UNION ALL operand remains internally widened and unmaterialized so an outer N-way
+        // merge can flatten its leaves without constructing successively larger cursor arrays. The
+        // outermost segment constructs one heap and performs one SYMBOL projection.
+        if (isGeneratingUnionAllOperand) {
+            return mergeFactory;
+        }
+        mergeFactory.prepareCursor();
         return maybeResymboliseUnion(mergeFactory, symbolUnionColumns);
     }
 
@@ -8188,7 +8208,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
+        final boolean savedGeneratingUnionAllOperand = isGeneratingUnionAllOperand;
+        final boolean hasUnionAllTail = model.getUnionModel() != null
+                && model.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL;
+        final RecordCursorFactory factory;
+        try {
+            isGeneratingUnionAllOperand |= hasUnionAllTail;
+            factory = generateQuery0(model, executionContext, processJoins);
+        } finally {
+            isGeneratingUnionAllOperand = savedGeneratingUnionAllOperand;
+        }
         if (model.getUnionModel() != null) {
             return generateSetFactory(model, factory, executionContext, null);
         }
@@ -10826,9 +10855,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> castFunctionsA = null;
         ObjList<Function> castFunctionsB = null;
         try {
-            factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
-
             final int setOperationType = model.getSetOperationType();
+            if (symbolUnionColumns == null && factoryA instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
+                symbolUnionColumns = mergeFactory.getSymbolUnionColumns();
+            }
+            final boolean savedGeneratingUnionAllOperand = isGeneratingUnionAllOperand;
+            try {
+                isGeneratingUnionAllOperand |= setOperationType == IQueryModel.SET_OPERATION_UNION_ALL;
+                factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+            } finally {
+                isGeneratingUnionAllOperand = savedGeneratingUnionAllOperand;
+            }
+
+            if (setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
+                prepareMergeUnionAllFactory(factoryA);
+                prepareMergeUnionAllFactory(factoryB);
+            }
             if (symbolUnionColumns != null
                     && setOperationType != IQueryModel.SET_OPERATION_UNION
                     && setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
@@ -10906,6 +10948,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
+                    prepareMergeUnionAllFactory(factoryA);
+                    prepareMergeUnionAllFactory(factoryB);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);

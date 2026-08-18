@@ -24,34 +24,45 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
+    private ObjList<ObjList<Function>> castFunctions;
+    private MergeUnionAllRecordCursor mergeCursor;
+    private ObjList<RecordCursorFactory> sourceFactories;
+    private IntList sourcePositions;
+    @Nullable
+    private final IntList symbolUnionColumns;
     private final boolean isAscending;
     private final int timestampIndex;
 
-    public MergeUnionAllRecordCursorFactory(
+    MergeUnionAllRecordCursorFactory(
             RecordMetadata metadata,
-            RecordCursorFactory factoryA,
-            RecordCursorFactory factoryB,
-            ObjList<Function> castFunctionsA,
-            ObjList<Function> castFunctionsB,
+            ObjList<RecordCursorFactory> sourceFactories,
+            IntList sourcePositions,
+            ObjList<ObjList<Function>> castFunctions,
             int timestampIndex,
-            boolean isAscending
+            boolean isAscending,
+            @Nullable IntList symbolUnionColumns
     ) {
-        super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
+        super(metadata);
+        this.castFunctions = castFunctions;
         this.isAscending = isAscending;
+        this.sourceFactories = sourceFactories;
+        this.sourcePositions = sourcePositions;
+        this.symbolUnionColumns = symbolUnionColumns;
         this.timestampIndex = timestampIndex;
-        try {
-            this.cursor = new MergeUnionAllRecordCursor(castFunctionsA, castFunctionsB, timestampIndex, isAscending);
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
     }
 
     @Override
@@ -65,8 +76,71 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
     }
 
     @Override
+    public String getBaseColumnName(int index) {
+        return sourceFactories.getQuick(0).getMetadata().getColumnName(index);
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        assert mergeCursor != null;
+        try {
+            for (int i = 0, n = sourceFactories.size(); i < n; i++) {
+                RecordCursor sourceCursor = sourceFactories.getQuick(i).getCursor(executionContext);
+                try {
+                    mergeCursor.openSource(i, sourceCursor);
+                    sourceCursor = null;
+                    Function.initNc(castFunctions.getQuick(i), mergeCursor.getSourceCursor(i), executionContext, null);
+                } finally {
+                    Misc.free(sourceCursor);
+                }
+            }
+            mergeCursor.of(executionContext);
+            return mergeCursor;
+        } catch (Throwable th) {
+            Misc.free(mergeCursor);
+            throw th;
+        }
+    }
+
+    @Override
     public int getScanDirection() {
         return isAscending ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
+    }
+
+    @Nullable
+    public IntList getSymbolUnionColumns() {
+        return symbolUnionColumns;
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = sourceFactories.size(); i < n; i++) {
+            if (sourceFactories.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = sourceFactories.size(); i < n; i++) {
+            if (!sourceFactories.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public void prepareCursor() {
+        if (mergeCursor == null) {
+            try {
+                mergeCursor = new MergeUnionAllRecordCursor(castFunctions, timestampIndex, isAscending);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+        }
     }
 
     @Override
@@ -80,8 +154,54 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
         sink.attr("order").val('[');
         sink.putBaseColumnName(timestampIndex);
         sink.val(isAscending ? " asc]" : " desc]");
-        sink.child(factoryA);
-        sink.child(factoryB);
+        sink.attr("branches").val(sourceFactories.size());
+        for (int i = 0, n = sourceFactories.size(); i < n; i++) {
+            sink.child(sourceFactories.getQuick(i));
+        }
+    }
+
+    @Override
+    public boolean usesExternalDataSource() {
+        for (int i = 0, n = sourceFactories.size(); i < n; i++) {
+            if (sourceFactories.getQuick(i).usesExternalDataSource()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    MergeUnionAllRecordCursorFactoryBuilder.OperandState detachOperands() {
+        final MergeUnionAllRecordCursorFactoryBuilder.OperandState state =
+                new MergeUnionAllRecordCursorFactoryBuilder.OperandState(
+                        sourceFactories,
+                        sourcePositions,
+                        castFunctions
+                );
+        sourceFactories = null;
+        sourcePositions = null;
+        castFunctions = null;
+        mergeCursor = Misc.free(mergeCursor);
+        return state;
+    }
+
+    @Override
+    protected void _close() {
+        final MergeUnionAllRecordCursor cursor = mergeCursor;
+        mergeCursor = null;
+        final ObjList<RecordCursorFactory> factories = sourceFactories;
+        sourceFactories = null;
+        final ObjList<ObjList<Function>> functions = castFunctions;
+        castFunctions = null;
+        sourcePositions = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeObjListBestEffort(failure, factories);
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                failure = Misc.freeObjListBestEffort(failure, functions.getQuick(i));
+            }
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

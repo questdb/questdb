@@ -31,49 +31,64 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+    private final ObjList<Record> adaptedRecords;
+    private final ObjList<UnionCastRecord> castRecords;
+    private final IntList heap;
     private final boolean isAscending;
-    private final AbstractUnionRecord record;
+    private final MergeUnionAllRecord record = new MergeUnionAllRecord();
+    private final ObjList<RecordCursor> sourceCursors;
+    private final LongList timestamps;
     private final int timestampIndex;
-    private boolean hasPendingA;
-    private boolean hasPendingB;
-    private boolean isLastA;
+    private int heapSize;
     private boolean isStarted;
-    private Record recordA;
-    private Record recordB;
-    private long tsA;
-    private long tsB;
+    private int lastSource = -1;
 
-    public MergeUnionAllRecordCursor(
-            ObjList<Function> castFunctionsA,
-            ObjList<Function> castFunctionsB,
+    MergeUnionAllRecordCursor(
+            ObjList<ObjList<Function>> castFunctions,
             int timestampIndex,
             boolean isAscending
     ) {
-        if (castFunctionsA != null && castFunctionsB != null) {
-            this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
-        } else {
-            assert castFunctionsA == null && castFunctionsB == null;
-            this.record = new UnionRecord();
-        }
-        this.timestampIndex = timestampIndex;
+        final int sourceCount = castFunctions.size();
+        this.adaptedRecords = new ObjList<>(sourceCount);
+        this.castRecords = new ObjList<>(sourceCount);
+        this.heap = new IntList(sourceCount);
         this.isAscending = isAscending;
+        this.sourceCursors = new ObjList<>(sourceCount);
+        this.timestamps = new LongList(sourceCount);
+        this.timestampIndex = timestampIndex;
+        adaptedRecords.setPos(sourceCount);
+        castRecords.setPos(sourceCount);
+        heap.setPos(sourceCount);
+        sourceCursors.setPos(sourceCount);
+        timestamps.setPos(sourceCount);
+        for (int i = 0; i < sourceCount; i++) {
+            final ObjList<Function> functions = castFunctions.getQuick(i);
+            castRecords.setQuick(i, functions != null ? new UnionCastRecord(functions, functions) : null);
+        }
     }
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        // Once iteration has started, one row is buffered per
-        // branch and summing branch sizes would double-count them, so fall back to draining.
         if (!isStarted) {
-            cursorA.calculateSize(circuitBreaker, counter);
-            cursorB.calculateSize(circuitBreaker, counter);
+            for (int i = 0, n = sourceCursors.size(); i < n; i++) {
+                sourceCursors.getQuick(i).calculateSize(circuitBreaker, counter);
+            }
             return;
         }
-        while (hasNext()) {
-            counter.inc();
-        }
+        NoRandomAccessRecordCursor.super.calculateSize(circuitBreaker, counter);
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(sourceCursors);
+        circuitBreaker = null;
+        clearState();
     }
 
     @Override
@@ -84,65 +99,147 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
     @Override
     public boolean hasNext() {
         if (!isStarted) {
-            hasPendingA = cursorA.hasNext();
-            hasPendingB = cursorB.hasNext();
-            if (hasPendingA && hasPendingB) {
-                tsA = recordA.getLong(timestampIndex);
-                tsB = recordB.getLong(timestampIndex);
+            heapSize = 0;
+            for (int i = 0, n = sourceCursors.size(); i < n; i++) {
+                final RecordCursor cursor = sourceCursors.getQuick(i);
+                if (cursor.hasNext()) {
+                    timestamps.setQuick(i, cursor.getRecord().getLong(timestampIndex));
+                    heap.setQuick(heapSize, i);
+                    siftUp(heapSize++);
+                }
             }
             isStarted = true;
-        } else if (isLastA) {
-            hasPendingA = cursorA.hasNext();
-            if (hasPendingA && hasPendingB) {
-                tsA = recordA.getLong(timestampIndex);
+        } else if (lastSource > -1) {
+            final RecordCursor cursor = sourceCursors.getQuick(lastSource);
+            if (cursor.hasNext()) {
+                timestamps.setQuick(lastSource, cursor.getRecord().getLong(timestampIndex));
+            } else {
+                heapSize--;
+                if (heapSize > 0) {
+                    heap.setQuick(0, heap.getQuick(heapSize));
+                }
             }
-        } else {
-            hasPendingB = cursorB.hasNext();
-            if (hasPendingA && hasPendingB) {
-                tsB = recordB.getLong(timestampIndex);
+            if (heapSize > 0) {
+                siftDown();
             }
         }
 
-        if (hasPendingA && hasPendingB) {
-            isLastA = isAscending ? tsA <= tsB : tsA >= tsB;
-        } else if (hasPendingA) {
-            isLastA = true;
-        } else if (hasPendingB) {
-            isLastA = false;
-        } else {
+        if (heapSize == 0) {
+            lastSource = -1;
             return false;
         }
-        record.setAb(isLastA);
+        lastSource = heap.getQuick(0);
+        record.of(adaptedRecords.getQuick(lastSource));
         return true;
     }
 
     @Override
     public long preComputedStateSize() {
-        return cursorA.preComputedStateSize() + cursorB.preComputedStateSize();
+        long size = 0;
+        for (int i = 0, n = sourceCursors.size(); i < n; i++) {
+            size += sourceCursors.getQuick(i).preComputedStateSize();
+        }
+        return size;
+    }
+
+    @Override
+    public void setParquetDecodeHint(io.questdb.cairo.sql.ParquetDecodeHint hint) {
+        for (int i = 0, n = sourceCursors.size(); i < n; i++) {
+            sourceCursors.getQuick(i).setParquetDecodeHint(hint);
+        }
     }
 
     @Override
     public long size() {
-        return sumBranchSizes();
+        long size = 0;
+        for (int i = 0, n = sourceCursors.size(); i < n; i++) {
+            final long sourceSize = sourceCursors.getQuick(i).size();
+            if (sourceSize < 0) {
+                return -1;
+            }
+            size += sourceSize;
+        }
+        return size;
     }
 
     @Override
     public void toTop() {
-        isStarted = false;
-        hasPendingA = false;
-        hasPendingB = false;
-        isLastA = true;
-        record.setAb(true);
-        cursorA.toTop();
-        cursorB.toTop();
+        for (int i = 0, n = sourceCursors.size(); i < n; i++) {
+            sourceCursors.getQuick(i).toTop();
+        }
+        clearState();
     }
 
-    @Override
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
-        super.of(cursorA, cursorB, executionContext);
-        this.recordA = cursorA.getRecord();
-        this.recordB = cursorB.getRecord();
-        record.of(recordA, recordB);
-        toTop();
+    RecordCursor getSourceCursor(int index) {
+        return sourceCursors.getQuick(index);
+    }
+
+    void openSource(int index, RecordCursor cursor) {
+        sourceCursors.setQuick(index, cursor);
+        final UnionCastRecord castRecord = castRecords.getQuick(index);
+        if (castRecord != null) {
+            final Record sourceRecord = cursor.getRecord();
+            castRecord.of(sourceRecord, sourceRecord);
+            castRecord.setAb(true);
+            adaptedRecords.setQuick(index, castRecord);
+        } else {
+            adaptedRecords.setQuick(index, cursor.getRecord());
+        }
+    }
+
+    void of(SqlExecutionContext executionContext) throws SqlException {
+        this.circuitBreaker = executionContext.getCircuitBreaker();
+        clearState();
+    }
+
+    private void clearState() {
+        heapSize = 0;
+        isStarted = false;
+        lastSource = -1;
+    }
+
+    private boolean isBefore(int leftSource, int rightSource) {
+        final long leftTimestamp = timestamps.getQuick(leftSource);
+        final long rightTimestamp = timestamps.getQuick(rightSource);
+        if (leftTimestamp != rightTimestamp) {
+            return isAscending ? leftTimestamp < rightTimestamp : leftTimestamp > rightTimestamp;
+        }
+        return leftSource < rightSource;
+    }
+
+    private void siftDown() {
+        int parent = 0;
+        final int source = heap.getQuick(0);
+        while (true) {
+            final int left = 2 * parent + 1;
+            if (left >= heapSize) {
+                break;
+            }
+            final int right = left + 1;
+            int child = left;
+            if (right < heapSize && isBefore(heap.getQuick(right), heap.getQuick(left))) {
+                child = right;
+            }
+            if (!isBefore(heap.getQuick(child), source)) {
+                break;
+            }
+            heap.setQuick(parent, heap.getQuick(child));
+            parent = child;
+        }
+        heap.setQuick(parent, source);
+    }
+
+    private void siftUp(int child) {
+        final int source = heap.getQuick(child);
+        while (child > 0) {
+            final int parent = (child - 1) >>> 1;
+            final int parentSource = heap.getQuick(parent);
+            if (!isBefore(source, parentSource)) {
+                break;
+            }
+            heap.setQuick(child, parentSource);
+            child = parent;
+        }
+        heap.setQuick(child, source);
     }
 }
