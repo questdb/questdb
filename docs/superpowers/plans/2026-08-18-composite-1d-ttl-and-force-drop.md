@@ -2,9 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Establish whether TTL-based partition eviction and `FORCE DROP PARTITION` already work on composite tables now that sub-project 1B fixed the shared removal machinery — and if they do, lift their gates with the evidence to justify it.
+**Goal:** Make TTL-based partition eviction and `FORCE DROP PARTITION` cell-aware on composite tables.
 
-**Architecture:** Both operations funnel through `dropPartitionByExactTimestamp`, the method 1B made cell-correct (N1's cell-aware path resolution, N2's cell-agnostic index lookup and cellKey-passing removal). `enforceTtl` calls it at two sites; `forceRemovePartitions` is the FORCE DROP entry point. Neither needs new addressing: TTL is whole-days-only by definition (spec §5.6), and FORCE DROP takes the same predicate surface as DROP, which today cannot name a cell through `WHERE` and is refused through `LIST`. So this sub-project is plausibly *verification plus gate removal* rather than new implementation — but that is a hypothesis to test, not an assumption to build on.
+**Task 1 ran on 2026-08-18 and FALSIFIED this plan's opening hypothesis.** Neither operation inherited
+1B's fix: with the gates lifted, both removed **nothing** on a composite table while the plain twin
+dropped and evicted correctly. Had the gates been lifted on the strength of the shared-method
+argument — they both call `dropPartitionByExactTimestamp`, which 1B made cell-correct — both would
+have become **silent no-ops**: accepted, reporting success, changing nothing. That is strictly worse
+than today's loud refusal. See `.superpowers/sdd/sp1d-task-1-measurement.md`.
+
+Tasks 2 and 3 are therefore **implementation**, not gate removal. The selection logic upstream of the
+shared removal is what is still blind — `enforceTtl` chooses what to evict, and `forceRemovePartitions`
+is a separate entry point that never enters the loop 1B fixed.
+
+**Architecture:** Both operations reach `dropPartitionByExactTimestamp`, which 1B made cell-correct — but that is the REMOVAL, and Task 1 showed the failure is upstream of it, in SELECTION. `enforceTtl` decides which partitions have aged out and selected nothing for a composite table; `forceRemovePartitions` is a separate entry point that never enters the loop 1B fixed. So the work is to make those two selection paths enumerate `(ts, cellKey)` records rather than assuming one partition per day. TTL needs no new addressing (whole days only, spec §5.6), and FORCE DROP needs no cell-qualified guard — its LIST parser already rejects `<day>/<cell>` with a date-format error, unlike `DROP`'s.
 
 **Tech Stack:** Java 25 (`JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64`), Maven offline (`mvn -o -pl core`), JUnit 4, `QDB_TEST_TMPDIR=/dev/shm`.
 
