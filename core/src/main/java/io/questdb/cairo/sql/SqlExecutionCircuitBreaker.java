@@ -51,6 +51,13 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         public void clearCancelledFlag(AtomicBoolean expected) {
         }
 
+        // the default takes this singleton's monitor; it is process-wide, so a parallel query
+        // path would serialise on it
+        @Override
+        public void copyCancelledFlagTo(CancellationBinding target) {
+            target.clear();
+        }
+
         @Override
         public AtomicBoolean getCancelledFlag() {
             return null;

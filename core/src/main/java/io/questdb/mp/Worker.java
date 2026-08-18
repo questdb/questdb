@@ -239,8 +239,11 @@ public class Worker extends Thread {
 
     private boolean runJobs() {
         boolean isRunAsap = false;
-        final SuspensionScope.Mode previousMode = fiberRuntime != null
-                ? SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN)
+        final SuspensionScope.CarrierScope suspensionScope = fiberRuntime != null
+                ? SuspensionScope.scope()
+                : null;
+        final SuspensionScope.Mode previousMode = suspensionScope != null
+                ? SuspensionScope.enterForbidden(suspensionScope)
                 : null;
         jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
         try {
@@ -279,8 +282,8 @@ public class Worker extends Thread {
             }
             return isRunAsap;
         } finally {
-            if (fiberRuntime != null) {
-                SuspensionScope.restore(previousMode);
+            if (suspensionScope != null) {
+                SuspensionScope.restoreMode(suspensionScope, previousMode);
             }
         }
     }

@@ -149,7 +149,7 @@ public final class FiberWaitCoordinator {
         // cancellable slot registration may belong to the current build.
         FiberSlotWaitRegistration activeRegistration = activeSlotRegistrations;
         while (activeRegistration != null) {
-            if (!activeRegistration.isHandoffPending()) {
+            if (!activeRegistration.isPeerOwned()) {
                 throw new IllegalStateException("wait coordinator already has a slot registration");
             }
             activeRegistration = activeRegistration.nextActive;
@@ -496,7 +496,7 @@ public final class FiberWaitCoordinator {
             FiberSlotWaitRegistration registration = activeSlotRegistrations;
             FiberSlotWaitRegistration cancellableRegistration = null;
             while (registration != null) {
-                if (!registration.isHandoffPending()) {
+                if (!registration.isPeerOwned()) {
                     if (cancellableRegistration != null) {
                         throw new IllegalStateException("wait coordinator has multiple slot registrations");
                     }

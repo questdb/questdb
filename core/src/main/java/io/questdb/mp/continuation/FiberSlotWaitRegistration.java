@@ -126,8 +126,12 @@ public final class FiberSlotWaitRegistration extends FiberWaitRegistrationNode<F
         return this.token == token;
     }
 
-    boolean isHandoffPending() {
-        return state == STATE_FIRING_CANCELLED;
+    // A granted registration stays linked until its releaser reaches coordinator.release(). It is
+    // FIRING_CANCELLED while the handoff runs and FREE between the terminal CAS and the unlink, so
+    // both states mean "a peer owns the completion" and neither belongs to the current build.
+    boolean isPeerOwned() {
+        final int state = this.state;
+        return state == STATE_FIRING_CANCELLED || state == STATE_FREE;
     }
 
     boolean markGranted(int slot) {

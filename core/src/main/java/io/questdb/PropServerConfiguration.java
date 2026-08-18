@@ -2278,13 +2278,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!isReadOnlyInstance && lineTcpEnabled && lineTcpIOWorkerCount < 1 && networkPoolWorkerCount < 1) {
                 throw ServerConfigurationException.forInvalidKey(
                         PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(),
-                        "line TCP requires at least one network worker"
+                        "line TCP requires at least one network worker; raise it, set "
+                                + PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath()
+                                + ", or disable " + PropertyKey.LINE_TCP_ENABLED.getPropertyPath()
                 );
             }
             if (!isReadOnlyInstance && lineTcpEnabled && lineTcpWriterWorkerCount < 1 && writeWorkers < 1) {
                 throw ServerConfigurationException.forInvalidKey(
                         PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(),
-                        "line TCP requires at least one writer worker"
+                        "line TCP requires at least one writer worker; raise it, set "
+                                + PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath()
+                                + ", or disable " + PropertyKey.LINE_TCP_ENABLED.getPropertyPath()
                 );
             }
 
