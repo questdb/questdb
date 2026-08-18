@@ -3025,10 +3025,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // MERGES correctly (right cell, siblings untouched, twin data and ordering intact),
                     // but the fragment's directory is not purged -- the candidate path renders doubled --
                     // so the refusal stays until that is resolved.
-                    if (isRoutedCompositeTable(tableToken)) {
-                        throw SqlException.$(tableNamePosition, "composite partitioning does not yet support SQUASH PARTITIONS [table=")
-                                .put(tableToken.getTableName()).put(']');
-                    }
                     compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");

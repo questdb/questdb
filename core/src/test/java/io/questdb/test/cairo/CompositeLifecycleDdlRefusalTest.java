@@ -83,10 +83,13 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
      * that 1B Task 0 established for them.
      */
 
-    @Test
-    public void testSquashPartitionsRefusesAtTheStatement() throws Exception {
-        assertRefusedAtStatement("ALTER TABLE c SQUASH PARTITIONS");
-    }
+    /*
+     * The SQUASH PARTITIONS refusal test that stood here is gone, for the same reason as SET TTL
+     * below: sub-project 1E made split-fragment squash cell-aware for mid-table day groups, so the
+     * statement is no longer refused on a composite table. What squash does on an ACTIVE-TAIL day
+     * group is skip (logged), not refuse -- so there is no statement-level contract left to assert
+     * here. The behaviour is covered by CompositeSquashTest instead.
+     */
 
     /*
      * The SET TTL refusal test that stood here is gone: sub-project 1D made TTL eviction cell-aware,

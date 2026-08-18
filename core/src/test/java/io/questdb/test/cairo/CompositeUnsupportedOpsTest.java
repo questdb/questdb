@@ -110,14 +110,18 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * SP1E (2026-08-18): SQUASH PARTITIONS is no longer gated for composite tables. Mid-table
+     * split-fragment squash is implemented and cell-scoped (see CompositeSquashTest); an active-tail
+     * day group is SKIPPED with a log line rather than refused, so there is no gate left to fire.
+     */
     @Test
-    public void testSquashPartitionsGated() throws Exception {
+    public void testSquashPartitionsIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c squash partitions",
-                    "c",
-                    "composite partitioning does not yet support SQUASH PARTITIONS");
+            execute("alter table c squash partitions");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
         });
     }
 
@@ -430,13 +434,18 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
             assertQuery("select px from c where ts = '2020-01-01T00:01:00.000000Z' and exch = 'A'")
                     .noLeakCheck().returns("px\n1501.0\n-1.0\n");
 
-            // Evidence a real physical SPLIT happened (not just that nothing was triggered): with the
-            // threshold forced to ~1 row, day1's cell A must have split into more than one physical
-            // partition entry -- table_partitions() is already cell-aware (Plan 4a), so this counts
-            // raw (ts,cellKey[,split]) entries, not logical days.
+            // SP1E (2026-08-18): this assertion INVERTED, and the inversion is the point. It used to
+            // require MORE than 3 raw entries, as evidence that a real physical split had happened and
+            // been left alone -- the squash-skip behaviour this test was written for. Composite squash
+            // is now implemented for mid-table day groups, and the third insert above (2020-01-03) is
+            // exactly what pushes day1 off the active tail, so day1's fragment is now MERGED BACK into
+            // its cell and the count legitimately returns to 3: cell A + cell B on day1, plus day3.
+            // Row-level evidence that nothing was lost is asserted above (2003 rows, and both rows at
+            // the colliding timestamp). That a split physically occurs at all is pinned separately by
+            // CompositeSquashTest#testCompositeSplitProducesACellStructuredFragment.
             engine.releaseInactive();
             printSql("select count() from table_partitions('c')");
-            TestUtils.assertNotContains(sink, "count\n3\n");
+            TestUtils.assertContains(sink, "count\n3\n");
         });
     }
 

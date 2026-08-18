@@ -113,15 +113,15 @@ public class CompositeSilentSkipTest extends AbstractCairoTest {
             // -- meaningless against an async gate, and green over a suspended table. Then it asserted
             // the async suspension, which was accurate but encoded an invariant-6 violation as the
             // expected behaviour. The refusal now lands where the user typed it.
+            // SP1E (2026-08-18): no longer refused. Mid-table split-fragment squash is implemented and
+            // cell-scoped, and an ACTIVE-TAIL day group is skipped with a log line rather than refused
+            // -- so the statement is accepted and the table must stay healthy either way. The point
+            // this test still guards is the one in its name: whatever squash does or declines to do,
+            // it must not silently corrupt or suspend the table.
             final TableToken token = engine.verifyTableName("c");
-            try {
-                execute("alter table c squash partitions");
-                Assert.fail("explicit SQUASH PARTITIONS must be refused at the statement");
-            } catch (SqlException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(), "composite");
-                TestUtils.assertContains(expected.getFlyweightMessage(), "SQUASH PARTITIONS");
-            }
+            execute("alter table c squash partitions");
             drainWalQueue();
+            Assert.assertFalse("squash must not suspend the table", engine.getTableSequencerAPI().isSuspended(token));
 
             Assert.assertFalse("a statement-time refusal must NOT suspend the table",
                     engine.getTableSequencerAPI().isSuspended(token));

@@ -18402,12 +18402,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // survives the bad merge, relocated into one cell, so rows and count() are identical to the
         // plain twin -- only a structural assertion on cell COUNT catches it. Do not treat a green
         // data-level test as evidence that a squash change is safe.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support SQUASH PARTITIONS [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
-
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
@@ -18513,6 +18507,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void squashSplitPartitionsComposite(int partitionIndexLo) {
         final long dayTs = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndexLo));
+        boolean merged = false;
         while (true) {
             // Re-resolve the day's span every pass: merging removes entries and shifts indices.
             int lo = -1, hi = -1;
@@ -18527,12 +18522,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             if (lo < 0) {
-                return;
+                break;
             }
             if (hi >= txWriter.getPartitionCount()) {
                 LOG.info().$("composite squash skipped, day group is the active tail [table=").$(tableToken)
                         .$(", day=").$ts(dayTs).I$();
-                return;
+                break;
             }
             long fragTs = Long.MIN_VALUE;
             for (int i = lo; i < hi; i++) {
@@ -18543,11 +18538,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             if (fragTs == Long.MIN_VALUE) {
-                return; // no fragments left in this day
+                break; // no fragments left in this day
             }
             if (!squashSplitPartitionsComposite_mergeFragment(dayTs, fragTs)) {
-                return; // could not merge this fragment; leave it rather than invent a target
+                break; // could not merge this fragment; leave it rather than invent a target
             }
+            merged = true;
+        }
+        if (merged) {
+            // MUST commit. housekeep() runs AFTER commit00(), so everything this method mutates lands
+            // outside the committed transaction unless it opens its own -- exactly as the plain
+            // squashSplitPartitions does at its tail. Without this the attached-entry removal was
+            // discarded on reload while the fragment's DIRECTORY deletion (via the post-commit purge
+            // drain) persisted, leaving the txn pointing at a directory that no longer exists:
+            //   "Partition '2023-01-01T010000-000001/E0' does not exist in table 'c' directory"
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            commitTxWriterAndPublishPendingPostingSealPurges();
         }
     }
 
@@ -18759,13 +18766,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reason as before -- a skipped squash leaves every fragment independently valid and queryable,
         // whereas a cell-blind merge silently destroys the day's cell structure.
         if (isRoutedComposite()) {
-            // SP1E: the merge itself is verified correct (per cell, siblings untouched, twin data and
-            // ordering intact). What is NOT resolved is that after housekeeping merges a fragment, the
-            // txn still lists <fragment>/<cell> while its directory is gone, so a later pass fails
-            // "does not exist in table directory". TWO hypotheses tested and DISPROVED: a missing
-            // recordStructureVersion bump, and eager container removal before commit. The removal of
-            // the attached entry itself is not sticking -- start there, not at the merge.
-            LOG.info().$("composite table, skipping split-fragment squash (attached-entry removal not durable) [table=").$(tableToken).I$();
+            squashSplitPartitionsComposite(partitionIndexLo);
             return;
         }
 

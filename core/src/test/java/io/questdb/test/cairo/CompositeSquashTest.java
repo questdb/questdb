@@ -104,13 +104,6 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * into each other and destroy two of them. Nothing here exercises the merge's path-building, which is
      * exactly the point: this test fails if the range fix is missing even when the path fix is present.
      */
-    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
-            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
-            + " fragment DIRECTORY purge: the candidate path renders doubled"
-            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
-            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
-            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
-            + " actually implements (a fragmented day that is NOT the active tail).")
     @Test(timeout = 60_000)
     public void testSquashOnAThreeCellDayWithNoFragmentIsANoOp() throws Exception {
         assertMemoryLeak(() -> {
@@ -138,13 +131,10 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * this: a cell-blind merge opens a directory that does not exist, and a count-based range drags the
      * two innocent sibling cells in with it.
      */
-    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
-            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
-            + " fragment DIRECTORY purge: the candidate path renders doubled"
-            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
-            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
-            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
-            + " actually implements (a fragmented day that is NOT the active tail).")
+    @Ignore("SP1E: ACTIVE-TAIL case, not yet implemented. squashSplitPartitionsComposite deliberately"
+            + " skips a day group that is the table's active tail, because that needs the"
+            + " fixedRowCount/transientRowCount bookkeeping the plain loop does under lastPartitionSquashed."
+            + " Mid-table fragments DO merge and purge -- see testMidTableFragmentIsMergedPerCell.")
     @Test(timeout = 60_000)
     public void testSquashDistinguishesFragmentsFromSiblingCells() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -170,13 +160,10 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     /**
      * The acceptance test for the explicit statement.
      */
-    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
-            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
-            + " fragment DIRECTORY purge: the candidate path renders doubled"
-            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
-            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
-            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
-            + " actually implements (a fragmented day that is NOT the active tail).")
+    @Ignore("SP1E: ACTIVE-TAIL case, not yet implemented. squashSplitPartitionsComposite deliberately"
+            + " skips a day group that is the table's active tail, because that needs the"
+            + " fixedRowCount/transientRowCount bookkeeping the plain loop does under lastPartitionSquashed."
+            + " Mid-table fragments DO merge and purge -- see testMidTableFragmentIsMergedPerCell.")
     @Test(timeout = 60_000)
     public void testExplicitSquashMergesFragmentsIntoTheirCells() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -204,13 +191,10 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * of the two, because a user who never types {@code SQUASH} still accumulates fragments and nothing
      * tells them.
      */
-    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
-            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
-            + " fragment DIRECTORY purge: the candidate path renders doubled"
-            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
-            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
-            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
-            + " actually implements (a fragmented day that is NOT the active tail).")
+    @Ignore("SP1E: ACTIVE-TAIL case, not yet implemented. squashSplitPartitionsComposite deliberately"
+            + " skips a day group that is the table's active tail, because that needs the"
+            + " fixedRowCount/transientRowCount bookkeeping the plain loop does under lastPartitionSquashed."
+            + " Mid-table fragments DO merge and purge -- see testMidTableFragmentIsMergedPerCell.")
     @Test(timeout = 60_000)
     public void testAutomaticSquashDoesNotAccumulateFragments() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -253,10 +237,6 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * without that, every test here exercises the active-tail path, which is deliberately still skipped
      * because it needs the fixedRowCount/transientRowCount bookkeeping.
      */
-    @Ignore("SP1E: merge verified correct and fragment container purges. REMAINING: after housekeeping"
-            + " merges a fragment the txn still lists <fragment>/<cell> while the directory is gone."
-            + " DISPROVED so far: missing recordStructureVersion bump; eager container removal before"
-            + " commit. The attached-entry removal is not sticking -- start there, not at the merge.")
     @Test(timeout = 60_000)
     public void testMidTableFragmentIsMergedPerCell() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
