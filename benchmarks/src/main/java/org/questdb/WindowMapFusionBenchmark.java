@@ -148,12 +148,23 @@ import java.util.Locale;
  *     then the streaming one exactly and the forcing is the sort, which every arm pays for and
  *     which is large enough at these row counts to compress the ratio between them.</li>
  * </ul>
- * The two {@code partition-*} shapes need neither: they are whole-partition two-pass functions and
- * so are cached by construction. They are also what the next step of the design would fuse and
- * cannot fuse yet - no whole-partition family declares an accumulator, so both fusion arms of a
- * {@code partition-*} shape run the same code, like the single-sum control. What they measure is
- * the cost that rewrite stands to remove: {@code partition-sum-avg-count} is three maps and six
- * probes a row, and {@code partition-avg} is the one map and two probes a fused group would leave.
+ * The four {@code partition-*} shapes need neither: they are whole-partition two-pass functions
+ * and so are cached by construction. Three of them fuse - a whole-partition {@code sum},
+ * {@code avg} and {@code count} are three readings of one {@code (sum, nonNullCount)} pair, so
+ * {@code partition-sum-avg-count} is three maps and six probes a row unfused against one map and
+ * two fused - and {@code partition-avg} does not, because one fusible function is not a group. It
+ * is the map work a fused {@code partition-sum-avg-count} is left with, which is what makes it that
+ * shape's floor.
+ *
+ * <h2>{@code --null-pct}: the refused-row population</h2>
+ * A whole-partition group's pass 1 does map work for a row before its contributors decide the row
+ * was never their business, and a group whose components can all be predicated skips that work for
+ * a row every one of them refuses - see {@code WindowMapState.isPass1SkipEnabled}. What decides
+ * whether that skip pays is how often the argument is absent, which is what this option varies:
+ * {@code --null-pct=0,50,90,99,100} makes {@code x} NULL on that percentage of rows and {@code y}
+ * NULL on the same percentage offset by 37, so a two-argument group has to refuse both before it
+ * skips anything. The {@code skips/row} column is where the answer is legible; a shape with no
+ * skippable group reports zero there in both arms.
  *
  * <h2>Build and run</h2>
  * <pre>
@@ -197,6 +208,7 @@ public class WindowMapFusionBenchmark {
         String fusionArg = "both";
         String cursorsArg = "streaming";
         String cachedBucketArg = "natural";
+        String nullPctArg = "0";
         int warmups = 1;
         int runs = 3;
         for (String arg : args) {
@@ -216,6 +228,8 @@ public class WindowMapFusionBenchmark {
                 cursorsArg = arg.substring(9);
             } else if (arg.startsWith("--cached-bucket=")) {
                 cachedBucketArg = arg.substring(16);
+            } else if (arg.startsWith("--null-pct=")) {
+                nullPctArg = arg.substring(11);
             } else if (arg.startsWith("--warmups=")) {
                 warmups = Integer.parseInt(arg.substring(10));
             } else if (arg.startsWith("--runs=")) {
@@ -230,6 +244,12 @@ public class WindowMapFusionBenchmark {
 
         final List<Long> cardinalities = parseLongs(keysArg, "--keys");
         final List<Integer> entrySizes = parseInts(entrySizesArg, "--entry-size");
+        final List<Integer> nullPercentages = parseInts(nullPctArg, "--null-pct");
+        for (int nullPct : nullPercentages) {
+            if (nullPct < 0 || nullPct > 100) {
+                throw new IllegalArgumentException("--null-pct must be between 0 and 100: " + nullPct);
+            }
+        }
         final List<KeyType> keyTypes = new ArrayList<>();
         for (String name : keyTypesArg.split(",")) {
             keyTypes.add(KeyType.of(name.trim()));
@@ -277,21 +297,24 @@ public class WindowMapFusionBenchmark {
 
             System.out.printf(
                     Locale.ROOT,
-                    "# rows=%d keys=%s keyTypes=%s entrySizes=%s shapes=%s fusion=%s cursors=%s"
-                            + " cachedBucket=%s warmups=%d runs=%d%n",
-                    rows, keysArg, keyTypesArg, entrySizesArg, shapesArg, fusionArg, cursorsArg,
-                    cachedBucketArg, warmups, runs
+                    "# rows=%d keys=%s keyTypes=%s entrySizes=%s nullPct=%s shapes=%s fusion=%s"
+                            + " cursors=%s cachedBucket=%s warmups=%d runs=%d%n",
+                    rows, keysArg, keyTypesArg, entrySizesArg, nullPctArg, shapesArg, fusionArg,
+                    cursorsArg, cachedBucketArg, warmups, runs
             );
 
             for (KeyType keyType : keyTypes) {
                 for (long keys : cardinalities) {
-                    engine.execute(createTableSql(keyType, keys, rows), sqlCtx);
+                    for (int nullPct : nullPercentages) {
+                        engine.execute(createTableSql(keyType, keys, rows, nullPct), sqlCtx);
+                    }
                 }
             }
 
             final List<String> table = new ArrayList<>();
-            table.add("shape\tcursor\tkey\tkeys\tmaxEntry\tfusion\tplans\tgroups\tmaps\tmapImpl\tcomps\tslots"
-                    + "\tlookups/row\tupdates/row\targs/row\tns/row\trows/s\tpeakKiB\tretainedKiB\tchecksum");
+            table.add("shape\tcursor\tkey\tkeys\tnullPct\tmaxEntry\tfusion\tplans\tgroups\tmaps\tmapImpl"
+                    + "\tcomps\tslots\tlookups/row\tskips/row\tupdates/row\targs/row\tns/row\trows/s"
+                    + "\tpeakKiB\tretainedKiB\tchecksum");
             System.out.println(table.get(0));
 
             try (PeakSampler sampler = new PeakSampler()) {
@@ -306,43 +329,54 @@ public class WindowMapFusionBenchmark {
                         }
                         for (KeyType keyType : keyTypes) {
                             for (long keys : cardinalities) {
-                                for (int entrySize : entrySizes) {
-                                    final Arm[] best = new Arm[fusionSettings.length];
-                                    // Forward then backward over the settings, keeping each one's
-                                    // fastest drain. One arm always runs into a JIT state the other
-                                    // left behind, and a fixed order would charge that to whichever
-                                    // arm goes first every time; alternating gives each of them the
-                                    // warm position once. Pointless with a single setting, so the
-                                    // second pass only runs when there are two to alternate.
-                                    final int passes = fusionSettings.length > 1 ? 2 : 1;
-                                    for (int pass = 0; pass < passes; pass++) {
-                                        for (int i = 0; i < fusionSettings.length; i++) {
-                                            final int index = pass == 0 ? i : fusionSettings.length - 1 - i;
-                                            configuration.setSqlUnorderedMapMaxEntrySize(entrySize);
-                                            configuration.setSqlWindowMapFusionEnabled(fusionSettings[index]);
-                                            configuration.setSqlWindowCachedLightEnabled(cursor == Cursor.CACHED_LIGHT);
-                                            final Arm arm = runArm(
-                                                    engine, sqlCtx, sampler, shape, cursor, orderedBucket,
-                                                    keyType, keys, rows, warmups, runs
-                                            );
-                                            if (best[index] == null || arm.nanos < best[index].nanos) {
-                                                best[index] = arm;
+                                for (int nullPct : nullPercentages) {
+                                    for (int entrySize : entrySizes) {
+                                        final Arm[] best = new Arm[fusionSettings.length];
+                                        // Forward then backward over the settings, keeping each
+                                        // one's fastest drain. One arm always runs into a JIT
+                                        // state the other left behind, and a fixed order would
+                                        // charge that to whichever arm goes first every time;
+                                        // alternating gives each of them the warm position once.
+                                        // Pointless with a single setting, so the second pass only
+                                        // runs when there are two to alternate.
+                                        final int passes = fusionSettings.length > 1 ? 2 : 1;
+                                        for (int pass = 0; pass < passes; pass++) {
+                                            for (int i = 0; i < fusionSettings.length; i++) {
+                                                final int index = pass == 0
+                                                        ? i
+                                                        : fusionSettings.length - 1 - i;
+                                                configuration.setSqlUnorderedMapMaxEntrySize(entrySize);
+                                                configuration.setSqlWindowMapFusionEnabled(fusionSettings[index]);
+                                                configuration.setSqlWindowCachedLightEnabled(
+                                                        cursor == Cursor.CACHED_LIGHT
+                                                );
+                                                final Arm arm = runArm(
+                                                        engine, sqlCtx, sampler, shape, cursor,
+                                                        orderedBucket, keyType, keys, nullPct, rows,
+                                                        warmups, runs
+                                                );
+                                                if (best[index] == null || arm.nanos < best[index].nanos) {
+                                                    best[index] = arm;
+                                                }
                                             }
                                         }
-                                    }
-                                    for (int i = 0; i < fusionSettings.length; i++) {
-                                        if (best[i].checksum != best[0].checksum) {
-                                            throw new IllegalStateException(
-                                                    "fused and unfused answers differ for " + shape.name + "/"
-                                                            + cursor.name + "/" + keyType.name + "/keys=" + keys
-                                                            + "/maxEntry=" + entrySize
+                                        for (int i = 0; i < fusionSettings.length; i++) {
+                                            if (best[i].checksum != best[0].checksum) {
+                                                throw new IllegalStateException(
+                                                        "fused and unfused answers differ for "
+                                                                + shape.name + "/" + cursor.name + "/"
+                                                                + keyType.name + "/keys=" + keys
+                                                                + "/nullPct=" + nullPct
+                                                                + "/maxEntry=" + entrySize
+                                                );
+                                            }
+                                            final String row = row(
+                                                    shape, cursor, keyType, keys, nullPct, entrySize,
+                                                    fusionSettings[i], best[i]
                                             );
+                                            table.add(row);
+                                            System.out.println(row);
                                         }
-                                        final String row = row(
-                                                shape, cursor, keyType, keys, entrySize, fusionSettings[i], best[i]
-                                        );
-                                        table.add(row);
-                                        System.out.println(row);
                                     }
                                 }
                             }
@@ -372,14 +406,35 @@ public class WindowMapFusionBenchmark {
      * data. The row number is aliased out of {@code long_sequence} first: an expression over
      * {@code x} projected as {@code x} would be a column name resolving to two things.
      */
-    private static String createTableSql(KeyType keyType, long keys, long rows) {
-        return "create table " + tableName(keyType, keys) + " as (select"
+    private static String createTableSql(KeyType keyType, long keys, long rows, int nullPct) {
+        return "create table " + tableName(keyType, keys, nullPct) + " as (select"
                 + " (" + START_TS + " + rn * " + TS_STEP_MICROS + ")::timestamp as ts,"
                 + " " + keyType.keyExpression("((rn - 1) % " + keys + ")") + " as k,"
-                + " (rn % 997)::double as x,"
-                + " (rn % 991)::double as y"
+                + " " + nullableDouble("(rn % 997)::double", nullPct, 0) + " as x,"
+                + " " + nullableDouble("(rn % 991)::double", nullPct, 37) + " as y"
                 + " from (select x as rn from long_sequence(" + rows + ")))"
                 + " timestamp(ts) partition by day";
+    }
+
+    /**
+     * Wraps a DOUBLE expression so it is absent on {@code nullPct} percent of the rows, with the
+     * absent rows displaced by {@code offset}.
+     * <p>
+     * The displacement is what makes a two-argument group's gate visible: such a group skips a row
+     * only where every one of its components refuses it, so {@code x} and {@code y} sharing a NULL
+     * pattern would make that gate indistinguishable from a one-argument group's. Zero is returned
+     * unwrapped rather than as a {@code case} that never fires, so the default run generates the
+     * data it always did.
+     */
+    private static String nullableDouble(String expression, int nullPct, int offset) {
+        if (nullPct <= 0) {
+            return expression;
+        }
+        if (nullPct >= 100) {
+            return "null::double";
+        }
+        return "case when (rn + " + offset + ") % 100 < " + nullPct
+                + " then null::double else " + expression + " end";
     }
 
     private static void deleteRecursively(Path dir) throws IOException {
@@ -428,17 +483,20 @@ public class WindowMapFusionBenchmark {
             Cursor cursor,
             KeyType keyType,
             long keys,
+            int nullPct,
             int entrySize,
             boolean fusion,
             Arm arm
     ) {
         return String.format(
                 Locale.ROOT,
-                "%s\t%s\t%s\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.1f\t%.0f\t%d\t%d\t%d",
+                "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.2f"
+                        + "\t%.1f\t%.0f\t%d\t%d\t%d",
                 shape.name,
                 cursor.name,
                 keyType.name,
                 keys,
+                nullPct,
                 entrySize,
                 fusion ? "on" : "off",
                 arm.plans,
@@ -448,6 +506,7 @@ public class WindowMapFusionBenchmark {
                 arm.components,
                 arm.slots,
                 arm.lookups / (double) arm.rows,
+                arm.skips / (double) arm.rows,
                 arm.updates / (double) arm.rows,
                 arm.argumentEvaluations / (double) arm.rows,
                 arm.nanos / (double) arm.rows,
@@ -472,11 +531,12 @@ public class WindowMapFusionBenchmark {
             boolean orderedBucket,
             KeyType keyType,
             long keys,
+            int nullPct,
             long rows,
             int warmups,
             int runs
     ) throws Exception {
-        final String sql = shape.sql(tableName(keyType, keys), cursor, orderedBucket, keys);
+        final String sql = shape.sql(tableName(keyType, keys, nullPct), cursor, orderedBucket, keys);
         RecordCursorFactory factory = null;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             factory = compiler.compile(sql, sqlCtx).getRecordCursorFactory();
@@ -505,8 +565,8 @@ public class WindowMapFusionBenchmark {
         }
     }
 
-    private static String tableName(KeyType keyType, long keys) {
-        return "w_" + keyType.name + "_" + keys;
+    private static String tableName(KeyType keyType, long keys, int nullPct) {
+        return "w_" + keyType.name + "_" + keys + "_n" + nullPct;
     }
 
     /**
@@ -605,6 +665,7 @@ public class WindowMapFusionBenchmark {
                 final WindowMapState state = states.getQuick(i);
                 arm.groups++;
                 arm.lookups += state.getLookupCount();
+                arm.skips += state.getSkippedRowCount();
                 arm.updates += state.getContributorUpdateCount();
                 final WindowAccumulatorPlan plan = state.getPlan();
                 arm.components += plan.getComponentCount();
@@ -745,6 +806,7 @@ public class WindowMapFusionBenchmark {
         int plans;
         long retainedBytes;
         long rows;
+        long skips;
         int slots;
         long updates;
     }
@@ -944,18 +1006,41 @@ public class WindowMapFusionBenchmark {
         DISPERSION("dispersion", false),
         /**
          * The whole-partition {@code avg} on its own: one map and two probes a row, and no group,
-         * because one fusible function is not a group and no whole-partition family is fusible
-         * anyway. It is the map work a fused {@code partition-sum-avg-count} would be left with,
-         * which is what makes it the standing-in fused arm for the shape below.
+         * because one fusible function is not a group - moving a map is not removing one. It is the
+         * map work a fused {@code partition-sum-avg-count} is left with, so it is that shape's
+         * floor and, like the single-sum control, a row whose two arms run the same code.
          */
         PARTITION_AVG("partition-avg", true),
         /**
+         * Two whole-partition two-pass functions over one argument: two maps and four probes a row
+         * unfused against one map and two fused. The narrower of the two fusing whole-partition
+         * shapes, and the one the refused-row skip moves most - its whole group is the single
+         * {@code (sum, nonNullCount)} component, so a row with a non-finite {@code x} is a row the
+         * group has nothing at all to do for.
+         */
+        PARTITION_SUM_AVG("partition-sum-avg", true),
+        /**
          * Three whole-partition two-pass functions over one argument: three maps, six probes a row
          * - three in pass 1 and three in pass 2 - and three copies of a {@code (sum, count)} pair
-         * that a shared component would make one. It is what the non-destructive
-         * {@code preparePass2} step exists to fuse, and today it runs unfused on both arms.
+         * that a shared component makes one. It is what the non-destructive {@code preparePass2}
+         * step exists to fuse.
          */
         PARTITION_SUM_AVG_COUNT("partition-sum-avg-count", true),
+        /**
+         * {@link #PARTITION_SUM_AVG} with the two calls reading different columns, which is the
+         * one thing that changes: the same arithmetic over two arguments is two
+         * {@code (sum, nonNullCount)} components rather than one, so the group co-locates them
+         * behind one key instead of merging them. It is the row that separates the merge from
+         * co-location, and the one where the refused-row skip is a joint decision - a row counts
+         * as refused only when neither column offers a finite value, so
+         * {@code --null-pct=90} skips rather less than 0.90 of the rows here and the
+         * {@code skips/row} column says how much less.
+         * <p>
+         * A wider fused value than {@link #PARTITION_SUM_AVG}'s, so an INT-keyed group crosses
+         * {@code --entry-size=32} onto an {@code OrderedMap} while its unfused members keep an
+         * {@code Unordered4Map} each. Run it at 64 as well to hold the implementation constant.
+         */
+        PARTITION_SUM_AVG_TWO_ARGS("partition-sum-avg-two-args", true),
         /**
          * Case 6: the row-count family, and a {@code count} over the window's own partition key,
          * which is a guarded reading of it wherever the key type admits the guard.
@@ -1072,6 +1157,8 @@ public class WindowMapFusionBenchmark {
                 case DISPERSION -> "stddev_samp(x) over w, stddev_pop(x) over w, var_samp(x) over w, "
                         + "var_pop(x) over w, count(x) over w";
                 case PARTITION_AVG -> "avg(x) over w";
+                case PARTITION_SUM_AVG -> "sum(x) over w, avg(x) over w";
+                case PARTITION_SUM_AVG_TWO_ARGS -> "sum(x) over w, avg(y) over w";
                 case PARTITION_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";
                 case RANGE_FRAME_SUM_AVG -> "sum(x) over w, avg(x) over w";
                 case RANGE_FRAME_SUM_AVG_COUNT -> "sum(x) over w, avg(x) over w, count(x) over w";

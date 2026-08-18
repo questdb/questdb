@@ -1175,6 +1175,47 @@ public final class WindowAccumulatorDescriptor {
     }
 
     /**
+     * Whether a row this component's contribution predicate refuses leaves its state exactly as
+     * it was - so a group whose every component refuses a row has nothing to write for it, and
+     * {@link WindowMapState#computeNext} may leave that row's key out of the map altogether.
+     * <p>
+     * Deliberately narrower than "the predicate refuses the row", and the families it turns away
+     * are what say why:
+     * <ul>
+     *     <li>{@link #CONTRIBUTION_EVERY_ROW} has no refused row to be inert about, so a row
+     *     count and the two respect-nulls captures decline here through their predicate;</li>
+     *     <li>a <b>{@code last_value ignore nulls}</b> capture writes its slot on the first row of
+     *     a partition whatever that row held and only then begins refusing, so a refused row that
+     *     happens to be a partition's first one does change the state;</li>
+     *     <li>a <b>{@link #isRingBacked() ring-backed} bounded frame</b> allocates its ring on the
+     *     partition's first row and advances it on every row after, refused rows included,
+     *     because a refused row still occupies a position in the frame.</li>
+     * </ul>
+     * Only {@link #CONTRIBUTION_FINITE_DOUBLE} answers true, and that is the caller's constraint
+     * rather than a claim about the other predicates. The group evaluates the predicate itself,
+     * off the contributor's own argument, and {@code Numbers.isFinite(arg.getDouble(record))} is
+     * the whole of this one - where the type's own null test is a different expression per
+     * argument type and a second spelling of it here would be a second chance to disagree with
+     * the contributor. Families carrying the other kinds are inert in the same sense and may be
+     * admitted once a caller can evaluate them.
+     */
+    public boolean isRefusedRowInert() {
+        if (contributionKind != CONTRIBUTION_FINITE_DOUBLE) {
+            return false;
+        }
+        return switch (family) {
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                 FAMILY_DOUBLE_MAX,
+                 FAMILY_DOUBLE_MIN,
+                 FAMILY_DOUBLE_SUM_COUNT,
+                 FAMILY_DOUBLE_WELFORD,
+                 FAMILY_NON_NULL_COUNT -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * Whether this component's state continues outside the group's map value, in a ring of the
      * frame's own values that its <b>contributor</b> owns and the ring slots address.
      * <p>

@@ -30,6 +30,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowMapGroups;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.ObjList;
@@ -37,6 +40,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -93,6 +97,13 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
     private static final int FRAME_BOUNDED_RANGE = 3;
     private static final int FRAME_RANGE = 0;
     private static final int FRAME_ROWS = 1;
+    /**
+     * A window with no ORDER BY, whose every row is a peer and whose frame is therefore the whole
+     * partition. It is the only frame here whose functions are two-pass, so it is also the only
+     * one that reaches a cached cursor - and the only one whose group may leave a row out of its
+     * map in pass 1, which is the path this arm exists to compare.
+     */
+    private static final int FRAME_WHOLE_PARTITION = 4;
     private static final int ITERATIONS = 40;
     private static final String[] KEY_COLUMNS = {"ki", "ks", "kv"};
     /**
@@ -252,6 +263,34 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             "first_value(ts)",
     };
     /**
+     * The calls a <b>whole-partition</b> window can fuse. A short list, and deliberately so: the
+     * extremum, dispersion, compensated-sum and capture implementations behind an unordered
+     * window are separate classes that declare no family, so what is left is the DOUBLE
+     * {@code (sum, nonNullCount)} pair, the counters that fold onto it, and the row count.
+     * <p>
+     * All three contribution predicates a two-pass group can carry are here, which is what makes
+     * the arm differential about the pass-1 skip rather than only about the answers: the DOUBLE
+     * calls, {@code count(xd)} and {@code count(ki)} refuse a row on {@code Numbers.isFinite},
+     * which a group can evaluate for itself and skip on; the SYMBOL, VARCHAR and DECIMAL counters
+     * refuse on their own type's null test, which it cannot; and {@code count(*)} refuses nothing
+     * at all. A query mixing them is one whose group must decline the skip it would take for the
+     * DOUBLE calls alone.
+     */
+    private static final String[] WHOLE_PARTITION_CALLS = {
+            "sum(xd)",
+            "sum(yd)",
+            "avg(xd)",
+            "avg(yd)",
+            "count(xd)",
+            "count(yd)",
+            "count(*)",
+            "count(ki)",
+            "count(ks)",
+            "count(kv)",
+            "count(xdec)",
+            "count(xdec128)",
+    };
+    /**
      * Calls no family describes. One of them lands in a query now and then so that a residual
      * function and a bound group share a cursor, which is what an ordinary query looks like.
      * <p>
@@ -278,6 +317,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int boundIterations = 0;
             int boundGroups = 0;
+            long skippedRows = 0;
             for (int i = 0; i < ITERATIONS; i++) {
                 final String table = "t" + i;
                 final String data = createTable(table);
@@ -288,13 +328,14 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                 final String sql = randomQuery(table);
                 final int[] groups = new int[1];
                 final int[] unfusedGroups = new int[1];
+                final long[] skipped = new long[1];
                 final String fused;
                 final String unfused;
                 try {
-                    fused = render(sql, groups);
+                    fused = render(sql, groups, skipped);
                     setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
                     try {
-                        unfused = render(sql, unfusedGroups);
+                        unfused = render(sql, unfusedGroups, null);
                     } finally {
                         setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
                     }
@@ -309,6 +350,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                     boundIterations++;
                     boundGroups += groups[0];
                 }
+                skippedRows += skipped[0];
                 Assert.assertEquals(context(i, data, sql), unfused, fused);
             }
             // A generator that stopped producing fusible shapes - a family withdrawn, a decline
@@ -318,9 +360,18 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                     "no iteration bound a window Map group, so nothing here was differential",
                     boundIterations > 0
             );
+            // The whole-partition arm's own liveness check. Every table this generator builds has
+            // a NULL-heavy DOUBLE column, so a run that drew even one whole-partition query over
+            // one skips rows - and a run that skipped none compared the two arms over a path the
+            // skip never took.
+            Assert.assertTrue(
+                    "no bound group skipped a pass-1 row, so the refused-row path was never taken",
+                    skippedRows > 0
+            );
             LOG.info().$("window map fusion fuzz [iterations=").$(ITERATIONS)
                     .$(", fusedIterations=").$(boundIterations)
                     .$(", boundGroups=").$(boundGroups)
+                    .$(", skippedRows=").$(skippedRows)
                     .I$();
         });
     }
@@ -337,12 +388,16 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
      * {@code toTop} and by nothing else, so a domain that survived one - or one cleared once
      * per bound member rather than once per group - shows up here and nowhere else in this
      * class.
+     *
+     * @param skipped receives how many pass-1 rows the bound groups left out of their maps, or
+     *                null when the caller does not read it. Counted while the cursor is open,
+     *                since closing it hands the group's map back and resets the counters with it
      */
-    private static String render(String sql, int[] groups) throws SqlException {
+    private static String render(String sql, int[] groups, long[] skipped) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+            final ObjList<WindowMapState> states = windowMapStates(factory);
             if (groups != null) {
-                final ObjList<WindowMapState> states = windowMapStates(factory);
                 groups[0] = states == null ? 0 : states.size();
             }
             final StringSink first = new StringSink();
@@ -351,6 +406,11 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                 CursorPrinter.println(cursor, factory.getMetadata(), first, true, false);
                 cursor.toTop();
                 CursorPrinter.println(cursor, factory.getMetadata(), second, true, false);
+                if (skipped != null && states != null) {
+                    for (int i = 0, n = states.size(); i < n; i++) {
+                        skipped[0] += states.getQuick(i).getSkippedRowCount();
+                    }
+                }
             }
             TestUtils.assertEquals(first, second);
             return first.toString();
@@ -361,13 +421,30 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
      * The bound groups of the window factory in {@code factory}'s chain, or null when the query
      * has none - a projection wrapper can sit above the window factory, so the search walks the
      * whole chain rather than unwrapping one known level.
+     * <p>
+     * All three window factories, because which one a query lands on is the compiler's answer
+     * rather than the generator's: one whole-partition call in the SELECT list is what declines
+     * the streaming fast path, and a run that read groups off the streaming factory alone would
+     * report every cached query as having bound none - which the differential assertion below
+     * would then pass without comparing anything.
      */
-    private static ObjList<WindowMapState> windowMapStates(RecordCursorFactory factory) {
+    private static @Nullable ObjList<WindowMapState> windowMapStates(RecordCursorFactory factory) {
         RecordCursorFactory root = factory;
-        while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+        while (root != null) {
+            if (root instanceof WindowRecordCursorFactory f) {
+                return f.getWindowMapStates();
+            }
+            if (root instanceof CachedWindowRecordCursorFactory f) {
+                final CachedWindowMapGroups groups = f.getWindowMapGroups();
+                return groups == null ? null : groups.getStates();
+            }
+            if (root instanceof CachedWindowLightRecordCursorFactory f) {
+                final CachedWindowMapGroups groups = f.getWindowMapGroups();
+                return groups == null ? null : groups.getStates();
+            }
             root = root.getBaseFactory();
         }
-        return root == null ? null : ((WindowRecordCursorFactory) root).getWindowMapStates();
+        return null;
     }
 
     /**
@@ -465,21 +542,40 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * One random streaming query: one or two partitioned windows, two to five outputs spread over
-     * them in random order, each window referenced by name or spelled inline.
+     * One random query: one or two partitioned windows, two to five outputs spread over them in
+     * random order, each window referenced by name or spelled inline.
      * <p>
-     * Every window is partitioned and ordered by the designated timestamp the base is already
-     * scanned in, which is what keeps the query on the streaming path the group compiler runs
-     * under - and what a bounded RANGE frame requires outright, since one is compiled only where
-     * that order was dismissed. What varies is everything the group identity is a function of, the
-     * frame included: a cumulative ROWS or RANGE frame, or a bounded ROWS or RANGE one in each of
-     * the three geometries its ring comes in.
+     * A query is drawn as one of two kinds, because the two do not mix. A <b>streaming</b> query's
+     * windows are all partitioned and ordered by the designated timestamp the base is already
+     * scanned in, which is what keeps it on the streaming path - and what a bounded RANGE frame
+     * requires outright, since one is compiled only where that order was dismissed. A
+     * <b>whole-partition</b> query's windows carry no ORDER BY at all, so every row of a partition
+     * is a peer and every call over it is two-pass, which lands the query on a cached cursor
+     * instead. Drawing one kind per query rather than one per window is what keeps a bounded RANGE
+     * frame off a cursor that would not compile it.
+     * <p>
+     * What varies within a kind is everything the group identity is a function of, the frame
+     * included: a cumulative ROWS or RANGE frame, or a bounded ROWS or RANGE one in each of the
+     * three geometries its ring comes in.
      */
     private String randomQuery(String table) {
         final int windowCount = 1 + rnd.nextInt(2);
         final String[] specs = new String[windowCount];
         final int[] frameKinds = new int[windowCount];
+        final boolean wholePartition = rnd.nextInt(3) == 0;
         for (int w = 0; w < windowCount; w++) {
+            // A key is a column or an expression over one or two of them, and which it is
+            // decides how the group writes it: off the record's own columns, or through the
+            // compiled terms it borrows from a member. The expressions are deliberately ones
+            // whose value no column carries, so the two arms cannot agree by accident.
+            final String key = rnd.nextInt(4) == 0
+                    ? KEY_EXPRESSIONS[rnd.nextInt(KEY_EXPRESSIONS.length)]
+                    : KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)];
+            if (wholePartition) {
+                frameKinds[w] = FRAME_WHOLE_PARTITION;
+                specs[w] = "partition by " + key;
+                continue;
+            }
             final int roll = rnd.nextInt(8);
             frameKinds[w] = roll < 2
                     ? FRAME_RANGE
@@ -493,13 +589,6 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             } else {
                 frame = "unbounded preceding and current row";
             }
-            // A key is a column or an expression over one or two of them, and which it is
-            // decides how the group writes it: off the record's own columns, or through the
-            // compiled terms it borrows from a member. The expressions are deliberately ones
-            // whose value no column carries, so the two arms cannot agree by accident.
-            final String key = rnd.nextInt(4) == 0
-                    ? KEY_EXPRESSIONS[rnd.nextInt(KEY_EXPRESSIONS.length)]
-                    : KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)];
             specs[w] = "partition by " + key
                     + " order by ts "
                     + (range ? "range" : "rows")
@@ -521,11 +610,14 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
                 case FRAME_ROWS:
                     calls = ROWS_FRAME_CALLS;
                     break;
+                case FRAME_WHOLE_PARTITION:
+                    calls = WHOLE_PARTITION_CALLS;
+                    break;
                 default:
                     calls = BOUNDED_ROWS_FRAME_CALLS;
                     break;
             }
-            final String call = rnd.nextInt(8) == 0
+            final String call = frameKinds[w] != FRAME_WHOLE_PARTITION && rnd.nextInt(8) == 0
                     ? RESIDUAL_CALLS[rnd.nextInt(RESIDUAL_CALLS.length)]
                     : calls[rnd.nextInt(calls.length)];
             sql.append(", ").append(call).append(" over ");
