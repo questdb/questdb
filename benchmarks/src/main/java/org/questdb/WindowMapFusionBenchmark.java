@@ -166,34 +166,36 @@ import java.util.Locale;
  * skips anything. The {@code skips/row} column is where the answer is legible; a shape with no
  * skippable group reports zero there in both arms.
  *
- * <h2>Why this runs with {@code -ea}</h2>
+ * <h2>What the structural columns cost</h2>
  * The {@code lookups/row}, {@code skips/row} and {@code updates/row} columns read counters
- * {@code WindowMapState} keeps behind {@code assert}, so that a server never pays for them on a
- * path it runs once per row of every window query. This benchmark needs them, so it refuses to
- * start without assertions and every command line below passes {@code -ea}.
+ * {@code WindowMapState} keeps only under {@code -Dquestdb.window.map.counters=true}, so that a
+ * server never pays for them on a path it runs once per row of every window query. {@code main()}
+ * sets that property for itself, so no command line below has to.
  * <p>
- * What that costs the timings is a field increment per row, and only in the fused arm - an
+ * What it costs these timings is a field increment per row, and only in the fused arm - an
  * unfused plan binds no group and so runs no counter at all. The fused-versus-unfused ratios
  * this benchmark exists to report are therefore biased against fusion by however much that
- * increment costs, and a fused win it reports is a floor rather than an estimate.
+ * increment costs, and a fused win it reports is a floor rather than an estimate. Running with
+ * the property unset removes the bias and the structural columns together, which is a fair
+ * timing and no evidence.
  *
  * <h2>Build and run</h2>
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
  *
  * # the whole acceptance matrix at both shipped entry-size settings
- * java -ea --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark
  *
  * # one shape, one key type, the transition measurement of case 4
- * java -ea --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark \
  *     --shape=count-count --key-type=int --entry-size=11,16
  *
  * # case 11: both cached factories, including the two-pass shapes
- * java -ea --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx8g \
  *     -cp benchmarks/target/benchmarks.jar \
  *     org.questdb.WindowMapFusionBenchmark \
  *     --cursor=cached,cached-light --key-type=int --entry-size=32
@@ -211,7 +213,7 @@ public class WindowMapFusionBenchmark {
     private static final long TS_STEP_MICROS = 1_000L;
 
     public static void main(String[] args) throws Exception {
-        requireAssertions();
+        configureStructuralCounters(args);
         long rows = 2_000_000L;
         String keysArg = "1000,1000000";
         String keyTypesArg = "int,symbol,string,varchar";
@@ -246,6 +248,8 @@ public class WindowMapFusionBenchmark {
                 warmups = Integer.parseInt(arg.substring(10));
             } else if (arg.startsWith("--runs=")) {
                 runs = Integer.parseInt(arg.substring(7));
+            } else if (arg.startsWith("--counters=")) {
+                // configureStructuralCounters(args) consumed and validated it before this loop.
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -490,6 +494,18 @@ public class WindowMapFusionBenchmark {
         return values;
     }
 
+    /**
+     * One counter-derived column, or {@code n/a} where this run kept no counters. Never {@code
+     * 0.00} in that case: a zero there reads as a measured absence of lookups, which is the one
+     * thing it does not mean.
+     */
+    private static String perRow(long total, long rows) {
+        if (!WindowMapState.areCountersEnabled()) {
+            return "n/a";
+        }
+        return String.format(Locale.ROOT, "%.2f", total / (double) rows);
+    }
+
     private static String row(
             Shape shape,
             Cursor cursor,
@@ -502,7 +518,7 @@ public class WindowMapFusionBenchmark {
     ) {
         return String.format(
                 Locale.ROOT,
-                "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.2f"
+                "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%s\t%s\t%s\t%.2f"
                         + "\t%.1f\t%.0f\t%d\t%d\t%d",
                 shape.name,
                 cursor.name,
@@ -517,9 +533,9 @@ public class WindowMapFusionBenchmark {
                 arm.mapImplementation,
                 arm.components,
                 arm.slots,
-                arm.lookups / (double) arm.rows,
-                arm.skips / (double) arm.rows,
-                arm.updates / (double) arm.rows,
+                perRow(arm.lookups, arm.rows),
+                perRow(arm.skips, arm.rows),
+                perRow(arm.updates, arm.rows),
                 arm.argumentEvaluations / (double) arm.rows,
                 arm.nanos / (double) arm.rows,
                 arm.rows / (arm.nanos / 1e9),
@@ -660,6 +676,46 @@ public class WindowMapFusionBenchmark {
     }
 
     /**
+     * Decides whether this run keeps {@code WindowMapState}'s structural counters, and does it
+     * before anything has had a chance to load that class.
+     * <p>
+     * They are gated on a {@code static final} read of {@code questdb.window.map.counters} rather
+     * than left always-on, because they sit on a per-row path a server runs for every window
+     * query, and a server runs with {@code -ea} - so an {@code assert} would not have gated them.
+     * Setting the property here rather than asking for it on the command line is safe for one
+     * reason only: {@code WindowMapState} is initialized on first use, and the only classes
+     * initialized before this call are this one and its supertypes, none of which touch it. The
+     * read-back below is what keeps that reasoning honest - if some future static field loads the
+     * class earlier, this fails loudly instead of reporting a fusion result made of zeroes.
+     * <p>
+     * {@code --counters=off} leaves the property alone, which is how to time the two arms with
+     * nothing on the fused arm's per-row path that the server would not run. The structural
+     * columns then report {@code n/a} rather than zero, because a run that cannot count is not a
+     * run that counted nothing.
+     */
+    private static void configureStructuralCounters(String[] args) {
+        boolean enabled = true;
+        for (String arg : args) {
+            if ("--counters=off".equals(arg)) {
+                enabled = false;
+            } else if ("--counters=on".equals(arg)) {
+                enabled = true;
+            } else if (arg.startsWith("--counters=")) {
+                throw new IllegalArgumentException("--counters must be one of on, off: " + arg);
+            }
+        }
+        if (enabled) {
+            System.setProperty("questdb.window.map.counters", "true");
+        }
+        if (WindowMapState.areCountersEnabled() != enabled) {
+            throw new IllegalStateException(
+                    "WindowMapState was initialized before its counters could be configured; pass "
+                            + "-Dquestdb.window.map.counters=" + enabled + " on the command line instead"
+            );
+        }
+    }
+
+    /**
      * Captures the structural facts of the drain that just finished, while the cursor is still
      * open: a close resets the group counters and frees the maps this reads.
      * <p>
@@ -667,27 +723,6 @@ public class WindowMapFusionBenchmark {
      * is not one. The bound groups' lookup and update counts are measured; a function on its own
      * map contributes the structural one-per-row, since the private path carries no counter.
      */
-    /**
-     * Refuses to run without assertions, because the structural columns would silently read zero.
-     * <p>
-     * {@code WindowMapState} keeps its lookup, update and skip tallies behind {@code assert} so a
-     * server pays nothing for them on a per-row path. That makes {@code -ea} this benchmark's
-     * business rather than the JVM's default, and a run that quietly reported {@code 0.00}
-     * lookups/row would read as a fusion result rather than a missing flag.
-     */
-    private static void requireAssertions() {
-        boolean enabled = false;
-        //noinspection AssertWithSideEffects,ConstantValue
-        assert enabled = true;
-        //noinspection ConstantValue
-        if (!enabled) {
-            throw new IllegalStateException(
-                    "WindowMapFusionBenchmark needs -ea: the lookups/row, skips/row and updates/row "
-                            + "columns read assert-gated counters and would report zero without it"
-            );
-        }
-    }
-
     private static void captureStructure(Arm arm, WindowProbe factory, long rows) {
         final LinkedHashMap<String, Integer> implementations = new LinkedHashMap<>();
         final ObjList<WindowAccumulatorPlan> plans = factory.plans;
@@ -697,9 +732,11 @@ public class WindowMapFusionBenchmark {
             for (int i = 0, n = states.size(); i < n; i++) {
                 final WindowMapState state = states.getQuick(i);
                 arm.groups++;
-                arm.lookups += state.getLookupCount();
-                arm.skips += state.getSkippedRowCount();
-                arm.updates += state.getContributorUpdateCount();
+                if (WindowMapState.areCountersEnabled()) {
+                    arm.lookups += state.getLookupCount();
+                    arm.skips += state.getSkippedRowCount();
+                    arm.updates += state.getContributorUpdateCount();
+                }
                 final WindowAccumulatorPlan plan = state.getPlan();
                 arm.components += plan.getComponentCount();
                 arm.slots += plan.getSlotCount();

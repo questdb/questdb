@@ -434,8 +434,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         final long diskSize = base.size();
         final long rawLeadStart = slotRowCount - slot.leadRowCount();
         // The overlap band is a suffix of the disk scan, so it cannot run negative. Assert to
-        // fail loudly under -ea, but clamp as well: -ea is off in production, and a negative
-        // leadStart inflates the seam's disk band past the scan.
+        // fail loudly, and clamp as well. The assert is what a server takes: every shipped
+        // artifact runs with -ea (docker-entrypoint.sh, questdb.sh, the AMI systemd unit), so it
+        // throws before the clamp is reached. The clamp covers an embedding that disables
+        // assertions, where a negative leadStart would inflate the seam's disk band past the
+        // scan.
         assert rawLeadStart >= 0 : "leadStart " + rawLeadStart + " is negative";
         final long leadStart = Math.max(0, rawLeadStart);
         // The intervals the base scan confines its rows to, if any. They select the mode as
@@ -452,10 +455,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         // an unsized base degrade instead of mis-cutting.
         final boolean isSeamShape = !isDescending && intervals == null && diskSize >= 0;
         // Under the seam shape the overlap band is a suffix of the disk scan, so it cannot
-        // exceed it. Assert to fail loudly under -ea, and degrade to lead-only otherwise: with
-        // -ea off a negative cut makes every reader read diskRoutedRows as "cannot size", so the
-        // disk frames pass through in full AND the slot band is served on top - rows emitted
-        // twice, with size() returning -1 so nothing cross-checks it.
+        // exceed it. Assert to fail loudly - which is what a server does, since every shipped
+        // artifact runs with -ea - and degrade to lead-only for an embedding that disables
+        // assertions. Without either, a negative cut makes every reader read diskRoutedRows as
+        // "cannot size", so the disk frames pass through in full AND the slot band is served on
+        // top - rows emitted twice, with size() returning -1 so nothing cross-checks it.
         assert !isSeamShape || leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
         if (!isSeamShape || leadStart > diskSize) {
             // Lead-only: disk serves every row it kept and the slot adds the lead band

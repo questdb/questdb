@@ -34,7 +34,12 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>25</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow
+        <!-- questdb.window.map.counters keeps WindowMapState's structural counters, which the
+             window Map fusion tests assert on. It is off in a server because those counters sit
+             on a per-row path; -ea does not gate them, since every shipped artifact runs with
+             assertions on. -->
+        <argLine>-ea -Dquestdb.window.map.counters=true -Dfile.encoding=UTF-8 -XX:+UseParallelGC
+            --sun-misc-unsafe-memory-access=allow
             --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED
             --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED
             --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
