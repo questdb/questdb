@@ -9060,6 +9060,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
+                // A replace commit that removed or trimmed the last partition moves maxTimestamp
+                // back to the new last partition. Re-sync partitionTimestampHi to that partition:
+                // finishO3Commit only re-opens (and thereby re-syncs) a NATIVE last partition, so a
+                // parquet last partition would otherwise leave partitionTimestampHi stale and trip
+                // the partition-timestamp consistency assert at the top of the next processWalCommit.
+                partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getMaxTimestamp());
                 assert partitionTimestampHi != Long.MIN_VALUE;
             } else {
                 LOG.info().$("replace commit truncated the table [table=").$(tableToken).$();
@@ -15484,7 +15490,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll);
 
+        void putDecimalChar(int columnIndex, char decimalValue);
+
         void putDecimalStr(int columnIndex, CharSequence decimalValue);
+
+        void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue);
 
         void putDouble(int columnIndex, double value);
 
@@ -15677,7 +15687,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            // no-op
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
             // no-op
         }
 
@@ -15914,9 +15934,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalChar(columnIndex, decimal256Sink, decimalValue, type, this);
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             final int type = metadata.getColumnType(columnIndex);
             WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, type, this);
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256Sink, decimalValue, type, this);
         }
 
         @Override

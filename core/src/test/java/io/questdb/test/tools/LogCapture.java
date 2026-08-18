@@ -10,9 +10,12 @@ import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 import org.junit.Assert;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
+import java.util.function.LongSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,6 +26,10 @@ public class LogCapture {
     private final LogConsoleWriter consoleWriter;
     private final StringSink sink = new SynchronizedSink();
     private final LogConsoleWriter.LogInterceptor interceptor = this::onLog;
+    // Real by default; a test pins the exact deadline boundary in waitFor(CharSequence, long) by
+    // swapping these for a fake clock/sleeper instead of racing real wall-clock granularity.
+    private LongSupplier clockMillis = System::currentTimeMillis;
+    private LongConsumer sleeper = Os::sleep;
 
     public LogCapture() {
         consoleWriter = getFirstConsoleWriter();
@@ -57,9 +64,19 @@ public class LogCapture {
     }
 
     public void assertOnlyOnce(String regex) {
-        Matcher m = Pattern.compile(regex).matcher(sink);
-        Assert.assertTrue("Message '" + regex + "' was not logged", m.find());
-        Assert.assertEquals("Message '" + regex + "' was not more than once", 0, m.groupCount());
+        Matcher matcher = Pattern.compile(regex).matcher(sink.toString());
+        Assert.assertTrue("Message '" + regex + "' was not logged", matcher.find());
+        Assert.assertFalse("Message '" + regex + "' was logged more than once", matcher.find());
+    }
+
+    @TestOnly
+    public void setClockForTest(LongSupplier clockMillis) {
+        this.clockMillis = clockMillis;
+    }
+
+    @TestOnly
+    public void setSleeperForTest(LongConsumer sleeper) {
+        this.sleeper = sleeper;
     }
 
     /**
@@ -99,26 +116,42 @@ public class LogCapture {
     }
 
     public void waitFor(String value) {
-        long start = System.currentTimeMillis();
-        int maxWait = 120_000;
-        while (sink.indexOf(value) == -1 && (System.currentTimeMillis() - start) < maxWait) {
-            Os.sleep(1);
-        }
-        if ((System.currentTimeMillis() - start) > maxWait) {
-            throw new AssertionError("timed out waiting for log to populate");
+        waitFor(value, 120_000);
+    }
+
+    public void waitFor(CharSequence value, long timeoutMs) {
+        final String needle = value.toString();
+        long start = clockMillis.getAsLong();
+        while (sink.indexOf(needle) == -1) {
+            if ((clockMillis.getAsLong() - start) >= timeoutMs) {
+                throw new AssertionError("timed out waiting for log to contain '" + value + "', captured log: " + sink);
+            }
+            sleeper.accept(1);
         }
     }
 
     public void waitForRegex(String regex) {
-        long start = System.currentTimeMillis();
-        int maxWait = 120_000;
-        Matcher m = Pattern.compile(regex).matcher(sink);
-        while (!m.find() && (System.currentTimeMillis() - start) < maxWait) {
-            Os.sleep(1);
-            m.reset(sink);
-        }
-        if ((System.currentTimeMillis() - start) > maxWait) {
-            throw new AssertionError("timed out waiting for log to populate");
+        // Same deadline shape as waitFor(CharSequence, long): the timeout check runs BEFORE the
+        // sleep and treats elapsed == maxWait as timed out. The old shape looped on
+        // `elapsed < maxWait` but threw on `elapsed > maxWait`, so landing exactly on the deadline
+        // left the loop with no match and returned silently -- a timed-out wait passing as a
+        // successful one.
+        final long maxWait = 120_000;
+        final long start = clockMillis.getAsLong();
+        final Pattern pattern = Pattern.compile(regex);
+        // Snapshot the sink into an immutable String before matching. Matching a Matcher
+        // directly against the live SynchronizedSink would race an in-flight put() because
+        // CharSequence#charAt() isn't one of the methods SynchronizedSink guards; toString()
+        // is also synchronized (below), so this snapshot is a single atomic read of the sink's
+        // current contents, same as the synchronized indexOf() reads in waitFor(CharSequence,
+        // long).
+        Matcher m = pattern.matcher(sink.toString());
+        while (!m.find()) {
+            if ((clockMillis.getAsLong() - start) >= maxWait) {
+                throw new AssertionError("timed out waiting for log to match '" + regex + "', captured log: " + sink);
+            }
+            sleeper.accept(1);
+            m = pattern.matcher(sink.toString());
         }
     }
 
@@ -167,6 +200,11 @@ public class LogCapture {
         @Override
         public synchronized @NotNull CharSequence subSequence(int lo, int hi) {
             return super.subSequence(lo, hi);
+        }
+
+        @Override
+        public synchronized @NotNull String toString() {
+            return super.toString();
         }
     }
 
