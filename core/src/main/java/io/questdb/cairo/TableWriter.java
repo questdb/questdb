@@ -18508,6 +18508,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashSplitPartitionsComposite(int partitionIndexLo) {
         final long dayTs = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndexLo));
         boolean merged = false;
+        boolean tailTouched = false;
         while (true) {
             // Re-resolve the day's span every pass: merging removes entries and shifts indices.
             int lo = -1, hi = -1;
@@ -18524,11 +18525,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lo < 0) {
                 break;
             }
-            if (hi >= txWriter.getPartitionCount()) {
-                LOG.info().$("composite squash skipped, day group is the active tail [table=").$(tableToken)
-                        .$(", day=").$ts(dayTs).I$();
-                break;
-            }
+            final boolean tail = hi >= txWriter.getPartitionCount();
             long fragTs = Long.MIN_VALUE;
             for (int i = lo; i < hi; i++) {
                 final long ts = txWriter.getPartitionTimestampByIndex(i);
@@ -18544,8 +18541,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 break; // could not merge this fragment; leave it rather than invent a target
             }
             merged = true;
+            tailTouched |= tail;
         }
         if (merged) {
+            if (tailTouched) {
+                // The day group reached the table's TAIL, so the merge changed which entry is last and
+                // how many rows it holds. The plain loop tracks this with delta arithmetic under
+                // lastPartitionSquashed; here the counts are RECOMPUTED from the attached list instead,
+                // which is O(partitions) but cannot drift -- squash is rare, and a wrong transient/fixed
+                // split silently corrupts count(*). Safe at this point because housekeep() runs after
+                // commit00(), where the caller asserts getLagRowCount() == 0, so a partition's stored
+                // size is its whole row count. A routed composite table has no day-level active
+                // partition to reopen (see openLastPartitionAndSetAppendPosition), so there is no
+                // openLastPartition() counterpart to the plain path's.
+                final int pc = txWriter.getPartitionCount();
+                long fixed = 0;
+                for (int i = 0; i < pc - 1; i++) {
+                    fixed += txWriter.getPartitionSize(i);
+                }
+                txWriter.fixedRowCount = fixed;
+                txWriter.transientRowCount = pc > 0 ? txWriter.getPartitionSize(pc - 1) : 0;
+            }
             // MUST commit. housekeep() runs AFTER commit00(), so everything this method mutates lands
             // outside the committed transaction unless it opens its own -- exactly as the plain
             // squashSplitPartitions does at its tail. Without this the attached-entry removal was
@@ -18581,7 +18597,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int dayIndex = findCompositePartitionIndex(dayTs, cellKey);
             assert dayIndex >= 0; // guaranteed by the pre-flight above
             final long srcNameTxn = txWriter.getPartitionNameTxn(srcIndex);
-            final long srcSize = txWriter.getPartitionSize(srcIndex);
+            // For the LAST attached partition the stored size is not authoritative -- its live row
+            // count is transient + lag (the plain loop does the same under lastPartitionSquashed).
+            // Reading getPartitionSize here opened the source frame short and silently dropped the
+            // fragment's rows: the twin comparison caught it as a missing row, not as an error.
+            final boolean srcIsLast = srcIndex == txWriter.getPartitionCount() - 1;
+            if (srcIsLast) {
+                closeActivePartition(false);
+            }
+            final long srcSize = srcIsLast
+                    ? txWriter.getTransientRowCount() + txWriter.getLagRowCount()
+                    : txWriter.getPartitionSize(srcIndex);
             final long dayNameTxn = txWriter.getPartitionNameTxn(dayIndex);
             final long daySize = txWriter.getPartitionSize(dayIndex);
             squashedSeqTxn = Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(srcIndex));
