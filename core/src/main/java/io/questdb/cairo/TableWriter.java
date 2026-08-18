@@ -1082,12 +1082,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // getColumnNameTxn(timestamp, columnIndex) resolves by timestamp, which is cellKey-0-only on a
         // composite table. Gate retained until the column read is cell-aware too -- an ungated failure
         // that suspends the table is worse than a refusal.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support ADD INDEX [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
-
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
 
         commit();
@@ -2608,6 +2602,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        
+
+        // SP2 (2026-08-18): gate RETAINED, now with a measured root cause rather than a guess. With it
+        // lifted, DROP INDEX fails
+        //     cannot hardLink [src=.../2023-01-01/sym.d.1, hardLink=.../2023-01-01/sym.d.1]  errno=17
+        // -- source and destination are the SAME path. DropIndexOperator#partitionDFile builds both
+        // through the bare 5-arg setPathForNativePartition (the day container, not the cell directory),
+        // and its two column versions both come from the cellKey-0-only
+        // getColumnNameTxn(timestamp, columnIndex), so they collide. Making it cell-aware means
+        // threading cellKey through DropIndexOperator's walk -- a change in that class, not here.
         if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support DROP INDEX [table=")
@@ -9945,7 +9949,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ts > Numbers.LONG_NULL) {
             try {
                 // Index last partition separately
-                for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
+                // A composite table indexes EVERY entry here, including the last. indexLastPartition
+                // builds its index from the writer's LIVE column memory (getPrimaryColumn), and a
+                // routed composite table keeps no day-level active partition open -- see
+                // openLastPartitionAndSetAppendPosition -- so that memory is closed and the read fails
+                // with fd=-1. Indexing from FILES, exactly as historic partitions do, is well-defined
+                // for every cell.
+                final int lastExclusive = isRoutedComposite()
+                        ? txWriter.getPartitionCount()
+                        : txWriter.getPartitionCount() - 1;
+                for (int i = 0, n = lastExclusive; i < n; i++) {
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     path.trimTo(pathSize);
                     // Per-INDEX, so each composite CELL is indexed. Resolving by timestamp built the
@@ -9955,7 +9968,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (ff.exists(path.$())) {
                         final int plen = path.size();
-                        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
+                        // Per-CELL: the 2-arg overload resolves cellKey 0 only, so on a composite table
+                        // it answers for the wrong cell and the .d file open fails with fd=-1.
+                        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(
+                                timestamp, txWriter.getPartitionCellKey(i), columnIndex);
                         if (txWriter.isPartitionParquet(i)) {
                             indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -19579,7 +19595,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, int columnIndex, SymbolColumnIndexer indexer) {
         // create indexer
-        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
+        // Per-CELL for the LAST entry, for the same reason as the historic walk above.
+        final int lastEntryIndex = txWriter.getPartitionCount() - 1;
+        final long columnNameTxn = lastEntryIndex >= 0
+                ? columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(),
+                        txWriter.getPartitionCellKey(lastEntryIndex), columnIndex)
+                : columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
         try {
             try {
                 // edge cases here are:
@@ -19592,7 +19613,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // run indexer for the whole table
                     indexHistoricPartitions(indexer, columnName, indexValueBlockSize, indexType, columnIndex);
                     long timestamp = txWriter.getLastPartitionTimestamp();
-                    if (timestamp != Numbers.LONG_NULL) {
+                    if (timestamp != Numbers.LONG_NULL && !isRoutedComposite()) {
                         path.trimTo(pathSize);
                         // The last ENTRY, which on a composite table is the last cell of the last day.
                         // Resolving by timestamp named a directory that does not exist, and

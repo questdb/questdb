@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import io.questdb.cairo.TableReader;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -192,14 +193,23 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * SP2 (2026-08-18): ADD INDEX is no longer gated. Note the column here is the DIMENSION column
+     * itself, where every row in a given cell shares one value -- a degenerate but legitimate index,
+     * and worth asserting rather than assuming, since the index build now walks cells.
+     */
     @Test
-    public void testAddIndexGated() throws Exception {
+    public void testAddIndexOnDimensionColumnWorks() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c alter column exch add index",
-                    "c",
-                    "composite partitioning does not yet support ADD INDEX");
+            execute("alter table c alter column exch add index");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("c"))) {
+                final int idx = reader.getMetadata().getColumnIndex("exch");
+                Assert.assertTrue("exch must be indexed after ADD INDEX",
+                        reader.getMetadata().isColumnIndexed(idx));
+            }
         });
     }
 
