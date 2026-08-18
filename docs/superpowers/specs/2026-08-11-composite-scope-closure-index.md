@@ -94,7 +94,7 @@ Silent skips, which are not gates but must become real behaviour or provably-har
 |---|---|
 | split-fragment squash ("cell-blind merge, cell-aware squash deferred") | 1 — lifecycle (behaviour), 8 (proof it is harmless meanwhile) |
 | symbol-capacity autoscale ("cell-blind reopen") | 8 — proof it is harmless; no behaviour change planned |
-| **O3 partition purge** (`O3PartitionPurgeJob:224`) | 1 — lifecycle. **MEASURED 2026-08-17: NOT harmless.** 20 O3 rounds of out-of-order writes into an already-written day left composite at 4 partition-version directories vs plain at 1 (before: both at 1) — obsolete versions are never reclaimed. This is a silent disk leak, and it is sub-project 1's first task. Acceptance test: `CompositeO3PurgeSkipTest` (currently `@Ignore`d). |
+| **O3 partition purge** (`O3PartitionPurgeJob:224`) | **RESOLVED 2026-08-18 — and the attribution here was wrong.** The measured leak (composite 1→4 day directories vs plain 1→1) was real, but it was NOT caused by this skip. Running the same churn with the purge job ON and OFF leaves a byte-identical directory set: `TableWriter.openLastPartitionAndSetAppendPosition` opened a day-level "last partition" for a routed composite table, and `openPartition` resolved it cell-blind then `ff.mkdirs`-ed it into existence. Fixed at the producer (`eb539b7ddf`); `CompositeO3PurgeSkipTest` now passes un-ignored. **This skip remains, and remains correct**: the LIVE composite container is the UNVERSIONED day directory, so a naive cell-aware purge that keeps the newest `<day>.<txn>` would delete every live cell. Lifting it is not sub-project 1 work and has no known outstanding cost. |
 
 ## Deferred by decision — recorded, not forgotten
 
