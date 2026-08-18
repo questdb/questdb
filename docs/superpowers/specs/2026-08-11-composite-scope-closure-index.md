@@ -78,7 +78,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 | 27 | Enterprise `PARTITION_SEAL` WAL event | 6 — enterprise |
 | 28 | Enterprise checkpoint / backup manifest | 6 — enterprise |
 | 29 | Enterprise replication (no gate — **unverified**) | 6 — enterprise |
-| 30 | Materialized views over a composite base (no gate today; 8 adds one) | 7 — matview |
+| 30 | Materialized views over a composite base — **GATED**, added by sub-project 8 in `executeCreateMatView`; refuses at CREATE with a caret. The "no gate today" wording here was stale and misread on 2026-08-18 as an ungated risk | 7 — matview (removing the gate is 7's deliverable) |
 | 31 | Multiple sub-day time intervals over a single multi-cell day | 9 — read-surface (9A) |
 | 32 | Indexed `WHERE` predicate | 9 — read-surface (9B) |
 | 33 | `ORDER BY` on an indexed symbol column | 9 — read-surface (9C) |
