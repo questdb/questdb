@@ -111,7 +111,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long rowHi;
         private long rowIdPtr;
         private long rowLo;
-        private CountingCursor keyProbe;
         private boolean detached;
         private int[] requiredCoverColumns;
         private long rowInGroup;
@@ -121,10 +120,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          */
         @Override
         public void close() {
-            if (keyProbe != null) {
-                keyProbe.close();
-                keyProbe = null;
-            }
+            keyProbe = Misc.free(keyProbe);
             if (detached) {
                 freeResources();
             } else {
@@ -133,13 +129,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             keyIdPtr = 0;
             rowIdPtr = 0;
             hasNext = false;
-        }
-
-        private CountingCursor probe() {
-            if (keyProbe == null) {
-                keyProbe = new CountingCursor();
-            }
-            return keyProbe;
         }
 
         @Override

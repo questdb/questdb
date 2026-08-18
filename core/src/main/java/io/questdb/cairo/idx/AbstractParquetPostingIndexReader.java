@@ -545,7 +545,26 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
         protected int[] coverChunkOrdinal;
         protected long emittedRow = -1;
+        /**
+         * The {@code key_id}-only cursor pruning level 3 binary searches, built
+         * on the first row group this cursor bounds.
+         * <p>
+         * Owned HERE rather than by the subclasses so that
+         * {@link #freeResources()} -- the one call a closing READER makes
+         * against its pooled cursor -- reaches it. Left to the subclasses it was
+         * released only by {@code close()}, which nothing obliges a caller of a
+         * pooled cursor to make, and the probe owns a second decoder, its own
+         * buffers and its own projection.
+         */
+        protected CountingCursor keyProbe;
         private boolean decoderBound;
+
+        protected CountingCursor probe() {
+            if (keyProbe == null) {
+                keyProbe = new CountingCursor();
+            }
+            return keyProbe;
+        }
 
         /**
          * Binds this cursor's decoder to the reader's parquet mapping. The
@@ -566,6 +585,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * which no reader will ever come back for.
          */
         protected void freeResources() {
+            keyProbe = Misc.free(keyProbe);
             Misc.free(decoder);
             Misc.free(rowGroupBuffers);
             Misc.free(projection);

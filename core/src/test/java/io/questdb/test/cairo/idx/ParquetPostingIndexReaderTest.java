@@ -390,6 +390,46 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Closing the READER must release everything the reader owns, including the
+     * key probe its pooled cursor created.
+     * <p>
+     * The probe is a second {@code CountingCursor}, and it owns a second parquet
+     * decoder, its own row-group buffers and its own projection -- three native
+     * allocations. It is created lazily, on the first row group the cursor
+     * bounds, so it exists exactly when the cursor has been iterated. A reader
+     * whose {@code close()} reaches only the cursor's own buffers leaks all
+     * three, and it does so on the ordinary path: nothing obliges a caller to
+     * close a POOLED cursor, which is the reader's to recycle.
+     * <p>
+     * The cursor is deliberately left open here. Asserting through
+     * {@code assertMemoryLeak} rather than through an accessor is what makes
+     * this catch the leak by its size rather than by a flag the fix would also
+     * have to set.
+     */
+    @Test
+    public void testAReaderCloseReleasesItsPooledCursorsKeyProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedParquetTable("x");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+                final int key = reader.getSymbolMapReader(columnIndex).keyOf("s15") + 1;
+                for (int direction : new int[]{IndexReader.DIR_FORWARD, IndexReader.DIR_BACKWARD}) {
+                    final IndexReader indexReader = reader.getIndexReader(0, columnIndex, direction);
+                    final RowCursor cursor = indexReader.getCursor(key, 0, Long.MAX_VALUE);
+                    long n = 0;
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        n++;
+                    }
+                    // Without postings no row group is bounded, so no probe is
+                    // built and the fixture would prove nothing.
+                    Assert.assertTrue("the key must have postings [direction=" + direction + ']', n > 0);
+                }
+            }
+        });
+    }
+
+    /**
      * N detached cursors over ONE frozen reader must each return the whole
      * answer, concurrently.
      * <p>
