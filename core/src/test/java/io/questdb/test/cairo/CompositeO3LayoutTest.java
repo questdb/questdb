@@ -39,27 +39,32 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * CHARACTERISATION of the composite on-disk layout under out-of-order writes. Green from the start by
- * design — it asserts what today's build already does, so that sub-project 1A's fix is designed
- * against a measured layout rather than an inferred one.
+ * The composite on-disk layout under out-of-order writes. Written first as a CHARACTERISATION test —
+ * green against the pre-fix build, asserting that composite leaked day-level version directories —
+ * so that sub-project 1A's fix was designed against a measured layout rather than an inferred one.
+ * Flipped to the fixed contract once the fix landed: assertion (1) went from "composite accumulates
+ * more than one" to "composite keeps exactly one, like plain".
  * <p>
- * It exists because inference got this wrong twice. {@code nameTxn} is stored per {@code (ts, cellKey)}
+ * It exists because inference got this wrong repeatedly. {@code nameTxn} is stored per {@code (ts, cellKey)}
  * in {@code _txn}, which suggests {@code <day>.<txn>} directories should hold per-cell subsets; they do
  * not. And a short probe without the purge job running suggested day-level version directories never
  * accumulate at all; they do. Both readings would have produced a wrong fix.
  * <p>
  * The four facts pinned here, each of which sub-project 1A depends on:
  * <ol>
- *     <li>a composite table accumulates several {@code <day>[.<txn>]} directories under its root while
- *     its plain twin keeps exactly one — the leak itself;</li>
+ *     <li>a composite table keeps exactly ONE day directory, like its plain twin. Before sub-project
+ *     1A it accumulated one extra {@code <day>.<txn>} per commit that bumped cellKey 0's nameTxn;</li>
  *     <li>the composite table's LIVE cells sit under the <b>unversioned</b> day directory. This is the
  *     data-loss trap: a fix that keeps "the newest {@code <day>.<txn>}" and deletes the older entries
  *     would delete the unversioned directory, i.e. every live cell;</li>
- *     <li>the {@code <day>.<txn>} directories hold day-level column files and NO cell subdirectories;</li>
+ *     <li>no VERSIONED day directory survives — that was the leaked artifact;</li>
  *     <li>every live row is accounted for in the cell directories, so the day-level directories hold
  *     nothing live. This is the assertion that licenses deleting them.</li>
  * </ol>
- * If this test fails, sub-project 1A's premises are void — fix the plan, not the test.
+ * Fixed by sub-project 1A: {@code openLastPartitionAndSetAppendPosition} no longer opens a day-level
+ * "last partition" for a routed composite table. {@code openPartition} resolved that path with the
+ * cell-blind {@code setStateForTimestamp} and then called {@code ff.mkdirs}, creating a directory
+ * nothing ever read.
  */
 public class CompositeO3LayoutTest extends AbstractCairoTest {
 
@@ -95,15 +100,15 @@ public class CompositeO3LayoutTest extends AbstractCairoTest {
                 purgeJob.close();
             }
 
-            // (1) the leak: composite accumulates day-level version dirs, the plain twin does not
+            // (1) no leak: composite keeps a single day directory, exactly like the plain twin
             final List<String> compositeDayDirs = dayDirs("c");
             final List<String> plainDayDirs = dayDirs("p");
             Assert.assertEquals("control: the plain twin must reclaim down to a single day directory,"
-                            + " otherwise this workload does not exercise purge at all " + plainDayDirs,
+                            + " otherwise this workload does not exercise the leak at all " + plainDayDirs,
                     1, plainDayDirs.size());
-            Assert.assertTrue("composite is expected to LEAK day-level version directories on today's"
-                            + " build; if this now passes, 1A may already be fixed " + compositeDayDirs,
-                    compositeDayDirs.size() > 1);
+            Assert.assertEquals("composite must not accumulate day-level version directories."
+                            + " Before 1A this was 4 after the same churn " + compositeDayDirs,
+                    1, compositeDayDirs.size());
 
             // (2) THE TRAP: live cells sit under the UNVERSIONED day directory
             Assert.assertTrue("the unversioned day directory must exist " + compositeDayDirs,
@@ -115,15 +120,10 @@ public class CompositeO3LayoutTest extends AbstractCairoTest {
                         cell.matches("E[0-2]\\.\\d+"));
             }
 
-            // (3) the versioned day dirs are day-level: column files, no cells
+            // (3) no VERSIONED day directory exists at all -- that was the leaked artifact
             for (String dayDir : compositeDayDirs) {
-                if ("2023-01-02".equals(dayDir)) {
-                    continue;
-                }
-                Assert.assertTrue(dayDir + " should be a day-level version directory holding column files",
-                        Files.exists(tableDir("c").resolve(dayDir).resolve("ts.d")));
-                Assert.assertTrue(dayDir + " must not contain cell subdirectories",
-                        cellDirs("c", dayDir).isEmpty());
+                Assert.assertEquals("a composite day directory must be unversioned; " + dayDir
+                        + " is a leaked day-level version", "2023-01-02", dayDir);
             }
 
             // (4) every live row is in the cells, so the day-level dirs hold nothing live

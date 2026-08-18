@@ -11662,6 +11662,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionParquet()) {
             return;
         }
+        // Sub-project 1A: a routed composite table has no day-level "last partition" to open. Its
+        // partitions are the CELLS of the day, each with its own nameTxn and its own directory under
+        // the shared day container, and the fast-append path opens those itself.
+        //
+        // Calling openPartition here resolves the path with the cell-blind setStateForTimestamp --
+        // which builds <day>.<cellKey-0 nameTxn> -- and then ff.mkdirs CREATES that directory. It is
+        // never read by anything: TableWriter construction after any commit that bumped cellKey 0's
+        // nameTxn leaves one behind, and O3PartitionPurgeJob skips composite tables, so it is never
+        // reclaimed either. Measured: 20 rounds of out-of-order writes left three such directories
+        // (CompositeO3LayoutTest, CompositeO3PurgeSkipTest).
+        if (isRoutedComposite()) {
+            return;
+        }
         openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }

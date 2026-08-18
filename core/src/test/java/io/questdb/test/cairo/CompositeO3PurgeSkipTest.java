@@ -39,13 +39,23 @@ import java.nio.file.Paths;
 import java.util.stream.Stream;
 
 /**
- * O3PartitionPurgeJob skips composite tables entirely (a day-blind walk over what are now
- * <day>/<cell> directories). The project's invariant permits a skip only with a test proving it
- * harmless; this is that test.
+ * Written to test whether {@code O3PartitionPurgeJob}'s composite skip is harmless — the project's
+ * invariant permits a skip only with such a test. It was not harmless: 20 rounds of out-of-order
+ * writes took a composite table from 1 to 4 day-level directories while its plain twin stayed at 1.
  * <p>
- * O3 writes into an already-written partition create a NEW partition version directory and leave the
- * old one behind for readers still on the old txn. Purge is what reclaims them. If purge never runs,
- * those directories accumulate: a disk leak that no error surfaces.
+ * <b>The cause was NOT the purge job.</b> Running the same churn with the purge job ON and OFF leaves
+ * a byte-identical set of directories, so the writer produces them and the purge merely fails to
+ * reclaim them. {@code TableWriter.openLastPartitionAndSetAppendPosition} opened a day-level "last
+ * partition" for a routed composite table; {@code openPartition} resolved that path with the
+ * cell-blind {@code setStateForTimestamp} — yielding {@code <day>.<cellKey-0 nameTxn>} — and then
+ * called {@code ff.mkdirs}, creating a directory nothing ever reads. A composite table's partitions
+ * are the CELLS of the day, and the fast-append path opens those itself.
+ * <p>
+ * Sub-project 1A fixed the producer. {@code O3PartitionPurgeJob}'s composite skip is untouched and
+ * still correct: a cell-aware purge would have to know that the LIVE container is the UNVERSIONED day
+ * directory, so a naive "keep the newest {@code <day>.<txn>}" walk would delete every live cell.
+ * <p>
+ * See {@link CompositeO3LayoutTest} for the on-disk layout this rests on.
  */
 public class CompositeO3PurgeSkipTest extends AbstractCairoTest {
     private static O3PartitionPurgeJob purgeJob;
@@ -61,9 +71,6 @@ public class CompositeO3PurgeSkipTest extends AbstractCairoTest {
         purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
-    @org.junit.Ignore("PROVEN LEAK: O3PartitionPurgeJob skips composite tables, so obsolete partition"
-            + " version directories are never reclaimed. Un-ignore when sub-project 1 makes the purge"
-            + " walk cell-aware; this test is its acceptance criterion.")
     @Test
     public void testCompositeReclaimsObsoletePartitionVersions() throws Exception {
         assertMemoryLeak(() -> {
@@ -102,9 +109,11 @@ public class CompositeO3PurgeSkipTest extends AbstractCairoTest {
                     plainAfter <= plainBefore + 1);
 
             Assert.assertTrue(
-                    "composite leaked obsolete partition version directories: before=" + compositeBefore
+                    "composite leaked day-level partition version directories: before=" + compositeBefore
                             + " after=" + compositeAfter + " (plain: " + plainBefore + " -> " + plainAfter
-                            + "). O3PartitionPurgeJob skips composite tables, so nothing reclaims them.",
+                            + "). Sub-project 1A: TableWriter.openLastPartitionAndSetAppendPosition must not"
+                            + " open a day-level last partition for a routed composite table -- openPartition"
+                            + " resolves the path cell-blind and then ff.mkdirs CREATES it.",
                     compositeAfter <= compositeBefore + 1);
         });
     }
