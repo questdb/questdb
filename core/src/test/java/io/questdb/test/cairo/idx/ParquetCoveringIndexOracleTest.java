@@ -170,6 +170,138 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
      * ({@code NaN} / 0) rather than the covered column's real value for those
      * rows, which is a native question and not this reader's.
      */
+    /**
+     * A parquet partition never presents a posting reader with a column top --
+     * and the whole implicit-null prefix path depends on it.
+     * <p>
+     * There are exactly two ways a column can carry one, and conversion closes
+     * both:
+     * <ul>
+     * <li><b>partial data</b> ({@code 0 < top < partitionRowCount}):
+     * {@code zeroColumnTopsAfterParquetRewrite} zeroes it, because the encoder
+     * materialises the top region as real NULL rows. Those NULLs are ordinary
+     * rows in the parquet file and the seal indexes them as key 0 like any
+     * other value -- there is nothing implicit left to synthesise.</li>
+     * <li><b>no data at all</b> ({@code top >= partitionRowCount}): the column
+     * top survives, but the column resolves to {@code IndexFwdNullReader} on
+     * BOTH arms, so no parquet posting reader is constructed.</li>
+     * </ul>
+     * The consequence: {@code nullPrefixCount()} is structurally always 0 in
+     * the parquet form, and the prefix emission in the cursors is unreachable
+     * defensive code rather than a live path.
+     * <p>
+     * This test is the guard on that invariant. If it starts failing -- most
+     * likely because {@code zeroColumnTopsAfterParquetRewrite} stopped zeroing,
+     * or an all-NULL column began sealing to a real index -- then the prefix
+     * logic in the cursors has become load-bearing, and
+     * {@link #testTheParquetReaderMatchesTheNativeOneOverAnImplicitNullPrefix()}
+     * changes from a defensive contract into a correctness requirement. It also
+     * makes the KEY_SPACE_SIZE the seal records live: the seal stores the index
+     * writer's raw key count, while the native reader reports
+     * {@code keyCount + 1} when a column top is present, so the two would then
+     * disagree by one on an EXCLUSIVE bound.
+     */
+    @Test
+    public void testAParquetPartitionNeverPresentsAPostingReaderWithAColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            createArmWithLateColumn("partial_top", true);
+            createArmWithLateColumn("absent_top", false);
+
+            // Partial data: the column top is zeroed and a real parquet posting
+            // reader takes over, so the NULLs must be reachable as key 0.
+            try (TableReader reader = engine.getReader(engine.verifyTableName("partial_top"))) {
+                final int col = reader.getMetadata().getColumnIndex("sym2");
+                final IndexReader fwd = reader.getIndexReader(0, col, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "a partially-populated column must seal to the parquet form",
+                        fwd instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertEquals(
+                        "conversion must zero a mid column top; a surviving one would make"
+                                + " the cursors' implicit-null prefix load-bearing",
+                        0,
+                        fwd.getColumnTop()
+                );
+                Assert.assertEquals(
+                        "the NULLs the encoder materialised must be indexed as ordinary key-0 rows",
+                        ROW_COUNT,
+                        countPostings(fwd, 0)
+                );
+            }
+
+            // No data at all: the column top survives conversion, but nothing
+            // dispatches to a posting reader, so it cannot observe one either.
+            try (TableReader reader = engine.getReader(engine.verifyTableName("absent_top"))) {
+                final int col = reader.getMetadata().getColumnIndex("sym2");
+                final IndexReader fwd = reader.getIndexReader(0, col, IndexReader.DIR_FORWARD);
+                Assert.assertFalse(
+                        "an all-NULL column must not reach a parquet posting reader",
+                        fwd instanceof AbstractParquetPostingIndexReader
+                );
+            }
+        });
+    }
+
+    private long countPostings(IndexReader reader, int key) {
+        final RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);
+        long n = 0;
+        while (cursor.hasNext()) {
+            cursor.next();
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * @param sameDay when {@code true} the late column gets values inside the
+     *                partition being indexed, giving it a column top in
+     *                {@code (0, partitionRowCount)} -- the branch conversion
+     *                zeroes. When {@code false} the values land on the next
+     *                day, leaving the indexed partition with no values for the
+     *                column at all -- the branch whose column top survives.
+     */
+    private void createArmWithLateColumn(String table, boolean sameDay) throws Exception {
+        execute("CREATE TABLE " + table + " (" +
+                "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + table + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " 's' || (x % 5)," +
+                " x::DOUBLE," +
+                " x" +
+                " FROM long_sequence(" + ROW_COUNT + ")");
+        drainWalQueue();
+        execute("ALTER TABLE " + table + " ADD COLUMN sym2 SYMBOL");
+        drainWalQueue();
+        final String base = sameDay
+                ? "dateadd('u', (x + " + ROW_COUNT + ")::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)"
+                : "dateadd('u', x::INT, dateadd('d', 1, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP))";
+        execute("INSERT INTO " + table + " SELECT" +
+                " " + base + "," +
+                " 's' || (x % 5)," +
+                " x::DOUBLE," +
+                " x," +
+                " 't' || (x % 3)" +
+                " FROM long_sequence(2000)");
+        drainWalQueue();
+        execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        execute("ALTER TABLE " + table + " ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    /**
+     * NOTE: this forces a column top by rebinding a reader. A parquet partition
+     * cannot actually present a posting reader with one -- see
+     * {@link #testAParquetPartitionNeverPresentsAPostingReaderWithAColumnTop()},
+     * which proves both routes are closed. So this pins the cursors' defensive
+     * prefix contract, not a reachable production path. It stays because the
+     * invariant it depends on lives in the WRITER, far from these cursors: if
+     * that invariant is ever relaxed, this is what makes the prefix correct
+     * rather than merely present.
+     */
     @Test
     public void testTheParquetReaderMatchesTheNativeOneOverAnImplicitNullPrefix() throws Exception {
         assertMemoryLeak(() -> {
