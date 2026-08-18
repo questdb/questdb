@@ -3133,7 +3133,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             timestampMergeIndexSize
                     );
                 } else if (tableWriter.isCommitDedupMode()) {
-                    final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                    // Publish the buffer to timestampMergeIndexAddr/Size IMMEDIATELY,
+                    // before anything that can throw. getDedupRows() opens the
+                    // partition's dedup key column, so it throws on a full disk, an
+                    // exhausted fd limit or an I/O error - and while the buffer is
+                    // held only in a local, the catch below cannot reach it: it frees
+                    // timestampMergeIndexAddr, which would still be 0. That leaked
+                    // mergeRowCount * 16 bytes of NATIVE_O3 per failed commit, for
+                    // the life of the process. Owning it from the start makes the
+                    // existing cleanup correct by construction rather than by the
+                    // caller remembering a second free path.
+                    timestampMergeIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                    timestampMergeIndexSize = tempIndexSize;
                     final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
                     final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getDbRoot()).concat(tableWriter.getTableToken());
 
@@ -3151,10 +3162,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dedupColSinkAddr,
                             tableWriter,
                             tempTablePath,
-                            tempIndexAddr
+                            timestampMergeIndexAddr
+                    );
+                    // realloc from the CURRENT size, then record the new one, so the
+                    // pair stays consistent for the free even if this shrinks.
+                    timestampMergeIndexAddr = Unsafe.realloc(
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES,
+                            MemoryTag.NATIVE_O3
                     );
                     timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-                    timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                     final long duplicateCount = mergeRowCount - dedupRows;
                     boolean appendOnly = false;
                     if (duplicateCount > 0) {
