@@ -12690,21 +12690,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // partition -- minutes to hours of continuous late-data ingest -- after
         // which every publish forever takes the .squash_ts file write.
         //
-        // That much is checkable here. The next two claims are NOT: neither
-        // CheckpointManifest nor StoragePolicyJob exists in this checkout, both
-        // are enterprise-side, and the paragraph below is a lead for whoever can
-        // read them rather than something this repository establishes.
+        // That much is checkable here. Who READS the counter is enterprise-side
+        // -- neither CheckpointManifest nor StoragePolicyJob exists in this
+        // checkout -- but the answer is settled and the two consumers differ,
+        // which is the part that matters:
         //
-        //   - The incremental backup is believed not to read .squash_ts on a
-        //     parquet partition at all: CheckpointManifest.getPartitionSquashTracker
-        //     branches on isParquet and falls back to .squash_ts only on the
-        //     NATIVE arm, the parquet arm taking data.parquet's last-modified
-        //     time, which a token publish does not touch. If so, saturation does
-        //     not degrade that consumer to a slower signal, it loses the signal.
-        //   - Cold storage is believed to resolve the same fallback with no
-        //     isParquet branch (StoragePolicyJob.resolveSquashTracker), so there
-        //     the .squash_ts write below would be load-bearing for a parquet
-        //     partition and saturation would only make the signal slower.
+        //   - COLD STORAGE (StoragePolicyJob) consults the squash tracker only
+        //     while the partition is NATIVE. Once it is parquet the field is
+        //     ignored, so a stamp here cannot make it disagree with the
+        //     _pm-embedded tracker, and cannot trigger a reconversion. An
+        //     earlier note here treated that as an open hazard; it is not one.
+        //   - THE CHECKPOINT MANIFEST reads it for parquet partitions too. Its
+        //     record is name, version, timestamp, row_count, format,
+        //     squash_tracker, column_type_version, per-column version/col_top,
+        //     parquet_file_len -- and a token publish moves EXACTLY ONE of
+        //     them, squash_tracker. So this stamp is not decoration: it is the
+        //     only thing that tells incremental backup the directory gained a
+        //     <col>.pidx pair and a grown _pm.
+        //
+        // Which is also why nothing else moves the counter for a parquet
+        // partition -- squashSplitPartitions hard-refuses a parquet target. For
+        // such a partition the field has no squashing to record, so it is free
+        // to carry "the index metadata changed", and that is what it carries.
         //
         // The skip rests on neither. It rests on what is verifiable above: the
         // trigger was per-commit, the counter is 16 bits, nothing on the
@@ -12720,57 +12727,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // retirement, the native/parquet switch -- is DDL, so saturation now
         // needs 65 535 index DDLs on one partition.
         //
-        // DEFERRED, ENTERPRISE-SIDE, recorded here because this is the site that
-        // creates the state and no ledger travels with the branch. Cold storage
-        // is believed to compare the squash tracker EMBEDDED IN THE _pm HEADER
-        // (a header feature section, qdb-parquet-meta types.rs) against the live
-        // _txn counter, and to treat a mismatch as "reconvert": remove
-        // data.parquet and rebuild the partition from scratch
-        // (StoragePolicyJob). A token publish moves the _txn-side counter -- the
-        // stamp immediately below -- but CANNOT move the embedded one: the
-        // append above writes the footer and then EXACTLY EIGHT BYTES AT OFFSET
-        // 0, the PARQUET_META_FILE_SIZE word, and never rewrites the header.
-        // That much is verifiable here and is verified.
+        // The stamp is skipped when the transaction already moved the
+        // partition's own _txn record, because there the manifest sees the row
+        // count, the data.parquet size or the name txn move anyway. What is
+        // left -- ADD INDEX, DROP INDEX's retirement, the native/parquet switch
+        // -- is DDL, which is why saturation now needs 65 535 index DDLs on one
+        // partition rather than 65 535 commits.
         //
-        // If the enterprise half holds, an index DDL on a cold-storage-managed
-        // parquet partition can trigger a full reconversion whose fresh _pm
-        // names no covering token at all, while the <col>.pidx pairs stay on
-        // disk: the index silently disappears and its artifacts leak. Neither
-        // StoragePolicyJob nor CheckpointManifest exists in this checkout, so
-        // the second half is a lead for whoever can read them, not a claim this
-        // repository establishes. Do not treat its absence from the tests as
-        // evidence that it does not happen.
-        //
-        // Three OSS-side facts narrow it, all verified here, so whoever owns
-        // the enterprise half does not have to re-derive them:
-        //
-        //   1. On a PARQUET partition this stamp is the ONLY thing that moves
-        //      the counter. squashSplitPartitions hard-refuses a parquet target
-        //      ("cannot squash into parquet partition"), so the ordinary source
-        //      of counter movement cannot apply. A consumer reading the counter
-        //      on a parquet partition is therefore reading "a covering token was
-        //      published", never "the partition was squashed" -- this code is
-        //      overloading a field whose parquet-side meaning was otherwise
-        //      "never moves".
-        //   2. The embedded tracker CANNOT be brought back into agreement from
-        //      here. It lives in the _pm header, and every footer's CRC covers
-        //      [HEADER_CRC_AREA_OFF, its own crc field) -- rewriting the header
-        //      would invalidate the checksum of every footer already in the
-        //      file, including the ones pinned readers resolve.
-        //   3. No other per-partition field can carry the signal instead. For a
-        //      parquet partition the offset-3 value word IS the data.parquet
-        //      size, which a token publish deliberately leaves alone; the row
-        //      count and name txn do not move either. That absence is why the
-        //      squash counter was chosen, and it is why the fix cannot simply
-        //      move elsewhere.
-        //
-        // So this is a cross-repo design question, not an OSS bug with an OSS
-        // fix: either cold storage tolerates a moved squash counter on a parquet
-        // partition, or QuestDB grows a per-partition "metadata changed" counter
-        // distinct from the squash one. Dropping the stamp is not a third
-        // option -- it trades this hazard for the one I8 records, where a
-        // per-partition consumer cannot see that the directory gained a pidx
-        // pair at all.
+        // The embedded tracker in the _pm HEADER is NOT kept in step, and
+        // cannot be: every footer's CRC covers [HEADER_CRC_AREA_OFF, its own
+        // crc field), so rewriting the header would invalidate the checksum of
+        // every footer already in the file, including ones pinned readers
+        // resolve. That divergence is harmless precisely because the consumer
+        // that compares the two stops looking once the partition is parquet.
         if (!partitionRecordAlreadyMoved) {
             stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
         }
