@@ -274,3 +274,52 @@ which is the hottest and most crash-sensitive code in the writer. A merge that i
 crash-safe would trade a fragment leak for a torn partition. The crash-safety expectations are already
 established by the fast-append work (`CompositeMultiCellFastAppendCrashTest`); this task must run those
 suites, not only the squash tests.
+
+
+---
+
+## ATTACH PARTITION: design settled 2026-08-18 (read the artifact's `_txn`, do NOT parse directory names)
+
+**Measured state.** With both gates lifted, DETACH round-trips as far as producing the artifact and then
+ATTACH fails:
+
+```
+cannot read min, max timestamp from the [path=.../2023-01-01.attachable, partitionSizeRows=1, errno=2]
+```
+
+`TableWriter` reads the designated-timestamp column at the artifact's CONTAINER root
+(`readNativeMinMaxTimestamps(path, columnName, partitionSize)`), but a composite artifact keeps its data
+one level down, inside per-cell directories.
+
+**The design question, and the answer.** Attaching needs a `cellKey` in THIS table for each cell in the
+artifact. The registry interns by dimension ORDINALS (`CellRegistry#internCell(dimOrdinals, dimCount)`),
+so the obvious route -- read the cell directory names and map those strings back to ordinals -- requires
+parsing a rendered segment back into values.
+
+**Do not do that.** Segment rendering is deliberately one-way in this codebase: it is path-safety
+encoded, has its own NULL token, and multiple dimension kinds render through
+`putCellSegmentPathSafe`. The existing cell-qualified DROP resolves names by RENDERING each attached
+cellKey and comparing, precisely to avoid a reverse parse (`SqlCompilerImpl#resolveCellQualifiedPartitionName`).
+Introducing a parser for ATTACH would create a second, lossier source of truth for the same mapping.
+
+**Read the artifact's own metadata instead.** `detachPartition` already copies `_meta`, `_cv` and `_txn`
+into the detached directory (see its "copy _meta, _cv and _txn to partition.detached" block). The `_txn`
+copy carries the attached-partition entries -- including each entry's cellKey -- and `_cv` carries the
+per-cell column versions. So ATTACH can enumerate the artifact's cells authoritatively, with their
+ordinals, without looking at a single directory name.
+
+**The remaining real work, in order:**
+
+1. Open the artifact's copied `_txn` and `_cv` and enumerate its (timestamp, cellKey) entries.
+2. For each, resolve the artifact's dimension ORDINALS to ordinals in THIS table's dictionaries. These
+   can differ: the dictionaries are per-table and the artifact may come from another table entirely
+   (which is the whole point of ATTACH). This is the genuinely new machinery -- a dictionary-to-dictionary
+   ordinal remap -- and it is where the cellKey may need to be created rather than found.
+3. `internCell` the remapped ordinals to get this table's cellKey, then read min/max per cell from that
+   cell's directory rather than the container root.
+4. Register one attached entry per cell, and write per-cell column versions.
+
+**Why this is not a cell-awareness fix.** Every other composite gate lifted in SP1/SP2 was the same
+shape -- a walk resolving by timestamp where it should resolve by index. ATTACH is different in kind: it
+has to translate identity between two independent dictionaries. It deserves its own plan, and this
+section is the starting point rather than the whole of it.
