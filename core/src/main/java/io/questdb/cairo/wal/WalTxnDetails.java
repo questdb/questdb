@@ -742,7 +742,7 @@ public class WalTxnDetails implements QuietCloseable {
                             }
                             flags |= (commitInfo.getDedupMode() << 24);
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
-                            transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn));
+                            transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn, walId, segmentId));
                             if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
@@ -788,7 +788,7 @@ public class WalTxnDetails implements QuietCloseable {
         return totalRowsLoaded;
     }
 
-    private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {
+    private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn, int walId, int segmentId) {
         var symbolMem = getSymbolMem();
         SymbolMapDiff symbolMapDiff;
         int symbolCount = 0;
@@ -820,8 +820,19 @@ public class WalTxnDetails implements QuietCloseable {
             long symbolValueOffset = symbolMem.getAppendOffset() + currentSymbolStringMemStartOffset;
 
             while ((entry = symbolMapDiff.nextEntry()) != null) {
-                final int key = entry.getKey() - cleanSymbolCount;
-                assert key == symbolIndex;
+                final int actualKey = entry.getKey();
+                final int expectedKey = cleanSymbolCount + symbolIndex;
+                if (actualKey != expectedKey) {
+                    throw CairoException.critical(0)
+                            .put("invalid WAL symbol diff key [seqTxn=").put(seqTxn)
+                            .put(", walId=").put(walId)
+                            .put(", segmentId=").put(segmentId)
+                            .put(", columnIndex=").put(symbolMapDiff.getColumnIndex())
+                            .put(", cleanSymbolCount=").put(cleanSymbolCount)
+                            .put(", expectedKey=").put(expectedKey)
+                            .put(", actualKey=").put(actualKey)
+                            .put(']');
+                }
                 symbolIndex++;
                 entry.appendSymbolTo(symbolMem);
             }
