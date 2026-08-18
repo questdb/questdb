@@ -6,8 +6,12 @@
 
 **RE-SCOPED 2026-08-18 by Task 2's finding: this is a WRITER defect, not a purge-job defect.** With
 the purge job ON and OFF, the same composite churn leaves the byte-identical set of day-level
-directories — so the writer produces them and the purge merely fails to reclaim them. The trigger is
-narrow: an O3 write that **prepends below the partition's minimum timestamp**. Since composite
+directories — so the writer produces them and the purge merely fails to reclaim them. **Corrected 2026-08-18 after pinning the site:** the trigger is NOT the O3 prepend itself. The
+prepend only bumps cellKey 0's nameTxn; the directory is created on the NEXT `TableWriter`
+construction, when `initLastPartition` → `openPartition` (`TableWriter:11817`) resolves "the last
+partition" with the cell-blind `setStateForTimestamp` and then calls `ff.mkdirs`. The numbers in
+`2023-01-02.6` are nameTxn values, not round numbers — they coincided with rounds 6/12/18 by accident
+of the workload. A fix aimed at the O3 prepend path would have missed entirely. Since composite
 partitioning is unreleased there is no on-disk legacy to clean, so the fix is in the producer alone
 and `O3PartitionPurgeJob`'s composite gate stays as it is. Task 3 targets the O3 write path; the
 three cellKey-0 assumptions catalogued in Task 2 Step 3 are documentation for whoever later lifts the
