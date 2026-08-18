@@ -58,10 +58,12 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
         assertRefusedAtStatement("ALTER TABLE c ATTACH PARTITION LIST '2023-01-01'");
     }
 
-    @Test
-    public void testDetachPartitionRefusesAtTheStatement() throws Exception {
-        assertRefusedAtStatement("ALTER TABLE c DETACH PARTITION LIST '2023-01-01'");
-    }
+    /*
+     * The DETACH PARTITION refusal test that stood here is gone: sub-project 1 made DETACH cell-aware
+     * once 1E unblocked it (detach calls squash internally, so it could not be reached before). A
+     * composite day detaches as a container holding its cells -- see CompositeDetachAttachTest. ATTACH
+     * remains refused, and its test below still guards that.
+     */
 
     /*
      * The DROP refusal tests that stood here are gone. Whole-day DROP became supported in 1B and

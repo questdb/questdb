@@ -61,14 +61,20 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * {@code CompositeDropPartitionWholeDayTest}.
      */
 
+    /**
+     * SP1 (2026-08-18): DETACH PARTITION is no longer gated for composite tables. It detaches the day
+     * as a container holding its cells; the round-trip back via ATTACH is still unsupported and gated
+     * separately. Full behaviour lives in CompositeDetachAttachTest.
+     */
     @Test
-    public void testDetachPartitionGated() throws Exception {
+    public void testDetachPartitionIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c detach partition list '2020-01-01'",
-                    "c",
-                    "composite partitioning does not yet support DETACH PARTITION");
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            execute("alter table c detach partition list '2020-01-01'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
         });
     }
 

@@ -1215,6 +1215,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public AttachDetachStatus attachPartition(long timestamp) {
+        if (isRoutedComposite()) {
+            // SP1 (2026-08-18): DETACH is supported for composite; ATTACH is not. The attach path reads
+            // the designated-timestamp column at the artifact's CONTAINER root, but a composite
+            // artifact holds its data inside per-cell directories one level down, and re-attaching must
+            // also re-intern those directories' dimension VALUES into this table's cellKeys.
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support ATTACH PARTITION [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
         // -1 means unknown size
         return attachPartition(timestamp, -1L);
     }
@@ -1246,11 +1256,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support ATTACH PARTITION [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
 
         if (txWriter.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$substr(pathRootSize, path).I$();
@@ -2343,11 +2348,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support DETACH PARTITION [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
 
         if (inTransaction()) {
             assert !tableToken.isWal();
@@ -2383,10 +2383,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // To check that partition is squashed, get the next partition and
         // verify that it's not the same timestamp as the one we are trying to detach.
         // The next partition should exist, since the last partition cannot be detached.
-        assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
+        if (isRoutedComposite()) {
+            // A composite day is SEVERAL entries -- one per cell -- all sharing this raw timestamp, so
+            // the plain assertion below ("the next entry belongs to another day") is false here by
+            // construction: squash merges FRAGMENTS, not sibling cells, and is right not to. What must
+            // hold after the squash is that no fragment of this day survives, i.e. every remaining
+            // entry at this calendar floor carries the SAME raw timestamp.
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                final long ts = txWriter.getPartitionTimestampByIndex(i);
+                assert txWriter.getLogicalPartitionTimestamp(ts) != timestamp || ts == timestamp
+                        : "unsquashed fragment still attached at detach time";
+            }
+        } else {
+            assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
+        }
 
         long minTimestamp = txWriter.getMinTimestamp();
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        // -1 for composite: the DAY CONTAINER has no .nameTxn suffix (composite versions are per CELL,
+        // inside the container), so resolving it with a cell's nameTxn names the 1A orphan-directory
+        // shape <day>.<txn> rather than the real container.
+        long partitionNameTxn = isRoutedComposite() ? -1L : txWriter.getPartitionNameTxn(partitionIndex);
         Path detachedPath = Path.PATH.get();
 
         try {
@@ -2488,7 +2504,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // all good, commit
                 txWriter.beginPartitionSizeUpdate();
-                txWriter.removeAttachedPartitions(timestamp);
+                if (isRoutedComposite()) {
+                    // removeAttachedPartitions(ts) resolves cellKey 0 only; a composite day holds one
+                    // entry per cell and detaching the day must detach all of them, or the table keeps
+                    // entries pointing into a directory that has just been moved to .detached.
+                    int idx;
+                    while ((idx = findCompositePartitionIndexByTimestamp(timestamp)) >= 0) {
+                        txWriter.removeAttachedPartitions(timestamp, txWriter.getPartitionCellKey(idx));
+                    }
+                } else {
+                    txWriter.removeAttachedPartitions(timestamp);
+                }
                 txWriter.setMinTimestamp(nextMinTimestamp);
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
                 txWriter.bumpTruncateVersion();

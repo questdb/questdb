@@ -1699,9 +1699,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // timestamp, so "WHERE exch = 'E0'" fails with "Invalid column: exch".
                     break;
                 case PartitionAction.DETACH:
-                    throw SqlException.$(pos, "composite partitioning does not yet support DETACH PARTITION [table=")
-                            .put(tableToken.getTableName()).put(']');
+                    break;
                 case PartitionAction.ATTACH:
+                    // SP1: DETACH is supported (see TableWriter#detachPartition's composite branches);
+                    // ATTACH is not. Measured 2026-08-18: attach reads the designated-timestamp column
+                    // at the CONTAINER root ("cannot read min, max timestamp ... errno=2"), but a
+                    // composite artifact keeps its data one level down, inside per-cell directories --
+                    // and re-attaching also has to map those directories' dimension VALUES back to
+                    // cellKeys, which this table may number differently. That is new machinery, not
+                    // cell-awareness over existing machinery.
                     throw SqlException.$(pos, "composite partitioning does not yet support ATTACH PARTITION [table=")
                             .put(tableToken.getTableName()).put(']');
                 default:
