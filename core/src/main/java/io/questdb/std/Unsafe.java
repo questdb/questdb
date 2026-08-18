@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Array;
@@ -66,6 +67,15 @@ public final class Unsafe {
     // Must match `struct QdbAllocator` (#[repr(C, packed)]) in `allocator.rs`.
     private static final long QDB_ALLOCATOR_SIZE = 8 + 8 + 8 + 4;
     private static final long REALLOC_COUNT_ADDR;
+    // The accounted total (RSS_MEM_USED_ADDR) captured at the moment of the last
+    // successful residency sample. Paired with RESIDENT_MEM_SAMPLED to extrapolate
+    // real residency between samples; see getEffectiveResidentMemUsed().
+    private static volatile long RESIDENT_MEM_ACCOUNTED_AT_SAMPLE = 0L;
+    // Last sampled real process residency (see ResidentMemoryReader), or
+    // ResidentMemoryReader.UNKNOWN_RESIDENT_BYTES if no sample has landed yet.
+    // Updated only via updateResidentSample(), which is called off the allocation
+    // path (periodic timer) - checkAllocLimit() never performs the I/O itself.
+    private static volatile long RESIDENT_MEM_SAMPLED = ResidentMemoryReader.UNKNOWN_RESIDENT_BYTES;
     private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
@@ -158,6 +168,43 @@ public final class Unsafe {
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
+    /**
+     * Resets the cached residency sample to "never sampled", restoring
+     * {@link #getEffectiveResidentMemUsed()} to its pre-first-sample fallback
+     * of {@link #getRssMemUsed()}. Production code only ever advances the
+     * sample via {@link #updateResidentSample(long)}, which by design never
+     * un-samples (a transient read failure should not poison a good sample) -
+     * so a test that seeds a sample with {@link #updateResidentSample(long)}
+     * must call this to restore isolation for subsequent tests.
+     */
+    @TestOnly
+    public static void clearResidentSampleForTests() {
+        RESIDENT_MEM_SAMPLED = ResidentMemoryReader.UNKNOWN_RESIDENT_BYTES;
+        RESIDENT_MEM_ACCOUNTED_AT_SAMPLE = 0L;
+    }
+
+    /**
+     * Pure extrapolation arithmetic behind {@link #getEffectiveResidentMemUsed()},
+     * pulled out so it can be tested without depending on live process memory
+     * state or timing. Returns {@code accountedNow} unchanged when no sample is
+     * available ({@code sampledResidentBytes < 0}), otherwise
+     * {@code sampledResidentBytes + max(0, accountedNow - accountedAtSample)}:
+     * the last known real residency plus however much QuestDB's own accounting
+     * has grown since that sample, floored at zero so a net shrink in
+     * accounted usage (frees outpacing allocs) never lowers the estimate below
+     * the sample itself.
+     */
+    public static long computeEffectiveResidentMemUsed(long sampledResidentBytes, long accountedAtSample, long accountedNow) {
+        if (sampledResidentBytes < 0) {
+            return accountedNow;
+        }
+        long delta = accountedNow - accountedAtSample;
+        if (delta < 0) {
+            delta = 0;
+        }
+        return sampledResidentBytes + delta;
+    }
+
     public static void copyMemory(long srcAddress, long destAddress, long bytes) {
         UNSAFE.copyMemory(srcAddress, destAddress, bytes);
     }
@@ -237,6 +284,25 @@ public final class Unsafe {
 
     public static double getDouble(long address) {
         return UNSAFE.getDouble(address);
+    }
+
+    /**
+     * Returns the best available estimate of actual process residency: the
+     * residency last sampled off the allocation path (see
+     * {@link #updateResidentSample(long)} and {@link ResidentMemoryReader})
+     * plus the QuestDB-accounted growth since that sample, floored at zero.
+     * This is what {@link #malloc(long, int)}/{@link #realloc(long, long, long, int)}
+     * guard against. Unlike {@link #getRssMemUsed()} alone, it also reflects
+     * JVM heap and JVM-internal native memory (metaspace, code cache, thread
+     * stacks, GC) that QuestDB never allocates and therefore can never
+     * account for directly.
+     * <p>
+     * Falls back to {@link #getRssMemUsed()} verbatim until the first
+     * successful sample lands, so behaviour is unchanged before the periodic
+     * sampler has ever run - including in every test that never starts it.
+     */
+    public static long getEffectiveResidentMemUsed() {
+        return computeEffectiveResidentMemUsed(RESIDENT_MEM_SAMPLED, RESIDENT_MEM_ACCOUNTED_AT_SAMPLE, getRssMemUsed());
     }
 
     public static long getFieldOffset(Class<?> clazz, String name) {
@@ -342,6 +408,19 @@ public final class Unsafe {
 
     public static long getRssMemUsed() {
         return UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
+    }
+
+    /**
+     * Returns the raw residency figure from the last successful periodic
+     * sample (see {@link #updateResidentSample(long)}), or
+     * {@link ResidentMemoryReader#UNKNOWN_RESIDENT_BYTES} if no sample has
+     * landed yet. Exposed for logging (see {@code MemoryUsageFormatter})
+     * alongside the accounted figures - most callers that need a single
+     * "how much memory is really in use" number want
+     * {@link #getEffectiveResidentMemUsed()} instead.
+     */
+    public static long getSampledResidentMemUsed() {
+        return RESIDENT_MEM_SAMPLED;
     }
 
     public static short getShort(long address) {
@@ -592,6 +671,27 @@ public final class Unsafe {
         UNSAFE.storeFence();
     }
 
+    /**
+     * Records a freshly read residency figure, pairing it with the current
+     * accounted total so {@link #getEffectiveResidentMemUsed()} can
+     * extrapolate real residency between samples. Called only from a
+     * periodic sampler (e.g. {@code MemoryUsageLogJob}) - never from the
+     * allocation path: the caller does the I/O (see
+     * {@link ResidentMemoryReader#readResidentBytes()}), this method is pure
+     * bookkeeping (two volatile writes, no I/O, no lock).
+     * <p>
+     * A negative {@code residentBytes} (the reader's "unknown" sentinel, e.g.
+     * a transient read failure) is ignored, leaving the previous sample - if
+     * any - in place rather than poisoning the guard with an unknown value.
+     */
+    public static void updateResidentSample(long residentBytes) {
+        if (residentBytes < 0) {
+            return;
+        }
+        RESIDENT_MEM_ACCOUNTED_AT_SAMPLE = getRssMemUsed();
+        RESIDENT_MEM_SAMPLED = residentBytes;
+    }
+
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {
             return;
@@ -599,7 +699,11 @@ public final class Unsafe {
         // Don't check limits for mmap'd memory
         final long rssMemLimit = getRssMemLimit();
         if (rssMemLimit > 0 && memoryTag >= NATIVE_DEFAULT) {
-            long usage = getRssMemUsed();
+            // getEffectiveResidentMemUsed() is a couple of volatile reads and one
+            // subtraction - no I/O, no allocation, no lock - so this stays safe on
+            // the hot path even though it now reflects real residency, not just
+            // what QuestDB itself accounted for.
+            long usage = getEffectiveResidentMemUsed();
             if (usage + size > rssMemLimit) {
                 throw CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")

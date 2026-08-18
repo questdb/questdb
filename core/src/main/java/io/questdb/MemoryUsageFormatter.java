@@ -91,6 +91,15 @@ public final class MemoryUsageFormatter {
                 .putAscii(", mem.rss.accounted=").put(memRssAccounted)
                 .putAscii(", mem.non.rss.accounted=").put(memNonRssAccounted)
                 .putAscii(", mem.rss.limit=").put(Unsafe.getRssMemLimit())
+                // mem.rss.sampled/effective make the accounted-vs-actual gap visible: sampled is
+                // the last real residency read (cgroup v2 memory.current, or /proc/self/statm RSS
+                // as a fallback - see ResidentMemoryReader), effective is what the RSS guard in
+                // Unsafe.checkAllocLimit() compares against (sampled extrapolated forward by
+                // accounted growth since the sample). A persistently large
+                // mem.rss.effective - mem.rss.accounted gap is JVM heap/metaspace/etc that
+                // QuestDB's own accounting can never see.
+                .putAscii(", mem.rss.sampled=").put(Unsafe.getSampledResidentMemUsed())
+                .putAscii(", mem.rss.effective=").put(Unsafe.getEffectiveResidentMemUsed())
                 .putAscii(", rss.physical=").put(Os.getRss())
                 .putAscii(", jvm.heap.used=").put(heapUsed)
                 .putAscii(", jvm.heap.committed=").put(heapCommitted)

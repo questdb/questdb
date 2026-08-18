@@ -405,6 +405,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSqlRecompileAttempts;
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
+    private final MemoryBudget memoryBudget;
     private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
@@ -1123,6 +1124,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             cpuWalApplyWorkers = 3;
         }
 
+        final long memoryBudgetBytes = getLongSize(properties, env, PropertyKey.CAIRO_MEMORY_BUDGET, 0);
+        // Heap, Metaspace, code cache and thread stacks cannot be measured
+        // from inside the JVM, so they are declared rather than derived.
+        // Measured floor on this build: the JVM alone needs ~250MB before
+        // any QuestDB native allocation, so 128M is optimistic for 256M
+        // budgets and exists to be tuned by measurement, not guessed at.
+        final long memoryBudgetJvmOverhead = getLongSize(
+                properties, env, PropertyKey.CAIRO_MEMORY_BUDGET_JVM_OVERHEAD, 128 * Numbers.SIZE_1MB);
+        this.memoryBudget = new MemoryBudget(
+                memoryBudgetBytes, memoryBudgetJvmOverhead,
+                /* columnCount */ 32, /* writerCount */ 2,
+                /* cpuCount */ Runtime.getRuntime().availableProcessors(),
+                /* connectionCount */ 16);
+
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
             volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, installRoot);
@@ -1403,12 +1418,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             // deprecated
             this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, -1);
             this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_SNDBUF, httpNetConnectionSndBuf);
-            this.httpSendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_SEND_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
+            this.httpSendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_SEND_BUFFER_SIZE,
+                    this.memoryBudget.isEnabled()
+                            ? (int) Math.min(Integer.MAX_VALUE, this.memoryBudget.getConnectionBufferSize())
+                            : 2 * Numbers.SIZE_1MB);
 
             // deprecated
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, -1);
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
-            this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
+            this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE,
+                    this.memoryBudget.isEnabled()
+                            ? (int) Math.min(Integer.MAX_VALUE, this.memoryBudget.getConnectionBufferSize())
+                            : 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
             this.httpRecvMaxBufferSize = getLongSize(properties, env, PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
 
@@ -1643,21 +1664,27 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
-            this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
+            this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS,
+                    this.memoryBudget.isEnabled() ? this.memoryBudget.getReaderPoolMaxSegments() : 10);
             this.poolSegmentSize = getIntSize(properties, env, PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE, 32);
             this.walWriterMadviseMode = getWalWriterMadviseMode(properties, env, PropertyKey.CAIRO_WAL_WRITER_MADVISE_MODE);
             this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 10);
             this.viewWalWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS, 4);
             this.spinLockTimeout = getMillis(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
-            this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
-            this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
-            this.sqlExpressionPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, 8192);
+            this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, this.memoryBudget.getSqlPoolCapacity(64));
+            this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, this.memoryBudget.getSqlPoolCapacity(4096));
+            this.sqlExpressionPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, this.memoryBudget.getSqlPoolCapacity(8192));
             this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, "0.7");
-            this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
-            this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
+            this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, this.memoryBudget.getSqlPoolCapacity(64));
+            this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, this.memoryBudget.getSqlPoolCapacity(2048));
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
-            this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            // Default from the budget when one is declared; the bounds below still
+            // apply, because a derived page size is no more exempt from the map's
+            // structural minimum than a configured one -- and failing here names the
+            // property, where failing later is an AssertionError out of the compiler.
+            this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE,
+                    this.memoryBudget.isEnabled() ? this.memoryBudget.getSmallMapPageSize() : 32 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, MIN_MAP_PAGE_SIZE);
             validatePageSizeAtMost(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, this.sqlSmallMapPageSize, CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
@@ -1665,7 +1692,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
             this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
-            this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
+            this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, this.memoryBudget.getSqlPoolCapacity(1024));
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             // Heap-backed page sizes (sort.key, sort.light.value, window.*) must hold one fixed-size
             // block, so validatePageSizeAtLeast rejects a sub-block value at startup rather than let a
@@ -1738,12 +1765,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
-            this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            this.queryMemoryLimitBytes = getLongSize(properties, env,
+                    PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES,
+                    this.memoryBudget.isEnabled() ? this.memoryBudget.getQueryArenaBytes() : 0);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
-            this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
+            this.walApplyMemoryLimitBytes = getLongSize(properties, env,
+                    PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES,
+                    this.memoryBudget.isEnabled() ? this.memoryBudget.getWriteArenaBytes() : 0);
             this.liveViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
-            this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
+            this.sqlCopyBufferSize = getIntSize(properties, env,
+                    PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE,
+                    this.memoryBudget.isEnabled()
+                            ? (int) Math.min(Integer.MAX_VALUE, this.memoryBudget.getSqlCopyBufferSize())
+                            : 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
             this.columnPurgeRetryDelayLimit = getMicros(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 60_000_000L);
@@ -1774,7 +1809,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
-            this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
+            this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(
+                    properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE,
+                    this.memoryBudget.isEnabled()
+                            ? this.memoryBudget.getWriterDataAppendPageSize()
+                            : 16 * Numbers.SIZE_1MB));
             this.systemWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
             this.symbolTableMinAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE, Files.PAGE_SIZE));
@@ -1784,8 +1823,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
             this.sqlSampleByFillSortStrategy = getSampleByFillSortStrategy(properties, env);
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
-            this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
-            this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
+            this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env,
+                    PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE,
+                    this.memoryBudget.isEnabled()
+                            ? this.memoryBudget.getGroupByAllocatorDefaultChunkSize()
+                            : 128 * 1024);
+            // Stock is 4 GiB, i.e. no ceiling at all under a small budget. A
+            // 128 MiB server was killed by double-groupby-all returning ZERO
+            // rows: the memory went on group-by setup, not results.
+            this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env,
+                    PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE,
+                    this.memoryBudget.isEnabled()
+                            ? this.memoryBudget.getGroupByAllocatorMaxChunkSize()
+                            : 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
@@ -1800,8 +1850,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY, 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, "0.5");
-            this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
-            this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+            this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS,
+                    this.memoryBudget.isEnabled() ? this.memoryBudget.getPageFrameMinRows() : 100_000);
+            this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS,
+                    this.memoryBudget.isEnabled() ? this.memoryBudget.getPageFrameMaxRows() : 1_000_000);
             this.sqlSmallPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
             this.sqlSmallPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
             // The batched GROUP BY probe packs the frame-relative row index into a
@@ -1876,7 +1928,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (debugO3MemSize != 0) {
                 this.o3ColumnMemorySize = debugO3MemSize;
             } else {
-                this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
+                this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(
+                        properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE,
+                        this.memoryBudget.isEnabled()
+                                ? (int) Math.min(Integer.MAX_VALUE, this.memoryBudget.getO3ColumnMemorySize())
+                                : 8 * Numbers.SIZE_1MB));
             }
             this.systemO3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE, 256 * 1024));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
@@ -2213,7 +2269,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             // Legacy shared pool, it used to be a single shared pool for all the tasks.
             // Now it's split into 3: IO, Query and Write
             // But the old props are the defaults for the new shared pools, read them.
-            final int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare));
+            final int stockWorkers = Math.max(2, cpuAvailable - cpuSpare);
+            final int budgetedWorkers = this.memoryBudget.isEnabled()
+                    ? Math.min(stockWorkers, this.memoryBudget.getWorkerCount())
+                    : stockWorkers;
+            final int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, budgetedWorkers);
             final boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
             final long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
             final long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
@@ -2236,13 +2296,24 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
+            // Parallel GROUP BY holds one hash map per query worker, so query
+            // memory scales with this count and an unbounded one overruns the
+            // budget's query arena. Measured at a 512 MB budget: 12 workers
+            // rejected three TSBS queries against the query limit in 3 of 7
+            // repetitions, while 4 workers were 105/105 clean AND 2.7x faster
+            // than disabling parallel GROUP BY altogether. Cap it; do not
+            // switch the feature off. Explicit configuration still wins,
+            // and with no budget this is the stock sharedWorkerCount.
+            final int budgetedQueryWorkers = this.memoryBudget.isEnabled()
+                    ? Math.min(sharedWorkerCount, this.memoryBudget.getQueryWorkerCount())
+                    : sharedWorkerCount;
             final int queryWorkers = configureSharedThreadPool(
                     properties,
                     env,
                     sharedWorkerPoolQueryConfiguration,
                     PropertyKey.SHARED_QUERY_WORKER_COUNT,
                     PropertyKey.SHARED_QUERY_WORKER_AFFINITY,
-                    sharedWorkerCount,
+                    budgetedQueryWorkers,
                     Thread.NORM_PRIORITY,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -2290,7 +2361,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
-            this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
+            // Pre-sizing allocates for expected cardinality BEFORE reading a
+            // row, which a small budget cannot afford. Off by default under a
+            // budget; an explicit setting still wins.
+            this.cairoGroupByPresizeEnabled = getBoolean(properties, env,
+                    PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED,
+                    !this.memoryBudget.isEnabled());
             this.cairoGroupByPresizeMaxCapacity = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY, 100_000_000);
             this.cairoGroupByPresizeMaxHeapSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, Numbers.SIZE_1GB);
             this.cairoGroupByTopKThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, 5_000_000);
@@ -2304,7 +2380,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
-            this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
+            // Parallel filter allocates per-worker buffers; a budget cannot
+            // afford them. Explicit configuration still wins.
+            this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED,
+                    !this.memoryBudget.isEnabled() && defaultParallelSqlEnabled);
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
             this.sqlHorizonJoinBwdScanAbsoluteThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 131_072);
             this.sqlHorizonJoinBwdScanMinGap = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1_024);
@@ -2312,6 +2391,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
+            // A budget does NOT disable parallel GROUP BY. An earlier revision
+            // did, reasoning that the vectorized path cannot be bounded (Rosti
+            // allocates natively and reports via Unsafe.recordMemAlloc, which
+            // performs no limit check). Measurement showed that was the wrong
+            // remedy: the problem is that parallel GROUP BY holds one hash map
+            // per query worker, so query memory scales with worker count.
+            // Bounding the worker count fixes it and is strictly better than
+            // switching the feature off -- see MemoryBudget#MEM_PER_QUERY_WORKER
+            // and the derivation of shared.query.worker.count below.
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled

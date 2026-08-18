@@ -26,12 +26,14 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.BootstrapConfiguration;
+import io.questdb.BuildInformationHolder;
 import io.questdb.ConfigPropertyKey;
 import io.questdb.ConfigReloader;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DynamicPropServerConfiguration;
 import io.questdb.FactoryProviderFactoryImpl;
+import io.questdb.FreeOnExit;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
@@ -58,6 +60,7 @@ import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
@@ -69,7 +72,10 @@ import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -179,6 +185,70 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertTrackerLimit(serverMain, MemoryTrackerWorkload.WAL_APPLY, 3_000_000);
             }
         });
+    }
+
+    @Test
+    public void testBudgetDerivedLimitsSurviveAnUnrelatedReload() throws Exception {
+        // Budget set at startup; the reload touches an unrelated key only.
+        // The derived limits must not fall back to 0 (== unlimited).
+        //
+        // This drives DynamicPropServerConfiguration.reload() directly instead of going
+        // through ServerMain + reload_config(): a ServerMain in this suite binds fixed
+        // ports (9000/9003/8812), and this environment has another QuestDB instance
+        // already holding those ports. reload() itself is pure property re-parsing with
+        // no network dependency, so this exercises the exact mechanism under test without
+        // the port collision.
+        try (FileWriter w = new FileWriter(serverConf)) {
+            w.write("cairo.memory.budget=256M\n");
+        }
+        // conf/ already exists (created in setUp() for serverConf), so copy mime.types
+        // into it directly rather than via TestUtils.copyMimeTypes(), which asserts it is
+        // creating a fresh conf/ directory.
+        try (
+                InputStream mimeTypes = io.questdb.std.Files.class.getResourceAsStream("/io/questdb/site/conf/mime.types");
+                FileOutputStream fos = new FileOutputStream(new File(serverConf.getParentFile(), "mime.types"))
+        ) {
+            Assert.assertNotNull(mimeTypes);
+            mimeTypes.transferTo(fos);
+        }
+
+        Properties bootProperties = new Properties();
+        try (FileInputStream fis = new FileInputStream(serverConf)) {
+            bootProperties.load(fis);
+        }
+
+        DynamicPropServerConfiguration conf = new DynamicPropServerConfiguration(
+                root,
+                bootProperties,
+                null,
+                LOG,
+                new BuildInformationHolder(),
+                FilesFacadeImpl.INSTANCE,
+                MicrosecondClockImpl.INSTANCE,
+                FactoryProviderFactoryImpl.INSTANCE,
+                true
+        );
+
+        // init() requires a CairoEngine (it registers the reloader on it), but the engine
+        // itself binds no network ports, so it does not hit the port collision above.
+        try (CairoEngine engine = new CairoEngine(conf.getCairoConfiguration())) {
+            conf.init(engine, new FreeOnExit());
+
+            long before = conf.getCairoConfiguration().getQueryMemoryLimitBytes();
+            Assert.assertTrue("precondition: budget must derive a limit", before > 0);
+
+            // Note: cairo.memory.budget is deliberately NOT repeated here. It is read
+            // once at startup and is not in the reloadable-key set, so this reload
+            // exercises whether the derived limit survives a config file that omits it.
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("cairo.mat.view.max.refresh.retries=7\n");
+            }
+
+            Assert.assertTrue("reload should report a change", conf.reload());
+
+            Assert.assertEquals("an unrelated reload must not drop the derived limit",
+                    before, conf.getCairoConfiguration().getQueryMemoryLimitBytes());
+        }
     }
 
     @Test

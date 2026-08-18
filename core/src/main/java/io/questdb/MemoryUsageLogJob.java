@@ -28,6 +28,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.ResidentMemoryReader;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 
@@ -68,6 +70,10 @@ public class MemoryUsageLogJob extends SynchronizedJob {
             }
         }
         lastRunMicros = now;
+        // The only place that samples real residency: this runs on a timer (never
+        // per allocation), so the file read in ResidentMemoryReader is safe here.
+        // Unsafe.checkAllocLimit() only ever reads the cached result of this call.
+        Unsafe.updateResidentSample(ResidentMemoryReader.readResidentBytes());
         final LogRecord record = LOG.info();
         if (record.isEnabled()) {
             record.$("memory usage [");
