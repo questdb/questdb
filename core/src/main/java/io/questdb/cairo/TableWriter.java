@@ -9030,18 +9030,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
-        final int index = txWriter.getPartitionIndex(timestamp);
+        // SP1B (N2): cell-agnostic lookup. getPartitionIndex resolves cellKey 0 ONLY, so on a day
+        // with 2+ cells it returned -1 the moment cell 0 was gone -- and the caller loop, which does
+        // not increment its index, then spun for ever. Identical to getPartitionIndex for a plain table.
+        final int index = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestampDriver, timestamp).I$();
             return false;
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-        // Resolved before any removeAttachedPartitions call below mutates the array. Both of this
-        // method's callers (removePartition/DROP PARTITION and enforceTtl/TTL eviction) are gated
-        // for any real composite table (see their own gate comments), so cellKey is always 0 here in
-        // practice -- getPartitionCellKey returns 0 unconditionally for a plain-stride table anyway,
-        // so this is threaded through for defense-in-depth/consistency rather than to fix a live gap.
+        // Resolved before any removeAttachedPartitions call below mutates the array.
+        //
+        // SP1B (N2): this is no longer defense-in-depth -- it is the fix. Both removals below used the
+        // one-arg removeAttachedPartitions(timestamp), which defaults to cellKey 0. On a day with 2+
+        // cells that removes cell 0 and leaves its siblings, so removePartition's caller loop (which
+        // does NOT increment its index, relying on the entry disappearing) re-reads the same raw index
+        // forever: an infinite loop, reproduced here at 34.3 MILLION "partition is already removed"
+        // log lines in 60s before the test timeout fired.
+        //
+        // getAnyPartitionIndexByTimestamp resolves to the LOWEST index of the equal-ts run, so each
+        // pass removes the lowest surviving cell of the day and the loop drains the run one cell per
+        // iteration. For a plain table the run is one entry and getPartitionCellKey returns 0, so this
+        // is byte-identical there.
         final int cellKey = txWriter.getPartitionCellKey(index);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
@@ -9073,7 +9084,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.removeAttachedPartitions(timestamp, cellKey);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
@@ -9109,7 +9120,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.removeAttachedPartitions(timestamp, cellKey);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();

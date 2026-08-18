@@ -166,6 +166,31 @@ public class TxReader implements Closeable, Mutable {
      * always agree: a plain table can never have two entries sharing a raw ts, so "cellKey 0 present"
      * and "any cellKey present" are the same question.
      */
+    /**
+     * Partition index of the LOWEST-cellKey attached partition at {@code ts}, or -1 if none is
+     * attached. Counterpart of {@link #getPartitionIndex(long)}, which resolves through
+     * {@link #findAttachedPartitionRawIndexByLoTimestamp} and therefore only ever finds {@code
+     * cellKey = 0}.
+     * <p>
+     * SP1B (N2): that distinction is what made {@code DROP PARTITION} spin forever on a composite day
+     * with 2+ cells. {@code removePartition}'s loop does not increment its index — it relies on the
+     * entry disappearing — so once cell 0 was gone, the cellKey-0 lookup returned -1, the drop logged
+     * "partition is already removed" and returned false, and the loop re-read the same surviving
+     * sibling for ever (34.3 million iterations in 60s, measured).
+     * <p>
+     * For a plain table (or a dormant composite, stride 4) this and {@link #getPartitionIndex(long)}
+     * always agree: there can never be two entries sharing a raw timestamp, so "cellKey 0's index" and
+     * "the lowest index at this ts" are the same index.
+     */
+    public int getAnyPartitionIndexByTimestamp(long ts) {
+        final int rawIndex = attachedPartitions.binarySearchBlock(
+                attachedPartitionsShl, getPartitionTimestampByTimestamp(ts), Vect.BIN_SEARCH_SCAN_UP);
+        if (rawIndex > -1) {
+            return rawIndex / longsPerAttachedPartition;
+        }
+        return -1;
+    }
+
     public boolean hasAnyAttachedPartitionForTimestamp(long ts) {
         return attachedPartitions.binarySearchBlock(attachedPartitionsShl, ts, Vect.BIN_SEARCH_SCAN_UP) >= 0;
     }

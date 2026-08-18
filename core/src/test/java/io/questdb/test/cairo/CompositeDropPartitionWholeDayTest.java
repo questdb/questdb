@@ -69,9 +69,9 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * The acceptance test: dropping a whole middle day must leave the composite table agreeing with
      * its plain twin, and must remove the day's directory from disk.
      */
-    @Ignore("Sub-project 1B: DROP PARTITION is gated for routed composite tables. Un-ignore in Task 5,"
-            + " once N1/N2/N3 are fixed and the gate is narrowed to dimension-constrained predicates.")
-    @Test
+    @Ignore("SP1B: DROP PARTITION is still gated. N2 (the infinite loop) is FIXED; N1 (active"
+            + " tail) and the day-container housekeeping remain. Un-ignore when the gate is narrowed.")
+    @Test(timeout = 60_000)
     public void testDropWholeDayMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createTwins();
@@ -92,8 +92,9 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * resolving the new tail's bounds cell-blind. Also asserts the row-count identity the spec calls
      * for, since the tail is where transient/fixed accounting is decided.
      */
-    @Ignore("Sub-project 1B: see the class javadoc. Targets N1.")
-    @Test
+    @Ignore("SP1B: DROP PARTITION is still gated. N2 (the infinite loop) is FIXED; N1 (active"
+            + " tail) and the day-container housekeeping remain. Un-ignore when the gate is narrowed.")
+    @Test(timeout = 60_000)
     public void testDropActivePartitionTail() throws Exception {
         assertMemoryLeak(() -> {
             createTwins();
@@ -116,7 +117,8 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * N2: the infinite loop. A day with THREE cells; dropping it must terminate. The timeout is the
      * assertion — a regression here wedges CI rather than failing it, so it must fail fast instead.
      */
-    @Ignore("Sub-project 1B: see the class javadoc. Targets N2.")
+    @Ignore("SP1B: DROP PARTITION is still gated. N2 (the infinite loop) is FIXED; N1 (active"
+            + " tail) and the day-container housekeeping remain. Un-ignore when the gate is narrowed.")
     @Test(timeout = 60_000)
     public void testDropDayWithMultipleCellsTerminates() throws Exception {
         assertMemoryLeak(() -> {
@@ -137,8 +139,9 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
      * neighbours with every row and every cell directory intact. If the unlink collapses to the shared
      * day container, this is what catches it.
      */
-    @Ignore("Sub-project 1B: see the class javadoc. Targets N3 -- the silent data-loss mechanism.")
-    @Test
+    @Ignore("SP1B: DROP PARTITION is still gated. N2 (the infinite loop) is FIXED; N1 (active"
+            + " tail) and the day-container housekeeping remain. Un-ignore when the gate is narrowed.")
+    @Test(timeout = 60_000)
     public void testDropDayDoesNotTouchSiblingDays() throws Exception {
         assertMemoryLeak(() -> {
             createTwins();
