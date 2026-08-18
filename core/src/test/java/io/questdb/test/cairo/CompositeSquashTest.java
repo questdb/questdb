@@ -104,10 +104,13 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * into each other and destroy two of them. Nothing here exercises the merge's path-building, which is
      * exactly the point: this test fails if the range fix is missing even when the path fix is present.
      */
-    @Ignore("SP1E: blocked only by the restored gate, NOT by a missing fix. hasSplitFragments already"
-            + " makes this case correct -- it passed when the gates were briefly lifted, which is how the"
-            + " RANGE half was verified. Expect this to be the FIRST test to go green when the merge loop"
-            + " becomes cell-scoped and the gates come off.")
+    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
+            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
+            + " fragment DIRECTORY purge: the candidate path renders doubled"
+            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
+            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
+            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
+            + " actually implements (a fragmented day that is NOT the active tail).")
     @Test(timeout = 60_000)
     public void testSquashOnAThreeCellDayWithNoFragmentIsANoOp() throws Exception {
         assertMemoryLeak(() -> {
@@ -135,12 +138,13 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * this: a cell-blind merge opens a directory that does not exist, and a count-based range drags the
      * two innocent sibling cells in with it.
      */
-    @Ignore("SP1E: gates restored 2026-08-18. The RANGE half is fixed and the merge's paths are"
-            + " cell-aware, but squashSplitPartitions' source loop still walks targetIndex+1 and swallows"
-            + " SIBLING CELLS -- measured: 3 merges on a 3-cell day holding 1 fragment, 2 of them innocent"
-            + " cells. Un-ignore when the merge loop is scoped to a single cellKey. NOTE the twin DATA"
-            + " comparison passes straight through that corruption; only the cell-count assertions here"
-            + " detect it.")
+    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
+            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
+            + " fragment DIRECTORY purge: the candidate path renders doubled"
+            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
+            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
+            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
+            + " actually implements (a fragmented day that is NOT the active tail).")
     @Test(timeout = 60_000)
     public void testSquashDistinguishesFragmentsFromSiblingCells() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -166,12 +170,13 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     /**
      * The acceptance test for the explicit statement.
      */
-    @Ignore("SP1E: gates restored 2026-08-18. The RANGE half is fixed and the merge's paths are"
-            + " cell-aware, but squashSplitPartitions' source loop still walks targetIndex+1 and swallows"
-            + " SIBLING CELLS -- measured: 3 merges on a 3-cell day holding 1 fragment, 2 of them innocent"
-            + " cells. Un-ignore when the merge loop is scoped to a single cellKey. NOTE the twin DATA"
-            + " comparison passes straight through that corruption; only the cell-count assertions here"
-            + " detect it.")
+    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
+            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
+            + " fragment DIRECTORY purge: the candidate path renders doubled"
+            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
+            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
+            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
+            + " actually implements (a fragmented day that is NOT the active tail).")
     @Test(timeout = 60_000)
     public void testExplicitSquashMergesFragmentsIntoTheirCells() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -199,12 +204,13 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * of the two, because a user who never types {@code SQUASH} still accumulates fragments and nothing
      * tells them.
      */
-    @Ignore("SP1E: gates restored 2026-08-18. The RANGE half is fixed and the merge's paths are"
-            + " cell-aware, but squashSplitPartitions' source loop still walks targetIndex+1 and swallows"
-            + " SIBLING CELLS -- measured: 3 merges on a 3-cell day holding 1 fragment, 2 of them innocent"
-            + " cells. Un-ignore when the merge loop is scoped to a single cellKey. NOTE the twin DATA"
-            + " comparison passes straight through that corruption; only the cell-count assertions here"
-            + " detect it.")
+    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
+            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
+            + " fragment DIRECTORY purge: the candidate path renders doubled"
+            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
+            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
+            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
+            + " actually implements (a fragmented day that is NOT the active tail).")
     @Test(timeout = 60_000)
     public void testAutomaticSquashDoesNotAccumulateFragments() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -238,6 +244,45 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             forceSplit();
             Assert.assertEquals("precondition: a fragment exists", 1, fragmentDirs("c").size());
             assertTwinEqual(" WHERE ts >= '2023-01-01T00:00:00.000000Z' AND ts < '2023-01-02T00:00:00.000000Z'");
+        });
+    }
+
+    /**
+     * The case the first cut of the composite merge actually implements: a fragmented day that is NOT
+     * the table's active tail. A later day is written so the fragmented one stops being the tail --
+     * without that, every test here exercises the active-tail path, which is deliberately still skipped
+     * because it needs the fixedRowCount/transientRowCount bookkeeping.
+     */
+    @Ignore("SP1E: the cell-scoped merge MERGES correctly -- verified 2026-08-18: exactly the fragment's"
+            + " own cell, sibling cells untouched, twin data and ordering intact. What blocks it is the"
+            + " fragment DIRECTORY purge: the candidate path renders doubled"
+            + " (/c~1/<frag>/<frag>/E0.1), so the fragment would leak on disk with its attached entry"
+            + " already gone -- worse than not squashing. Un-ignore when the purge path is fixed. NOTE"
+            + " testMidTableFragmentIsMergedPerCell is the one to run first: it is the case the merge"
+            + " actually implements (a fragmented day that is NOT the active tail).")
+    @Test(timeout = 60_000)
+    public void testMidTableFragmentIsMergedPerCell() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeCellDay();
+            forceSplit();
+            Assert.assertEquals("precondition: a fragment on day 1", 1, fragmentDirs("c").size());
+            // push day 1 off the tail
+            insertIntoBoth("('2023-01-02T01:00:00.000000Z','E0',9.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            execute("ALTER TABLE p SQUASH PARTITIONS");
+            drainWalQueue();
+            // the merge queues the fragment for purge; release readers so it can actually be deleted
+            engine.releaseInactive();
+
+            assertTwinEqual("");
+            Assert.assertTrue("the mid-table fragment must be merged away " + fragmentDirs("c"),
+                    fragmentDirs("c").isEmpty());
+            Assert.assertEquals("all three sibling cells must survive", 3, cellDirs("c", "2023-01-01").size());
         });
     }
 

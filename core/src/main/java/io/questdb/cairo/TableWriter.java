@@ -18492,6 +18492,151 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return sink;
     }
 
+
+    /**
+     * Cell-scoped split-fragment squash for a composite table. Kept SEPARATE from the plain
+     * {@code squashSplitPartitions} loop on purpose: that loop walks {@code targetPartitionIndex + 1}
+     * unconditionally, which on a composite table swallows the day's SIBLING CELLS into the target
+     * before ever reaching a real fragment (measured: 3 merges on a 3-cell day holding 1 fragment, 2 of
+     * them innocent cells). Keeping the plain path untouched makes Invariant 1 hold by construction.
+     *
+     * <p><b>The unit of work is a FRAGMENT, not an attached entry.</b> A split fragment is its own
+     * container holding its own cells, so merging it means appending {@code <fragment>/<cell k>} into
+     * {@code <day>/<cell k>} for each cell the FRAGMENT holds (a subset of the day's), then discarding
+     * the fragment's column versions in one call -- {@link ColumnVersionWriter#squashPartition} already
+     * drops every cell at the source timestamp via {@code removeAllCellsAtTimestamp}.
+     *
+     * <p><b>Scope of this first cut:</b> day groups that are not the table's active tail. That avoids
+     * {@code lastPartitionSquashed}'s {@code fixedRowCount}/{@code transientRowCount} bookkeeping, which
+     * is the crash-sensitive part of the plain loop. Mid-table fragments are the common accumulation
+     * case; the active tail is deliberately left for a follow-up rather than half-handled here.
+     */
+    private void squashSplitPartitionsComposite(int partitionIndexLo) {
+        final long dayTs = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndexLo));
+        while (true) {
+            // Re-resolve the day's span every pass: merging removes entries and shifts indices.
+            int lo = -1, hi = -1;
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) == dayTs) {
+                    if (lo < 0) {
+                        lo = i;
+                    }
+                    hi = i + 1;
+                } else if (lo >= 0) {
+                    break;
+                }
+            }
+            if (lo < 0) {
+                return;
+            }
+            if (hi >= txWriter.getPartitionCount()) {
+                LOG.info().$("composite squash skipped, day group is the active tail [table=").$(tableToken)
+                        .$(", day=").$ts(dayTs).I$();
+                return;
+            }
+            long fragTs = Long.MIN_VALUE;
+            for (int i = lo; i < hi; i++) {
+                final long ts = txWriter.getPartitionTimestampByIndex(i);
+                if (ts != dayTs) {
+                    fragTs = ts;
+                    break;
+                }
+            }
+            if (fragTs == Long.MIN_VALUE) {
+                return; // no fragments left in this day
+            }
+            if (!squashSplitPartitionsComposite_mergeFragment(dayTs, fragTs)) {
+                return; // could not merge this fragment; leave it rather than invent a target
+            }
+        }
+    }
+
+    /**
+     * Merges every cell of ONE fragment into the matching cell of its day. Returns false (having changed
+     * nothing) when a fragment cell has no day counterpart -- that is an adopt/move, not an append, and
+     * inventing a target would be worse than leaving the fragment in place.
+     */
+    private boolean squashSplitPartitionsComposite_mergeFragment(long dayTs, long fragTs) {
+        // Pre-flight: every fragment cell must have a day counterpart before anything is written.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == fragTs
+                    && findCompositePartitionIndex(dayTs, txWriter.getPartitionCellKey(i)) < 0) {
+                LOG.info().$("composite squash skipped, fragment cell has no day counterpart [table=").$(tableToken)
+                        .$(", fragment=").$ts(fragTs).$(", cellKey=").$(txWriter.getPartitionCellKey(i)).I$();
+                return false;
+            }
+        }
+        final FrameFactory frameFactory = engine.getFrameFactory();
+        long squashedSeqTxn = 0;
+        int srcIndex;
+        while ((srcIndex = findCompositePartitionIndexByTimestamp(fragTs)) >= 0) {
+            final int cellKey = txWriter.getPartitionCellKey(srcIndex);
+            final int dayIndex = findCompositePartitionIndex(dayTs, cellKey);
+            assert dayIndex >= 0; // guaranteed by the pre-flight above
+            final long srcNameTxn = txWriter.getPartitionNameTxn(srcIndex);
+            final long srcSize = txWriter.getPartitionSize(srcIndex);
+            final long dayNameTxn = txWriter.getPartitionNameTxn(dayIndex);
+            final long daySize = txWriter.getPartitionSize(dayIndex);
+            squashedSeqTxn = Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(srcIndex));
+
+            path.trimTo(pathSize);
+            setPathForNativePartition(path, timestampType, partitionBy, dayTs, dayNameTxn, cellSegmentOrNull(cellKey));
+            other.trimTo(pathSize);
+            setPathForNativePartition(other, timestampType, partitionBy, fragTs, srcNameTxn, cellSegmentOrNull(cellKey));
+
+            LOG.info().$("squashing composite fragment cell [table=").$(tableToken)
+                    .$(", day=").$ts(dayTs).$(", fragment=").$ts(fragTs)
+                    .$(", cellKey=").$(cellKey).$(", srcSize=").$(srcSize).I$();
+
+            Frame targetFrame = null;
+            Frame sourceFrame = null;
+            try {
+                targetFrame = frameFactory.open(true, path, dayTs, metadata, columnVersionWriter, daySize);
+                sourceFrame = frameFactory.openRO(other, fragTs, metadata, columnVersionWriter, srcSize);
+                FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                addPhysicallyWrittenRows(sourceFrame.getRowCount());
+            } catch (Throwable th) {
+                LOG.critical().$("composite fragment squash failed [table=").$(tableToken).$(", error=").$(th).I$();
+                throw th;
+            } finally {
+                Misc.free(sourceFrame);
+                Misc.free(targetFrame);
+            }
+
+            txWriter.updatePartitionSizeByRawIndex(dayIndex * txWriter.getLongsPerAttachedPartition(), dayTs, daySize + srcSize);
+            txWriter.removeAttachedPartitions(fragTs, cellKey);
+            partitionRemoveCandidates.add(fragTs, srcNameTxn, cellKey);
+        }
+        // Once per FRAGMENT, not once per cell: this drops every cell recorded at fragTs.
+        columnVersionWriter.squashPartition(dayTs, fragTs);
+        final int dayFirst = findCompositePartitionIndexByTimestamp(dayTs);
+        if (dayFirst >= 0) {
+            txWriter.setPartitionSeqTxn(dayFirst, Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(dayFirst)));
+        }
+        removeEmptyDayContainer(fragTs);
+        return true;
+    }
+
+    /** First attached index at {@code ts} with {@code cellKey}, or -1. */
+    private int findCompositePartitionIndex(long ts, int cellKey) {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == ts && txWriter.getPartitionCellKey(i) == cellKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** First attached index at exactly {@code ts} (any cell), or -1. */
+    private int findCompositePartitionIndexByTimestamp(long ts) {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == ts) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
         if (partitionIndexHi > partitionIndexLo) {
             int subpartitions = partitionIndexHi - partitionIndexLo;
@@ -18594,7 +18739,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reason as before -- a skipped squash leaves every fragment independently valid and queryable,
         // whereas a cell-blind merge silently destroys the day's cell structure.
         if (isRoutedComposite()) {
-            LOG.info().$("composite table, skipping split-fragment squash (merge loop not yet cell-scoped) [table=").$(tableToken).I$();
+            // SP1E: squashSplitPartitionsComposite below MERGES CORRECTLY (verified: exactly the
+            // fragment's own cell, siblings untouched, twin data and ordering intact) but the fragment
+            // DIRECTORY is not purged -- the candidate path renders doubled, e.g.
+            //   /c~1/2023-01-01T010000-000001/2023-01-01T010000-000001/E0.1
+            // Until that is fixed the fragment leaks on disk while its attached entry is gone, which is
+            // worse than not squashing. Skipping remains correct meanwhile.
+            LOG.info().$("composite table, skipping split-fragment squash (fragment purge path unresolved) [table=").$(tableToken).I$();
             return;
         }
 
