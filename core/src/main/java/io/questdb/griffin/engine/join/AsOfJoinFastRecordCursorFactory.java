@@ -229,11 +229,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
 
             for (; ; ) {
-                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
-                    // we are past the tolerance interval, no need to traverse the slave cursor any further
-                    record.hasSlave(false);
-                    break;
+                if (toleranceInterval != Numbers.LONG_NULL) {
+                    long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                    if (slaveTimestamp < masterTimestamp - toleranceInterval) {
+                        // we are past the tolerance interval, no need to traverse the slave cursor any further
+                        record.hasSlave(false);
+                        break;
+                    }
                 }
 
                 slaveSinkTarget.clear();

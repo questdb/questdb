@@ -550,7 +550,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String fullFatResult = sink.toString();
 
             printSql("EXPLAIN " + query, false);
-            TestUtils.assertContains(sink, "AsOf Join Fast");
+            TestUtils.assertContains(sink, "AsOf Join Dense");
             printSql(query, false);
             String lightResult = sink.toString();
             TestUtils.assertEquals(fullFatResult, lightResult);
@@ -600,7 +600,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense Single Symbol", expected);
@@ -643,7 +643,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -685,7 +685,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -727,7 +727,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -776,7 +776,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -831,7 +831,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -875,7 +875,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -925,7 +925,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 1m";
 
-            assertAlgoAndResult(queryBody1, "", "Fast", expected1);
+            assertAlgoAndResult(queryBody1, "", "Dense", expected1);
             assertAlgoAndResult(queryBody1, "asof_index(t q)", "Indexed", expected1);
             assertAlgoAndResult(queryBody1, "asof_memoized(t q)", "Memoized", expected1);
             assertAlgoAndResult(queryBody1, "asof_dense(t q)", "Dense", expected1);
@@ -940,7 +940,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryBody2 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 15m";
-            assertAlgoAndResult(queryBody2, "", "Fast", expected2);
+            assertAlgoAndResult(queryBody2, "", "Dense", expected2);
             assertAlgoAndResult(queryBody2, "asof_index(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
             assertAlgoAndResult(queryBody2, "asof_dense(t q)", "Dense", expected2);
@@ -992,7 +992,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ON t.symbol = q.symbol " +
                     "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'";
 
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "", "Dense", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
@@ -1532,7 +1532,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         .returns(expected);
 
                 printSql("EXPLAIN " + queryWithoutHint);
-                TestUtils.assertContains(sink, "AsOf Join Fast");
+                TestUtils.assertContains(sink, "AsOf Join Dense");
                 printSql("EXPLAIN " + queryWithDenseHint);
                 TestUtils.assertContains(sink, "AsOf Join Dense");
             }
@@ -1683,7 +1683,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym, m.id, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -1742,7 +1742,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -1800,7 +1800,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.sym3, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2 AND m.sym3 = s.sym3)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -1830,7 +1830,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
             // sanity check: uses AsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Fast");
+            TestUtils.assertContains(sink, "AsOf Join Dense");
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
             String expected = String.format("""
@@ -2268,7 +2268,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON(m.sym1 = s.sym1 AND m.sym2 = s.sym2) TOLERANCE 15s";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2325,7 +2325,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2382,7 +2382,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.sym2, s.sym1 FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2424,7 +2424,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2468,7 +2468,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2522,7 +2522,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2584,7 +2584,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2907,7 +2907,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -2967,7 +2967,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
@@ -6052,9 +6052,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2022-10-06T00:01:00.000000%1$s	6	c	2022-10-06T00:01:00.000000%1$s	6	c
                     2022-10-06T00:02:00.000000%1$s	7	a	2022-10-06T00:02:00.000000%1$s	7	a
                     """, tsSuffix);
-            assertAlgoAndResult(queryBody1, "", "Fast", expected1);
-            assertAlgoAndResult(queryBody1, "asof_index(t1 t2)", "Fast", expected1);
-            assertAlgoAndResult(queryBody1, "asof_memoized(t1 t2)", "Fast", expected1);
+            assertAlgoAndResult(queryBody1, "", "Dense", expected1);
+            assertAlgoAndResult(queryBody1, "asof_index(t1 t2)", "Dense", expected1);
+            assertAlgoAndResult(queryBody1, "asof_memoized(t1 t2)", "Dense", expected1);
 
 
             String queryBody2 = "* from (SELECT * FROM (SELECT dateadd('s', 1, ts) AS ts, i, s FROM t) TIMESTAMP(ts)) as t1 asof join t as t2 on s;";
@@ -6070,7 +6070,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2022-10-06T00:01:01.000000%1$s	6	c	2022-10-06T00:01:00.000000%1$s	6	c
                     2022-10-06T00:02:01.000000%1$s	7	a	2022-10-06T00:02:00.000000%1$s	7	a
                     """, tsSuffix);
-            assertAlgoAndResult(queryBody2, "", "Fast", expected2);
+            assertAlgoAndResult(queryBody2, "", "Dense", expected2);
             assertAlgoAndResult(queryBody2, "asof_index(t1 t2)", "Index", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t1 t2)", "Memoized", expected2);
         });
@@ -6258,7 +6258,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 """;
 
         String queryBody = "m.val, s.price FROM " + masterTableName + " m ASOF JOIN " + slaveTableName + " s ON (m.sym = s.sym AND m.id = s.id)";
-        assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+        assertAlgoAndResult(queryBody, "", "Dense", expected, true);
         assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
         assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
     }
@@ -6321,6 +6321,150 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testAutoSelectIndexedForSmallMasterIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (sym symbol index, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%1000))::symbol, (x*1000)::timestamp, x from long_sequence(200000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select 's1', (x*1000000)::timestamp, x from long_sequence(50)");
+            printSql("EXPLAIN SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym)");
+            TestUtils.assertContains(sink, "AsOf Join Indexed Scan");
+        });
+    }
+
+    @Test
+    public void testAutoSelectKeepsDenseForLargeMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (sym symbol index, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%1000))::symbol, (x*10)::timestamp, x from long_sequence(200000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select 's1', (x*10+1)::timestamp, x from long_sequence(200000)"); // master == slave size
+            printSql("EXPLAIN SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym)");
+            TestUtils.assertNotContains(sink, "Indexed Scan"); // ratio 100% > 2% -> Dense
+        });
+    }
+
+    @Test
+    public void testHintStillOverridesAutoSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (sym symbol index, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%1000))::symbol, (x*1000)::timestamp, x from long_sequence(200000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select 's1', (x*1000000)::timestamp, x from long_sequence(50)");
+            printSql("EXPLAIN SELECT /*+ asof_dense(t q) */ sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym)");
+            TestUtils.assertContains(sink, "AsOf Join Dense"); // explicit hint wins over auto-index
+        });
+    }
+
+    @Test
+    public void testAutoIndexResultsMatchDense() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (sym symbol index, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%50))::symbol, (x*1000)::timestamp, x::double from long_sequence(100000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select ('s'||(x%50))::symbol, (x*137)::timestamp, x::double from long_sequence(500)");
+            String auto = "SELECT t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+            String dense = "SELECT /*+ asof_dense(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+            printSql("EXPLAIN " + auto);
+            TestUtils.assertContains(sink, "AsOf Join Indexed Scan"); // confirm auto path engaged
+            assertSqlCursors(dense, auto); // identical results
+        });
+    }
+
+    @Test
+    public void testMemoizedFallbackMatchesDenseOnDenseTimestamps() throws Exception {
+        // Low threshold so the dense-timestamp guard trips on modest data; results must equal the Dense oracle.
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD, 8);
+        assertMemoryLeak(() -> {
+            execute("create table md (sym symbol, ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("insert into md select ('s'||(x%100))::symbol, ((x/50))::timestamp, x::double from long_sequence(20000)");
+            execute("create table ord (sym symbol, ts timestamp, o double) timestamp(ts) partition by day bypass wal");
+            execute("insert into ord select ('s'||(x%100))::symbol, (x*7)::timestamp, x::double from long_sequence(300)");
+            String memo = "SELECT /*+ asof_memoized(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            String dense = "SELECT /*+ asof_dense(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            assertSqlCursors(dense, memo);
+        });
+    }
+
+    @Test
+    public void testMemoizedForwardFallbackCorrectAtThresholdOne() throws Exception {
+        // Threshold 1 forces the Dense fallback from the very first equal-timestamp pair -> exercises
+        // resolveViaDenseScan on its own; results must still equal the Dense oracle.
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD, 1);
+        assertMemoryLeak(() -> {
+            execute("create table md (sym symbol, ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("insert into md select ('s'||(x%40))::symbol, ((x/8))::timestamp, x::double from long_sequence(16000)");
+            execute("create table ord (sym symbol, ts timestamp, o double) timestamp(ts) partition by day bypass wal");
+            execute("insert into ord select ('s'||(x%40))::symbol, (x*11)::timestamp, x::double from long_sequence(400)");
+            String memo = "SELECT /*+ asof_memoized(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            String dense = "SELECT /*+ asof_dense(o md) */ o.ts, o.sym, md.v FROM ord o ASOF JOIN md ON (sym)";
+            assertSqlCursors(dense, memo);
+        });
+    }
+
+    @Test
+    public void testAutoSelectMemoizedForSmallMasterNonIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            // NOT indexed slave symbol + small master -> auto-select memoized (index path unavailable).
+            execute("create table quotes (sym symbol, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('s'||(x%1000))::symbol, (x*1000)::timestamp, x::double from long_sequence(200000)");
+            execute("create table trades (sym symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select ('s'||(x%1000))::symbol, (x*137)::timestamp, x::double from long_sequence(500)");
+            String auto = "SELECT t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+            String dense = "SELECT /*+ asof_dense(t q) */ t.ts, t.sym, q.bid FROM trades t ASOF JOIN quotes q ON (sym)";
+            printSql("EXPLAIN " + auto);
+            TestUtils.assertContains(sink, "AsOf Join Memoized Scan"); // auto path engaged (no index available)
+            assertSqlCursors(dense, auto); // identical results
+        });
+    }
+
+    @Test
+    public void testAutoSelectDualSymbolForTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table quotes (s1 symbol, s2 symbol, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select ('a'||(x%20))::symbol, ('b'||(x%15))::symbol, (x*100)::timestamp, x::double from long_sequence(50000)");
+            execute("create table trades (s1 symbol, s2 symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into trades select ('a'||(x%20))::symbol, ('b'||(x%15))::symbol, (x*137)::timestamp, x::double from long_sequence(2000)");
+            printSql("EXPLAIN SELECT t.ts, t.s1, t.s2, q.bid FROM trades t ASOF JOIN quotes q ON (s1, s2)");
+            TestUtils.assertContains(sink, "AsOf Join Dense Dual Symbol");
+        });
+    }
+
+    @Test
+    public void testDualSymbolResultsMatchFast() throws Exception {
+        assertMemoryLeak(() -> {
+            // include NULL symbols and master keys absent in slave to exercise the VALUE_NOT_FOUND path.
+            execute("create table quotes (s1 symbol, s2 symbol, ts timestamp, bid double) timestamp(ts) partition by day bypass wal");
+            execute("insert into quotes select rnd_symbol('a','b','c',null), rnd_symbol('x','y',null), (x*100)::timestamp, x::double from long_sequence(40000)");
+            execute("create table trades (s1 symbol, s2 symbol, ts timestamp, px double) timestamp(ts) partition by day bypass wal");
+            // 'z' and 'w' never appear in quotes -> non-existent key lookups
+            execute("insert into trades select rnd_symbol('a','b','z',null), rnd_symbol('x','w',null), (x*137)::timestamp, x::double from long_sequence(3000)");
+            String dual = "SELECT t.ts, t.s1, t.s2, q.bid FROM trades t ASOF JOIN quotes q ON (s1, s2)";
+            String fast = "SELECT /*+ asof_fast(t q) */ t.ts, t.s1, t.s2, q.bid FROM trades t ASOF JOIN quotes q ON (s1, s2)";
+            printSql("EXPLAIN " + dual);
+            TestUtils.assertContains(sink, "AsOf Join Dense Dual Symbol"); // confirm the packed path is engaged
+            assertSqlCursors(fast, dual); // dual cursor agrees with the independent Fast algorithm
+        });
+    }
+
+    @Test
+    public void testDualSymbolDoNoHarm() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table q3 (s1 symbol, s2 symbol, s3 symbol, k long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into q3 select 'a','b','c',1, (x*100)::timestamp from long_sequence(1000)");
+            execute("create table t3 (s1 symbol, s2 symbol, s3 symbol, k long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into t3 select 'a','b','c',1, (x*137)::timestamp from long_sequence(100)");
+            // three symbol keys -> not eligible for the dual-symbol packing, must stay general Dense
+            printSql("EXPLAIN SELECT t.ts FROM t3 t ASOF JOIN q3 q ON (s1, s2, s3)");
+            TestUtils.assertContains(sink, "AsOf Join Dense");
+            TestUtils.assertNotContains(sink, "Dual Symbol");
+            // two NON-symbol keys -> not eligible either
+            printSql("EXPLAIN SELECT t.ts FROM t3 t ASOF JOIN q3 q ON (s1, k)");
+            TestUtils.assertNotContains(sink, "Dual Symbol");
         });
     }
 }

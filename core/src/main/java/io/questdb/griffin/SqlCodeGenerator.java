@@ -223,6 +223,7 @@ import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
+import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
@@ -1496,6 +1497,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    // A two-symbol join key where both columns short-circuit to static-symbol mappings: eligible for the
+    // packed-long Dense cursor. The mappings array is built per join column in listColumnFilterA order,
+    // so mappings[i] translates to the symbol space of listColumnFilterA column i.
+    private static boolean isDualSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
+        return joinColumns.getColumnCount() == 2 &&
+                symbolShortCircuit instanceof ChainedSymbolShortCircuit &&
+                ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings().length == 2;
+    }
+
+    private AsOfJoinDenseDualSymbolRecordCursorFactory createDualSymbolDenseJoin(
+            JoinRecordMetadata joinMetadata,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            int joinColumnSplit,
+            SymbolShortCircuit symbolShortCircuit,
+            JoinContext slaveContext,
+            long toleranceInterval
+    ) {
+        SymbolJoinKeyMapping[] mappings = ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings();
+        return new AsOfJoinDenseDualSymbolRecordCursorFactory(
+                configuration,
+                joinMetadata,
+                master,
+                slave,
+                joinColumnSplit,
+                listColumnFilterA.getColumnIndexFactored(0),
+                listColumnFilterA.getColumnIndexFactored(1),
+                mappings[0],
+                mappings[1],
+                slaveContext,
+                toleranceInterval
+        );
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -5298,7 +5333,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata masterMetadata,
             final CharSequence masterAlias,
             final RecordCursorFactory slave,
-            final RecordMetadata slaveMetadata
+            final RecordMetadata slaveMetadata,
+            final SqlExecutionContext executionContext
     ) throws SqlException {
         long toleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
         CharSequence slaveAlias = slaveModel.getName();
@@ -5329,6 +5365,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (slave.supportsTimeFrameCursor()) {
                         boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
+                        boolean hasFastHint = SqlHints.hasAsOfFastHint(model, masterAlias, slaveAlias);
                         if (hasDenseHint) {
                             if (isSingleSymbolJoin) {
                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -5343,6 +5380,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveContext,
                                         toleranceInterval
                                 );
+                            }
+                            if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
+                                return createDualSymbolDenseJoin(joinMetadata, master, slave, joinColumnSplit, symbolShortCircuit, slaveContext, toleranceInterval);
                             }
                             int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                             return new AsOfJoinDenseRecordCursorFactory(
@@ -5374,7 +5414,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveSymbolColumnIndex,
                                         symbolJoinKeyMapping,
                                         slaveContext,
-                                        toleranceInterval
+                                        toleranceInterval,
+                                        null
                                 );
                             }
                             boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
@@ -5394,25 +5435,86 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                             }
 
-                            // We're falling back to the default Fast scan. We can still optimize one thing:
-                            // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
-                            // For that to work, we need code that maps master symbol key to slave symbol key.
-                            writeSymbolAsString.unset(slaveSymbolColumnIndex);
-                            return new AsOfJoinFastRecordCursorFactory(
+                            if (hasFastHint) {
+                                // Fast only on explicit request: its per-master symbol back-scan is
+                                // O(symbol-cardinality / symbol-distance) and cliffs on high-cardinality
+                                // symbols. We still optimize the key equality check: compare symbol keys
+                                // (ints) instead of strings, via a master->slave symbol-key mapping.
+                                writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                                return new AsOfJoinFastRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
+                                        slave,
+                                        createRecordCopierSlave(slaveMetadata),
+                                        joinColumnSplit,
+                                        symbolShortCircuit,
+                                        slaveContext,
+                                        toleranceInterval,
+                                        null,
+                                        null
+                                );
+                            }
+                            // Auto-select a faster single-symbol algo when the master is confidently small
+                            // relative to the slave (crossover ~2% master/slave ratio): the index-accelerated
+                            // scan if the slave symbol is indexed (O(master lookups) vs Dense O(slave scan)),
+                            // otherwise memoized (fast on sparse/illiquid symbols, dense-ts-cliff guarded).
+                            // Unknown estimate -> fall through to Dense (do no harm).
+                            if (configuration.isSqlAsOfAutoAlgoEnabled()) {
+                                long slaveN = estimateBaseRowCount(slave, executionContext);
+                                long masterN = estimateBaseRowCount(master, executionContext);
+                                long masterLimit = masterLimitOrMinus1(model.getJoinModels().getQuick(0));
+                                long effMaster = masterLimit >= 0
+                                        ? (masterN >= 0 ? Math.min(masterN, masterLimit) : masterLimit)
+                                        : masterN;
+                                int bp = configuration.getSqlAsOfIndexMaxMasterBp();
+                                if (slaveN > 0 && effMaster >= 0 && effMaster * 10000L <= slaveN * (long) bp) {
+                                    if (slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                        return new AsOfJoinIndexedRecordCursorFactory(
+                                                configuration,
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                joinColumnSplit,
+                                                slaveSymbolColumnIndex,
+                                                symbolJoinKeyMapping,
+                                                slaveContext,
+                                                toleranceInterval,
+                                                "auto:master~" + effMaster + " slave~" + slaveN + " bp<=" + bp
+                                        );
+                                    }
+                                    return new AsOfJoinMemoizedRecordCursorFactory(
+                                            configuration,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            joinColumnSplit,
+                                            slaveSymbolColumnIndex,
+                                            symbolJoinKeyMapping,
+                                            slaveContext,
+                                            toleranceInterval,
+                                            false
+                                    );
+                                }
+                            }
+                            // Default single-symbol ASOF: forward-scan DenseSingleSymbol. Resilient to
+                            // symbol cardinality and timestamp density (O(n), no per-master back-scan cliff).
+                            return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
-                                    new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
                                     slave,
-                                    createRecordCopierSlave(slaveMetadata),
                                     joinColumnSplit,
-                                    symbolShortCircuit,
+                                    slaveSymbolColumnIndex,
+                                    (SymbolJoinKeyMapping) symbolShortCircuit,
                                     slaveContext,
-                                    toleranceInterval,
-                                    null,
-                                    null
+                                    toleranceInterval
                             );
-                        } else {
+                        } else if (hasFastHint) {
+                            // Multi-column / non-single-symbol key: Fast only on explicit request. Its
+                            // per-master key back-scan is O(rows-per-timestamp / key-distance) and cliffs
+                            // on dense timestamps or high key cardinality; see asof_fast hint.
                             int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
@@ -5427,6 +5529,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
+                            );
+                        } else {
+                            // Default multi-key ASOF: forward-scan Dense. Resilient to timestamp density
+                            // and key cardinality (O(n), no per-master back-scan cliff).
+                            if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)) {
+                                // Two static-symbol keys: pack both into a long map key and skip the generic
+                                // RecordSink/memeq per row (see AsOfJoinDenseDualSymbolRecordCursorFactory).
+                                return createDualSymbolDenseJoin(joinMetadata, master, slave, joinColumnSplit, symbolShortCircuit, slaveContext, toleranceInterval);
+                            }
+                            int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            return new AsOfJoinDenseRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    createRecordCopierMaster(masterMetadata),
+                                    slave,
+                                    createRecordCopierSlave(slaveMetadata),
+                                    joinColumnSplit,
+                                    keyTypes,
+                                    slaveContext,
+                                    toleranceInterval,
+                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[0] : null,
+                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
                             );
                         }
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
@@ -5643,6 +5768,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(joinMetadata);
             throw t;
         }
+    }
+
+    // Cheap plan-time base-table row-count estimate. Returns -1 when unknown (subquery/join/no token).
+    // NOTE: getTableToken() on a filtered factory returns the BASE table, so a filtered master is
+    // over-estimated - that only ever makes us MORE conservative (skip index), never wrong results.
+    private long estimateBaseRowCount(RecordCursorFactory f, SqlExecutionContext ec) {
+        final TableToken token = f.getTableToken();
+        if (token == null) {
+            return -1;
+        }
+        final long tracked = ec.getCairoEngine().getRecentWriteTracker().getRowCount(token);
+        if (tracked != Numbers.LONG_NULL) {
+            return tracked;
+        }
+        try (TableReader r = ec.getReader(token)) {
+            return r.size();
+        } catch (CairoException e) {
+            return -1;
+        }
+    }
+
+    private static long masterLimitOrMinus1(IQueryModel masterModel) {
+        final ExpressionNode lo = masterModel.getLimitLo();
+        final ExpressionNode hi = masterModel.getLimitHi();
+        final ExpressionNode lim = hi != null ? hi : lo;
+        if (lim != null && lim.type == ExpressionNode.CONSTANT) {
+            try {
+                return Numbers.parseLong(lim.token);
+            } catch (NumericException ignore) {
+                return -1;
+            }
+        }
+        return -1;
     }
 
     private @NotNull RecordCursorFactory generateJoinLt(
@@ -5910,7 +6068,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
                                 master = joinType == IQueryModel.JOIN_ASOF
-                                        ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
+                                        ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata, executionContext)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata);
                                 masterAlias = null;
                                 // from now on, master owns slave, so we don't have to close it

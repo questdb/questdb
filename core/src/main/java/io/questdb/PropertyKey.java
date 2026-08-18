@@ -728,6 +728,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true),
     DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true),
     CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
+    CAIRO_SQL_ASOF_ADAPTIVE_BACKSCAN_BUDGET("cairo.sql.asof.adaptive.backscan.budget"),
+    CAIRO_SQL_ASOF_AUTO_ALGO("cairo.sql.asof.auto.algo"),
+    CAIRO_SQL_ASOF_INDEX_MAX_MASTER_BP("cairo.sql.asof.index.max.master.bp"),
+    CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD("cairo.sql.asof.memoized.dense.run.threshold"),
     CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
     CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes");
 

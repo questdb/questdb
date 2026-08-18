@@ -32,6 +32,7 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
     public static final String ASOF_DENSE_HINT = "asof_dense";
+    public static final String ASOF_FAST_HINT = "asof_fast";
     public static final String ASOF_INDEX_HINT = "asof_index";
     public static final String ASOF_LINEAR_HINT = "asof_linear";
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
@@ -48,6 +49,14 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_DENSE_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfFastHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_FAST_HINT, tableNameA, tableNameB);
     }
 
     public static boolean hasAsOfIndexHint(

@@ -758,6 +758,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.asof.join.lookahead\tQDB_CAIRO_SQL_ASOF_JOIN_LOOKAHEAD\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.asof.join.short.circuit.cache.capacity\tQDB_CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY\t10000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.asof.join.evacuation.threshold\tQDB_CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD\t10000000\tdefault\tfalse\ttrue\n" +
+                                    "cairo.sql.asof.auto.algo\tQDB_CAIRO_SQL_ASOF_AUTO_ALGO\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.index.max.master.bp\tQDB_CAIRO_SQL_ASOF_INDEX_MAX_MASTER_BP\t200\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.memoized.dense.run.threshold\tQDB_CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD\t4096\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.adaptive.backscan.budget\tQDB_CAIRO_SQL_ASOF_ADAPTIVE_BACKSCAN_BUDGET\t-1\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.insert.model.pool.capacity\tQDB_CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.insert.model.batch.size\tQDB_CAIRO_SQL_INSERT_MODEL_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.interval.incremental.merge.threshold\tQDB_CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD\t256\tdefault\tfalse\tfalse\n" +

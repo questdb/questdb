@@ -50,6 +50,7 @@ import io.questdb.std.Rows;
  * instead of linear scanning through time-ordered records.
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final CharSequence autoReason;
     private final AsOfJoinIndexedRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
     private final SymbolJoinKeyMapping symbolJoinKeyMapping;
@@ -64,9 +65,11 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
             JoinContext joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            CharSequence autoReason
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.autoReason = autoReason;
         assert slaveFactory.supportsTimeFrameCursor();
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
@@ -118,6 +121,9 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Indexed Scan");
+        if (autoReason != null) {
+            sink.attr("select").val(autoReason);
+        }
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
