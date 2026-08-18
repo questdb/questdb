@@ -252,6 +252,109 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A day is built into a composite partition, the table is TRUNCATEd, and the same day is built into a
+     * composite partition again from nothing - each round's backdated batches submitted without a drain
+     * between them, so {@code ApplyWal2TableJob} replays them as ONE bundled WAL transaction block, letting
+     * transaction clustering cut the fresh partition into several pieces from a single commit.
+     * <p>
+     * Minimised from a WAL fuzz failure ({@code WalWriterFuzzTest#testAddDropColumnDropPartition}) that
+     * lost exactly one row at a piece boundary the first time a truncated table's partition went composite
+     * again. Root cause not yet isolated: {@code TxWriter.removeAllPartitions()} clears
+     * {@code attachedPartitions} cleanly and {@link PartitionGeometry#resolveInternal} re-derives its
+     * {@code (partitionTimestamp, nameTxn)} cache key from the live {@code TxReader} on every call, so a
+     * stale resolver-cache entry surviving the truncate looks ruled out on inspection - the loss happens
+     * somewhere else in the truncate-then-rebuild path.
+     */
+    @Test
+    public void testTruncateThenRebuildComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // This table is narrower than the WIDE_COLUMNS ones the rest of this class uses, so the split
+            // threshold - in rows derived from an average record size - needs a proportionally smaller
+            // setting before a cut is worth proposing at all.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            final String base = "SELECT x::INT i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)";
+            // A later day, so 2020-02-03 is never the active partition and the backdated batches go
+            // through the O3 path rather than an append to the open one.
+            final String nextDay = "SELECT x::INT + 90000 i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
+            // Three backdated batches, each in its own hour with cold gaps either side, so transaction
+            // clustering has separate hot strides to cut around rather than one contiguous stride.
+            final String batch1 = "SELECT x::INT + 70000 i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-03T02:00:07', 5*1000000L) ts FROM long_sequence(120)";
+            final String batch2 = "SELECT x::INT + 80000 i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-03T08:00:11', 5*1000000L) ts FROM long_sequence(120)";
+            final String batch3 = "SELECT x::INT + 60000 i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-03T14:00:23', 5*1000000L) ts FROM long_sequence(120)";
+
+            // First round: build 2020-02-03 into a composite partition. The three backdated batches are
+            // submitted without draining between them, so ApplyWal2TableJob replays them as ONE bundled WAL
+            // transaction block - exactly how the fuzz failure's own replay batched several original
+            // commits into a single o3 partition task.
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+            execute("INSERT INTO x " + batch1);
+            execute("INSERT INTO x " + batch2);
+            execute("INSERT INTO x " + batch3);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("the first round should have gone composite",
+                        reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            // Wipe the table and build the SAME calendar day into a composite partition again, from
+            // nothing - a brand new directory, a brand new _geometry file - via the same bundled-replay
+            // shape.
+            execute("TRUNCATE TABLE x");
+            drainWalQueue();
+
+            execute("INSERT INTO x " + base);
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+            execute("INSERT INTO x " + batch1);
+            execute("INSERT INTO x " + batch2);
+            execute("INSERT INTO x " + batch3);
+            drainWalQueue();
+
+            Assert.assertFalse("rebuilding a composite partition after truncate suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("the rebuilt partition should have gone composite too",
+                        reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            // The oracle needs only the POST-truncate rows - that is all TRUNCATE TABLE leaves standing.
+            execute("CREATE TABLE o AS (SELECT i, s, vs, ts FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + batch1 +
+                    " UNION ALL " + batch2 + " UNION ALL " + batch3 +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM o ORDER BY ts, i",
+                    "SELECT * FROM x ORDER BY ts, i",
+                    LOG
+            );
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM o ORDER BY ts, i",
+                    "SELECT * FROM x ORDER BY ts, i",
+                    LOG
+            );
+        });
+    }
+
+    /**
      * {@code ALTER TABLE ... ALTER COLUMN TYPE} over a directory that already has DEAD pieces - a merge
      * relocated one to the tail, leaving its old copy behind, so every column's file spans more rows than
      * are live. A conversion rewrites a FILE, not a query result, and it has to span that whole extent

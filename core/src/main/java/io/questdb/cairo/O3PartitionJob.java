@@ -361,30 +361,38 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 o3TimestampHi
         );
 
-        // The cuts above already made every piece sit fully inside or fully outside [o3TimestampLo,
-        // o3TimestampHi], so a piece whose own bounds landed fully inside carries only rows the commit
-        // means to delete. A KEEP there got no O3 row of this commit's own - downgrading it to DROP
-        // excludes it from the new geometry instead of carrying it forward. A MERGE there DID get O3 rows
-        // routed to it (that is the only reason computeActions emitted MERGE instead of KEEP), so plainly
-        // unioning the piece with the incoming rows would keep exactly the rows the range means to delete
-        // alongside them. Rewriting it to NEW_PIECE, over its own o3Lo/o3Hi - already the right rows,
-        // computeActions assigned them from this piece's routing range - drops the pieceIndex reference
-        // and writes only the incoming rows, leaving the piece's old bytes as dead space the same way a
-        // genuine DROP does.
-        for (int i = 0; i < actionCount; i++) {
-            final O3CompositeMergeStrategy.Action action = ctx.actions.getQuick(i);
-            if (action.type != O3CompositeMergeStrategy.ActionType.KEEP && action.type != O3CompositeMergeStrategy.ActionType.MERGE) {
-                continue;
-            }
-            final long pieceTsLo = O3CompositeMergeStrategy.getTsLo(ctx.bounds, action.pieceIndex);
-            final long pieceTsHi = O3CompositeMergeStrategy.getTsHi(ctx.bounds, action.pieceIndex);
-            if (pieceTsHi == Numbers.LONG_NULL || pieceTsLo < o3TimestampLo || pieceTsHi > o3TimestampHi) {
-                continue;
-            }
-            if (action.type == O3CompositeMergeStrategy.ActionType.KEEP) {
-                action.setDrop(action.pieceIndex);
-            } else {
-                action.setNewPiece(action.o3Lo, action.o3Hi);
+        // Only a REPLACE commit's declared range means "delete everything in here" - for an ordinary
+        // commit, [o3TimestampLo, o3TimestampHi] is just the incoming batch's own min/max timestamp, and a
+        // piece landing fully inside it is not thereby superseded. Without this guard, a plain out-of-order
+        // insert that never touches an existing piece, but whose own span happens to fully contain it,
+        // reads that piece's bounds as data the range means to delete.
+        //
+        // In replace mode, the cuts above already made every piece sit fully inside or fully outside
+        // [o3TimestampLo, o3TimestampHi], so a piece whose own bounds landed fully inside carries only rows
+        // the commit means to delete. A KEEP there got no O3 row of this commit's own - downgrading it to
+        // DROP excludes it from the new geometry instead of carrying it forward. A MERGE there DID get O3
+        // rows routed to it (that is the only reason computeActions emitted MERGE instead of KEEP), so
+        // plainly unioning the piece with the incoming rows would keep exactly the rows the range means to
+        // delete alongside them. Rewriting it to NEW_PIECE, over its own o3Lo/o3Hi - already the right
+        // rows, computeActions assigned them from this piece's routing range - drops the pieceIndex
+        // reference and writes only the incoming rows, leaving the piece's old bytes as dead space the same
+        // way a genuine DROP does.
+        if (tableWriter.isCommitReplaceMode()) {
+            for (int i = 0; i < actionCount; i++) {
+                final O3CompositeMergeStrategy.Action action = ctx.actions.getQuick(i);
+                if (action.type != O3CompositeMergeStrategy.ActionType.KEEP && action.type != O3CompositeMergeStrategy.ActionType.MERGE) {
+                    continue;
+                }
+                final long pieceTsLo = O3CompositeMergeStrategy.getTsLo(ctx.bounds, action.pieceIndex);
+                final long pieceTsHi = O3CompositeMergeStrategy.getTsHi(ctx.bounds, action.pieceIndex);
+                if (pieceTsHi == Numbers.LONG_NULL || pieceTsLo < o3TimestampLo || pieceTsHi > o3TimestampHi) {
+                    continue;
+                }
+                if (action.type == O3CompositeMergeStrategy.ActionType.KEEP) {
+                    action.setDrop(action.pieceIndex);
+                } else {
+                    action.setNewPiece(action.o3Lo, action.o3Hi);
+                }
             }
         }
 
