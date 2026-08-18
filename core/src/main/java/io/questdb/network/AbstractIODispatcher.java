@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Counter;
@@ -37,10 +38,13 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjLongMatrix;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Utf8s;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -85,6 +89,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
     private final Counter listenerStateChangeCounter;
+    private final int oomResponseBufLen;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     protected volatile boolean closed = false;
@@ -95,6 +100,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private long idSeq = 1;
     private volatile boolean listening;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
+    private long oomResponseBuf;
     private int port;
 
     public AbstractIODispatcher(
@@ -131,7 +137,16 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
 
+        // Allocate last, immediately before the guarded region: close() frees this buffer, so
+        // anything that can throw between the malloc and the try below would leak it.
+        final String oomResponse = configuration.getOomResponse();
+        this.oomResponseBufLen = oomResponse != null ? oomResponse.length() : 0;
+
         try {
+            if (oomResponse != null) {
+                this.oomResponseBuf = Unsafe.malloc(oomResponseBufLen, MemoryTag.NATIVE_DEFAULT);
+                Utf8s.strCpyAscii(oomResponse, oomResponseBuf);
+            }
             createListenerFd();
         } catch (Throwable th) {
             close();
@@ -162,6 +177,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             nf.close(serverFd, LOG);
             serverFd = -1;
         }
+
+        oomResponseBuf = Unsafe.free(oomResponseBuf, oomResponseBufLen, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
@@ -249,8 +266,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void setup() {
-        if (ioContextFactory instanceof EagerThreadSetup) {
-            ((EagerThreadSetup) ioContextFactory).setup();
+        if (ioContextFactory instanceof EagerThreadSetup ets) {
+            ets.setup();
         }
     }
 
@@ -427,6 +444,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 addPending(fd, timestamp);
             } catch (Throwable th) {
                 LOG.error().$("could not accept connection [fd=").$(fd).$(", e=").$(th).I$();
+                if (!closed && oomResponseBuf != 0 && CairoException.isCairoOomError(th)) {
+                    // best-effort send: peer may receive a truncated response if backpressured;
+                    // we close the fd next regardless.
+                    nf.sendRaw(fd, oomResponseBuf, oomResponseBufLen);
+                }
                 nf.close(fd, LOG);
                 connectionCount.decrementAndGet();
                 continue;

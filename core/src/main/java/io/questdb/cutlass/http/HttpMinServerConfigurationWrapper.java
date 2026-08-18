@@ -161,6 +161,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public String getOomResponse() {
+        return getDelegate().getOomResponse();
+    }
+
+    @Override
     public boolean getPeerNoLinger() {
         return getDelegate().getPeerNoLinger();
     }

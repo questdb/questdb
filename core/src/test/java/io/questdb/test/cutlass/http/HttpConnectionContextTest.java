@@ -28,12 +28,25 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class HttpConnectionContextTest extends AbstractCairoTest {
+public class HttpConnectionContextTest extends AbstractOomSweepTest {
+    // The context's construction allocates roughly 4.7 KiB across its two header parsers and the
+    // response sink, so the ceiling has to climb past that to reach the point where construction
+    // survives - the far end of the transition assertOomSweep insists the sweep crosses.
+    private static final int CONSTRUCTION_SLACK_MAX = 16 * 1024;
+    // The smallest native allocation on the construction path is the 64-byte BoundaryAugmenter, one
+    // of the buffers the pre-fix code stranded alongside the parser's DirectUtf8Sink. A coarser step
+    // can jump the window between "the augmenter allocated" and "the header buffer failed", which is
+    // the only window the leak shows in, and the sweep then passes blind.
+    private static final int CONSTRUCTION_SLACK_STEP = 8;
+    private static final int HEADER_BUFFER_SIZE = 4096;
 
     @Test
     public void testClearDisarmsBreakerOnPoolReturnWhileProtocolSwitched() throws Exception {
@@ -58,6 +71,36 @@ public class HttpConnectionContextTest extends AbstractCairoTest {
                 Assert.assertEquals("clear() must disarm the breaker on pool return", -1, breaker.getFd());
                 Assert.assertFalse(breaker.isTimerSet());
             }
+        });
+    }
+
+    @Test
+    public void testConnectionContextConstructionOomLeavesNothingBehind() throws Exception {
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            // The constructor allocates several native buffers in sequence. A ceiling that lets an
+            // earlier one through and trips a later one strands the earlier one unless the constructor
+            // closes what it built, so the sweep walks the ceiling across every one of those points.
+            assertOomSweep(CONSTRUCTION_SLACK_MAX, CONSTRUCTION_SLACK_STEP, null, () -> {
+                HttpConnectionContext context = new HttpConnectionContext(httpConfig, PlainSocketFactory.INSTANCE);
+                // Only reached when construction survived its ceiling; a thrown constructor has
+                // already cleaned up after itself, which is what this test asserts.
+                context.close();
+            });
+        });
+    }
+
+    @Test
+    public void testHeaderParserConstructionOomLeavesNothingBehind() throws Exception {
+        assertMemoryLeak(() -> {
+            ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
+            // The parser mallocs its header buffer and then its BoundaryAugmenter. The augmenter used
+            // to be a field initializer, so it ran first and leaked whenever the header buffer malloc
+            // failed behind it - the NATIVE_HTTP_CONN leak this sweep guards.
+            assertOomSweep(CONSTRUCTION_SLACK_MAX, CONSTRUCTION_SLACK_STEP, null, () -> {
+                HttpHeaderParser parser = new HttpHeaderParser(HEADER_BUFFER_SIZE, csPool);
+                parser.close();
+            });
         });
     }
 

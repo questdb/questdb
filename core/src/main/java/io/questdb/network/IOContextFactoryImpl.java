@@ -25,6 +25,8 @@
 package io.questdb.network;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
@@ -34,6 +36,8 @@ import io.questdb.std.WeakMutableObjectPool;
 import java.io.Closeable;
 
 public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFactory<C>, Closeable, EagerThreadSetup {
+
+    private static final Log LOG = LogFactory.getLog(IOContextFactoryImpl.class);
 
     private final CarrierLocal<WeakMutableObjectPool<C>> contextPool;
     private volatile boolean closed = false;
@@ -82,6 +86,16 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
 
     @Override
     public void setup() {
-        contextPool.get();
+        try {
+            contextPool.get();
+        } catch (CairoException e) {
+            // Only OOM is worth surviving: memory may free up, and newInstance() re-runs the
+            // pool supplier on the next connection. Any other failure is permanent, so let it
+            // escape instead of starting a server that rejects every connection in silence.
+            if (!CairoException.isCairoOomError(e)) {
+                throw e;
+            }
+            LOG.critical().$("context pool pre-fill failed on OOM, will retry lazily [e=").$((Throwable) e).I$();
+        }
     }
 }
