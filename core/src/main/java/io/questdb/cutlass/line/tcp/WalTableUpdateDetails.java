@@ -32,6 +32,15 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
 public class WalTableUpdateDetails extends TableUpdateDetails {
+    /**
+     * Sequencer transaction this table's writer was last checked for pending
+     * structure changes at. {@link Long#MIN_VALUE} forces the first check.
+     * <p>
+     * Read and written from the QWP ingest path only, which is single-threaded
+     * per cache, so it needs no synchronisation.
+     */
+    private long lastStructureCheckSeqTxn = Long.MIN_VALUE;
+
     public WalTableUpdateDetails(
             CairoEngine engine,
             @Nullable SecurityContext securityContext,
@@ -46,8 +55,16 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, commitInterval, commitOnClose, maxUncommittedRows);
     }
 
+    public long getLastStructureCheckSeqTxn() {
+        return lastStructureCheckSeqTxn;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
+    }
+
+    public void setLastStructureCheckSeqTxn(long seqTxn) {
+        lastStructureCheckSeqTxn = seqTxn;
     }
 }

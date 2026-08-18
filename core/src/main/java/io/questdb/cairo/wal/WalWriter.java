@@ -632,10 +632,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (isDistressed()) {
             return;
         }
-        if (isInColumnarWrite()) {
-            columnarAppender.cancelColumnarWrite();
+        try {
+            if (isInColumnarWrite()) {
+                columnarAppender.cancelColumnarWrite();
+            }
+            rollback0();
+        } catch (Throwable th) {
+            // Latch so the expel path's second close attempt short-circuits on
+            // the distressed check above instead of retrying the failed IO and
+            // replacing the original exception. rollback0() already latches
+            // its own failures; this extends the same guarantee to the
+            // columnar cancel.
+            distressed = true;
+            throw th;
         }
-        rollback0();
     }
 
     private void rollback0() {

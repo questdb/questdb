@@ -3725,7 +3725,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
-                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                // An executor that leaves compiledQuery at NONE gave up and fell back to the
+                // execution model below (e.g. compileCreate() bails out for every CREATE
+                // TABLE/VIEW/MATERIALIZED VIEW that isn't CREATE OR REPLACE VIEW). That fallback
+                // path owns completion logging for the statement -- either directly in
+                // compileUsingModel(), or later when the built Operation actually executes (e.g.
+                // executeCreateTable()). Logging "fin" here too would double-log completion.
+                if (compiledQuery.getType() != CompiledQuery.NONE) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
             } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
@@ -5058,45 +5066,56 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getSecurityContext().authorizeLiveViewCreate();
-        // Reject a name already taken up front, mirroring CREATE MATERIALIZED VIEW so
-        // the collision wording names the offending kind:
-        //   - a table / regular view / materialized view collision is always an error
-        //     ("table or view with the requested name already exists"), even under
-        //     IF NOT EXISTS - otherwise the shared create helper silently no-ops the
-        //     IF NOT EXISTS branch and a user is left believing a live view exists when
-        //     the name is actually a plain table;
-        //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
-        //     already exists" (mirroring "materialized view already exists") instead of
-        //     the generic "table exists" createLiveView would otherwise surface.
-        // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
-        final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
-        if (existingToken != null) {
-            if (!existingToken.isLiveView()) {
-                throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+            executionContext.getSecurityContext().authorizeLiveViewCreate();
+            // Reject a name already taken up front, mirroring CREATE MATERIALIZED VIEW so
+            // the collision wording names the offending kind:
+            //   - a table / regular view / materialized view collision is always an error
+            //     ("table or view with the requested name already exists"), even under
+            //     IF NOT EXISTS - otherwise the shared create helper silently no-ops the
+            //     IF NOT EXISTS branch and a user is left believing a live view exists when
+            //     the name is actually a plain table;
+            //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
+            //     already exists" (mirroring "materialized view already exists") instead of
+            //     the generic "table exists" createLiveView would otherwise surface.
+            // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
+            final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
+            if (existingToken != null) {
+                if (!existingToken.isLiveView()) {
+                    throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+                }
+                if (!op.isIgnoreIfExists()) {
+                    throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+                }
             }
-            if (!op.isIgnoreIfExists()) {
-                throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+            // validate base table exists and is WAL
+            final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+            if (baseTableToken == null) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
             }
-        }
-        // validate base table exists and is WAL
-        final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
-        if (baseTableToken == null) {
-            throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
-        }
-        if (!engine.isWalTable(baseTableToken)) {
-            throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
-        }
-        if (baseTableToken.isLiveView()) {
-            // Live-on-live composition is not supported; live views may
-            // become composable once the apply pipeline supports LV-as-base.
-            // Position at the base table name.
-            throw SqlException.$(op.getBaseTableNamePosition(),
-                    "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
-        }
+            if (!engine.isWalTable(baseTableToken)) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+            }
+            if (baseTableToken.isLiveView()) {
+                // Live-on-live composition is not supported; live views may
+                // become composable once the apply pipeline supports LV-as-base.
+                // Position at the base table name.
+                throw SqlException.$(op.getBaseTableNamePosition(),
+                        "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
+            }
 
-        engine.createLiveView(op, baseTableToken, executionContext);
-        return true;
+            engine.createLiveView(op, baseTableToken, executionContext);
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+            return true;
+        } catch (Throwable th) {
+            QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
     }
 
     private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
