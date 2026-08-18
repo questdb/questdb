@@ -104,6 +104,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long maxValue;
         private long minValue;
         private long next;
+        private long nullCount;
+        private long nullPos;
         private int rg;
         private int rgLo;
         private long rowHi;
@@ -147,7 +149,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             }
             while (rg >= rgLo) {
                 if (keyIdPtr == 0 && !decodeCurrentGroup()) {
-                    return false;
+                    // Out of groups, NOT out of answers: the implicit-null
+                    // prefix below still has to be served. Returning here is
+                    // what would drop it.
+                    break;
                 }
                 while (rowInGroup > 0) {
                     final long i = --rowInGroup;
@@ -166,6 +171,16 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 // Group exhausted; force a decode of the previous one.
                 rg--;
                 keyIdPtr = 0;
+            }
+            if (nullPos > minValue) {
+                // The implicit-null prefix, emitted LAST here rather than first:
+                // it is the lowest run of row ids, and this cursor descends.
+                // Same rows as the forward cursor's, same bound, opposite end.
+                next = --nullPos;
+                // No decoded group backs a prefix row.
+                setEmittedRow(-1);
+                hasNext = true;
+                return true;
             }
             return false;
         }
@@ -248,6 +263,18 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.rowInGroup = 0;
             this.groupRows = 0;
             setEmittedRow(-1);
+            // @see ParquetPostingIndexFwdReader.FwdCursor#of -- same bound, but
+            // nullPos starts at the TOP of the prefix and counts down, so the
+            // prefix leaves the cursor after the postings and descending order
+            // is preserved without a sort.
+            if (key == 0 && columnTop > 0 && minValue < columnTop) {
+                final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+                this.nullCount = Math.min(columnTop, hi);
+                this.nullPos = this.nullCount;
+            } else {
+                this.nullCount = 0;
+                this.nullPos = 0;
+            }
 
             final long range = rowGroupRangeForKey(key);
             if (range == IndexMetaFileReader.KEY_ABSENT) {

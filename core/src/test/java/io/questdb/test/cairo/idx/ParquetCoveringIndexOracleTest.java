@@ -26,6 +26,7 @@ package io.questdb.test.cairo.idx;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
@@ -58,6 +59,12 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
 
     private static final String INDEXED_PARTITION = "2024-01-01";
     private static final int ROW_COUNT = 60_000;
+    /**
+     * The synthetic implicit-null prefix length. Deliberately not a round
+     * fraction of a row group so a window inside it cannot coincide with a
+     * group boundary and pass on the pruning arithmetic alone.
+     */
+    private static final long COLUMN_TOP = 12_345;
 
     @Test
     public void testTheParquetReaderMatchesTheNativeOneEverywhere() throws Exception {
@@ -120,6 +127,113 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                                 (PostingIndexReader) parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD),
                                 key, w[0], w[1]
                         );
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * The same grid, over a reader carrying an implicit-null (columnTop) PREFIX.
+     * <p>
+     * Rows below {@code columnTop} carry no value, are not in the index at all,
+     * and key 0 (NULL) owns them implicitly. The native reader synthesises them
+     * ahead of the postings; every one of the parquet reader's four answers --
+     * both cursors and both metadata primitives -- has to agree with that, and
+     * with each other, or {@code count(*)} disagrees with the rows a scan
+     * produces.
+     * <p>
+     * <b>Why the columnTop is injected rather than built by SQL.</b> No SQL
+     * sequence reaches a parquet-sealed index with a non-zero top:
+     * {@code CONVERT PARTITION TO PARQUET} collapses an intermediate top to 0
+     * (the NULLs become real key-0 postings in the parquet), an O3 append into a
+     * parquet partition does the same, and a column whose top EQUALS the
+     * partition size is never sealed at all -- the seal is guarded on
+     * {@code partitionSize > columnTop} and the partition dispatches to
+     * {@code IndexFwdNullReader} instead. {@code TableWriter} asserts that
+     * invariant outright. So the state is reachable only through the binding
+     * call itself, which is what this fixture drives: both readers are re-bound
+     * through their PRODUCTION entry points ({@code of} / {@code ofParquet}) with
+     * the same synthetic top over the same data, and the native answer is the
+     * oracle. That keeps the reader honest for a future ATTACH PARQUET or
+     * restore path that hands it one, which the class would otherwise answer
+     * inconsistently -- the primitives counting a prefix the cursors do not
+     * emit.
+     * <p>
+     * The fixture's symbols are never NULL, so key 0 has no postings at all and
+     * the prefix is the WHOLE of its answer -- a cursor that skips it returns
+     * empty rather than short, which no row-count assertion could miss.
+     * <p>
+     * Covered values are deliberately not compared here: the native cursor
+     * serves the prefix with its covering state unset and returns type defaults
+     * ({@code NaN} / 0) rather than the covered column's real value for those
+     * rows, which is a native question and not this reader's.
+     */
+    @Test
+    public void testTheParquetReaderMatchesTheNativeOneOverAnImplicitNullPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            createArm("native_top_arm");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            createArm("parquet_top_arm");
+
+            try (
+                    TableReader nativeReader = engine.getReader(engine.verifyTableName("native_top_arm"));
+                    TableReader parquetReader = engine.getReader(engine.verifyTableName("parquet_top_arm"))
+            ) {
+                final int nativeCol = nativeReader.getMetadata().getColumnIndex("sym");
+                final int parquetCol = parquetReader.getMetadata().getColumnIndex("sym");
+
+                // Bound BEFORE the rebind, so the assertion below sees the form
+                // the dispatch actually chose rather than one this test picked.
+                final IndexReader nativeFwd = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD);
+                final IndexReader nativeBwd = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_BACKWARD);
+                final IndexReader parquetFwd = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD);
+                final IndexReader parquetBwd = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_BACKWARD);
+                Assert.assertTrue(
+                        "the parquet arm must actually dispatch to the parquet reader",
+                        parquetFwd instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertFalse(
+                        "the native arm must NOT dispatch to the parquet reader",
+                        nativeFwd instanceof AbstractParquetPostingIndexReader
+                );
+                // The premise this whole fixture rests on: with the top at 0 the
+                // prefix is empty and none of the code under test runs, so a
+                // reader that came back already carrying one would mean the
+                // injection below was measuring something else.
+                Assert.assertEquals("a sealed parquet index must carry a zero column top", 0, parquetFwd.getColumnTop());
+                Assert.assertEquals(0, nativeFwd.getColumnTop());
+
+                rebindWithColumnTop(nativeReader, nativeFwd, nativeCol, COLUMN_TOP);
+                rebindWithColumnTop(nativeReader, nativeBwd, nativeCol, COLUMN_TOP);
+                rebindWithColumnTop(parquetReader, parquetFwd, parquetCol, COLUMN_TOP);
+                rebindWithColumnTop(parquetReader, parquetBwd, parquetCol, COLUMN_TOP);
+                Assert.assertEquals(COLUMN_TOP, parquetFwd.getColumnTop());
+                Assert.assertEquals(COLUMN_TOP, nativeFwd.getColumnTop());
+
+                // Windows that start below, inside, at and past the prefix, plus
+                // the two that bound it exactly. A window starting at 0 alone
+                // would leave the missing `- minValue` term invisible.
+                final long[][] windows = {
+                        {0, Long.MAX_VALUE},
+                        {0, COLUMN_TOP - 1},
+                        {0, COLUMN_TOP},
+                        {1, Long.MAX_VALUE},
+                        {COLUMN_TOP / 2, Long.MAX_VALUE},
+                        {COLUMN_TOP / 2, COLUMN_TOP / 2 + 100},
+                        {COLUMN_TOP - 1, COLUMN_TOP + 1},
+                        {COLUMN_TOP, Long.MAX_VALUE},
+                        {COLUMN_TOP + 1000, Long.MAX_VALUE},
+                        {ROW_COUNT, Long.MAX_VALUE},
+                };
+
+                // Key 0 is the one the prefix belongs to; the rest are the
+                // control that says the prefix was added to key 0 ONLY.
+                for (int key = 0; key < 8; key++) {
+                    for (long[] w : windows) {
+                        assertSameCursorSequence(nativeFwd, parquetFwd, key, w[0], w[1], IndexReader.DIR_FORWARD);
+                        assertSameCursorSequence(nativeBwd, parquetBwd, key, w[0], w[1], IndexReader.DIR_BACKWARD);
                     }
                 }
             }
@@ -200,6 +314,65 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                             "selectKthMatch disagreed [key=" + key + ", k=" + k + ']', a, b
                     );
                 }
+            }
+        }
+    }
+
+    /**
+     * Drains two already-bound readers over one window and compares the row-id
+     * sequences. Unlike {@link #assertSameSequence} it does not re-fetch the
+     * readers from their {@code TableReader}, because that would rebind them and
+     * discard the injected column top.
+     */
+    private void assertSameCursorSequence(
+            IndexReader nativeReader, IndexReader parquetReader,
+            int key, long min, long max, int direction
+    ) {
+        final LongList expected = new LongList();
+        final LongList ignored = new LongList();
+        drain(nativeReader, key, min, max, null, expected, ignored);
+
+        final LongList actual = new LongList();
+        drain(parquetReader, key, min, max, null, actual, ignored);
+
+        final String where = "[key=" + key + ", min=" + min + ", max=" + max + ", dir=" + direction + ']';
+        Assert.assertEquals("posting count disagreed " + where, expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            Assert.assertEquals("row id disagreed at " + i + ' ' + where, expected.getQuick(i), actual.getQuick(i));
+        }
+    }
+
+    /**
+     * Re-binds one index reader through the production entry point its form
+     * uses -- {@code ofParquet} for the parquet form, the nine-argument
+     * {@code of} for the native one -- with {@code columnTop} substituted and
+     * everything else exactly what {@code TableReader.getIndexReader} would have
+     * passed.
+     */
+    private void rebindWithColumnTop(TableReader reader, IndexReader indexReader, int columnIndex, long columnTop) {
+        final long partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+        final long partitionTxn = reader.getTxFile().getPartitionNameTxn(0);
+        final int writerIndex = reader.getMetadata().getWriterIndex(columnIndex);
+        final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, writerIndex);
+        final CharSequence columnName = reader.getMetadata().getColumnName(columnIndex);
+        final int timestampType = reader.getMetadata().getColumnType(reader.getMetadata().getTimestampIndex());
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForNativePartition(
+                    path, timestampType, reader.getPartitionedBy(), partitionTimestamp, partitionTxn
+            );
+            if (indexReader instanceof AbstractParquetPostingIndexReader parquet) {
+                parquet.ofParquet(
+                        configuration, path, columnName, columnNameTxn, partitionTxn, columnTop,
+                        reader.getMetadata(), reader.getColumnVersionReader(), partitionTimestamp,
+                        reader.getPartitionIndexTxn(0, columnIndex),
+                        reader.getPartitionIndexImFileSize(0, columnIndex)
+                );
+            } else {
+                indexReader.of(
+                        configuration, path, columnName, columnNameTxn, partitionTxn, columnTop,
+                        reader.getMetadata(), reader.getColumnVersionReader(), partitionTimestamp
+                );
             }
         }
     }

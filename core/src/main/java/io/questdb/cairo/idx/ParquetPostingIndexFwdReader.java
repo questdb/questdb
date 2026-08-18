@@ -117,6 +117,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private long maxValue;
         private long minValue;
         private long next;
+        private long nullCount;
+        private long nullPos;
         private int rg;
         private int rgHi;
         private long rowHi;
@@ -161,6 +163,24 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         @Override
         public boolean hasNext() {
             if (hasNext) {
+                return true;
+            }
+            if (nullPos < nullCount) {
+                // The implicit-null prefix, which comes FIRST in row order and
+                // is not in the index at all: rows below columnTop carry no
+                // value, so key 0 owns them implicitly. Emitted here rather
+                // than by a wrapper cursor because this reader's own
+                // countMatchesClamped and selectKthMatch already count them --
+                // a cursor that skipped them would make count(*) disagree with
+                // the rows a scan produces, and would trip the covered
+                // re-decode row count check outright.
+                next = nullPos++;
+                // No decoded group backs a prefix row, so no covered value can
+                // be served for it. -1 makes isCoveredAvailable false and the
+                // accessors throw, rather than handing back whatever row the
+                // last decode left addressed.
+                setEmittedRow(-1);
+                hasNext = true;
                 return true;
             }
             while (rg <= rgHi) {
@@ -263,6 +283,19 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             this.rowInGroup = 0;
             this.groupRows = 0;
             setEmittedRow(-1);
+            // Bounded by the UNCLAMPED caller max and by columnTop only: the
+            // prefix is independent of the index, so getEntryMaxValue does not
+            // clamp it. Matches PostingIndexFwdReader.getCursor's NullCursor,
+            // including its Long.MAX_VALUE guard -- maxValue + 1 wraps negative
+            // there and would leave nullCount at Long.MIN_VALUE.
+            if (key == 0 && columnTop > 0 && minValue < columnTop) {
+                final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+                this.nullCount = Math.min(columnTop, hi);
+                this.nullPos = minValue;
+            } else {
+                this.nullCount = 0;
+                this.nullPos = 0;
+            }
 
             final long range = rowGroupRangeForKey(key);
             if (range == IndexMetaFileReader.KEY_ABSENT) {
