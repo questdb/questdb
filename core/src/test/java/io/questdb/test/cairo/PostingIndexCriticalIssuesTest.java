@@ -935,13 +935,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * leaving it unmapped while the pending batch is still queued and valueMemSize still
      * reflects the old extent. The failed commit's caller then rolls back, re-entering
      * {@code flushAllPending} through {@code rollbackValues()}. That second flush must not
-     * dereference the closed valueMem: under {@code -ea} it asserts in
-     * {@code MemoryCR.addressOf}, and in a production build it wild-writes at
-     * {@code pageAddress} 0. {@code flushAllPending} surfaces a clean {@link CairoException}
-     * instead, so the caller can distress the writer and recover the chain on reopen.
+     * write into the closed valueMem: its first act is {@code jumpTo(valueMemSize)}, and
+     * because {@code close()} zeroes {@code lim} and {@code appendAddress} the
+     * {@code checkAndExtend()} short-circuit no longer fires for a positive valueMemSize,
+     * so the call lands in {@code extend0()} -- which trips {@code assert size > 0} under
+     * {@code -ea} and dereferences the nulled {@code FilesFacade} in
+     * {@code TableUtils.allocateDiskSpace} without it. {@code flushAllPending} surfaces a clean {@link CairoException} instead,
+     * so the caller can distress the writer and recover the chain on reopen.
      */
     @Test
-    public void testRollbackValuesToleratesClosedValueMemAfterValueFileRemapFailure() throws Exception {
+    public void testRollbackValuesRejectsFlushOverClosedValueMemAfterValueFileRemapFailure() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 1024);
         final IntHashSet valueFds = new IntHashSet();
         final AtomicBoolean armRemapFailure = new AtomicBoolean(false);
@@ -1009,19 +1012,111 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         writer.rollbackValues(gen0MaxValue);
                         Assert.fail("rollbackValues must not flush into closed value memory");
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "closed value memory");
+                        // Pin the flush message in full: the bare "closed value memory" substring
+                        // also matches reencodeAllGenerations' guard, which would mask the removal
+                        // of this one. flushAllPending and flushAllPendingDense emit this exact
+                        // string, so no narrower assertion exists without changing production text.
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "cannot flush posting index into closed value memory"
+                        );
                     }
                 } finally {
-                    // The writer is degraded (valueMem closed). Disarm so close()'s cleanup
-                    // path does its own I/O without the injected fault, then free it.
-                    armRemapFailure.set(false);
+                    // The writer is degraded (valueMem closed). No disarm is needed: the fault
+                    // fires only for an fd in valueFds, and MemoryCMARWImpl.close() already
+                    // routed the .pv fd through Vm.bestEffortClose -> ff.close(), which the
+                    // close(long) override above drops from the set. close() opens no file of
+                    // its own, so the armed mremap cannot match anything it does.
                     try {
                         writer.close();
                     } catch (CairoException ignore) {
-                        // close() frees resources without flushing, so it should not throw here;
-                        // the catch is defensive against keyMem trim I/O, and close()'s finally
-                        // frees every resource regardless.
+                        // close() already wraps its keyMem trim I/O in a catch of its own, so
+                        // this should not throw. Swallow it regardless: a throw escaping this
+                        // finally would replace -- and hide -- a genuine assertion failure
+                        // raised by the try block above.
                     }
+                }
+            }
+        });
+    }
+
+    /**
+     * {@code truncate()} frees the pending buffers and closes valueMem before it opens the
+     * replacement {@code .pv}. When that open fails (ENOSPC/EMFILE) the resets at its tail
+     * never run, so the writer is left with valueMem closed, {@code genCount > 0} and
+     * {@code pendingCountsAddr == 0} -- the degraded state truncate()'s own comment
+     * acknowledges. A later {@code rollbackValues()} sails straight past
+     * {@code flushAllPending}'s guard (the {@code pendingCountsAddr == 0} early-return) into
+     * {@code reencodeAllGenerations}, whose Phase 1 reads every generation out of valueMem.
+     * <p>
+     * That deref is worse than the flush one: gen 0 always sits at file offset 0, and
+     * {@code MemoryCR.checkOffsetMapped(0)} is {@code 0 <= size()}, which holds on a closed
+     * mapping where {@code size()} is 0. So {@code addressOf(0)} passes even under
+     * {@code -ea} and returns {@code pageAddress + 0 == 0}; Phase 1 then reads from address
+     * 0 and the JVM dies with SIGSEGV. {@code reencodeAllGenerations} must reject the closed
+     * mapping up front instead.
+     * <p>
+     * The assertion names the reencode message specifically: if a future change moved
+     * {@code flushAllPending}'s guard above its {@code hasPendingData} early-return, that
+     * guard would fire first with a different message and mask the removal of this one.
+     */
+    @Test
+    public void testRollbackValuesRejectsReencodeOverClosedValueMemAfterTruncateOpenFailure() throws Exception {
+        final AtomicBoolean armValueFileOpenFailure = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armValueFileOpenFailure.get() && Utf8s.containsAscii(name, ".pv")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "posting_reencode_closed_valuemem";
+                PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                try {
+                    // Phase 1: a clean commit builds gen 0, so genCount > 0 when the fault lands.
+                    long row = 0;
+                    for (int k = 0; k < 256; k++) {
+                        for (int r = 0; r < 8; r++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    final long gen0MaxValue = row - 1;
+                    writer.setMaxValue(gen0MaxValue);
+                    writer.commit();
+                    Assert.assertTrue("commit() must build at least one generation", writer.getGenCount() > 0);
+
+                    // Phase 2: fail the replacement .pv open inside truncate(). truncate() does
+                    // not poison the writer, so the entry points below stay callable.
+                    armValueFileOpenFailure.set(true);
+                    try {
+                        writer.truncate();
+                        Assert.fail("expected the armed .pv open failure to abort truncate()");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                    }
+                    armValueFileOpenFailure.set(false);
+                    Assert.assertTrue("truncate() must leave a generation behind for the reencode to read",
+                            writer.getGenCount() > 0);
+
+                    // Phase 3: the reencode entry point must reject the closed mapping.
+                    try {
+                        writer.rollbackValues(gen0MaxValue - 1);
+                        Assert.fail("rollbackValues must not reencode over closed value memory");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "cannot reencode posting index generations over closed value memory"
+                        );
+                    }
+                } finally {
+                    // The writer is degraded (valueMem closed). Disarm so close()'s cleanup
+                    // does its own I/O without the injected fault, then free it.
+                    armValueFileOpenFailure.set(false);
+                    writer.close();
                 }
             }
         });
