@@ -1036,7 +1036,14 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         // index at all, so the k-th match may land inside it.
         final long nulls = nullPrefixCount(key, minValue, nullMaxValue);
         if (k < nulls) {
-            return k;
+            // ABSOLUTE, not relative: the prefix rows this counts start at
+            // minValue, not at 0, and the caller (CoveringIndexRecordCursorFactory's
+            // firstAbs/lastAbs) bounds a chunk with what comes back. Returning k
+            // agrees with the native reader only when minValue is 0, which is
+            // false of every page frame that starts mid-partition -- the same
+            // blind spot the cursors' relative ids have, in the opposite
+            // direction.
+            return minValue + k;
         }
         long remaining = k - nulls;
         final long range = rowGroupRangeForKey(key);

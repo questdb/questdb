@@ -391,6 +391,32 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         );
         Assert.assertTrue("a count can never be negative " + where + " got " + actual, actual >= 0);
         Assert.assertEquals("countMatchesClamped disagreed " + where, expected, actual);
+        // selectKthMatch's contract is an ABSOLUTE row id -- the caller bounds a
+        // chunk with it -- where the cursors return one relative to minValue.
+        // Sampling both ends and the middle catches an off-by-minValue on every
+        // window whose lower bound is not 0, which is the only kind that can
+        // show it.
+        for (long k : new long[]{0, 1, 2, actual / 2, actual - 2, actual - 1, actual}) {
+            if (k < 0) {
+                continue;
+            }
+            final long a = nativeReader.selectKthMatch(key, min, nullMax, maxClamped, k);
+            final long b = parquetReader.selectKthMatch(key, min, nullMax, maxClamped, k);
+            final String at = " [k=" + k + "] " + where;
+            Assert.assertNotEquals("-1 is consumed as an absolute row id, never as a sentinel" + at, -1, b);
+            if (a == Numbers.LONG_NULL) {
+                continue;
+            }
+            Assert.assertNotEquals(
+                    "the parquet primitive must answer where the native one does" + at,
+                    Numbers.LONG_NULL, b
+            );
+            Assert.assertEquals("selectKthMatch disagreed" + at, a, b);
+            Assert.assertTrue(
+                    "an absolute row id must sit inside the window it was selected from" + at + " got " + b,
+                    b >= min
+            );
+        }
         // Only when the two bounds coincide does the count describe exactly the
         // window the cursor walks; with a separate nullMax it may legitimately
         // include prefix rows past maxClamped.
