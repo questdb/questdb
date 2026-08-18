@@ -195,6 +195,34 @@ For each cell present in the FRAGMENT, merge into the SAME cell of the target da
 so the merge must iterate the fragment's cells, not the day's, and must not touch a cell the fragment
 does not contain.
 
+> **Mechanics established 2026-08-18, so the next session starts from facts rather than a search.**
+>
+> - **Write it as a SEPARATE method** guarded by `isRoutedComposite()`, delegated to from
+>   `squashSplitPartitions`, and leave the plain loop untouched. Invariant 1 then holds by construction
+>   rather than by review, and the abort path is deleting one method — which matters, because the gate
+>   is the safety net: develop with it lifted, restore it if the work does not converge (done once
+>   already this session).
+> - **Restrict the first cut to day groups that are NOT the table's active tail**
+>   (`partitionIndexHi < txWriter.getPartitionCount()`), and log the skip. That deliberately avoids
+>   `lastPartitionSquashed`'s `fixedRowCount`/`transientRowCount` bookkeeping, which is the genuinely
+>   crash-sensitive part. Landing mid-table fragments first is a real improvement and a much smaller
+>   blast radius; the active-tail case is its own follow-up.
+> - **Size updates:** use `TxWriter#updatePartitionSizeByRawIndex(rawIndex, partitionTimestampLo,
+>   rowCount)` — index-based, so it is unambiguous when several cells share a raw timestamp. **Note the
+>   asymmetry:** unlike the `...ByTimestamp` variants it does NOT bump `recordStructureVersion`. Check
+>   whether the caller needs that bump before assuming parity.
+> - **Column versions need no per-cell work:** `ColumnVersionWriter#squashPartition` already calls
+>   `removeAllCellsAtTimestamp(sourceTs)`, discarding the fragment's every cell in one go. Call it ONCE
+>   per fragment, after that fragment's cells have all been appended — not once per cell.
+> - **Guard the adopt case.** A fragment cell whose day counterpart does not exist cannot be *appended*
+>   into anything (it would be a move/adopt, not a merge). If any fragment cell lacks a day counterpart,
+>   skip that fragment and log it, rather than inventing a target.
+>
+> **Fuzz coverage, checked (Task 3 Step 3 answered): there is NO squash generator.** Nothing under
+> `core/src/test/java/io/questdb/test/fuzz/` emits `SQUASH`, so there is no fuzz classification to flip
+> when the gates come off. Recording that rather than implying coverage that does not exist — the
+> acceptance tests in `CompositeSquashTest` are the whole safety net for this work.
+
 - [ ] **Step 3: Remove the fragment container when its last cell is merged**
 
 Same shape as 1B's day-container housekeeping, and the same two guards apply: nothing attached at that
