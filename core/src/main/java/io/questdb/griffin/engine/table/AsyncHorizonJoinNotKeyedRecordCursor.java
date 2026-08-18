@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -222,14 +221,17 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
         // Get slave page frame cursor for time frame initialization
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
-        // Initialize record functions with a symbol table source that routes lookups
-        // to the correct source (master or slave) based on column mappings
+        // Initialize the symbol table source that routes lookups to the correct source
+        // (master or slave) based on column mappings
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
 
-        // Initialize record with the owner's map value
+        // Initialize record with the owner's map value. The atom initializes the group by
+        // functions (this cursor's groupByFunctions) in initTimeFrameCursors(), before any frame
+        // is dispatched, and donates the owner state to the per-worker clones. Re-initializing
+        // them here would re-run stateful initialization, such as a cursor comparison re-executing
+        // its scalar sub-query, and could diverge from the state the workers observe.
         recordA.of(atom.getOwnerMapValue());
-        Function.init(groupByFunctions, symbolTableSource, executionContext, null);
 
         isValueBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

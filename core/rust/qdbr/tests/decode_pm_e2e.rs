@@ -24,7 +24,7 @@ use common::{
 
 use questdbr::allocator::{MemTracking, QdbAllocator};
 use questdbr::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat};
-use questdbr::parquet_metadata::convert::convert_from_parquet;
+use questdbr::parquet_metadata::convert::{convert_from_parquet, NoBloomFilterSource};
 use questdbr::parquet_metadata::reader::ParquetMetaReader;
 use questdbr::parquet_metadata::types::{Codec, ColumnFlags, FieldRepetition};
 use questdbr::parquet_read::decode_column::{
@@ -182,7 +182,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
         qdb_meta.as_ref(),
         parquet_footer_offset,
         parquet_footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");
@@ -248,19 +248,18 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
                 desc.fixed_byte_len,
                 desc.max_rep_level,
                 desc.max_def_level,
-                col_name,
                 repetition,
             );
 
             let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
+            let col_start = chunk.byte_range_start as usize;
+            let col_end = col_start + chunk.total_compressed as usize;
             decode_column_chunk_with_params(
                 &mut ctx,
                 &mut bufs,
-                parquet_bytes,
-                chunk.byte_range_start as usize,
-                chunk.total_compressed as usize,
+                &parquet_bytes[col_start..col_end],
                 compression,
                 descriptor,
                 chunk.num_values as i64,
@@ -333,7 +332,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
         qdb_meta.as_ref(),
         parquet_footer_offset,
         parquet_footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");
@@ -394,19 +393,18 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
                 desc.fixed_byte_len,
                 desc.max_rep_level,
                 desc.max_def_level,
-                col_name,
                 repetition,
             );
 
             let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
+            let col_start = chunk.byte_range_start as usize;
+            let col_end = col_start + chunk.total_compressed as usize;
             decode_column_chunk_with_params(
                 &mut ctx,
                 &mut bufs,
-                parquet_bytes,
-                chunk.byte_range_start as usize,
-                chunk.total_compressed as usize,
+                &parquet_bytes[col_start..col_end],
                 compression,
                 descriptor,
                 chunk.num_values as i64,
@@ -491,7 +489,7 @@ fn e2e_single_timestamp() {
         qdb_meta.as_ref(),
         parquet_footer_offset,
         parquet_footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");
@@ -634,7 +632,7 @@ fn e2e_multi_column() {
         qdb_meta.as_ref(),
         parquet_footer_offset,
         parquet_footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");
@@ -727,8 +725,15 @@ fn e2e_flba_uuid() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fs) = convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl, None, None)
-        .expect("convert_from_parquet");
+    let (pm_bytes, pm_fs) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        fo,
+        fl,
+        &NoBloomFilterSource,
+        None,
+    )
+    .expect("convert_from_parquet");
     let pm_reader =
         ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
@@ -761,8 +766,15 @@ fn e2e_flba_long256() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fs) = convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl, None, None)
-        .expect("convert_from_parquet");
+    let (pm_bytes, pm_fs) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        fo,
+        fl,
+        &NoBloomFilterSource,
+        None,
+    )
+    .expect("convert_from_parquet");
     let pm_reader =
         ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
@@ -795,8 +807,15 @@ fn e2e_snappy_compressed() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fs) = convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl, None, None)
-        .expect("convert_from_parquet");
+    let (pm_bytes, pm_fs) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        fo,
+        fl,
+        &NoBloomFilterSource,
+        None,
+    )
+    .expect("convert_from_parquet");
     let pm_reader =
         ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
@@ -833,8 +852,15 @@ fn e2e_zstd_compressed() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fs) = convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl, None, None)
-        .expect("convert_from_parquet");
+    let (pm_bytes, pm_fs) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        fo,
+        fl,
+        &NoBloomFilterSource,
+        None,
+    )
+    .expect("convert_from_parquet");
     let pm_reader =
         ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
@@ -867,8 +893,15 @@ fn e2e_nullable_optional() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fs) = convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl, None, None)
-        .expect("convert_from_parquet");
+    let (pm_bytes, pm_fs) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        fo,
+        fl,
+        &NoBloomFilterSource,
+        None,
+    )
+    .expect("convert_from_parquet");
     let pm_reader =
         ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
@@ -954,7 +987,7 @@ fn e2e_multiple_row_groups() {
         qdb_meta.as_ref(),
         parquet_footer_offset,
         parquet_footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");
@@ -1027,19 +1060,18 @@ fn e2e_multiple_row_groups() {
             desc.fixed_byte_len,
             desc.max_rep_level,
             desc.max_def_level,
-            col_name,
             repetition,
         );
 
         let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
+        let col_start = chunk.byte_range_start as usize;
+        let col_end = col_start + chunk.total_compressed as usize;
         let decoded_rows = decode_column_chunk_with_params(
             &mut ctx,
             &mut bufs,
-            &parquet_bytes,
-            chunk.byte_range_start as usize,
-            chunk.total_compressed as usize,
+            &parquet_bytes[col_start..col_end],
             compression,
             descriptor,
             chunk.num_values as i64,
@@ -1092,7 +1124,7 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
         qdb_meta.as_ref(),
         parquet_footer_offset,
         parquet_footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");
@@ -1133,19 +1165,18 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
         desc.fixed_byte_len,
         desc.max_rep_level,
         desc.max_def_level,
-        col_name,
         repetition,
     );
 
     let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
     let mut bufs = ColumnChunkBuffers::new(allocator);
 
+    let col_start = chunk.byte_range_start as usize;
+    let col_end = col_start + chunk.total_compressed as usize;
     decode_column_chunk_filtered_with_params::<FILL_NULLS>(
         &mut ctx,
         &mut bufs,
-        parquet_bytes,
-        chunk.byte_range_start as usize,
-        chunk.total_compressed as usize,
+        &parquet_bytes[col_start..col_end],
         compression,
         descriptor,
         chunk.num_values as i64,

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
@@ -70,6 +71,29 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
+    AsyncFilterContext(
+            CairoConfiguration configuration,
+            AsyncHorizonJoinResources resources,
+            int slotCount,
+            int filteredMemoryRecordCount,
+            long ownerMemoryPoolMaxBytes,
+            long perWorkerMemoryPoolMaxBytes
+    ) {
+        this(
+                configuration,
+                resources.takeCompiledFilter(),
+                resources.takeBindVarMemory(),
+                resources.takeBindVarFunctions(),
+                resources.takeFilter(),
+                resources.getFilterUsedColumnIndexes(),
+                resources.takePerWorkerFilters(),
+                slotCount,
+                filteredMemoryRecordCount,
+                ownerMemoryPoolMaxBytes,
+                perWorkerMemoryPoolMaxBytes
+        );
+    }
+
     public AsyncFilterContext(
             CairoConfiguration configuration,
             @Nullable CompiledFilter compiledFilter,
@@ -91,7 +115,7 @@ public class AsyncFilterContext implements Closeable {
         this.perWorkerFilters = perWorkerFilters;
 
         try {
-            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolMaxBytes);
+            ownerMemoryPool = new PageFrameMemoryPool(configuration, ownerMemoryPoolMaxBytes);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -107,7 +131,7 @@ public class AsyncFilterContext implements Closeable {
             perWorkerAuxAddresses = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolMaxBytes));
+                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes));
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
@@ -127,7 +151,7 @@ public class AsyncFilterContext implements Closeable {
                 frameFilteredMemoryRecords = null;
             }
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -153,23 +177,23 @@ public class AsyncFilterContext implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(compiledFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerFilter);
-        Misc.freeObjList(perWorkerFilters);
-        Misc.free(ownerMemoryPool);
-        Misc.freeObjList(perWorkerMemoryPools);
-        Misc.free(ownerFilteredRows);
-        Misc.freeObjList(perWorkerFilteredRows);
-        Misc.free(ownerDataAddresses);
-        Misc.freeObjList(perWorkerDataAddresses);
-        Misc.free(ownerAuxAddresses);
-        Misc.freeObjList(perWorkerAuxAddresses);
-        if (frameFilteredMemoryRecords != null) {
-            Misc.freeObjList(frameFilteredMemoryRecords);
-        }
-        Misc.free(ownerPageFrameFilteredMemoryRecord);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, bindVarFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMemoryPool);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMemoryPools);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilteredRows);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilteredRows);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerDataAddresses);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerDataAddresses);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAuxAddresses);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAuxAddresses);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, frameFilteredMemoryRecords);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public DirectLongList getAuxAddresses(int slotId) {

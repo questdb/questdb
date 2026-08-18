@@ -25,7 +25,6 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -43,7 +42,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
     public SqlExecutionCircuitBreakerWrapper(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
-        networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration, MemoryTag.NATIVE_CB2);
+        networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration);
     }
 
     @Override
@@ -59,6 +58,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     @Override
     public boolean checkIfTripped() {
         return delegate.checkIfTripped();
+    }
+
+    @Override
+    public boolean checkIfTrippedNoThrottle() {
+        return delegate.checkIfTrippedNoThrottle();
     }
 
     @Override
@@ -112,7 +116,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         } else {
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
             networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
-            networkSqlExecutionCircuitBreaker.resetTimer();
+            networkSqlExecutionCircuitBreaker.rearmTimer();
             networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
             delegate = networkSqlExecutionCircuitBreaker;
         }

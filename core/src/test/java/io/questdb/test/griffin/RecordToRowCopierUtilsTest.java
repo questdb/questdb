@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
@@ -36,11 +37,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -703,6 +706,123 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into dst_str2 select ts, s::varchar from src_str");
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_str order by ts", "dst_str2 order by ts", LOG);
+        });
+    }
+
+    @Test
+    public void testTransferDecimalIntoNonDecimalTargetRejected() {
+        // RowAsserter fails on any put, so a silent write into a non-decimal column is caught too.
+        // Zero is what clears transferDecimal's precision guard, leaving the storage switch to reject.
+        final Decimal256 decimal256 = new Decimal256();
+        final Decimal128 decimal128 = new Decimal128();
+        final RowAsserter row = new RowAsserter();
+
+        for (int toType : new int[]{ColumnType.INT, ColumnType.LONG, ColumnType.DOUBLE, ColumnType.UUID}) {
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal8(row, 0, decimal256, ColumnType.getDecimalType(1, 0), toType, (byte) 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal16(row, 0, decimal256, ColumnType.getDecimalType(4, 0), toType, (short) 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal32(row, 0, decimal256, ColumnType.getDecimalType(9, 0), toType, 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal64(row, 0, decimal256, ColumnType.getDecimalType(18, 0), toType, 0L));
+            assertTransferDecimalRejected(toType, () -> {
+                decimal128.ofLong(0, 0);
+                RecordToRowCopierUtils.transferDecimal128(row, 0, decimal256, ColumnType.getDecimalType(38, 0), toType, decimal128);
+            });
+            assertTransferDecimalRejected(toType, () -> {
+                decimal256.ofLong(0, 0);
+                RecordToRowCopierUtils.transferDecimal256(row, 0, decimal256, ColumnType.getDecimalType(76, 0), toType);
+            });
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferByteToDecimal(row, 0, (byte) 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferShortToDecimal(row, 0, (short) 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferIntToDecimal(row, 0, 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferLongToDecimal(row, 0, 0L, decimal256, toType));
+        }
+    }
+
+    private static void assertTransferDecimalRejected(int toType, Runnable transfer) {
+        try {
+            transfer.run();
+            Assert.fail("expected the transfer to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot store decimal into column type: " + ColumnType.nameOf(toType));
+        }
+    }
+
+    @Test
+    public void testMalformedVarcharConversionsAreNull() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR)");
+            execute("CREATE TABLE dst_direct_str (s STRING)");
+            execute("CREATE TABLE dst_str (s STRING)");
+            execute("CREATE TABLE dst_sym (sym SYMBOL)");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst_direct_str SELECT v FROM src");
+            execute("INSERT INTO dst_str SELECT replace(v, 'z', 'z') FROM src");
+            execute("INSERT INTO dst_sym SELECT v FROM src");
+
+            assertQuery("""
+                    SELECT direct.s IS NULL AS direct_str_null,
+                           decoded.s IS NULL AS decoded_str_null,
+                           sym IS NULL AS sym_null
+                    FROM dst_direct_str direct
+                    CROSS JOIN dst_str decoded
+                    CROSS JOIN dst_sym
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            direct_str_null\tdecoded_str_null\tsym_null
+                            true\ttrue\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testO3InsertSelectVarcharToString() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dst VALUES ('tail', '1970-01-01T03:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow(3_600_000_000L);
+                row.putVarchar(0, new Utf8String("über"));
+                row.append();
+
+                row = writer.newRow(7_200_000_000L);
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst SELECT v, ts FROM src");
+
+            assertQuery("SELECT ts, s, s IS NULL AS is_null FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tis_null
+                            1970-01-01T01:00:00.000000Z\tüber\tfalse
+                            1970-01-01T02:00:00.000000Z\t\ttrue
+                            1970-01-01T03:00:00.000000Z\ttail\tfalse
+                            """);
         });
     }
 

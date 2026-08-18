@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.jit.JitUtil;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -36,6 +37,23 @@ import org.junit.Test;
  * 3. The SQL plan shows the expected interval filters
  */
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
+
+    @Test
+    public void testAndOffsetWithSubQueryPredicateArg() throws Exception {
+        // a sub-query expression node has a null token; and_offset intrinsic analysis
+        // recurses into its predicate argument and used to NPE on it. It must fail
+        // with a clean SQL error instead (and_offset is not a user-callable function).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE flags (b BOOLEAN);");
+            execute("INSERT INTO flags VALUES (true);");
+            assertException(
+                    "select * from trades where and_offset((select b from flags limit 1), 'h', 1)",
+                    27,
+                    "unknown function name"
+            );
+        });
+    }
 
     @Test
     public void testDayOffsetPushdown() throws Exception {
@@ -74,6 +92,50 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2022-01-01T12:00:00.000000Z\t150.0
                             2022-12-31T12:00:00.000000Z\t200.0
                             """);
+        });
+    }
+
+    @Test
+    public void testDynamicBoundOffsetPredicateRemainsAsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T01:00:00.000000Z'),
+                        ('2024-01-02T01:00:00.000000Z'),
+                        ('2024-01-03T01:00:00.000000Z')
+                    """);
+            bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
+
+            assertQuery("""
+                    SELECT shifted
+                    FROM (SELECT dateadd('h', -1, ts) shifted FROM t)
+                    WHERE shifted = $1
+                    """)
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .withPlanContaining("Filter filter: $0::timestamp=shifted")
+                    .returns("""
+                            shifted
+                            2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testEmptyOffsetInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T01:00:00.000000Z')");
+
+            assertQuery("""
+                    SELECT shifted
+                    FROM (SELECT dateadd('h', -1, ts) shifted FROM t)
+                    WHERE shifted > NULL
+                    """)
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .returns("shifted\n");
         });
     }
 
@@ -117,6 +179,88 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2022-12-31T22:30:00.000000Z\t200.0
                             2022-12-31T23:30:00.000000Z\t250.0
                             """);
+        });
+    }
+
+    @Test
+    public void testIntervalUnionOffsetPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T01:00:00.000000Z'),
+                        ('2024-01-02T01:00:00.000000Z'),
+                        ('2024-01-03T01:00:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT shifted
+                    FROM (SELECT dateadd('h', -1, ts) shifted FROM t)
+                    WHERE shifted IN ('2024-01-01', '2024-01-03')
+                    """)
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .withPlanContaining("Interval forward scan on: t")
+                    .returns("""
+                            shifted
+                            2024-01-01T00:00:00.000000Z
+                            2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalUnionOffsetPushdownWithDynamicInnerBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T01:00:00.000000Z'),
+                        ('2024-01-02T01:00:00.000000Z'),
+                        ('2024-01-03T01:00:00.000000Z')
+                    """);
+            bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z"));
+
+            assertQuery("""
+                    SELECT shifted
+                    FROM (
+                        SELECT dateadd('h', -1, ts) shifted
+                        FROM t
+                        WHERE ts >= $1
+                    )
+                    WHERE shifted IN ('2024-01-01', '2024-01-03')
+                    """)
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .withPlanContaining("Interval forward scan on: t")
+                    .returns("""
+                            shifted
+                            2024-01-01T00:00:00.000000Z
+                            2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalUnionOffsetPushdownWithDynamicInnerInRemainsAsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-02T01:00:00.000000Z')");
+            bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2024-01-02T01:00:00.000000Z"));
+
+            assertQuery("""
+                    SELECT shifted
+                    FROM (
+                        SELECT dateadd('h', -1, ts) shifted
+                        FROM t
+                        WHERE ts IN ($1, '2024-01-02T01:00:00.000000Z')
+                    )
+                    WHERE shifted IN ('2024-01-01', '2024-01-03')
+                    """)
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .withPlanContaining("filter: ts in")
+                    .returns("shifted\n");
         });
     }
 

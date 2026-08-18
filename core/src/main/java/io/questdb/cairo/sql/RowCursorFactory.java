@@ -74,6 +74,25 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
     }
 
     /**
+     * Returns true only when every value this row cursor evaluates to select frame rows is itself
+     * stable within a single query execution (same {@code SqlExecutionContext}). Composed into
+     * {@code PageFrameRecordCursorFactory#isStableWithinExecution()} which gates scalar sub-query
+     * timestamp interval pruning in {@code WhereClauseParser}.
+     * <p>
+     * Fail-safe like {@link RecordCursorFactory#isStableWithinExecution()}: the default reports
+     * {@code false} so an unrecognised row-cursor shape never enables pruning. A plain entity scan
+     * embeds no selecting value and overrides to {@code true} (frame-set stability is proven
+     * separately by the partition-frame factory); index/function-driven cursors override to compose
+     * the property from their key and (residual) filter functions. Reporting {@code true} for a
+     * genuinely unstable cursor could silently drop rows, so unknown shapes must stay {@code false}.
+     *
+     * @return true if every cursor open within one execution selects the same frame rows
+     */
+    default boolean isStableWithinExecution() {
+        return false;
+    }
+
+    /**
      * Indicates if the factory uses index
      *
      * @return true if the returned RowCursor is using an index, false otherwise

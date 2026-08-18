@@ -154,33 +154,66 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
                 LOG
         );
-        this.configuration = configuration;
-        this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
-        this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
-        this.activeConnectionTracker = activeConnectionTracker;
-        final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
-        this.nf = contextConfiguration.getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
-        this.headerParser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
-        this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
-        this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
-        this.responseSink = new HttpResponseSink(configuration);
-        this.recvBufferSize = configuration.getRecvBufferSize();
-        this.preAllocateBuffers = configuration.preAllocateBuffers();
-        if (preAllocateBuffers) {
-            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.responseSink.open(configuration.getSendBufferSize());
+        // Both header parsers, the response sink and the receive buffer allocate natively, and the
+        // cookie handler, the session store and the context configuration the try opens with are
+        // extension points that can throw before any of that. super() has already taken the socket,
+        // so the rollback scope starts here rather than at the first allocation: a throw anywhere
+        // below leaves a half-built context that the pool never sees and nothing ever closes,
+        // leaking everything taken so far. Locals mirror the owners because the catch cannot read a
+        // blank final the failing statement never assigned.
+        HttpHeaderParser parser = null;
+        HttpHeaderParser multipartParser = null;
+        HttpResponseSink sink = null;
+        HttpAuthenticator auth = null;
+        long recvBuf = 0;
+        try {
+            this.configuration = configuration;
+            this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+            this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
+            this.activeConnectionTracker = activeConnectionTracker;
+            final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
+            this.nf = contextConfiguration.getNetworkFacade();
+            this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
+            this.headerParser = parser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+            this.multipartContentHeaderParser = multipartParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
+            this.multipartContentParser = new HttpMultipartContentParser(multipartParser);
+            this.responseSink = sink = new HttpResponseSink(configuration);
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.preAllocateBuffers = configuration.preAllocateBuffers();
+            if (preAllocateBuffers) {
+                recvBuffer = recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                this.responseSink.open(configuration.getSendBufferSize());
+            }
+            this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
+            this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
+            // This is default behaviour until the security context is overridden with correct principal.
+            this.securityContext = DenyAllSecurityContext.INSTANCE;
+            this.metrics = contextConfiguration.getMetrics();
+            this.authenticator = auth = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+            this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
+            this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
+            this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
+            this.selectCache = selectCache;
+        } catch (Throwable th) {
+            // Reverse order of acquisition. multipartContentParser only delegates close() to the
+            // parser it wraps, so freeing that parser once covers both.
+            Misc.free(auth, th);
+            // The sink owns the send buffer that responseSink.open() took after the receive buffer,
+            // and its close() releases both, so it goes before the receive buffer.
+            Misc.free(sink, th);
+            if (recvBuf != 0) {
+                this.recvBuffer = Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            }
+            Misc.free(multipartParser, th);
+            Misc.free(parser, th);
+            // IOContext took the socket before this try was entered, so it is the one resource the
+            // catch has to reach past its own acquisitions for. Only close() releases it, and the
+            // half-built context never gets there. Both the socket factory and the authenticator
+            // above come from FactoryProvider, an extension point whose implementations may own
+            // native state even though the OSS defaults are lightweight.
+            Misc.free(socket, th);
+            throw th;
         }
-        this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
-        this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
-        // This is default behaviour until the security context is overridden with correct principal.
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.metrics = contextConfiguration.getMetrics();
-        this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
-        this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
-        this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
-        this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
-        this.selectCache = selectCache;
     }
 
     // called when returning the context back to a pool (=connection closed)
@@ -202,12 +235,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
-        // SECURITY: these unconditional resets are the safety net for the conditional
-        // skip in reset(), which preserves securityContext while isProtocolSwitched is true.
-        // Both fields MUST be reset here to prevent security context leaks between pooled
-        // connections. Do not make these conditional.
+        // SECURITY: these unconditional resets are the safety net for the conditional skips in
+        // reset(), which preserve securityContext and the circuit breaker while isProtocolSwitched
+        // is true. securityContext MUST be reset here to prevent security context leaks between
+        // pooled connections. Do not make these conditional.
         this.isProtocolSwitched = false;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.resumeHandlerId = NO_RESUME_PROCESSOR;
+        if (httpCircuitBreaker != null) {
+            httpCircuitBreaker.clear();
+        }
     }
 
     @Override
@@ -296,8 +333,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (httpCircuitBreaker == null) {
             httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     engine,
-                    engine.getConfiguration().getCircuitBreakerConfiguration(),
-                    MemoryTag.NATIVE_CB3
+                    engine.getConfiguration().getCircuitBreakerConfiguration()
             );
         }
         return httpCircuitBreaker;
@@ -418,7 +454,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
-        if (httpCircuitBreaker != null) {
+        // Preserve the breaker for protocol-switched connections (e.g., WebSocket); a parked
+        // credit-suspended egress stream still needs it. clear() resets it on pool return.
+        if (httpCircuitBreaker != null && !isProtocolSwitched) {
             httpCircuitBreaker.clear();
         }
         this.multipartParserState.multipartRetry = false;

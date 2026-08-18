@@ -134,8 +134,8 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         }
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0));
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0));
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
     }
 
     @Override
@@ -143,10 +143,10 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         // no-op
     }
 
-    // tsLo is inclusive, tsHi is exclusive
-    public void setRange(long tsLo, long tsHi, int timestampType) throws SqlException {
-        getBindVariableService().setTimestampWithType(1, timestampType, tsLo);
-        getBindVariableService().setTimestampWithType(2, timestampType, tsHi - 1);
+    // timestampLo is inclusive, timestampHi is exclusive
+    public void setRange(long timestampLo, long timestampHi, int timestampType) throws SqlException {
+        getBindVariableService().setTimestampWithType(1, timestampType, timestampLo);
+        getBindVariableService().setTimestampWithType(2, timestampType, timestampHi - 1);
     }
 
     @Override

@@ -12,13 +12,7 @@ time-series SQL extensions.
 
 ## Coding guidelines
 
-Java class members are grouped by kind (static vs. instance) and visibility, and
-sorted alphabetically. When adding new methods or fields, insert them in the
-correct alphabetical position among existing members of the same kind.
-
-Never insert `// ===` or `// ---` banner comments as section headings in any
-Java file — not in production code, not in test code. Methods are sorted
-alphabetically and will not stay grouped by category.
+Java class members are grouped by kind (static vs. instance) and visibility.
 
 Use the modern Java 17 features:
 
@@ -73,6 +67,22 @@ standard resizable list and integrates with `Misc.freeObjList()` /
   any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
   reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
   stable across two reads.
+- **Never assert peer behaviour with a hand-built frame or a fake socket.** Server
+  tests must drive the real `java-questdb-client` for anything that asserts how a
+  client reacts to server output — close codes, NACK classification, ack watermark
+  advance, reconnect eligibility. The client is already on the test classpath (53 of
+  91 QWP tests import it). A hand-forged frame encodes the contract you *assume* the
+  client implements, so it passes even when the pinned client disagrees; that is how
+  the ROLE_CHANGE (4001) close shipped against a client that classified it as a
+  poison strike. If a test names a client class in a comment to justify an assertion,
+  it must import that class instead.
+- Fake sockets (`MockRawSocket`, `TestableContext`) remain valid for *transport fault
+  injection only* — partial sends, `PeerIsSlowToWriteException` resume paths, and
+  malformed frames a correct client would never emit. They must never encode what a
+  correct client would send in response to the server.
+- **Any change to a wire constant or wire format requires a test that exercises the
+  pinned submodule client.** A green OSS build does not otherwise prove the pinned
+  client agrees.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
@@ -209,10 +219,34 @@ pre-built java-questdb-client module, installed in the local Maven cache. It may
 be stale and result in build errors. Fix this issue with:
 
 ```bash
-cd java-questdb-client && mvn clean install -DskipTests && cd -
+cd java-questdb-client && mvn install -DskipTests && cd -
 ```
 
 This should install a fresh version into the Maven cache.
+
+**Do NOT add `clean` to that command.** The client no longer commits its native
+libraries — `libquestdb` is built from source into
+`core/target/classes/io/questdb/client/bin-local/`, which `clean` deletes and a
+plain `mvn install` does not regenerate. The resulting jar is missing its native,
+and `mvn -pl core test` then fails with hundreds of
+`NoClassDefFoundError: Could not initialize class io.questdb.client.std.Os`
+across unrelated suites — a failure that looks nothing like its cause.
+
+If the native is already missing (or you changed the client's C sources), rebuild
+it before installing. Requires `cmake` and `nasm`:
+
+```bash
+cd java-questdb-client/core
+export MACOSX_DEPLOYMENT_TARGET=13.0   # macOS only
+cmake -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build cmake-build-release --config Release
+cd .. && mvn install -DskipTests && cd -
+```
+
+Do not copy natives out of an older cached jar to repair this. The client's C
+sources change between versions, so an older `libquestdb` links against a
+different symbol set and fails with `UnsatisfiedLinkError` instead — a different
+wall of errors that also does not name its cause.
 
 ### Running Tests
 

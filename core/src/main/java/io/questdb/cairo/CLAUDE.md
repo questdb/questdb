@@ -34,7 +34,7 @@ executes them:
 | Action | Meaning | Handler | Conversions? |
 |--------|---------|---------|--------------|
 | `MERGE` | O3 rows interleave with an existing row group (possibly a coalesced run of groups sharing a boundary timestamp) | `mergeRowGroup()` | yes — **dedup-aware** |
-| `COPY_ROW_GROUP_SLICE` | a row group with no O3 overlap | `rewriteParquetRowGroupWithConversions()` if `isRewrite`, else `copyRowGroupWithNullColumns()` | yes, when rewriting |
+| `COPY_ROW_GROUP_SLICE` | a row group with no O3 overlap | `ParquetRowGroupMaterializer.materialize()` if `isRewrite`, else `copyRowGroupWithNullColumns()` | yes, when rewriting |
 | `COPY_O3` | O3 rows in a gap between/around row groups | fresh row group from O3 source buffers | no (O3 data is already target-typed) |
 
 **Rewrite vs in-place update.** A partition is rewritten to a new `txn`-named directory
@@ -56,11 +56,11 @@ differs — i.e. it went through `ALTER COLUMN TYPE`. So a pending conversion al
 rewrite; the in-place `copyRowGroupWithNullColumns()` path is taken only when the schema is
 unchanged.
 
-Both `mergeRowGroup()` and `rewriteParquetRowGroupWithConversions()` now share the same two
-conversion helpers (`chooseParquetDecodeType`, `prepareParquetSourceColumn`) — keep them in
-sync by editing the helper, never by copy/paste.
+Both `mergeRowGroup()` and `ParquetRowGroupMaterializer.materialize()` share the same
+`ParquetColumnTypeConverter` decode-selection and source-preparation methods. The materializer
+is also the parquet-to-parquet rewrite path used by cold storage.
 
-## Decode-type selection (`chooseParquetDecodeType`)
+## Decode-type selection (`ParquetColumnTypeConverter.chooseDecodeType`)
 
 Rust cannot produce every target representation directly, so the writer asks it to decode
 into a type it *can* produce, then Java finishes the cast. Per column:
@@ -79,14 +79,14 @@ misread as `HEADER_FLAG_INLINED`; that is why symbol→var must decode as native
 symbol→fixed must decode as `VARCHAR_SLICE` (its reader expects the 16-byte slice layout:
 4-byte header + absolute data pointer at offset 8).
 
-## Per-column source preparation (`prepareParquetSourceColumn`)
+## Per-column source preparation (`ParquetColumnTypeConverter.prepareSourceColumn`)
 
 Runs **once per active column, unconditionally** (independent of dedup). It turns the decoded
 row group into a target-typed *source* the merge/copy can consume, writing
 `outPtrs[slot4..+3] = {dataPtr, dataSize, auxPtr, auxSize}` and recording any buffer it
 allocates in the caller's free-list `ownedBufs[slot4..+3]` (`slot4 = ai*4`).
 
-| Column category | Allocates (all `MemoryTag.NATIVE_O3`) |
+| Column category | Allocates (using the owning context's memory tag) |
 |---|---|
 | fixed, no type change | **nothing** — points into the Rust decode buffer |
 | var, no change / symbol→var | **nothing** — pass-through to the decode buffer |
@@ -98,7 +98,7 @@ allocates in the caller's free-list `ownedBufs[slot4..+3]` (`slot4 = ai*4`).
 
 The actual per-row transform is done by `convertFixedColumnToVarchar` /
 `convertFixedColumnToString` / `convertVarColumnToFixed`, using the reusable
-`Utf8StringSink` / `StringSink` / `Decimal*` scratch in `O3ParquetMergeContext` (zero per-row
+`Utf8StringSink` / `StringSink` / `Decimal*` scratch in `ParquetConversionContext` (zero per-row
 GC). These converters must obey the same cast/parse/null rules as the native ALTER path and
 the read path — see the Native/Parquet contract in `griffin/CLAUDE.md`.
 
@@ -109,9 +109,9 @@ data-vs-aux semantics — do not rely on it.
 ## `mergeRowGroup` pipeline
 
 ```
-build decode list  -> chooseParquetDecodeType per column, track timestamp chunk index
+build decode list  -> chooseDecodeType per column, track timestamp chunk index
 decode row group   -> Rust into RowGroupBuffers (worker-owned, reused)
-Phase 1a           -> prepareParquetSourceColumn per column -> srcPtrs (+ nullBufs owns the
+Phase 1a           -> prepareSourceColumn per column -> srcPtrs (+ nullBufs owns the
                       converted/null buffers).  RUNS BEFORE the dedup compare.
 merge index        -> non-dedup: createMergeIndex
                       dedup:     malloc index, build dedup-compare addresses, mergeDedup, realloc
@@ -172,17 +172,18 @@ parquet, so enabling dedup or altering a dedup key never eagerly rewrites partit
 | `dedupColSinkAddr` | dedup-compare address sink | per partition | `TableWriter` (`dedupColumnCommitAddresses`) |
 | `srcPtrs`, `convertedPtrs` | **pointer copies** (not owned) | per-worker container; pointers valid per row group | nulled at `close` — never `freeNativePairs` |
 
-`O3ParquetMergeContext` hands out the reusable scratch lists (`getNullBufs`, `getTmpBufs`,
-`getMergeDstBufs`, `getSrcPtrs`, `getConvertedPtrs`), each zero-filled per use. On abnormal
-worker shutdown `close()` walks the **owning** lists (`mergeDstBufs`, `nullBufs`, `tmpBufs`)
+`ParquetConversionContext` owns common decode/conversion scratch, while
+`O3ParquetMergeContext` adds O3-only lists (`getNullBufs`, `getMergeDstBufs`, `getSrcPtrs`).
+Each list is zero-filled per use. On abnormal worker shutdown `close()` walks the
+**owning** lists (`mergeDstBufs`, `nullBufs`, `tmpBufs`)
 with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are just dropped.
 
 ## Gotchas
 
 - **Conversion before compare.** Any future code that reads dedup-key parquet data for a
-  native compare must run after `prepareParquetSourceColumn`. Moving the dedup compare ahead
+  native compare must run after `prepareSourceColumn`. Moving the dedup compare ahead
   of Phase 1a reintroduces the SIGSEGV / silent-corruption bug.
-- **One conversion site.** `chooseParquetDecodeType` and `prepareParquetSourceColumn` are
+- **One conversion site.** `chooseDecodeType` and `prepareSourceColumn` are
   shared by the merge and rewrite paths. Fix bugs in the helper, not in one caller.
 - **`var_data_len` is a debug-assert bound**, so a tight `getDataVectorSizeAt` extent is fine;
   do not pass a stale `getChunkDataSize` for a converted buffer.
@@ -193,9 +194,12 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 
 | File | Role |
 |------|------|
-| `O3PartitionJob.java` | `processParquetPartition` (action dispatch / rewrite decision), `mergeRowGroup` (dedup-aware merge), `rewriteParquetRowGroupWithConversions` (COPY rewrite), `prepareParquetSourceColumn`, `chooseParquetDecodeType`, `convert*` / `estimate*` helpers, `createMergeIndex` |
+| `O3PartitionJob.java` | `processParquetPartition` (action dispatch / rewrite decision), `mergeRowGroup` (dedup-aware merge), `createMergeIndex` |
+| `ParquetColumnTypeConverter.java` | shared decode-type selection, source preparation, and `convert*` / `estimate*` helpers |
+| `ParquetConversionContext.java` | reusable worker-local decode/conversion scratch and native-resource lifecycle |
+| `ParquetRowGroupMaterializer.java` | shared decode -> convert -> `PartitionUpdater.addRowGroup` pipeline for O3 and cold rewrites |
 | `O3ParquetMergeStrategy.java` | `computeMergeActions`, the `MergeAction` types (`MERGE` / `COPY_ROW_GROUP_SLICE` / `COPY_O3`) |
-| `O3ParquetMergeContext.java` | per-worker reusable scratch lists and their lifecycle (`getConvertedPtrs`, `getNullBufs`, `getMergeDstBufs`, `freeNativePairs`) |
+| `O3ParquetMergeContext.java` | O3-specific extension of `ParquetConversionContext` (`getNullBufs`, `getMergeDstBufs`, merge ranges) |
 | `DedupColumnCommitAddresses.java` | the dedup-compare address sink read by `Vect.mergeDedupTimestampWithLongIndexIntKeys` |
 | `O3CopyJob.java` | `mergeCopy` — consumes prepared source + merge index into destination buffers |
 | `TableWriter.java` | `isCommitDedupMode`, `getDedupCommitAddresses`, `convertPartitionParquetToNative`, `getParquetColumnType`, `TIMESTAMP_MERGE_ENTRY_BYTES` |

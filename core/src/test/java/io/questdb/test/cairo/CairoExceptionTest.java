@@ -26,10 +26,12 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.Closeable;
 import java.lang.reflect.Method;
 
 public class CairoExceptionTest extends AbstractTest {
@@ -80,6 +82,33 @@ public class CairoExceptionTest extends AbstractTest {
         Assert.assertTrue(ex.isSchemaMismatch());
         invokeClear(ex);
         Assert.assertFalse("clear() must reset the sticky schema-mismatch marker", ex.isSchemaMismatch());
+    }
+
+    @Test
+    public void testRethrowCleanupFailureUsesCairoBoundaryAndPreservesUncheckedIdentity() {
+        CairoException.rethrowCleanupFailure(null);
+
+        final RuntimeException runtimeException = new RuntimeException("runtime");
+        Assert.assertSame(
+                runtimeException,
+                Assert.assertThrows(RuntimeException.class, () -> CairoException.rethrowCleanupFailure(runtimeException))
+        );
+
+        final Error error = new AssertionError("error");
+        Assert.assertSame(
+                error,
+                Assert.assertThrows(Error.class, () -> CairoException.rethrowCleanupFailure(error))
+        );
+
+        final Exception checked = new Exception("checked");
+        final Throwable cleanupFailure = Misc.freeBestEffort(null, (Closeable) () -> sneakyThrow(checked));
+        Assert.assertSame(checked, cleanupFailure);
+        final CairoException wrapper = Assert.assertThrows(
+                CairoException.class,
+                () -> CairoException.rethrowCleanupFailure(cleanupFailure)
+        );
+        Assert.assertSame(checked, wrapper.getCause());
+        Assert.assertEquals(0, wrapper.getSuppressed().length);
     }
 
     @Test
@@ -136,5 +165,10 @@ public class CairoExceptionTest extends AbstractTest {
         Method clear = CairoException.class.getDeclaredMethod("clear", int.class);
         clear.setAccessible(true);
         clear.invoke(ex, CairoException.NON_CRITICAL);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable failure) throws T {
+        throw (T) failure;
     }
 }

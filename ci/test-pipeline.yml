@@ -1,4 +1,8 @@
-trigger: none
+# Also run in the GitHub merge queue: CI trigger on the ephemeral merge-queue branches.
+trigger:
+  branches:
+    include:
+      - gh-readonly-queue/*
 
 pr:
   branches:
@@ -43,7 +47,9 @@ stages:
 
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    # An explicit condition drops the implicit succeeded(), so restore it: a queue build
+    # whose CheckChanges stage failed must not post a real enterprise run.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
     jobs:
@@ -52,7 +58,13 @@ stages:
         pool: hetzner-incus
         variables:
           SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        # A PR or merge-queue build triggers enterprise CI even when no source path changed:
+        # enterprise-ci is a required check, so GitHub blocks a PR that never reports it from
+        # joining the queue, and ejects a queue entry that never reports it.
+        condition: >-
+          or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+          eq(variables['Build.Reason'], 'PullRequest'),
+          startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/'))
         steps:
           - checkout: none
           - bash: |
@@ -60,27 +72,53 @@ stages:
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
-              # For PR builds, Azure uses an ephemeral merge commit, not the actual PR head.
-              # Fetch the real PR head commit from GitHub API.
-              if [ -n "$OSS_PR_NUMBER" ]; then
-                OSS_COMMIT=$(curl -s -H "Authorization: token $GH_TOKEN" \
-                  "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
-                  | jq -r '.head.sha')
-                echo "Fetched PR head commit from GitHub API: $OSS_COMMIT"
-              fi
+              # Read one field of an OSS pull request. Prints an empty string when the PR does
+              # not exist or the API call fails, so a transient GitHub error can never reach the
+              # payload as the literal string "null".
+              gh_pr_field() {
+                curl -sS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+                  -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb/pulls/$1" \
+                  | jq -r "$2 // empty"
+              }
 
-              # Check if matching branch exists in enterprise repo (private, requires auth)
-              BRANCH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
-                -H "Authorization: token $GH_TOKEN" \
-                "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH")
-
-              if [ "$BRANCH_CHECK" = "200" ]; then
-                ENT_BRANCH="$OSS_BRANCH"
-                echo "Found matching enterprise branch: $ENT_BRANCH"
+              if [[ "$OSS_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+                # PR build: Azure builds an ephemeral merge commit, not the PR head.
+                # Fetch the real PR head commit from the GitHub API.
+                OSS_COMMIT=$(gh_pr_field "$OSS_PR_NUMBER" '.head.sha')
+                echo "PR build for PR #$OSS_PR_NUMBER; head commit $OSS_COMMIT"
+              elif [[ "$BUILD_SOURCEBRANCH" =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
+                # Merge-queue build: branch is refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>.
+                # Test the merge commit itself (PR merged with latest master); recover the PR
+                # number from the branch name and the PR source branch from the GitHub API.
+                OSS_PR_NUMBER="${BASH_REMATCH[1]}"
+                OSS_COMMIT="$BUILD_SOURCEVERSION"
+                OSS_BRANCH=$(gh_pr_field "$OSS_PR_NUMBER" '.head.ref')
+                echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
               else
-                ENT_BRANCH="main"
-                echo "No matching branch '$OSS_BRANCH' in enterprise, using: $ENT_BRANCH"
+                # Manual or scheduled run: there is no PR to test enterprise against.
+                echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping enterprise CI"
+                exit 0
               fi
+
+              if [ -z "$OSS_COMMIT" ]; then
+                echo "##vso[task.logissue type=error]Could not resolve the OSS commit for PR #$OSS_PR_NUMBER"
+                exit 1
+              fi
+
+              # Check if matching branch exists in enterprise repo (private, requires auth).
+              # An unreachable API falls back to main rather than failing the build.
+              ENT_BRANCH="main"
+              if [ -n "$OSS_BRANCH" ]; then
+                BRANCH_CHECK=$(curl -sS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+                  -o /dev/null -w "%{http_code}" \
+                  -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH" || echo "000")
+                if [ "$BRANCH_CHECK" = "200" ]; then
+                  ENT_BRANCH="$OSS_BRANCH"
+                fi
+              fi
+              echo "Enterprise branch: $ENT_BRANCH (OSS branch '$OSS_BRANCH')"
 
               PAYLOAD=$(cat <<EOF
               {
@@ -122,10 +160,12 @@ stages:
               GH_TOKEN: $(GH_TOKEN)
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
               OSS_BRANCH: $(System.PullRequest.SourceBranch)
+              BUILD_SOURCEBRANCH: $(Build.SourceBranch)
+              BUILD_SOURCEVERSION: $(Build.SourceVersion)
 
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -135,7 +175,7 @@ stages:
 
   - stage: SelfHostedRunCairoA
     displayName: "SelfHosted Cairo tests (A)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -145,7 +185,7 @@ stages:
 
   - stage: SelfHostedRunCairoB
     displayName: "SelfHosted Cairo tests (B)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -155,7 +195,7 @@ stages:
 
   - stage: SelfHostedRunOtherA
     displayName: "SelfHosted Other tests (A)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -165,7 +205,7 @@ stages:
 
   - stage: SelfHostedRunOtherB
     displayName: "SelfHosted Other tests (B)"
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     dependsOn:
       - CheckChanges
     jobs:
@@ -211,6 +251,9 @@ stages:
             lfs: false
             submodules: false
             persistCredentials: true
+          - template: templates/use-hetzner-apt-mirrors.yml
+            parameters:
+              shouldRun: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'))
           - bash: |
               sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven
               JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
@@ -318,13 +361,36 @@ stages:
               # cover-checker is able to automatically retrieve the diff from the Github Rest API.
               # Unfortunately, it happpens that the Rest API responses are missing the patch field for some files
               # which excludes these files from being covered.
-              git fetch origin $(System.PullRequest.targetBranchName)
-              git diff origin/$(System.PullRequest.targetBranchName)..HEAD > pr.diff
+              # A merge-queue build carries no PR context, so recover the PR and the base the
+              # entry was built on from the queue ref. Diffing against that commit excludes
+              # what other entries merged while this one waited.
+              if [[ "$BUILD_SOURCEBRANCH" =~ ^refs/heads/gh-readonly-queue/(.*)/pr-([0-9]+)-([0-9a-f]{40})$ ]]; then
+                BASE_BRANCH="${BASH_REMATCH[1]}"
+                PR_NUMBER="${BASH_REMATCH[2]}"
+                DIFF_BASE="${BASH_REMATCH[3]}"
+                # GitHub deletes the ref that made this commit reachable once that entry merges.
+                if ! git fetch --depth=1 origin "$DIFF_BASE"; then
+                  git fetch origin "$BASE_BRANCH"
+                  DIFF_BASE="origin/$BASE_BRANCH"
+                fi
+              elif [[ "$PR_NUMBER_MACRO" =~ ^[0-9]+$ ]]; then
+                PR_NUMBER="$PR_NUMBER_MACRO"
+                git fetch origin "$TARGET_BRANCH"
+                DIFF_BASE="origin/$TARGET_BRANCH"
+              else
+                echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping the diff coverage report"
+                exit 0
+              fi
+              git diff "$DIFF_BASE"..HEAD > pr.diff
 
               $JAVA_HOME_25_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
                 -dt file -d pr.diff \
-                $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
+                $COVER_ARGS --repo "questdb/questdb" --pr "$PR_NUMBER" \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Post combined report to GitHub"
             condition: eq(variables['SHOULD_RUN'], 'true')
+            env:
+              BUILD_SOURCEBRANCH: $(Build.SourceBranch)
+              PR_NUMBER_MACRO: $(System.PullRequest.PullRequestNumber)
+              TARGET_BRANCH: $(System.PullRequest.targetBranchName)
