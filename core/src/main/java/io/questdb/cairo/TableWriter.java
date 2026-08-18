@@ -1569,11 +1569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // the column files at the DAY container, not the cell directory. Unlike the other column
         // DDLs fixed in SP2, its paths are threaded through parallel conversion tasks from several
         // call sites, so making it cell-aware is a change in that class rather than a per-call fix.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support ALTER COLUMN TYPE [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        
 
         ConvertOperatorImpl convertOperator = getConvertOperator();
         try {

@@ -150,11 +150,6 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * ALTER COLUMN TYPE rewrites every partition's column file, so on a composite table it must rewrite
      * every CELL's. Expected to be the most expensive of the four.
      */
-    @Ignore("SP2: ALTER COLUMN TYPE remains gated, cause MEASURED 2026-08-18: with the gate lifted it"
-            + " fails 'could not open, file does not exist: <day>/px.d' -- ConvertOperatorImpl resolves"
-            + " column files at the DAY container rather than the cell directory. Its paths are threaded"
-            + " through parallel conversion tasks from several call sites, so the fix belongs in that"
-            + " class. The other four column DDLs are done.")
     @Test(timeout = 60_000)
     public void surveyAlterColumnType() throws Exception {
         assertMemoryLeak(() -> {
