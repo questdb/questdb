@@ -38,12 +38,15 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -83,9 +86,11 @@ import org.jetbrains.annotations.TestOnly;
  * consolidates, which is what {@link #isPass1SkipEnabled()} answers to: a two-pass group whose
  * components are every one
  * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row} evaluates the
- * predicate itself and leaves the row alone when the answer is no. That the group may then have
- * no entry for a partition is pass 2's to settle - see {@link #projectPass2(Record)} - and it is
- * the whole of what the skip changes about the map.
+ * predicate itself and leaves the row alone when the answer is no. A partition every row of
+ * which the group refused then has no entry at all, and keeps none: pass 2 projects the
+ * components' identity off a buffer of the group's own - see {@link #projectPass2(Record)} - so
+ * the map a skipping group ends with holds the contributing partitions rather than every
+ * partition the traversal saw. That is the whole of what the skip changes about the map.
  *
  * <h2>Ownership</h2>
  * The group owns its map and its key projection and nothing else. The functions it binds keep
@@ -147,6 +152,15 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * window functions own these and free them.
      */
     private final ObjList<Function> contributorArguments;
+    /**
+     * The value {@link #projectPass2(Record)} projects a missing partition off, over a buffer
+     * of the group's own rather than an entry of the map - or null unless
+     * {@link #isPass1SkipEnabled()} holds, which is the only way pass 2 can miss. One buffer
+     * serves every missing partition: what a partition nothing contributed to projects is the
+     * components' identity, and that does not vary by key.
+     */
+    private final FlyweightPackedMapValue identityValue;
+    private final long identityValueSize;
     private final boolean isPass1SkipEnabled;
     private final boolean isTwoPass;
     /**
@@ -161,6 +175,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
     private final int unorderedMapMaxEntrySize;
+    /**
+     * The identity buffer's native address, or 0 while the group holds no backing. Allocated
+     * and freed with the map, so a closed cursor's group owns nothing.
+     */
+    private long identityValueAddress;
 
     private WindowMapState(
             @NotNull CairoConfiguration configuration,
@@ -212,6 +231,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         plan.buildMapValueTypes(valueTypes);
+        // Only a skipping group can miss in pass 2, so only one carries the flyweight the miss
+        // projects off. Its layout is this buffer's own and never the map's: nothing inserts it,
+        // and the components address it by slot exactly as they address an entry.
+        this.identityValue = isPass1SkipEnabled ? new FlyweightPackedMapValue(valueTypes) : null;
+        this.identityValueSize = isPass1SkipEnabled ? identityValue.getSizeInBytes() : 0;
         // Built before the map so a failure here cannot strand a tracked allocation.
         this.keySink = RecordSinkFactory.getInstance(configuration, asm, sinkTypes, keyColumnFilter, null);
         // Lazily opened, like every other tracker-aware window state: the owning cursor binds
@@ -279,6 +303,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     @Override
     public void close() {
         Misc.free(map);
+        freeIdentityValue();
     }
 
     /**
@@ -382,10 +407,22 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
+     * Whether the group currently holds the buffer {@link #projectPass2(Record)} projects a
+     * missing partition off. Always false for a group whose pass 1 skips nothing, which needs
+     * none; for one whose pass 1 skips, it moves with the map, so it is what says a failed open
+     * or a closed cursor left the group holding nothing.
+     */
+    @TestOnly
+    public boolean isIdentityValueAllocated() {
+        return identityValueAddress != 0;
+    }
+
+    /**
      * Whether this group skips the pass-1 map work for a row every one of its components
      * refuses. A compile-time fact: it holds for a two-pass group whose components are every one
      * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}, and the
-     * group's pass 2 creates the entries it leaves out - see {@link #projectPass2}.
+     * group's pass 2 projects the partitions it leaves out off the identity buffer rather than
+     * putting them back in the map - see {@link #projectPass2}.
      */
     @TestOnly
     public boolean isPass1SkipEnabled() {
@@ -410,19 +447,27 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * not - so there is nothing to insert for a group that skips nothing, and inserting would
      * grow a key domain that is supposed to be closed by now.
      * <p>
-     * A group that does skip closes its key domain here instead, and only where the lookup
-     * misses. Pass 1 leaves out exactly the partitions nothing contributed to, so a missing
-     * entry is that partition's own answer rather than a lost one, and what it projects is the
-     * identity every component would still be sitting at had pass 1 created it - a NULL sum, a
-     * NULL average, a zero count. Creating it now rather than reading identity out of thin air
-     * is what keeps the projections reading a real value and the key domain the same one the
-     * unskipped group ends with, so the two bindings agree on the map's size as well as on its
-     * answers.
+     * A group that does skip leaves the miss where it is. Pass 1 omits exactly the partitions
+     * nothing contributed to, so a missing entry is that partition's own answer rather than a
+     * lost one, and what it projects is the identity every component would still be sitting at
+     * had pass 1 created it - a NULL sum, a NULL average, a zero count. The projections read
+     * that identity off {@link #identityValue}, a buffer of the group's own, so the row costs
+     * one failed lookup and nothing else: no second key write, no {@code createValue()}, and no
+     * entry the map then carries for a partition that has no state to keep. That is the whole
+     * of the saving, and it is concentrated exactly where the skip already pays - a wide key
+     * domain whose rows are mostly refused, where materializing the misses cost an insertion a
+     * row and a map the size of the key domain rather than of the contributing partitions.
+     * <p>
+     * What it costs is that the two bindings no longer agree on the map's <b>size</b>: a
+     * skipping group's map holds the contributing partitions alone, where the unskipped one
+     * holds every partition the traversal saw. They agree on every answer, which is what the
+     * fused/unfused comparison rests on, and nothing but a test reads the size.
      * <p>
      * There is deliberately no accumulation. A projection reads slots and writes no state, so
      * running this over a row a second time is idempotent, which is what a cached cursor's
-     * random access and its second drain need - and the create above is idempotent for the same
-     * reason, since the second visit finds the entry the first one left.
+     * random access and its second drain need - and the identity path is idempotent by
+     * construction, since it reads a buffer put back to identity ahead of every projection loop
+     * that uses it.
      */
     public void projectPass2(Record record) {
         final MapKey key = map.withKey();
@@ -433,7 +478,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             // only a skipping group can miss here - and it misses exactly on the partitions
             // whose every row its components refused.
             assert isPass1SkipEnabled;
-            value = putIdentity(record);
+            value = resetIdentityValue();
         }
         for (int p = 0; p < projectionCount; p++) {
             plan.getProjectionFunction(p).projectWindowState(record, value);
@@ -448,6 +493,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         map.reopen();
+        if (identityValue != null && identityValueAddress == 0) {
+            try {
+                identityValueAddress = Unsafe.malloc(identityValueSize, MemoryTag.NATIVE_DEFAULT);
+            } catch (Throwable th) {
+                // The map is already open by here, and an owner that never saw this group open
+                // has no reason to reset it - so give the backing back rather than strand it.
+                map.close();
+                throw th;
+            }
+            identityValue.of(identityValueAddress);
+        }
     }
 
     /**
@@ -456,6 +512,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     public void reset() {
         map.close();
+        freeIdentityValue();
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
@@ -516,6 +573,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
+     * Gives the identity buffer back, if the group holds one. Idempotent, because both
+     * {@link #reset()} and {@link #close()} run it and an owner may run both.
+     */
+    private void freeIdentityValue() {
+        if (identityValueAddress != 0) {
+            Unsafe.free(identityValueAddress, identityValueSize, MemoryTag.NATIVE_DEFAULT);
+            identityValueAddress = 0;
+        }
+    }
+
+    /**
      * Whether no component of the group would absorb this row, which is what lets pass 1 leave
      * the row's key out of the map.
      * <p>
@@ -534,28 +602,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Creates the entry for a partition pass 1 skipped whole and puts every component of it to
-     * identity, returning the value the caller's projections then read.
-     * <p>
-     * A second key write rather than a {@code createValue()} on the key
-     * {@link #projectPass2(Record)} just looked up with: pass 2's hot path is the lookup that
-     * finds an entry, and a {@code findValue()} is the cheaper of the two ways to make it. What
-     * this costs is one extra key write on the rows of a partition no row contributed to, which
-     * is the population the skip exists for.
-     */
-    private MapValue putIdentity(Record record) {
-        final MapKey key = map.withKey();
-        putKey(key, record);
-        final MapValue value = key.createValue();
-        if (value.isNew()) {
-            for (int c = 0; c < componentCount; c++) {
-                plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
-            }
-        }
-        return value;
-    }
-
-    /**
      * Writes the row's key onto {@code key}, through the compiled PARTITION BY terms where the
      * key is an expression and off the record's own columns where it is not.
      * <p>
@@ -571,4 +617,23 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
     }
 
+    /**
+     * Puts every component of the group's own buffer back to identity and hands it to
+     * {@link #projectPass2(Record)}, which is what a partition pass 1 skipped whole projects
+     * off instead of an entry of the map.
+     * <p>
+     * Put back on every miss rather than once per open, at a few slot stores a missed row. The
+     * projections that read it write no state, so a buffer put to identity once would answer
+     * for every miss the cursor makes - but that is a property of every projection family
+     * admitted to a skipping group rather than of this method, and one a family added later
+     * could quietly break, in a shape whose only symptom is one partition's output leaking into
+     * another's. Restoring it here costs less than the failed lookup that precedes it and
+     * leaves nothing to break.
+     */
+    private MapValue resetIdentityValue() {
+        for (int c = 0; c < componentCount; c++) {
+            plan.getComponent(c).resetState(identityValue, plan.getComponentSlotBase(c));
+        }
+        return identityValue;
+    }
 }
