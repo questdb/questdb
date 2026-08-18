@@ -45,7 +45,7 @@ import java.util.List;
  * A single deterministic stream is precomputed per seed and replayed twice into
  * two identically-defined covering-indexed tables:
  * <ul>
- *   <li>{@code reseal} - {@code COVERING_MIDPART_APPEND_DISABLED = true}: O3
+ *   <li>{@code reseal} - {@code COVERING_SEAL_APPEND_DISABLED = true}: O3
  *       indexes the rows and the seal full-reseals, as before;</li>
  *   <li>{@code append} - the flag off: the covered append path is active.</li>
  * </ul>
@@ -76,17 +76,35 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
     @After
     public void disableCoveringCountersAndAppendPath() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     @Test
     public void testMidPartitionAppendDifferentialFuzz() throws Exception {
-        runDifferential(generateRandom(LOG));
+        runDifferential(generateRandom(LOG), false);
     }
 
     @Test
     public void testMidPartitionAppendDifferentialFuzzRegression() throws Exception {
-        runDifferential(generateRandom(LOG, 0x51e3d7a9c4b206L, 0x1f8c62b0da3945L));
+        runDifferential(generateRandom(LOG, 0x51e3d7a9c4b206L, 0x1f8c62b0da3945L), false);
+    }
+
+    /**
+     * DEDUP disqualifies the WAL fast-lag gate (the block gate tests
+     * isCommitPlainInsert(), the single-txn gate tests !isCommitDedupMode()), so
+     * the same stream additionally routes the LAST partition's appends through
+     * O3 - the route that used to full-reseal per commit and to write a
+     * speculative covered fragment. The timestamps are unique, so nothing is
+     * actually deduplicated and the commits stay pure appends.
+     */
+    @Test
+    public void testDedupDifferentialFuzz() throws Exception {
+        runDifferential(generateRandom(LOG), true);
+    }
+
+    @Test
+    public void testDedupDifferentialFuzzRegression() throws Exception {
+        runDifferential(generateRandom(LOG, 0x2f70c81a9b3e56L, 0x4c19d7e0af6231L), true);
     }
 
     private void applyStream(String table, List<Op> ops, int symbolCardinality) throws Exception {
@@ -201,10 +219,10 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
-    private void runDifferential(Rnd rnd) throws Exception {
+    private void runDifferential(Rnd rnd, boolean dedup) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 134_217_728);
         setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 134_217_728);
@@ -213,25 +231,26 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
         final List<Op> ops = precomputeStream(rnd, symbolCardinality);
 
         assertMemoryLeak(() -> {
+            final String dedupClause = dedup ? " DEDUP UPSERT KEYS(ts, sym)" : "";
             execute("CREATE TABLE reseal (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
             execute("CREATE TABLE append (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
             drainWalQueue();
 
             // Replay 1: append path FORCED OFF -> index in O3 + full reseal.
-            PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = true;
+            PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
             resetCoveringCounters();
             applyStream("reseal", ops, symbolCardinality);
             final long resealRuns = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
-            final long resealAppends = PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get();
+            final long resealAppends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
 
             // Replay 2: append path ACTIVE.
-            PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+            PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
             resetCoveringCounters();
             applyStream("append", ops, symbolCardinality);
             final long appendRuns = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
-            final long appendAppends = PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get();
+            final long appendAppends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
 
             Assert.assertFalse("reseal suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("reseal")));
             Assert.assertFalse("append suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("append")));

@@ -50,7 +50,7 @@ public class MidPartitionAppendNewColumnTest extends AbstractCairoTest {
 
     @After
     public void resetSwitch() {
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     @Test
@@ -76,7 +76,7 @@ public class MidPartitionAppendNewColumnTest extends AbstractCairoTest {
      */
     @Test
     public void testAppendAfterAddColumnWorksOnResealPath() throws Exception {
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = true;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         assertMemoryLeak(() -> {
             seedTwoPartitions();
             execute("ALTER TABLE t ADD COLUMN sym SYMBOL");

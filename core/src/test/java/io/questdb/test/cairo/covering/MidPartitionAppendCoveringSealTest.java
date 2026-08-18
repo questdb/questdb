@@ -63,7 +63,7 @@ public class MidPartitionAppendCoveringSealTest extends AbstractCairoTest {
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     @After
@@ -109,11 +109,11 @@ public class MidPartitionAppendCoveringSealTest extends AbstractCairoTest {
             seedMidPartition();
 
             PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             appendToMidPartition();
 
             final long fullReseals = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
-            final long appends = PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get();
+            final long appends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
             Assert.assertEquals(
                     "a pure append into an existing mid partition must not full-reseal the covered sidecar",
                     0, fullReseals);
@@ -167,13 +167,13 @@ public class MidPartitionAppendCoveringSealTest extends AbstractCairoTest {
             seedMidPartition();
             final int afterSeed = countPostingFiles("blk", "2024-01-02");
 
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             appendToMidPartition();
             // Discriminate: the post-purge steady state below would also hold on
             // the reseal path (rotate every commit, purge reclaims), so pin that
             // these commits actually took the append path.
             Assert.assertEquals("every commit must take the covered append path",
-                    COMMITS, PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get());
+                    COMMITS, PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get());
             final int beforePurge = countPostingFiles("blk", "2024-01-02");
 
             // Deferred compaction DOES rotate .pv/.pc when it fires, superseding

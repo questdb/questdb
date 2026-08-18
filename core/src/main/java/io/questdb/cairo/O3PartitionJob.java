@@ -3354,7 +3354,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final CharSequence columnName = metadata.getColumnName(i);
-                // A COVERING posting index on a pure append into an existing mid
+                // A COVERING posting index on a pure append into an EXISTING
                 // partition is indexed by the trailing seal sweep
                 // (TableWriter#sealPostingIndexForPartition), not here: the pool
                 // IndexWriter has no covering configuration, so postings it writes
@@ -3367,7 +3367,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // the predicate so this can never skip a column the sweep would
                 // then ignore (which would silently lose the appended rows).
                 final boolean isIndexed = metadata.isColumnIndexed(i)
-                        && !(openColumnMode == OPEN_MID_PARTITION_FOR_APPEND
+                        && !(isOpenColumnModeForAppend(openColumnMode)
+                        && openColumnMode != OPEN_NEW_PARTITION_FOR_APPEND
                         && tableWriter.isCoveredAppendSealedByWriter(i, partitionTimestamp, srcDataMax));
                 final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
                 final byte indexType = metadata.getColumnIndexType(i);

@@ -50,7 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * The writer thread only ever appends into an EARLY day while a later day
  * already holds rows, so every commit is an append into a non-last partition and
- * takes the path under test (asserted via COVERING_MIDPART_APPEND_COUNT). N
+ * takes the path under test (asserted via COVERING_SEAL_APPEND_COUNT). N
  * reader threads concurrently run covered scans and check, per observation:
  * <ul>
  *   <li>no crash or exception;</li>
@@ -82,13 +82,29 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
     @After
     public void disableCoveringCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
         PostingIndexWriter.FORCE_LEGACY_COVERING_FORMAT = false;
     }
 
     @Test
     public void testMidPartitionAppendConcurrentReadFuzz() throws Exception {
         runConcurrentReadFuzz(generateRandom(LOG), false);
+    }
+
+    /**
+     * The same concurrent-reader load against the LAST partition. DEDUP
+     * disqualifies the WAL fast-lag gate, so these appends take the O3 route into
+     * the last partition - where the covered append path now extends a live .pc
+     * in place on the partition every reader is scanning.
+     */
+    @Test
+    public void testLastPartitionAppendConcurrentReadFuzzDedup() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG), false, true);
+    }
+
+    @Test
+    public void testLastPartitionAppendConcurrentReadFuzzDedupRegression() throws Exception {
+        runConcurrentReadFuzz(generateRandom(LOG, 0x63b1e04a7c25d9L, 0x0af52c9138be74L), false, true);
     }
 
     @Test
@@ -110,10 +126,14 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_COW_MIGRATE_COUNT.set(0);
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial) throws Exception {
+        runConcurrentReadFuzz(rnd, legacyInitial, false);
+    }
+
+    private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial, boolean dedup) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);
@@ -129,13 +149,18 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Day 3 anchors the table's max timestamp: every later write into day
-            // 1 is therefore an append into a partition that is NOT the last one.
-            // Its single row carries value 0, below the id floor of 1 the readers
-            // assert, so it is written with a NULL value instead.
-            execute("INSERT INTO t SELECT (" + (T0 + 3 * DAY_MICROS) + ")::TIMESTAMP, 'S0', cast(NULL AS DOUBLE)"
-                    + " FROM long_sequence(1)");
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL"
+                    + (dedup ? " DEDUP UPSERT KEYS(ts, sym)" : ""));
+            if (!dedup) {
+                // Day 3 anchors the table's max timestamp: every later write into day
+                // 1 is therefore an append into a partition that is NOT the last one.
+                // Its single row carries value 0, below the id floor of 1 the readers
+                // assert, so it is written with a NULL value instead.
+                execute("INSERT INTO t SELECT (" + (T0 + 3 * DAY_MICROS) + ")::TIMESTAMP, 'S0', cast(NULL AS DOUBLE)"
+                        + " FROM long_sequence(1)");
+            }
+            // With dedup there is deliberately NO later anchor: the target day is
+            // the LAST partition, and dedup routes its appends through O3.
             drainWalQueue();
 
             if (legacyInitial) {
@@ -277,8 +302,8 @@ public class MidPartitionAppendConcurrentReadFuzzTest extends AbstractFuzzTest {
             Assert.assertNull("concurrent covered reader failed: " + bgError.get(), bgError.get());
             Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             Assert.assertTrue("the mid-partition append path must fire (appends="
-                            + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
-                    PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                            + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
             if (legacyInitial) {
                 // A format-0 head must never be extended in place (the readers'
                 // clean scans above are the proof it was not); it migrates to

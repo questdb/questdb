@@ -82,6 +82,7 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     public void disableCoveringCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
         PostingIndexWriter.COVERING_FASTPATH_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     @Test
@@ -135,11 +136,25 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     // the head to format 1.
     @Test
     public void testO3PreLagConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
+        // Pinned to the pre-deferral path: this variant's job is to prove the
+        // publishToChain COW fires when a LEGACY format-0 head is extended in
+        // place by the O3-merge index commit. The covered append path stops that
+        // route from extending the head at all (the legacy head migrates via the
+        // reseal instead), so leaving it on would quietly retire the COW coverage
+        // rather than test it. The COW remains reachable from other extend sites.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         runConcurrentReadFuzz(generateRandom(LOG, 0x5c1e83b7096d2fL, 0x4a90e2f1b7c358L), true, false, true);
     }
 
     @Test
     public void testO3PreLagConcurrentReadFuzzLegacyFormat0() throws Exception {
+        // Pinned to the pre-deferral path: this variant's job is to prove the
+        // publishToChain COW fires when a LEGACY format-0 head is extended in
+        // place by the O3-merge index commit. The covered append path stops that
+        // route from extending the head at all (the legacy head migrates via the
+        // reseal instead), so leaving it on would quietly retire the COW coverage
+        // rather than test it. The COW remains reachable from other extend sites.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         runConcurrentReadFuzz(generateRandom(LOG), true, false, true);
     }
 

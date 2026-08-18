@@ -7780,7 +7780,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@code indexers} and {@code metadata} are stable for the duration.
      */
     boolean isCoveredAppendSealedByWriter(int columnIndex, long partitionTimestamp, long partitionSizeBeforeAppend) {
-        if (PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED) {
+        if (PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED) {
             return false;
         }
         if (columnIndex >= indexers.size() || indexers.getQuick(columnIndex) == null) {
@@ -10277,7 +10277,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                             final boolean notTheTimestamp = i != timestampIndex;
                             final CharSequence columnName = metadata.getColumnName(i);
-                            final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                            // Same deferral as the O3 worker path: a COVERING posting
+                            // index is maintained by the trailing seal instead, from
+                            // FINAL column data. Here that is a correctness gain as
+                            // well as a cost one - the covered fragment this route
+                            // writes during the copy phase is speculative, because
+                            // the indexed column's task can run before the covered
+                            // column's own append lands, and it is the trailing
+                            // rebuildSidecars that repairs it today.
+                            final boolean deferCovered = isCoveredAppendSealedByWriter(i, partitionTimestamp, srcDataMax);
+                            final int indexBlockCapacity = !deferCovered && metadata.isColumnIndexed(i)
+                                    ? metadata.getIndexValueBlockCapacity(i)
+                                    : -1;
                             final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
                             final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
@@ -13883,7 +13894,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * duplicates it dropped were identical to the rows they replaced.
      */
     private static boolean canAppendCovered(ColumnIndexer indexer, boolean canSkipRebuild, long appendFromRow, long partitionSize, long committedTxn) {
-        if (PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED) {
+        if (PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED) {
             return false;
         }
         if (!canSkipRebuild || appendFromRow < 0 || appendFromRow >= partitionSize) {
@@ -14024,6 +14035,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     int coverCount = coveringCols.size();
 
+                    // Read BEFORE configureFollowerAndWriter: its of() calls close(),
+                    // which releases resources without flushing pending add()s. Any
+                    // pending entry means the persisted chain is not the whole
+                    // truth, so the tail append must not be trusted to complete it.
+                    final boolean hadPendingEntries = indexer.getWriter() instanceof PostingIndexWriter pending
+                            && pending.hasPendingEntries();
                     try {
                         mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
 
@@ -14041,7 +14058,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
                         indexer.mergeTentativeIntoActiveIfAny();
-                        final boolean appendCovered = canAppendCovered(indexer, canSkipRebuild, appendFromRow, partitionSize, txWriter.getTxn());
+                        final boolean appendCovered = !hadPendingEntries
+                                && canAppendCovered(indexer, canSkipRebuild, appendFromRow, partitionSize, txWriter.getTxn());
                         if (appendCovered) {
                             // Pure append into an existing partition. O3 left the
                             // appended rows unindexed for this column (see
@@ -14069,7 +14087,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexer.getWriter().commit();
                             indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
                             if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
-                                PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.incrementAndGet();
+                                PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.incrementAndGet();
                             }
                         } else if (canSkipRebuild && !indexDeferredToSeal
                                 && indexer.getWriter().getMaxValue() + 1 >= partitionSize) {

@@ -68,7 +68,7 @@ public class MidPartitionAppendFaultRecoveryTest extends AbstractCairoTest {
     @Before
     public void enableCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     @After
@@ -230,14 +230,14 @@ public class MidPartitionAppendFaultRecoveryTest extends AbstractCairoTest {
             Assert.assertEquals("count\n" + (1 + 2 * ROWS) + "\n", sink.toString());
 
             // And the partition must still be usable for further appends.
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             insertBatch(2L * ROWS);
             drainWalQueue();
             assertIndexAgreesWithColumn();
             // ... via the path under test, not by silently falling back to the
             // reseal for the rest of the table's life.
             Assert.assertTrue("the append path must resume after recovery",
-                    PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
         });
     }
 }

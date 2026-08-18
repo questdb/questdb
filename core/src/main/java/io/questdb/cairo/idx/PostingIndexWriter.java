@@ -138,7 +138,7 @@ public class PostingIndexWriter implements IndexWriter {
     // Plain (non-volatile) boolean, like the flags above: tests flip it on the
     // thread that then applies the WAL synchronously.
     @TestOnly
-    public static boolean COVERING_MIDPART_APPEND_DISABLED = false;
+    public static boolean COVERING_SEAL_APPEND_DISABLED = false;
     // @TestOnly: number of times the O3 seal sweep updated a COVERING index by
     // indexing only the appended range and publishing an incremental covered
     // fragment, instead of resealing the partition. Lets a test assert the path
@@ -146,7 +146,7 @@ public class PostingIndexWriter implements IndexWriter {
     // (which is also true when nothing happened at all). Gated by
     // COVERING_COUNTERS_ENABLED like the others.
     @TestOnly
-    public static final java.util.concurrent.atomic.AtomicLong COVERING_MIDPART_APPEND_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_SEAL_APPEND_COUNT = new java.util.concurrent.atomic.AtomicLong();
     // @TestOnly: how many times TableWriter.tryFastAppendInOrderBlock actually
     // committed a block. Distinct from COVERING_FASTLAG_COMMIT_COUNT, which counts
     // the SHARED fast-lag covered publish that the pre-existing single-txn path
@@ -1005,6 +1005,18 @@ public class PostingIndexWriter implements IndexWriter {
      * decide what is already indexed must instead treat it as untrustworthy and
      * rebuild.
      */
+    /**
+     * True when the writer holds {@code add()} calls that have not been flushed
+     * to a generation yet. {@code close()} deliberately does NOT flush them, so
+     * any caller about to reopen this writer (which the seal does, via
+     * configureFollowerAndWriter) would drop them. A caller that relies on the
+     * persisted chain being the whole truth must therefore refuse to do so while
+     * this is true.
+     */
+    public boolean hasPendingEntries() {
+        return hasPendingData;
+    }
+
     public long getHeadTxnAtSeal() {
         if (!keyMem.isOpen() || !chain.hasHead()) {
             return -1L;

@@ -69,6 +69,9 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
     // Batches land in day 1; day 3 exists from the start, so day 1 is never last.
     private static final long TARGET_DAY = T0 + DAY_MICROS;
     private final FaultFilesFacade faultFf = new FaultFilesFacade();
+    // when set, the table dedups, which disqualifies the fast-lag gate and routes
+    // the appends into the LAST partition through O3
+    private boolean dedup;
 
     @Before
     public void enableCoveringCounters() {
@@ -79,14 +82,33 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
 
     @After
     public void disableCoveringCounters() {
+        dedup = false;
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
         faultFf.disarm();
     }
 
     @Test
     public void testMidPartitionAppendFailureFuzz() throws Exception {
         runFailureFuzz(generateRandom(LOG), true);
+    }
+
+    /**
+     * The same fault injection against the LAST partition. DEDUP disqualifies the
+     * WAL fast-lag gate, so the appends take the O3 route into the last partition
+     * - the route whose index is maintained through the writer's LIVE indexer,
+     * which the seal closes and reopens. A fault there must still converge.
+     */
+    @Test
+    public void testLastPartitionAppendFailureFuzzDedup() throws Exception {
+        dedup = true;
+        runFailureFuzz(generateRandom(LOG), true);
+    }
+
+    @Test
+    public void testLastPartitionAppendFailureFuzzDedupRegression() throws Exception {
+        dedup = true;
+        runFailureFuzz(generateRandom(LOG, 0x7c05b3e1d9a462L, 0x28fa61c7e0b539L), true);
     }
 
     @Test
@@ -108,7 +130,7 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
      */
     @Test
     public void testMidPartitionAppendFailureFuzzResealPathControl() throws Exception {
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = true;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         runFailureFuzz(generateRandom(LOG, 0x18b7d3f0a29e64L, 0x5c02af71e6d938L), true);
     }
 
@@ -196,7 +218,7 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
     private void resetCoveringCounters() {
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     private void runFailureFuzz(Rnd rnd, boolean injectFaults) throws Exception {
@@ -228,15 +250,19 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
         }
 
         assertMemoryLeak(faultFf, () -> {
+            final String dedupClause = dedup ? " DEDUP UPSERT KEYS(ts, sym)" : "";
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
             execute("CREATE TABLE ctl (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, value DOUBLE)"
-                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Anchor the table max in a LATER day so every batch below appends
-            // into a partition that is not the last one.
-            for (String table : new String[]{"t", "ctl"}) {
-                execute("INSERT INTO " + table + " SELECT (" + (T0 + 3 * DAY_MICROS) + ")::TIMESTAMP,"
-                        + " 'S0', cast(NULL AS DOUBLE) FROM long_sequence(1)");
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL" + dedupClause);
+            if (!dedup) {
+                // Anchor the table max in a LATER day so every batch below appends
+                // into a partition that is not the last one. With dedup there is
+                // deliberately no anchor: the target day IS the last partition.
+                for (String table : new String[]{"t", "ctl"}) {
+                    execute("INSERT INTO " + table + " SELECT (" + (T0 + 3 * DAY_MICROS) + ")::TIMESTAMP,"
+                            + " 'S0', cast(NULL AS DOUBLE) FROM long_sequence(1)");
+                }
             }
             drainWalQueue();
             resetCoveringCounters();
@@ -274,10 +300,10 @@ public class MidPartitionAppendFailureFuzzTest extends AbstractFuzzTest {
 
             assertCoveredMatchesControl(symbolCardinality);
 
-            if (!PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED) {
+            if (!PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED) {
                 Assert.assertTrue("the mid-partition append path must be exercised (appends="
-                                + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
-                        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                                + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
             }
         });
     }
