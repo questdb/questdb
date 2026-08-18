@@ -141,6 +141,53 @@ change.
 > Both are required, and the tests must distinguish them — a day with 3 cells AND a real fragment is
 > the case that separates the two.
 
+> ### Task 2 Step 2, RESPECIFIED FROM MEASUREMENT (2026-08-18)
+>
+> The original step said "merge per cell". Executing it showed *what shape* that has to take, and the
+> answer changes the loop rather than patching it.
+>
+> **What was tried and reverted.** Fixing the range (`hasSplitFragments`, SHIPPED) plus rendering each
+> path through the cell-aware overload is NOT sufficient. With the gates lifted, a 3-cell day holding
+> one fragment logged three merges -- two of them SIBLING CELLS swallowed into the target. The source
+> loop walks `targetPartitionIndex + 1` unconditionally, so on composite every sibling cell of the day
+> reads as a fragment of the target cell.
+>
+> **The trap that makes this dangerous to iterate on:** the twin DATA comparison PASSES through that
+> corruption. Every row survives, relocated into one cell, so rows and `count()` match the plain twin
+> exactly. Only a structural assertion on the day's cell COUNT detects it. Never accept a green
+> data-level test as evidence that a squash change is safe.
+>
+> **The unit of work is a FRAGMENT, not an attached entry.** `ColumnVersionWriter#squashPartition`
+> already calls `removeAllCellsAtTimestamp(sourcePartitionTimestamp)`, whose javadoc states it discards
+> the entire source partition -- *every* cell, not just cellKey 0. That is exactly right for a fragment,
+> because a split fragment is its own container holding its own cells. So the correct operation is:
+>
+> ```
+> for each FRAGMENT of the day (same calendar floor, different RAW timestamp):
+>     for each cell k present in THAT FRAGMENT:          # the fragment's cells, not the day's
+>         append  <fragment>/<cell k>   into   <day>/<cell k>
+>     columnVersionWriter.squashPartition(dayTs, fragmentTs)   # discards the fragment wholesale
+>     remove the fragment's attached entries, then its container (1B's two guards)
+> ```
+>
+> **Why this is a redesign, not a patch.** The current loop opens ONE target frame
+> (`frameFactory.open(rw, path, targetPartition, ...)`) and appends every source into it. The shape
+> above needs one target frame PER CELL, opened and closed per cell pair. The following also assume
+> adjacency or resolve by timestamp and must move to index-/cell-based forms:
+> `targetPartitionIndex + 1` (every use), `lastPartitionSquashed = targetPartitionIndex + 2 == count`,
+> `updatePartitionSizeByTimestamp` (ambiguous -- several cells share one raw timestamp), and
+> `getPartitionTimestampOrMax(targetPartitionIndex + 1)`.
+>
+> **Do not skip the crash suites.** This is the in-commit path. `CompositeMultiCellFastAppendCrashTest`
+> and `CompositeFastAppendCrashTest` run in under a second each, so there is no cost argument for
+> deferring them -- run them with the change, not after it.
+>
+> **Acceptance tests already written** (`CompositeSquashTest`, currently `@Ignore`d, each naming the
+> half it proves): `testSquashOnAThreeCellDayWithNoFragmentIsANoOp` (range half -- expected to go green
+> FIRST, it already passed when the gates were briefly lifted),
+> `testSquashDistinguishesFragmentsFromSiblingCells` (the discriminator: 3 cells AND a fragment),
+> `testExplicitSquashMergesFragmentsIntoTheirCells`, `testAutomaticSquashDoesNotAccumulateFragments`.
+
 - [ ] **Step 2: Merge per cell, matching fragment cells to target cells**
 
 For each cell present in the FRAGMENT, merge into the SAME cell of the target day. A fragment holds a
