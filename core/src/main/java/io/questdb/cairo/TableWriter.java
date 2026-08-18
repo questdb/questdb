@@ -18604,6 +18604,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.updatePartitionSizeByRawIndex(dayIndex * txWriter.getLongsPerAttachedPartition(), dayTs, daySize + srcSize);
+            // updatePartitionSizeByRawIndex does NOT bump recordStructureVersion, unlike its
+            // ...ByTimestamp siblings, so the attached-partition table is mutated without readers or a
+            // later squash pass being told the structure changed.
+            txWriter.bumpPartitionTableVersion();
             txWriter.removeAttachedPartitions(fragTs, cellKey);
             partitionRemoveCandidates.add(fragTs, srcNameTxn, cellKey);
             // Leave both scratch paths at table-root length. processPartitionRemoveCandidates0 does NOT
@@ -18621,11 +18625,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (dayFirst >= 0) {
             txWriter.setPartitionSeqTxn(dayFirst, Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(dayFirst)));
         }
-        removeEmptyDayContainer(fragTs);
-        // removeEmptyDayContainer trims on entry but not on exit, so it leaves `other` at the fragment
-        // container. processPartitionRemoveCandidates0 does not trim before building candidate paths
-        // (setPathForNativePartition APPENDS), so that residue is prepended to every purge path in the
-        // drain -- which is what produced /c~1/<fragment>/<fragment>/E0.1 and leaked the fragment.
+        // NO eager removeEmptyDayContainer here. Deleting the fragment container at this point removes
+        // a directory BEFORE the transaction recording its detachment is durable, so a reload sees the
+        // txn still listing <fragment>/<cell> while the directory is gone:
+        //   "Partition '2023-01-01T010000-000001/E0' does not exist in table 'c' directory"
+        // processPartitionRemoveCandidates0 already calls removeEmptyDayContainer after it successfully
+        // unlinks a composite candidate, i.e. after the commit -- which is the correct ordering, and
+        // makes an eager call here both premature and redundant.
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         return true;
@@ -18753,13 +18759,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reason as before -- a skipped squash leaves every fragment independently valid and queryable,
         // whereas a cell-blind merge silently destroys the day's cell structure.
         if (isRoutedComposite()) {
-            // SP1E: squashSplitPartitionsComposite below merges correctly and now purges the fragment
-            // container too, but the AUTOMATIC and EXPLICIT entry points interact: once housekeeping has
-            // merged and removed a fragment, a subsequent ALTER ... SQUASH re-enters
-            // squashPartitionForce and still references <fragment>/<cell>, which no longer exists
-            // ("Partition '...' does not exist in table directory"). Sequencing those two is the
-            // remaining work; skipping stays correct meanwhile.
-            LOG.info().$("composite table, skipping split-fragment squash (entry-point sequencing unresolved) [table=").$(tableToken).I$();
+            // SP1E: the merge itself is verified correct (per cell, siblings untouched, twin data and
+            // ordering intact). What is NOT resolved is that after housekeeping merges a fragment, the
+            // txn still lists <fragment>/<cell> while its directory is gone, so a later pass fails
+            // "does not exist in table directory". TWO hypotheses tested and DISPROVED: a missing
+            // recordStructureVersion bump, and eager container removal before commit. The removal of
+            // the attached entry itself is not sticking -- start there, not at the merge.
+            LOG.info().$("composite table, skipping split-fragment squash (attached-entry removal not durable) [table=").$(tableToken).I$();
             return;
         }
 

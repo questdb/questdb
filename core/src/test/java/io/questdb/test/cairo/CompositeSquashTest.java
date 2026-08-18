@@ -253,12 +253,10 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * without that, every test here exercises the active-tail path, which is deliberately still skipped
      * because it needs the fixedRowCount/transientRowCount bookkeeping.
      */
-    @Ignore("SP1E: merge is correct AND the fragment container now purges (the doubled candidate path"
-            + " was residue: removeEmptyDayContainer trims on entry but not exit, and"
-            + " processPartitionRemoveCandidates0 does not trim before appending). REMAINING: the"
-            + " automatic and explicit entry points are not sequenced -- once housekeeping has merged a"
-            + " fragment, ALTER ... SQUASH still references <fragment>/<cell> and fails 'does not exist"
-            + " in table directory'. Run this test first when resuming.")
+    @Ignore("SP1E: merge verified correct and fragment container purges. REMAINING: after housekeeping"
+            + " merges a fragment the txn still lists <fragment>/<cell> while the directory is gone."
+            + " DISPROVED so far: missing recordStructureVersion bump; eager container removal before"
+            + " commit. The attached-entry removal is not sticking -- start there, not at the merge.")
     @Test(timeout = 60_000)
     public void testMidTableFragmentIsMergedPerCell() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
