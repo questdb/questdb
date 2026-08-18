@@ -222,6 +222,28 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * PREMISE CHECK for the backward-scan defect: is the trigger really "a split fragment", or is it
+     * "cells whose timestamps interleave"? No fragment here at all -- two cells, each holding rows on
+     * BOTH sides of the other's rows. A backward walk over partition entries can only produce ts-DESC
+     * order if partitions are time-disjoint, and composite cells are not.
+     */
+    @Test(timeout = 60_000)
+    public void testBackwardScanOnInterleavedCellsWithoutAnyFragment() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T05:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-01T09:00:00.000000Z','E0',3.0),"
+                    + "('2023-01-01T13:00:00.000000Z','E1',4.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+            Assert.assertTrue("precondition: no fragment " + fragmentDirs("c"), fragmentDirs("c").isEmpty());
+            Assert.assertEquals("precondition: two cells", 2, cellDirs("c", "2023-01-01").size());
+            assertTwinEqual("");
+        });
+    }
+
+    /**
      * <b>DEFECT PIN — a pre-existing backward-scan bug, NOT a squash bug.</b> This began life as the
      * negative control for three failing squash tests, and it did its job: it fails with NO squash
      * anywhere in the test, which is what proves the defect is independent of sub-project 1E.
@@ -233,6 +255,17 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * calendar floor. The forward scan and {@code count()} both agree with the twin, so only the
      * backward half is affected, and only when a fragment is present: every other composite backward
      * test passes because none of them splits a partition first.
+     *
+     * <p><b>The trigger is the fragment, not cell interleaving</b> -- checked, not assumed. See
+     * {@link #testBackwardScanOnInterleavedCellsWithoutAnyFragment}, which builds two cells whose rows
+     * interleave in time with NO fragment and passes. So the defect needs a second attached entry
+     * sharing the day's FLOOR with a different RAW timestamp.
+     *
+     * <p><b>Lead for the fix.</b> The full (unfiltered) cursor family --
+     * {@code AbstractFullPartitionFrameCursor} and {@code FullBwdPartitionFrameCursor} -- has NO day-run
+     * or cell-major walk; its only composite awareness is {@code isCellAllowed()} for pruning. The 9A
+     * day-run work went into the INTERVAL cursors alone. A backward walk over raw partition-array order
+     * can only yield ts-DESC output if partitions are time-disjoint, which composite cells are not.
      *
      * <p>Un-ignoring this test is the acceptance criterion for the fix. It is left as a real test rather
      * than a comment so the defect cannot be lost, per this suite's own history of a backward cursor
