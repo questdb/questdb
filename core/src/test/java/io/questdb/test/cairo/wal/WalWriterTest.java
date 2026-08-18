@@ -5435,7 +5435,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.isWalApplySuspended(tableToken, null));
                 Assert.assertFalse(engine.isWalApplySuspended(unconfiguredToken, null));
                 // 2-arg overload, tracker-hit leg short-circuits ahead of the config list
-                unconfiguredTracker.setHardSuspended(true);
+                unconfiguredTracker.trySetSuspend(SeqTxnTracker.SUSPEND_PRIORITY_DDL, SeqTxnTracker.SUSPEND_FLAG_APPLY);
                 Assert.assertTrue(engine.isWalApplySuspended(unconfiguredToken, unconfiguredTracker));
                 Assert.assertFalse(engine.isWalApplySuspended(unconfiguredToken, created));
             } finally {
