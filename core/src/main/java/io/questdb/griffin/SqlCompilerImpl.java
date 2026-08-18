@@ -171,6 +171,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // Sentinel returned by foldPartitionFilterArithmetic when it cannot prove a value. It is
+    // unreachable as a real result: operands are read at 32 bits or less, so the largest magnitude
+    // a single operation can produce is 2^62.
+    private static final long PARTITION_FILTER_VALUE_NOT_PROVEN = Long.MAX_VALUE;
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
@@ -880,8 +884,82 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
+    /**
+     * Reports whether the node is an arithmetic operator whose result the partition-filter guard
+     * has to prove: binary {@code + - * / %}, or the unary {@code + -} the expression parser
+     * builds over a signed operand.
+     * <p>
+     * {@link #rejectWrappedPartitionFilterArithmetic} compiles only the nodes this accepts, which
+     * is deliberate: a WHERE clause holds nodes that mean nothing on their own - the type name in
+     * {@code x::timestamp}, the {@code epoch} field name in {@code extract(epoch from x)} - and
+     * compiling one of those in isolation would fail with an error the statement does not deserve.
+     */
+    private static boolean isPartitionFilterArithmetic(@Nullable ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION || node.token == null) {
+            return false;
+        }
+        if (node.paramCount == 1) {
+            return Chars.equals(node.token, '+') || Chars.equals(node.token, '-');
+        }
+        return node.paramCount == 2
+                && (Chars.equals(node.token, '+')
+                || Chars.equals(node.token, '-')
+                || Chars.equals(node.token, '*')
+                || Chars.equals(node.token, '/')
+                || Chars.equals(node.token, '%'));
+    }
+
+    /**
+     * Reports whether a constant of this type can be read back as the narrow integer that its
+     * parent arithmetic reads.
+     * <p>
+     * Overload resolution inserts no cast function for these. {@code MulIntFunctionFactory} and
+     * its siblings call {@code getInt()} straight on whatever argument they were handed, and
+     * {@code StrFunction.getInt()} answers with {@code SqlUtil.implicitCastStrAsInt}. That is why
+     * {@code '1720468802' * 1000000} is INT arithmetic over a STRING operand, and why reading the
+     * operand back the same way reproduces the engine's own value instead of guessing at a cast
+     * that lives in the parent's overload resolution.
+     * <p>
+     * Every other type - DECIMAL, DOUBLE, LONG, SYMBOL, an array - is reported as unreadable, so
+     * the fold reports NOT-PROVEN and the statement is refused rather than judged on a value this
+     * method invented. None of them can in fact reach a narrow-int arithmetic node, because an
+     * operand of any of those types makes the parent resolve to a wider factory; the list is a
+     * safety net, not a decision.
+     */
+    private static boolean isReadableAsNarrowInt(int type) {
+        final short tag = ColumnType.tagOf(type);
+        return tag == ColumnType.BYTE
+                || tag == ColumnType.SHORT
+                || tag == ColumnType.INT
+                || tag == ColumnType.CHAR
+                || tag == ColumnType.STRING
+                || tag == ColumnType.VARCHAR
+                || tag == ColumnType.NULL;
+    }
+
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Returns the number of bits an expression of this type computes in when it is too narrow to
+     * hold a timestamp - 8 for BYTE, 16 for SHORT, 32 for INT - or 0 for every type that is wide
+     * enough, or is not an integer at all.
+     * <p>
+     * Only these three wrap below 64 bits, and only these three reach {@code filterApply} through
+     * a {@code getTimestamp()} that sign-extends a narrow value rather than recomputing at 64
+     * bits, which is what makes a wrapped bound match every partition floor of a table holding
+     * modern data.
+     */
+    private static int narrowIntWidthOf(int type) {
+        final short tag = ColumnType.tagOf(type);
+        if (tag == ColumnType.BYTE) {
+            return 8;
+        }
+        if (tag == ColumnType.SHORT) {
+            return 16;
+        }
+        return tag == ColumnType.INT ? 32 : 0;
     }
 
     /**
@@ -924,6 +1002,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(unquote(foreignSource.token))
                     .put("]; the statement is replicated as SQL and re-executed on every node, and the referenced table is not synchronised with this one, so nodes could write different data");
         }
+    }
+
+    /**
+     * Truncates a 64-bit value to the given narrow width, exactly as the engine's arithmetic
+     * does. {@code truncateToNarrowInt(v, width) == v} is therefore the test for "this
+     * computation did not wrap", and when it did wrap the value returned here is the one the
+     * engine actually produced - which is what the error message quotes back to the operator.
+     */
+    private static long truncateToNarrowInt(long value, int width) {
+        if (width == 8) {
+            return (byte) value;
+        }
+        return width == 16 ? (short) value : (int) value;
     }
 
     private int addColumnWithType(
@@ -1603,6 +1694,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     Function function = functionParser.parseFunction(expr, metadata, executionContext);
                     try {
                         if (function != null && ColumnType.isBoolean(function.getType())) {
+                            // after the main compile, so every pre-existing compile error keeps its
+                            // precedence and a bind variable is already typed by the whole expression;
+                            // still at compile time, so a WAL table refuses the statement before it is
+                            // sequenced and the WAL apply that re-compiles it refuses it again
+                            rejectWrappedPartitionFilterArithmetic(expr, metadata, executionContext);
                             function.init(null, executionContext);
                             if (reader != null) {
                                 int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
@@ -5215,6 +5311,113 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return affectedPartitions;
     }
 
+    /**
+     * Evaluates one narrow-int arithmetic node at 64 bits, WITHOUT the wrapping the engine
+     * applies, so {@link #rejectWrappedPartitionFilterArithmetic} can tell whether the engine's
+     * narrow computation lost anything.
+     * <p>
+     * The caller walks children before parents, so every descendant of {@code node} has already
+     * been proven not to wrap by the time this runs. That is what makes reading an operand back
+     * at the node's own width exact: an operand that is itself arithmetic carries the same value
+     * narrow and wide, and an operand that is a leaf is read with the very getter the arithmetic
+     * factory calls on it.
+     *
+     * @param node             a node {@link #isPartitionFilterArithmetic} accepted, whose compiled
+     *                         type is {@code width} bits wide
+     * @param width            8, 16 or 32
+     * @param metadata         the one-column partition-filter metadata
+     * @param executionContext the compiling context
+     * @return the exact value; {@link Numbers#LONG_NULL} when the node evaluates to NULL, which
+     * cannot over-match; or {@link #PARTITION_FILTER_VALUE_NOT_PROVEN} when an operand is not a
+     * constant this method can read
+     * @throws SqlException propagated from compiling an operand
+     */
+    private long foldPartitionFilterArithmetic(
+            ExpressionNode node,
+            int width,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (node.paramCount == 1) {
+            final long operand = foldPartitionFilterOperand(node.rhs, width, metadata, executionContext);
+            if (operand == PARTITION_FILTER_VALUE_NOT_PROVEN || operand == Numbers.LONG_NULL) {
+                return operand;
+            }
+            return Chars.equals(node.token, '-') ? -operand : operand;
+        }
+        final long lhs = foldPartitionFilterOperand(node.lhs, width, metadata, executionContext);
+        if (lhs == PARTITION_FILTER_VALUE_NOT_PROVEN || lhs == Numbers.LONG_NULL) {
+            return lhs;
+        }
+        final long rhs = foldPartitionFilterOperand(node.rhs, width, metadata, executionContext);
+        if (rhs == PARTITION_FILTER_VALUE_NOT_PROVEN || rhs == Numbers.LONG_NULL) {
+            return rhs;
+        }
+        if (Chars.equals(node.token, '+')) {
+            return lhs + rhs;
+        }
+        if (Chars.equals(node.token, '-')) {
+            return lhs - rhs;
+        }
+        if (Chars.equals(node.token, '*')) {
+            return lhs * rhs;
+        }
+        if (rhs == 0) {
+            // DivIntFunctionFactory and RemIntFunctionFactory both answer NULL for a zero divisor
+            // rather than failing, so the node evaluates to NULL and cannot over-match
+            return Numbers.LONG_NULL;
+        }
+        return Chars.equals(node.token, '/') ? lhs / rhs : lhs % rhs;
+    }
+
+    /**
+     * Reads one operand of a narrow-int arithmetic node as the exact 64-bit number the engine
+     * will feed to that arithmetic.
+     * <p>
+     * The read goes through the same getter the arithmetic factory uses - {@code getInt()} for a
+     * 32-bit node - so a STRING constant is converted by the engine's own implicit cast rather
+     * than by a rule this method invents, and a nested arithmetic operand yields the value it
+     * already proved. A constant is required: a bind variable and any other runtime constant hold
+     * no readable value until {@code init()} runs, so they report NOT-PROVEN and the caller
+     * refuses the statement rather than guessing.
+     *
+     * @param operand          the operand node, or {@code null}
+     * @param width            the parent node's width in bits: 8, 16 or 32
+     * @param metadata         the one-column partition-filter metadata
+     * @param executionContext the compiling context
+     * @return the operand's value; {@link Numbers#LONG_NULL} when it is NULL; or
+     * {@link #PARTITION_FILTER_VALUE_NOT_PROVEN} when it is not a readable constant
+     * @throws SqlException propagated from compiling the operand
+     */
+    private long foldPartitionFilterOperand(
+            @Nullable ExpressionNode operand,
+            int width,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (operand == null) {
+            return PARTITION_FILTER_VALUE_NOT_PROVEN;
+        }
+        final Function operandFunction = functionParser.parseFunction(operand, metadata, executionContext);
+        try {
+            if (operandFunction == null
+                    || !operandFunction.isConstant()
+                    || !isReadableAsNarrowInt(operandFunction.getType())) {
+                return PARTITION_FILTER_VALUE_NOT_PROVEN;
+            }
+            if (width == 8) {
+                return operandFunction.getByte(null);
+            }
+            if (width == 16) {
+                return operandFunction.getShort(null);
+            }
+            final int value = operandFunction.getInt(null);
+            return value == Numbers.INT_NULL ? Numbers.LONG_NULL : value;
+        } finally {
+            Misc.free(operandFunction);
+        }
+    }
+
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
             IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
@@ -5647,6 +5850,111 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    /**
+     * Refuses a DROP / DETACH / CONVERT PARTITION WHERE clause that holds narrow-integer
+     * arithmetic whose 32-bit result differs from its mathematical one, or that cannot be proven
+     * to stay in range.
+     * <p>
+     * INT arithmetic wraps modulo 2^32 in every context, so the seconds-to-micros idiom
+     * {@code epoch_secs * 1000000} produces a small number - of either sign - rather than a
+     * timestamp. {@code partitionFunctionRec} exposes nothing but the designated timestamp, so
+     * {@code WHERE ts > <wrapped>} is true for every partition floor of a table holding modern
+     * data, and DROP PARTITION removes the whole table while reporting success. The wrap itself
+     * stays exactly as it is everywhere else; this only stops one irreversible statement from
+     * acting on a bound the operator plainly did not write.
+     * <p>
+     * The rule is a value-domain one and it runs over compiled constants, not over AST tokens.
+     * That is what makes it see through every spelling of an operand: a quoted numeric literal
+     * ({@code '1720468802' * 1000000}, which overload resolution reads as a number), a narrowing
+     * cast, an INT-returning function call, a CASE. It is also why it fires on the arithmetic
+     * wherever the arithmetic sits, not only at the bound:
+     * {@code ts > to_utc('1720468802'::int * 1000000, 'UTC')} and
+     * {@code ts - '1720468802' * 1000000 > 0} wrap one level below a 64-bit-typed parent and are
+     * refused all the same.
+     * <p>
+     * Two outcomes are accepted. Arithmetic proven to stay in range keeps working, which is what
+     * preserves {@code dateadd('d', 2 * 7, now())}, {@code ts + 1000000 * 60},
+     * {@code ts > abs(5) * 2} and the bare bounds {@code ts > 0} / {@code >= 0} / {@code > -1}
+     * that the codebase's "drop everything" idiom relies on. Arithmetic proven to evaluate to
+     * NULL is accepted too:
+     * every narrow-int factory answers NULL for a NULL operand or a zero divisor, and a NULL
+     * bound matches no partition floor, so it cannot over-match - the existing "no partitions
+     * matched WHERE clause" check reports it.
+     * <p>
+     * Anything else is refused. A narrow-int arithmetic node whose operand is only known once the
+     * statement runs - a bind variable, or a value read off the timestamp column - cannot be
+     * proven either way, and this deliberately fails closed: the statement is irreversible, the
+     * expressions it costs are exactly the ones the finding is about, and the refusal names the
+     * widening that fixes it.
+     * <p>
+     * The check runs after the WHERE clause has compiled as a whole, so every pre-existing
+     * compile error keeps its precedence and an undefined bind variable has already been typed by
+     * the full expression's overload resolution. It still runs at compile time, so a WAL table
+     * refuses the statement before it is sequenced and the WAL apply that re-compiles it refuses
+     * it again. Compiling a sub-expression a second time defines nothing twice and shifts no
+     * positional index: {@code FunctionParser.createIndexParameter} derives the index from the
+     * {@code $n} token and only reads {@code BindVariableService}.
+     * <p>
+     * The rule is self-contained: it needs the WHERE clause, a metadata describing the record the
+     * filter will see, and a compiling context. Extending the guard to another statement is
+     * therefore a matter of adding a call, not of moving logic.
+     *
+     * @param node             root of the WHERE clause expression, or {@code null}
+     * @param metadata         the one-column partition-filter metadata
+     * @param executionContext the compiling context
+     * @throws SqlException positioned at the arithmetic operator that wrapped or could not be
+     *                      proven
+     */
+    private void rejectWrappedPartitionFilterArithmetic(
+            @Nullable ExpressionNode node,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.paramCount > 2) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                rejectWrappedPartitionFilterArithmetic(node.args.getQuick(i), metadata, executionContext);
+            }
+        } else {
+            rejectWrappedPartitionFilterArithmetic(node.lhs, metadata, executionContext);
+            rejectWrappedPartitionFilterArithmetic(node.rhs, metadata, executionContext);
+        }
+        if (!isPartitionFilterArithmetic(node)) {
+            return;
+        }
+        final int width;
+        final Function nodeFunction = functionParser.parseFunction(node, metadata, executionContext);
+        try {
+            width = nodeFunction != null ? narrowIntWidthOf(nodeFunction.getType()) : 0;
+        } finally {
+            Misc.free(nodeFunction);
+        }
+        if (width == 0) {
+            return;
+        }
+        final long exact = foldPartitionFilterArithmetic(node, width, metadata, executionContext);
+        if (exact == Numbers.LONG_NULL) {
+            return;
+        }
+        if (exact == PARTITION_FILTER_VALUE_NOT_PROVEN) {
+            throw SqlException.$(node.position, "INT arithmetic overflow in partition filter cannot be ruled out: this computes at ")
+                    .put(width)
+                    .put(" bits and an operand is only known once the statement runs, so it can wrap and match partitions the statement did not mean to name; widen an operand (1_000_000L, expr::long) or use a timestamp literal");
+        }
+        final long wrapped = truncateToNarrowInt(exact, width);
+        if (wrapped != exact) {
+            throw SqlException.$(node.position, "INT arithmetic overflow in partition filter: this computes at ")
+                    .put(width)
+                    .put(" bits and wraps to ")
+                    .put(wrapped)
+                    .put(" instead of ")
+                    .put(exact)
+                    .put(", which matches partitions the statement did not mean to name; widen an operand (1_000_000L, expr::long) or use a timestamp literal");
+        }
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
