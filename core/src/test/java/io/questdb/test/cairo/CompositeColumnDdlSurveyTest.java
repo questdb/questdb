@@ -44,8 +44,11 @@ import org.junit.Test;
  * All {@code @Ignore}d — they are run by temporarily lifting the writer-side gates, exactly as 1D
  * Task 1 was run, and the findings recorded. They are NOT a claim that any of this works.
  * <p>
- * <b>A twin DATA comparison cannot verify a STRUCTURE change, and this survey proved it the hard
- * way.</b> {@code surveyAddIndex} passed — and a follow-up probe showed {@code isColumnIndexed} was
+ * <b>This survey produced THREE successive false positives, each caught only by checking a different
+ * observable than the last: rows, then structure flags, then on-disk files. Its first summary said
+ * "3 of 5 pass". The true answer is 0 of 5.</b> A twin DATA comparison cannot verify a STRUCTURE
+ * change, and neither can verify what is left on disk.
+ * <p> {@code surveyAddIndex} passed — and a follow-up probe showed {@code isColumnIndexed} was
  * FALSE afterwards: {@code ADD INDEX} reported success and created no index. The twin comparison
  * could not see it, because an index changes no query RESULT; and the indexed-{@code WHERE} check was
  * accepted rather than refused by the indexed-predicate gate for the same reason — there was no index
@@ -63,8 +66,9 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * partition, and a composite partition is a cell.
      */
     @Ignore("SP2 SURVEY -- run by temporarily lifting the writer-side gate, then restoring it. Results"
-            + " recorded 2026-08-18 in the ledger: ADD INDEX, DROP COLUMN and DROP INDEX PASS with only"
-            + " the gate removed; RENAME COLUMN and ALTER COLUMN TYPE FAIL.")
+            + " recorded 2026-08-18 in the ledger. FINAL RESULT: ZERO of the five work. ADD INDEX is a"
+            + " silent no-op, DROP COLUMN leaks every cell's column file, DROP INDEX is unverified,"
+            + " RENAME COLUMN and ALTER COLUMN TYPE fail outright.")
     @Test(timeout = 60_000)
     public void surveyAddIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -87,8 +91,9 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * question is whether the removal walks cells or days.
      */
     @Ignore("SP2 SURVEY -- run by temporarily lifting the writer-side gate, then restoring it. Results"
-            + " recorded 2026-08-18 in the ledger: ADD INDEX, DROP COLUMN and DROP INDEX PASS with only"
-            + " the gate removed; RENAME COLUMN and ALTER COLUMN TYPE FAIL.")
+            + " recorded 2026-08-18 in the ledger. FINAL RESULT: ZERO of the five work. ADD INDEX is a"
+            + " silent no-op, DROP COLUMN leaks every cell's column file, DROP INDEX is unverified,"
+            + " RENAME COLUMN and ALTER COLUMN TYPE fail outright.")
     @Test(timeout = 60_000)
     public void surveyDropColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -99,6 +104,11 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             execute("ALTER TABLE p DROP COLUMN px");
             drainWalQueue();
             assertTwinEqual("", " ORDER BY ts, exch");
+            // THE ASSERTION THAT MATTERS. The metadata drop succeeds either way, so the twin data
+            // comparison above passes even when every cell's column file survives on disk. Measured
+            // 2026-08-18: DROP COLUMN removed the DAY-LEVEL px.d and left E0/px.d, E1/px.d and
+            // E2/px.d in place -- a per-cell disk leak invisible to any query.
+            assertNoColumnFilesRemain("c", "px");
         });
     }
 
@@ -106,8 +116,9 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * DROP INDEX, the counterpart of {@link #surveyAddIndex()}.
      */
     @Ignore("SP2 SURVEY -- run by temporarily lifting the writer-side gate, then restoring it. Results"
-            + " recorded 2026-08-18 in the ledger: ADD INDEX, DROP COLUMN and DROP INDEX PASS with only"
-            + " the gate removed; RENAME COLUMN and ALTER COLUMN TYPE FAIL.")
+            + " recorded 2026-08-18 in the ledger. FINAL RESULT: ZERO of the five work. ADD INDEX is a"
+            + " silent no-op, DROP COLUMN leaks every cell's column file, DROP INDEX is unverified,"
+            + " RENAME COLUMN and ALTER COLUMN TYPE fail outright.")
     @Test(timeout = 60_000)
     public void surveyDropIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -130,8 +141,9 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * — which is exactly why it is worth measuring rather than assuming.
      */
     @Ignore("SP2 SURVEY -- run by temporarily lifting the writer-side gate, then restoring it. Results"
-            + " recorded 2026-08-18 in the ledger: ADD INDEX, DROP COLUMN and DROP INDEX PASS with only"
-            + " the gate removed; RENAME COLUMN and ALTER COLUMN TYPE FAIL.")
+            + " recorded 2026-08-18 in the ledger. FINAL RESULT: ZERO of the five work. ADD INDEX is a"
+            + " silent no-op, DROP COLUMN leaks every cell's column file, DROP INDEX is unverified,"
+            + " RENAME COLUMN and ALTER COLUMN TYPE fail outright.")
     @Test(timeout = 60_000)
     public void surveyRenameColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -150,8 +162,9 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * every CELL's. Expected to be the most expensive of the four.
      */
     @Ignore("SP2 SURVEY -- run by temporarily lifting the writer-side gate, then restoring it. Results"
-            + " recorded 2026-08-18 in the ledger: ADD INDEX, DROP COLUMN and DROP INDEX PASS with only"
-            + " the gate removed; RENAME COLUMN and ALTER COLUMN TYPE FAIL.")
+            + " recorded 2026-08-18 in the ledger. FINAL RESULT: ZERO of the five work. ADD INDEX is a"
+            + " silent no-op, DROP COLUMN leaks every cell's column file, DROP INDEX is unverified,"
+            + " RENAME COLUMN and ALTER COLUMN TYPE fail outright.")
     @Test(timeout = 60_000)
     public void surveyAlterColumnType() throws Exception {
         assertMemoryLeak(() -> {
@@ -163,6 +176,25 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             drainWalQueue();
             assertTwinEqual("");
         });
+    }
+
+    /**
+     * Asserts no file for {@code column} survives in ANY cell of the table. A dropped column stops
+     * being read the moment the metadata changes, so queries -- and therefore twin comparisons -- are
+     * blind to the files left behind.
+     */
+    private void assertNoColumnFilesRemain(String table, String column) throws Exception {
+        engine.releaseInactive();
+        final java.nio.file.Path root = java.nio.file.Paths.get(configuration.getDbRoot());
+        final java.util.List<String> leaked = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> w = java.nio.file.Files.walk(root, 4)) {
+            w.map(root::relativize).map(Object::toString)
+                    .filter(x -> x.startsWith(table + '~'))
+                    .filter(x -> x.endsWith('/' + column + ".d"))
+                    .sorted()
+                    .forEach(leaked::add);
+        }
+        org.junit.Assert.assertTrue("dropped column left files on disk: " + leaked, leaked.isEmpty());
     }
 
     /**
