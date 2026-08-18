@@ -114,8 +114,10 @@ import org.jetbrains.annotations.TestOnly;
  *
  * <h2>What declines</h2>
  * One thing stops a compiled plan from getting a runtime: {@code cairo.sql.window.map.fusion.enabled},
- * the operational escape hatch. Every plan the compiler produces binds otherwise. In particular a
- * fused value that crosses {@code cairo.sql.unordered.map.max.entry.size} still binds: the wider
+ * the operational escape hatch. It is reloadable and read once per compile, so flipping it moves
+ * the next compile and nothing already compiled - a cached select plan keeps the binding it was
+ * built with until the cache is flushed. Every plan the compiler produces binds otherwise. In
+ * particular a fused value that crosses {@code cairo.sql.unordered.map.max.entry.size} still binds: the wider
  * value may move the group's map from {@link io.questdb.cairo.map.Unordered4Map} to
  * {@link io.questdb.cairo.map.OrderedMap}, and measurement says that trade is worth taking,
  * because the unordered maps lead only while the key domain is small and a window map's cost is
