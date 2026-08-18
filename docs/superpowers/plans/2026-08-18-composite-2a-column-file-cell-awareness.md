@@ -253,3 +253,48 @@ misinterpreted — the same class of hazard 1C found in `AlterOperation`'s wire 
 was a new command code rather than a wider payload. Task 1 Step 2 must establish whether this queue
 survives a restart or is purely in-memory before widening it. If it is persisted, the `AlterOperation`
 precedent applies.
+
+
+## Async purge: the blocker, and the migration that clears it (measured 2026-08-18)
+
+**State.** DROP COLUMN's SYNCHRONOUS purge is cell-aware and shipped. The ASYNC fallback -- which fires
+when a reader is pinned across the drop -- still leaks every cell's column file. It is a disk leak, not
+corruption: the column is gone from metadata, no query can reach the files, and nothing references them.
+
+**Why it is not a one-line fix.** `ColumnPurgeOperator#setUpPartitionPath` builds the partition path
+from `(partitionTimestamp, partitionTxnName)` and nothing else, because that is all the task carries:
+
+```java
+private void setUpPartitionPath(int timestampType, int partitionBy, long partitionTimestamp, long partitionTxnName) {
+    path.trimTo(pathTableLen);
+    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionTxnName);
+}
+```
+
+`ColumnPurgeTask` stores 4 longs per entry (`BLOCK_SIZE = 4`: columnVersion, partitionTimestamp,
+partitionNameTxn, updateRowId) and the queue is drained into a PERSISTED system table with a POSITIONAL
+schema -- `_column_versions_purge_log`, columns 0..11, created with `CREATE TABLE IF NOT EXISTS`. So the
+cell cannot simply be threaded through: it has to survive a restart, in a table that already exists in
+every deployment.
+
+**The migration that clears it, and why this shape.** Add `cell_segment symbol` as column **12, at the
+END**, and issue an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on job startup alongside the existing
+`CREATE TABLE IF NOT EXISTS`.
+
+- Appending at the end keeps every existing positional read (0..11) valid, so an old log file and a new
+  one are both readable by the new code.
+- `IF NOT EXISTS` on both statements makes startup idempotent and safe on a fresh install and on an
+  upgrade alike.
+- NULL in column 12 means "plain table, no cell" -- which is exactly what every pre-migration row means,
+  so old rows need no backfill and no interpretation rule beyond `null -> day-level path`.
+- `BLOCK_SIZE` goes 4 -> 5 in `ColumnPurgeTask`. Every `updatedColumnInfo.add(...)` call site and every
+  `i += BLOCK_SIZE` walk must move together; the stride is not centralised, so grep it rather than
+  trusting the constant.
+
+**Blast radius, stated plainly.** This is the only remaining composite item that changes a table shared
+by every QuestDB deployment, composite or not. It deserves its own change and its own review, which is
+why it is specified here rather than folded into a column-DDL commit.
+
+**Do not "fix" it by disabling the async path for composite.** The async fallback exists because a
+pinned reader must not block a drop. Making composite drops synchronous-only would trade a bounded disk
+leak for a stall on a live reader, which is worse.
