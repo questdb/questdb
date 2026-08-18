@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
@@ -263,7 +264,7 @@ public final class WhereClauseParser implements Mutable {
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
             boolean isKeyColumnSuppressed,
-            @NotNull TableReader reader,
+            @Nullable TableReader reader,
             boolean noIndex,
             @NotNull ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
@@ -324,7 +325,7 @@ public final class WhereClauseParser implements Mutable {
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
             boolean isKeyColumnSuppressed,
-            @NotNull TableReader reader,
+            @Nullable TableReader reader,
             boolean noIndex,
             @NotNull ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
@@ -343,8 +344,8 @@ public final class WhereClauseParser implements Mutable {
         this.useIndexedSymbolFilters = !executionContext.isLiveViewCompile();
 
         IntrinsicModel model = models.next();
-        int timestampType = reader.getMetadata().getTimestampType();
-        model.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
+        int timestampType = timestampTypeOf(m, reader);
+        model.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         try {
 
@@ -526,7 +527,13 @@ public final class WhereClauseParser implements Mutable {
      * Checks if a symbol column with idx index has more distinct values
      * or has higher capacity than the current key column.
      */
-    private static boolean isMoreSelective(IntrinsicModel model, RecordMetadata meta, TableReader reader, int idx) {
+    private static boolean isMoreSelective(IntrinsicModel model, RecordMetadata meta, @Nullable TableReader reader, int idx) {
+        if (reader == null) {
+            // The WAL serialisation compile extracts without a reader, so symbol counts are out of
+            // reach. This only picks which indexed symbol drives the scan and that scan is never
+            // generated on that path, so keeping the column already chosen is the neutral answer.
+            return false;
+        }
         SymbolMapReader colReader = reader.getSymbolMapReader(idx);
         SymbolMapReader keyReader = reader.getSymbolMapReader(meta.getColumnIndex(model.keyColumn));
         int colCount = colReader.getSymbolCount();
@@ -578,6 +585,20 @@ public final class WhereClauseParser implements Mutable {
                 throw SqlException.invalidDate(lo.position);
             }
         }
+    }
+
+    /**
+     * The partition scheme the extracted intervals will be evaluated against, or
+     * {@link PartitionBy#NONE} when there is no reader to ask.
+     * <p>
+     * A null reader means the WAL serialisation compile, which runs the extraction purely to
+     * validate the WHERE clause and drops the model without calling
+     * {@link IntrinsicModel#buildIntervalModel()}. The partition scheme reaches nothing else -
+     * {@code RuntimeIntervalModelBuilder} stores it and hands it to the model it builds - so the
+     * validation run has no use for it.
+     */
+    private static int partitionByOf(@Nullable TableReader reader) {
+        return reader != null ? reader.getPartitionedBy() : PartitionBy.NONE;
     }
 
     private static void revertNodes(ObjList<ExpressionNode> nodes) {
@@ -723,8 +744,8 @@ public final class WhereClauseParser implements Mutable {
 
         // Create a temporary model to extract intervals from the inner predicate
         IntrinsicModel tempModel = models.next();
-        int timestampType = reader.getMetadata().getTimestampType();
-        tempModel.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
+        int timestampType = timestampTypeOf(m, reader);
+        tempModel.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
 
         // Process the inner predicate recursively
         final boolean isNestedAndOffset = isInsideAndOffset;
@@ -4091,6 +4112,15 @@ public final class WhereClauseParser implements Mutable {
             return csPool.next().of(value, 1, value.length() - 2);
         }
         return value;
+    }
+
+    /**
+     * The designated timestamp's type, taken from the reader when there is one and from the table
+     * metadata otherwise. Both call sites pass the same metadata the reader would have reported, so
+     * this only matters to the reader-less WAL serialisation compile.
+     */
+    private static int timestampTypeOf(RecordMetadata m, @Nullable TableReader reader) {
+        return reader != null ? reader.getMetadata().getTimestampType() : m.getTimestampType();
     }
 
     /**
