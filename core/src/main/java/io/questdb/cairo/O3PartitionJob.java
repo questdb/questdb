@@ -1841,6 +1841,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static long getDedupRows(
+            @Nullable CharSequence cellSegment,
             long partitionTimestamp,
             long srcNameTxn,
             long srcTimestampAddr,
@@ -1868,6 +1869,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
         } else {
             return getDedupRowsWithAdditionalKeys(
+                    cellSegment,
                     partitionTimestamp,
                     srcNameTxn,
                     srcTimestampAddr,
@@ -1887,6 +1889,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static long getDedupRowsWithAdditionalKeys(
+            @Nullable CharSequence cellSegment,
             long partitionTimestamp,
             long srcNameTxn,
             long srcTimestampAddr,
@@ -1965,12 +1968,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     } else { // if (columnTop > mergeDataHi)
                         if (columnSize > 0) {
                             // Fixed length column
+                            // Cell-aware. Without the segment this resolves the DAY container, where a
+                            // 0-byte stray <column>.d sits beside the cell directories -- openRO then
+                            // succeeds and mapAppendColumnBuffer maps fixMapSize bytes PAST its end, so
+                            // the native dedup merge died on first touch with SIGBUS/BUS_ADRERR in
+                            // Vect.mergeDedupTimestampWithLongIndexIntKeys. The dedup KEY column must be
+                            // read from the same cell whose rows the merge ranges describe.
                             TableUtils.setSinkForNativePartition(
                                     tableRootPath.trimTo(tableRootPathLen).slash(),
                                     tableWriter.getMetadata().getTimestampType(),
                                     tableWriter.getPartitionBy(),
                                     partitionTimestamp,
-                                    srcNameTxn
+                                    srcNameTxn,
+                                    cellSegment
                             );
                             long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
 
@@ -2000,12 +2010,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                             long auxMapSize = driver.getAuxVectorSize(rows);
 
+                            // Cell-aware. Without the segment this resolves the DAY container, where a
+                            // 0-byte stray <column>.d sits beside the cell directories -- openRO then
+                            // succeeds and mapAppendColumnBuffer maps fixMapSize bytes PAST its end, so
+                            // the native dedup merge died on first touch with SIGBUS/BUS_ADRERR in
+                            // Vect.mergeDedupTimestampWithLongIndexIntKeys. The dedup KEY column must be
+                            // read from the same cell whose rows the merge ranges describe.
                             TableUtils.setSinkForNativePartition(
                                     tableRootPath.trimTo(tableRootPathLen).slash(),
                                     tableWriter.getMetadata().getTimestampType(),
                                     tableWriter.getPartitionBy(),
                                     partitionTimestamp,
-                                    srcNameTxn
+                                    srcNameTxn,
+                                    cellSegment
                             );
                             long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
                             long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
@@ -2019,12 +2036,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
                             if (varMapSize > 0) {
+                                // Cell-aware for the same reason as the fixed-size branch above: the
+                                // var-size data vector must come from the cell the merge ranges describe.
                                 TableUtils.setSinkForNativePartition(
                                         tableRootPath.trimTo(tableRootPathLen).slash(),
                                         tableWriter.getMetadata().getTimestampType(),
                                         tableWriter.getPartitionBy(),
                                         partitionTimestamp,
-                                        srcNameTxn
+                                        srcNameTxn,
+                                        cellSegment
                                 );
                             }
                             long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
@@ -3164,6 +3184,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getDbRoot()).concat(tableWriter.getTableToken());
 
                     final long dedupRows = getDedupRows(
+                            cellSegment,
                             oldPartitionTimestamp,
                             srcNameTxn,
                             srcTimestampAddr,

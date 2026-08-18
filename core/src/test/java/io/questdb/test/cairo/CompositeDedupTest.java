@@ -47,16 +47,14 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("DEDUP is gated for composite, and the gate is LOAD-BEARING -- measured 2026-08-18 by"
-            + " lifting both gates (CREATE and ALTER): the JVM CRASHES. Not an exception, a SIGBUS in"
-            + " the native dedup merge:"
-            + "   Problematic frame: Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys"
-            + "   siginfo: SIGBUS, BUS_ADRERR"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys is handed the existing partition's"
-            + " timestampDataPtr over 0..rowGroupSize-1 plus the dedup column addresses. On a composite"
-            + " table a 'partition' is a CELL and the O3 path already splits work per cell, so"
-            + " day-scoped addresses against cell-scoped ranges walk off the end of the buffer."
-            + " Un-ignore when the dedup addresses and row ranges are computed per CELL.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
+            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
+            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
+            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
+            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
+            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
+            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
+            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
@@ -76,16 +74,14 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * distinct rows and must both survive -- a dedup that collapsed them would be losing data that the
      * plain twin keeps, because on the plain table the dimension column is just another column.
      */
-    @Ignore("DEDUP is gated for composite, and the gate is LOAD-BEARING -- measured 2026-08-18 by"
-            + " lifting both gates (CREATE and ALTER): the JVM CRASHES. Not an exception, a SIGBUS in"
-            + " the native dedup merge:"
-            + "   Problematic frame: Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys"
-            + "   siginfo: SIGBUS, BUS_ADRERR"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys is handed the existing partition's"
-            + " timestampDataPtr over 0..rowGroupSize-1 plus the dedup column addresses. On a composite"
-            + " table a 'partition' is a CELL and the O3 path already splits work per cell, so"
-            + " day-scoped addresses against cell-scoped ranges walk off the end of the buffer."
-            + " Un-ignore when the dedup addresses and row ranges are computed per CELL.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
+            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
+            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
+            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
+            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
+            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
+            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
+            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
     @Test(timeout = 60_000)
     public void testSameTimestampInDifferentCellsBothSurvive() throws Exception {
         assertMemoryLeak(() -> {
@@ -104,16 +100,14 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * timestamp. This is the shape {@code getDedupRowsWithAdditionalKeys} has to get right: the key set
      * spans a column that also decides which cell a row lives in.
      */
-    @Ignore("DEDUP is gated for composite, and the gate is LOAD-BEARING -- measured 2026-08-18 by"
-            + " lifting both gates (CREATE and ALTER): the JVM CRASHES. Not an exception, a SIGBUS in"
-            + " the native dedup merge:"
-            + "   Problematic frame: Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys"
-            + "   siginfo: SIGBUS, BUS_ADRERR"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys is handed the existing partition's"
-            + " timestampDataPtr over 0..rowGroupSize-1 plus the dedup column addresses. On a composite"
-            + " table a 'partition' is a CELL and the O3 path already splits work per cell, so"
-            + " day-scoped addresses against cell-scoped ranges walk off the end of the buffer."
-            + " Un-ignore when the dedup addresses and row ranges are computed per CELL.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
+            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
+            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
+            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
+            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
+            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
+            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
+            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
     @Test(timeout = 60_000)
     public void testUpsertWithinACellWhileSiblingHoldsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -134,16 +128,14 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * Dedup across an O3 write, which is where dedup and the composite cell router interact: the
      * incoming batch is out of order AND spans two cells.
      */
-    @Ignore("DEDUP is gated for composite, and the gate is LOAD-BEARING -- measured 2026-08-18 by"
-            + " lifting both gates (CREATE and ALTER): the JVM CRASHES. Not an exception, a SIGBUS in"
-            + " the native dedup merge:"
-            + "   Problematic frame: Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys"
-            + "   siginfo: SIGBUS, BUS_ADRERR"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys is handed the existing partition's"
-            + " timestampDataPtr over 0..rowGroupSize-1 plus the dedup column addresses. On a composite"
-            + " table a 'partition' is a CELL and the O3 path already splits work per cell, so"
-            + " day-scoped addresses against cell-scoped ranges walk off the end of the buffer."
-            + " Un-ignore when the dedup addresses and row ranges are computed per CELL.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
+            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
+            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
+            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
+            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
+            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
+            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
+            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
     @Test(timeout = 60_000)
     public void testDedupAcrossAnO3Write() throws Exception {
         assertMemoryLeak(() -> {
