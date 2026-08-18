@@ -22,6 +22,9 @@ Sub-project 8 is built **first** — it is the differential test harness every o
 graded against. Sub-project 1 is next, because its addressing decision propagates into 3, 6 and 7.
 
 ```
+Remaining lifecycle chain is SERIALISED (measured 2026-08-18): 1E squash -> DETACH -> ATTACH.
+Nothing else in sub-project 1 can even be MEASURED until squash lands.
+
 Wave 0 (earliest-refusal + O3-purge proof)
   → 8 (verify) → 9A (per-cell interval cursors) → 1 (lifecycle) → 2 (column DDL)
   → 9B/9C (index cell-awareness) → 4 (row-level + commit shapes) → 5 (create-time)
@@ -52,7 +55,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 | 1 | `DROP PARTITION` — **SUPPORTED 2026-08-18**; whole-day in 1B, per-cell (`LIST '<day>/<cell>'`) in 1C | 1 — partition-lifecycle (done) |
 | 2 | `FORCE DROP PARTITION` — **SUPPORTED 2026-08-18 (1D)**; whole days, and its LIST parser already makes a cell-qualified name unreachable | 1 — partition-lifecycle (done) |
 | 3 | `DETACH PARTITION` — **BLOCKED BY #5**: measured 2026-08-18, with its gates lifted DETACH suspends on the SQUASH gate, thrown from `detachPartition` itself. Squash must be cell-aware first | 1 — partition-lifecycle (needs 1E) |
-| 4 | `ATTACH PARTITION` | 1 — partition-lifecycle |
+| 4 | `ATTACH PARTITION` — **BLOCKED BY #3, transitively by #5**: cannot be exercised at all without a genuinely detached artifact, and `DETACH` suspends on the SQUASH gate. Probed 2026-08-18: attaching a never-detached partition is accepted with no suspension on composite AND on the plain twin, so that shape is existing behaviour, not a composite defect | 1 — partition-lifecycle (needs 1E, then #3) |
 | 5 | `SQUASH PARTITIONS` (split-fragment squash; today a silent skip) | 1 — partition-lifecycle |
 | 6 | TTL-based partition eviction — **SUPPORTED 2026-08-18 (1D)**; whole days only, per-dimension TTL remains deferred by decision | 1 — partition-lifecycle (done) |
 | 7 | `DROP COLUMN` | 2 — column-ddl |
