@@ -160,7 +160,28 @@ pinned reader still needs — nothing fails loudly, and the assumption lives in 
 
 See `.superpowers/sdd/sp2a-task-2-decision.md` for the full table.
 
-- [ ] **Step 3: Fix the reached site(s) per that decision**
+- [ ] **Step 3: Fix the reached site — there is only ONE, and the other must NOT be touched**
+
+> Found 2026-08-18. This plan treated `ColumnPurgeOperator`'s two `setPathForNativePartition` calls as
+> a pair. They are not:
+>
+> - **`reopenPurgeLogPartition` (~503)** addresses the PURGE LOG'S OWN partitions.
+>   `sys.column_versions_purge_log` is a **plain** table. Changing this would be wrong and would
+>   corrupt the job's access to its own log.
+> - **`setUpPartitionPath` (~564)** addresses the TARGET table, reached from the deletion loop at
+>   ~317 and ~366. This is the only site that matters.
+>
+> **Implementation shape, given the permanent `UPDATE` ban.** The loop handles one
+> `(columnVersion, partitionTimestamp)` entry and deletes one file; for a composite table it must
+> iterate the day's CELLS and delete that column's file in each. The cell set is derivable from the
+> table's own `_cell` registry, so **no new purge-log column is needed** — the schema migration is
+> avoided entirely.
+>
+> **That is safe ONLY because `UPDATE` is permanently banned.** Column supersession is now always
+> table-wide DDL, so "delete this column's file in every cell of the day" is exactly right. If
+> `UPDATE` were ever reinstated for composite, a column could be superseded in ONE cell and
+> enumerate-and-delete-all would destroy live data in the others. Do not implement this without
+> re-reading that sentence.
 
 - [ ] **Step 3: Run, negative-control, commit**
 
