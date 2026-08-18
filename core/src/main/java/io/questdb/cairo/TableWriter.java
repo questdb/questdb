@@ -8375,12 +8375,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                 }
 
-                // A COMPOSITE partition is excluded for the same reason a parquet one is: every branch below
-                // positions the append memories at the partition's LIVE row count, and a composite partition's
-                // files run to E, with live rows in between. finishO3Commit repositions it at E once txWriter
-                // carries the reference. Read the reference off the sink rather than txWriter, which does not
-                // learn it until further down this loop, so a partition that BECAME composite in this commit
-                // would otherwise be missed.
+                // Read the reference off the sink rather than txWriter, which does not learn it until
+                // further down this loop, so a partition that BECAME composite in this commit would
+                // otherwise be missed - see the isComposite branch below, which handles it separately from
+                // every other branch here: those position the append memories at the partition's LIVE row
+                // count, but a composite partition's files run to E, with live rows in between, and
+                // columns[] never wrote a single byte through it past the promotion - so there is no live
+                // count of its own for it to be positioned at, only a stale pre-promotion one to retire.
                 final boolean isComposite = geometryRef != NO_GEOMETRY_REF
                         || (partitionIndexRaw > -1 && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw));
 
@@ -8405,8 +8406,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (!isParquet && !isComposite && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
-                    if (partitionMutates) {
+                if (!isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
+                    if (isComposite) {
+                        // columns[] carries the append offset this partition had BEFORE it went composite,
+                        // and nothing will ever reposition it. The next openPartition reuses these same
+                        // MemoryMA objects for whatever partition becomes active next, closing this mapping
+                        // WITH truncation on the way, which cuts every column file back to that offset.
+                        // Retire it here instead, without truncating.
+                        if (!isLastPartitionClosed()) {
+                            closeActivePartition(false);
+                        }
+                    } else if (partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(true);
                     } else if (!isLastWrittenPartition) {

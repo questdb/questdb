@@ -818,6 +818,86 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A commit that BOTH merge-appends the still-active last partition into a composite one AND lands rows
+     * on a brand-new later partition - a day rollover crossed by the very same commit that promotes the
+     * day it rolls off. {@code txWriter}'s last-partition pointer moves to the new day before {@code
+     * columns[]} is ever told the old one went composite, so a plain reuse-via-close of {@code columns[]}
+     * (the next {@code openPartition}, repointing the same {@code MemoryMA} objects at the new day) would
+     * truncate the old day's files down to {@code columns[]}'s stale, pre-promotion append offset -
+     * discarding every row the composite frame executor appended since, silently, because the geometry it
+     * published is never consulted by that close. The corruption itself throws nothing; only a LATER
+     * commit or read that maps the partition against its (unaffected) geometry notices the file fell
+     * short.
+     * <p>
+     * Minimised from a {@code WalWriterFuzzTest#testWalWriteManyTablesInOrder} failure: "composite
+     * timestamp column file too short".
+     */
+    @Test
+    public void testMergeAppendAcrossDayRolloverInSameCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // This table is narrower than the WIDE_COLUMNS ones the rest of this class uses, so the split
+            // threshold - in rows derived from an average record size - needs a proportionally smaller
+            // setting before a cut is worth proposing at all.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // 2020-02-03 alone, in order - the table's only partition, so it is still the writer's active
+            // last partition when the next commit lands.
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // ONE commit: a backdated batch that merge-appends into 2020-02-03 (promoting it to
+            // composite), UNIONed with rows that land on 2020-02-04 - a brand-new partition this SAME
+            // commit creates.
+            // Big enough that the gap between the stale pre-promotion row count (5760) and E after the
+            // merge clears a whole OS page (512 rows for an 8-byte column) - otherwise page-rounding both
+            // sides up to the same page hides the corruption by sheer luck.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            final String nextDay = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-04', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("INSERT INTO x " + backfill + " UNION ALL " + nextDay);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite",
+                        reader.getGeometry().getPieceCount(0) > 1);
+                // The direct check: the ts column FILE has to reach at least E rows, independently of
+                // whether anything has read it back yet - a reuse-via-close that truncated it to a stale
+                // pre-promotion offset would still leave the geometry claiming E, and only a LATER commit
+                // or read that maps against that claim would notice.
+                final long requiredBytes = reader.getGeometry().getE(0) * Long.BYTES;
+                Assert.assertTrue("ts column file [" + columnFileSize(reader, 0, "ts") + "] shorter than E requires [" + requiredBytes + ']',
+                        columnFileSize(reader, 0, "ts") >= requiredBytes);
+            }
+
+            // The real failure needed a SECOND commit landing back on 2020-02-03 - now composite and no
+            // longer last - to surface the corruption: the truncate already happened silently above.
+            final String again = "SELECT x::INT + 80000 i, timestamp_sequence('2020-02-03T10:00:00', 5*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("INSERT INTO x " + again);
+            drainWalQueue();
+            Assert.assertFalse("the follow-up commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            execute("CREATE TABLE o AS (SELECT i, ts FROM (" +
+                    base + " UNION ALL " + backfill + " UNION ALL " + nextDay + " UNION ALL " + again +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM o ORDER BY ts, i",
+                    "SELECT * FROM x ORDER BY ts, i",
+                    LOG
+            );
+        });
+    }
+
+    /**
      * The .d file's own logical size at the given (0-based) row, read off the .i (aux) vector's own
      * offsets rather than the .d file's raw length - which can be page-rounded larger than what was
      * actually written, and would make an exact-size assertion fragile for reasons that have nothing to
