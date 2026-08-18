@@ -3108,7 +3108,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // is gone with the floor it protected: BEGINNING now has no lower bound at all.)
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
-        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        // Only the crash-recovery arm needs a bounded cut. It restores the view from a sealed
+        // checkpoint timeline, and a boundary at or above the last row's ts leaves the view empty for
+        // the whole run, so nothing ever seals and restartAndRecoverLead falls back to the
+        // applied-base rebuild - which publishes straight to LV disk and leaves no lead for
+        // assertLeadReadBack to find. The plain lead read-back arm does not: buildLeadForReadBack
+        // inserts its own two rows above the global max ts with i > 0, and those clear every boundary
+        // the draw can produce, so its lead is non-empty at any cut. Capping it too would drop the
+        // upper half of the range for nothing. nextInt takes one draw whatever the bound, so the rest
+        // of the run is unaffected either way.
+        final long boundary = startBoundary(rnd, startMode, tsv, false, leadReadBack && restart ? rowCount / 2 : rowCount);
         final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
         final String oracleSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
