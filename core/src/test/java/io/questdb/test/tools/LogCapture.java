@@ -80,6 +80,16 @@ public class LogCapture {
     }
 
     /**
+     * Snapshot of the captured log lines. Read-only view — the underlying
+     * sink keeps accumulating after this call, so tests that scan for
+     * "which of these events fired" should either call {@link #stop()}
+     * first or filter the returned text themselves.
+     */
+    public String captured() {
+        return sink.toString();
+    }
+
+    /**
      * Blocks until the console writer has handed every record enqueued so far to
      * the interceptor. ADVISORY is the top level, so it is in every writer's mask,
      * and all levels one writer subscribes to share a single ring queue.

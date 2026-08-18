@@ -285,6 +285,10 @@ public class TableSequencerAPI implements QuietCloseable {
         return getSeqTxnTracker(tableToken).isInitialised();
     }
 
+    public boolean isWalPurgeLocked(final TableToken tableToken) {
+        return getSeqTxnTracker(tableToken).isWalPurgeLocked();
+    }
+
     public long lastTxn(final TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             long lastTxn;
@@ -465,12 +469,37 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void setHardSuspended(final TableToken tableToken, boolean hardSuspended) {
-        getSeqTxnTracker(tableToken).setHardSuspended(hardSuspended);
+    public void setWalPurgeLocked(final TableToken tableToken, boolean walPurgeLocked) {
+        getSeqTxnTracker(tableToken).setWalPurgeLocked(walPurgeLocked);
     }
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
         getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
+    }
+
+    /**
+     * @see SeqTxnTracker#tryAcquireSuspend(int, int)
+     */
+    public boolean tryAcquireSuspend(final TableToken tableToken, int priority, int flags) {
+        return getSeqTxnTracker(tableToken).tryAcquireSuspend(priority, flags);
+    }
+
+    /**
+     * @see SeqTxnTracker#tryLockWalPurgeSeq()
+     */
+    public boolean tryLockWalPurgeSeq(final TableToken tableToken) {
+        return getSeqTxnTracker(tableToken).tryLockWalPurgeSeq();
+    }
+
+    public boolean trySetSuspend(final TableToken tableToken, int priority, int flags) {
+        return getSeqTxnTracker(tableToken).trySetSuspend(priority, flags);
+    }
+
+    /**
+     * @see SeqTxnTracker#unlockWalPurgeSeq()
+     */
+    public void unlockWalPurgeSeq(final TableToken tableToken) {
+        getSeqTxnTracker(tableToken).unlockWalPurgeSeq();
     }
 
     /**

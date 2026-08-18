@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.mp.CountedConcurrentQueue;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
@@ -37,15 +38,39 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
+    // Hard-suspend flags (low 16 bits of a suspendPriorityState word): bit 0 = WAL apply suspended, bit 1 =
+    // WAL writing suspended. Only two combined values are used: APPLY (1) and APPLY | WRITE (3).
+    public static final int SUSPEND_FLAG_APPLY = 1;
+    public static final int SUSPEND_FLAG_WRITE = 2;
+    // Hard-suspend priorities (high 16 bits of a suspendPriorityState word). A lower priority CANNOT change a
+    // lock currently held at a higher priority (trySetSuspend returns false); a higher priority
+    // preempts a lower one and restores it on release. Operator DDL (ALTER TABLE SUSPEND/RESUME WAL)
+    // is lowest; RECONCILE TABLE outranks it so an operator RESUME cannot free the writer mid-reconcile
+    // and a reconcile restores the operator's suspend when it finishes.
+    public static final int SUSPEND_PRIORITY_DDL = 0;
+    public static final int SUSPEND_PRIORITY_RECONCILE = 8;
     public static final long UNINITIALIZED_TXN = -1;
     private static final CarrierLocal<WaiterHolder> HOLDER = CarrierLocal.withInitial(WaiterHolder::new);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    private static final long SUSPEND_PRIORITY_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendPriorityState");
     private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    // Genuine per-table mutual exclusion between WalPurgeJob's sequencer re-open
+    // (fetchSequencerPairs) and RECONCILE TABLE apply's non-atomic _meta/_meta.0/_txnlog* swap.
+    // walPurgeLocked below is only a plain flag WalPurgeJob checks ONCE at the start of a table's
+    // sweep -- a check-then-act race lets a sweep that read the flag false a moment before the
+    // apply set it true carry on into the sequencer re-open regardless. This lock is acquired a
+    // second time, immediately before that re-open, and held by the apply for its whole file-swap,
+    // so the two genuinely cannot interleave. Callers use ONLY the CAS-based no-arg tryLock()/
+    // unlock() pair (never the parking tryLock(timeout, unit) or lock()), so the class's own
+    // "undefined for more than 2 threads" contract never applies here even though more than 2
+    // threads (WalPurgeJob's sweep thread, and potentially more than one reconcile apply worker
+    // across time) can call in.
+    private final SimpleWaitingLock walPurgeSeqLock = new SimpleWaitingLock();
     // Live-view dedup-base signal. The apply
     // worker is the single writer per table, so plain volatile suffices (no CAS). A
     // coupled dedup-base live view reads these to decide whether an applied seqTxn range
@@ -68,20 +93,30 @@ public class SeqTxnTracker {
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
     private volatile String errorMessage = "";
-    // Hard-suspend flag: when set, the table is excluded from WAL apply and (when
-    // cairo.wal.apply.suspended.write.denied is enabled) denied WAL writes. Set by
-    // ALTER TABLE ... SUSPEND WAL, cleared by ALTER TABLE ... RESUME WAL. The reloadable
-    // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
-    private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
+    // Hard-suspend priority lock. Two packed [priority:16][flags:16] words: high 32 bits = the ACTIVE
+    // lock (flags per SUSPEND_FLAG_*, priority per SUSPEND_PRIORITY_*), low 32 bits = the lock a
+    // higher-priority holder PREEMPTED, restored when the preemptor releases. Set by
+    // ALTER TABLE SUSPEND/RESUME WAL (priority DDL) and RECONCILE TABLE (priority RECONCILE), CAS-only
+    // via trySetSuspend. Replaces the old separate hardSuspended/writeSuspended booleans; the
+    // cairo.wal.apply.suspended.tables config list is an additional apply-suspend source the engine ORs in.
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile long suspendPriorityState;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long waiterRegistrationCount;
+    // WAL-purge lock: when set, WalPurgeJob skips this table's broad-sweep pass. Held by an
+    // out-of-band maintenance operation (RECONCILE TABLE apply) while it replaces the on-disk
+    // sequencer files (_meta/_meta.0/_txnlog*) non-atomically, so purge must not re-open the
+    // sequencer and read a half-swapped view. Distinct from hardSuspended (which also gates WAL
+    // apply and is set long-term by ALTER TABLE ... SUSPEND WAL): this is a short, purge-only
+    // fence cleared as soon as the swap completes.
+    private volatile boolean walPurgeLocked;
     private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public SeqTxnTracker(CairoConfiguration configuration) {
@@ -153,7 +188,7 @@ public class SeqTxnTracker {
     }
 
     public boolean isHardSuspended() {
-        return hardSuspended;
+        return (activeSuspendFlags() & SUSPEND_FLAG_APPLY) != 0;
     }
 
     public boolean isInitialised() {
@@ -162,6 +197,14 @@ public class SeqTxnTracker {
 
     public boolean isSuspended() {
         return suspendedState < 0;
+    }
+
+    public boolean isWalPurgeLocked() {
+        return walPurgeLocked;
+    }
+
+    public boolean isWriteSuspended() {
+        return (activeSuspendFlags() & SUSPEND_FLAG_WRITE) != 0;
     }
 
     public boolean notifyOnCheck(long newSeqTxn) {
@@ -250,10 +293,6 @@ public class SeqTxnTracker {
         }
     }
 
-    public void setHardSuspended(boolean hardSuspended) {
-        this.hardSuspended = hardSuspended;
-    }
-
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
         this.errorTag = errorTag;
         this.errorMessage = errorMessage;
@@ -275,6 +314,132 @@ public class SeqTxnTracker {
         this.errorMessage = "";
 
         metrics.tableWriterMetrics().decSuspendedTables();
+    }
+
+    public void setWalPurgeLocked(boolean walPurgeLocked) {
+        this.walPurgeLocked = walPurgeLocked;
+    }
+
+    /**
+     * Acquires a FRESH hard-suspend at the caller's {@code priority} (a {@code SUSPEND_PRIORITY_*}),
+     * for a caller that must be the only holder at its priority. Unlike {@link #trySetSuspend}, this
+     * refuses when a lock is already held at the SAME priority, so two callers at one priority cannot
+     * both believe they own the table. RECONCILE TABLE acquires through here: a second concurrent
+     * {@code RECONCILE TABLE t} must be rejected rather than silently taking the lock over while the
+     * first reconcile is still swapping files.
+     * <p>
+     * A strictly LOWER-priority lock is still PREEMPTED and remembered, exactly as in
+     * {@link #trySetSuspend}, so a reconcile of an operator-suspended table restores the operator's
+     * suspend when it releases. Release goes through {@code trySetSuspend(priority, 0)}.
+     *
+     * @param flags the lock to take ({@code SUSPEND_FLAG_*} OR'd); must be non-zero
+     * @return {@code true} if the lock was taken, {@code false} if a lock is already held at the same
+     * or a higher priority
+     */
+    public boolean tryAcquireSuspend(int priority, int flags) {
+        assert flags != 0; // a 0-flag "acquire" is a release -- use trySetSuspend
+        for (; ; ) {
+            final long s = suspendPriorityState;
+            final int active = (int) (s >>> 32);
+            final int activePriority = (active >>> 16) & 0xFFFF;
+            final int activeFlags = active & 0xFFFF;
+            if (activeFlags != 0 && activePriority >= priority) {
+                return false; // already held at our priority or above -- we are not the sole owner
+            }
+            // Either nothing is held (active == 0) or we outrank the holder; both cases remember
+            // `active` as the preempted lock, which is 0 when the table was unlocked.
+            final int newActive = ((priority & 0xFFFF) << 16) | (flags & 0xFFFF);
+            final long ns = ((long) newActive << 32) | (active & 0xFFFFFFFFL);
+            if (Unsafe.cas(this, SUSPEND_PRIORITY_STATE_OFFSET, s, ns)) {
+                return true;
+            }
+        }
+    }
+
+    /**
+     * Non-blocking acquire of {@link #walPurgeSeqLock}. Both {@code WalPurgeJob} (guarding its
+     * sequencer re-open) and a RECONCILE TABLE apply (guarding its file-swap) call only this
+     * CAS-based no-arg form, in a loop with an external backoff, never the class's own
+     * parking {@code tryLock(timeout, unit)} -- see the field doc for why.
+     *
+     * @return {@code true} if the lock was free and is now held by the caller
+     */
+    public boolean tryLockWalPurgeSeq() {
+        return walPurgeSeqLock.tryLock();
+    }
+
+    /**
+     * Atomically sets the hard-suspend state at the caller's {@code priority} (a
+     * {@code SUSPEND_PRIORITY_*}). {@code flags} is the desired lock ({@code SUSPEND_FLAG_*} OR'd,
+     * e.g. {@code SUSPEND_FLAG_APPLY | SUSPEND_FLAG_WRITE}); {@code 0} releases.
+     * <p>
+     * Priority rules (CAS loop, so it re-reads and re-checks on contention):
+     * <ul>
+     *   <li>A LOWER priority cannot change a lock currently held at a HIGHER priority — returns
+     *       {@code false} (e.g. an operator RESUME WAL cannot free a table an in-progress reconcile
+     *       locked).</li>
+     *   <li>A HIGHER priority PREEMPTS a lower-priority lock: the displaced lock is remembered and
+     *       RESTORED when the higher-priority holder releases (so a reconcile of an operator-suspended
+     *       table leaves the operator's suspend intact afterwards).</li>
+     *   <li>The current holder (same priority) may freely modify or release its own lock. Callers that
+     *       need to be the SOLE holder at their priority must acquire via
+     *       {@link #tryAcquireSuspend} instead.</li>
+     *   <li>A release only ever clears the caller's OWN lock: releasing at a priority that does not
+     *       match the holder leaves the holder's lock untouched.</li>
+     * </ul>
+     *
+     * @return {@code true} if the caller's intent was satisfied — the state changed, or a release
+     * found no lock of the caller's to clear; {@code false} if the caller is outranked, or if a
+     * release would otherwise have cleared a lock the caller does not own
+     */
+    public boolean trySetSuspend(int priority, int flags) {
+        for (; ; ) {
+            final long s = suspendPriorityState;
+            final int active = (int) (s >>> 32);
+            final int preempted = (int) s;
+            final int activePriority = (active >>> 16) & 0xFFFF;
+            final int activeFlags = active & 0xFFFF;
+            if (activeFlags != 0 && priority < activePriority) {
+                return false; // outranked: cannot change a higher-priority lock
+            }
+            final int newActive;
+            final int newPreempted;
+            if (flags != 0) {
+                newActive = ((priority & 0xFFFF) << 16) | (flags & 0xFFFF);
+                if (activeFlags != 0 && activePriority < priority) {
+                    newPreempted = active; // preempting a lower lock -- remember it
+                } else if (activeFlags != 0 && activePriority == priority) {
+                    newPreempted = preempted; // modifying our own lock -- keep what we displaced
+                } else {
+                    newPreempted = 0; // fresh lock over an unlocked table
+                }
+            } else if (activeFlags != 0 && activePriority != priority) {
+                // Release against a lock held at a DIFFERENT priority. The guard above already
+                // rejected priority < activePriority, so we outrank the holder: this is somebody
+                // else's lock (an operator SUSPEND WAL we never preempted) and clearing it would
+                // resume a table we do not own. Leave it exactly as it is.
+                return false;
+            } else {
+                // Release our own lock (or a no-op release of an unlocked table): restore whatever
+                // we preempted, which is 0 when there was nothing to displace. `active == 0` implies
+                // `preempted == 0`, since every path that clears active also clears preempted.
+                newActive = preempted;
+                newPreempted = 0;
+            }
+            final long ns = ((long) newActive << 32) | (newPreempted & 0xFFFFFFFFL);
+            if (Unsafe.cas(this, SUSPEND_PRIORITY_STATE_OFFSET, s, ns)) {
+                return true;
+            }
+        }
+    }
+
+    /**
+     * Releases {@link #walPurgeSeqLock}. Throws {@code IllegalStateException} if the caller does not
+     * hold it -- callers must guard this with the same success flag {@link #tryLockWalPurgeSeq}
+     * returned, exactly like every other lock this class exposes.
+     */
+    public void unlockWalPurgeSeq() {
+        walPurgeSeqLock.unlock();
     }
 
     /**
@@ -307,6 +472,10 @@ public class SeqTxnTracker {
             fireWaiters();
         }
         return writerTxn < seqTxn;
+    }
+
+    private int activeSuspendFlags() {
+        return (int) (suspendPriorityState >>> 32) & 0xFFFF;
     }
 
     private void enqueueHolder(WaiterHolder holder, TxnWaiter waiter) {
