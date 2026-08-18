@@ -298,28 +298,28 @@ public class PartitionGeometry implements Closeable, Mutable {
         return res < 0 ? -1 : resolved.getQuick(res + RES_WRITER_TXN);
     }
 
-    public boolean hasDirty() {
-        return dirtyCount > 0;
-    }
-
     /**
-     * Whether ANY record in the table has ever had a {@code _geometry} chain. Resident, zero I/O, and the
-     * thing that keeps an unsplit table off {@code _geometry} entirely. Deliberately an
-     * over-approximation: a directory keeps its chain after folding back to one piece, so this can be
-     * true for a table with no composite directory left.
+     * Whether ANY record in the table has ever been composite. Resident, zero I/O, and the thing that
+     * keeps an unsplit table off {@code _geometry} entirely. Deliberately an over-approximation: a
+     * directory stays composite after folding back to one piece, so this can be true for a table with no
+     * composite directory left.
      */
-    public boolean hasGeometryChain() {
+    public boolean hasCompositePartitions() {
         for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-            if (txReader.hasGeometryChain(i)) {
+            if (txReader.isPartitionComposite(i)) {
                 return true;
             }
         }
         return false;
     }
 
+    public boolean hasDirty() {
+        return dirtyCount > 0;
+    }
+
     /**
      * Exact: more than one piece, or dead space above the live rows, or rows starting above file row 0.
-     * Resolves the directory, unlike {@link TxReader#hasGeometryChain(int)}.
+     * Resolves the directory, unlike {@link TxReader#isPartitionComposite(int)}.
      */
     public boolean isComposite(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
@@ -343,7 +343,7 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     /**
      * Makes {@code partitionIndex}'s pieces resident. A no-op for a partition already resolved at the same
-     * {@code geometryRef}, and for a partition with no geometry chain, which needs no file at all.
+     * {@code geometryRef}, and for a partition that is not composite, which needs no file at all.
      */
     public void resolve(int partitionIndex) {
         resolveInternal(partitionIndex);
@@ -612,7 +612,7 @@ public class PartitionGeometry implements Closeable, Mutable {
      * piece, which is every record of an unsplit table.
      */
     private int resolveInternal(int partitionIndex) {
-        if (!txReader.hasGeometryChain(partitionIndex)) {
+        if (!txReader.isPartitionComposite(partitionIndex)) {
             return -1;
         }
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);

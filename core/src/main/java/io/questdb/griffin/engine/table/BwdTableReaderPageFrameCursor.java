@@ -271,9 +271,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // place in them, so a frame is cut at piece boundaries and carries that piece's SHIFT - the term
         // that turns a partition row into a file row. Walking backwards the cut is the piece's START, since
         // the frame ends at partitionHi. A frame spanning two pieces would address the dead space between
-        // them. 0 for a partition with no geometry, which is every partition of an unsplit table.
+        // them. 0 for a partition that is not composite, which is every partition of an unsplit table.
         long pieceShift = 0;
-        if (reader.getTxFile().hasGeometryChain(reenterPartitionIndex)) {
+        if (reader.getTxFile().isPartitionComposite(reenterPartitionIndex)) {
             final PartitionGeometry geometry = reader.getGeometry();
             final int piece = geometry.findPieceByRow(reenterPartitionIndex, partitionHi - 1);
             pieceShift = geometry.getPieceShift(reenterPartitionIndex, piece);

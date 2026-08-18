@@ -30,10 +30,254 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 
 @SuppressWarnings("unused")
 public class DebugUtils {
     public static final Log LOG = LogFactory.getLog(DebugUtils.class);
+
+    // ============================================================================================
+    // TEMPORARY - file-length guards, added while hunting the var-column undergrowth bug that still
+    // reproduces on the composite-partition (merge-append) branch: see COMPOSITE_PARTITION_STATE.md,
+    // sections 25/26. A SIGBUS reading unbacked pages past a file's real on-disk length is uncatchable
+    // and carries no Java-level detail; each of these turns that crash into a diagnosable
+    // CairoException naming the table, column, partition and byte counts instead. Remove this whole
+    // block once the write-side root cause is found and fixed - these are debug aids, not meant to
+    // ship as permanent behavior.
+    // ============================================================================================
+
+    /**
+     * Was {@code O3PartitionJob.processCompositePartition}'s inline check on the timestamp column it maps
+     * to plan cuts and piece bounds.
+     */
+    public static void assertCompositeTimestampColumnLength(
+            FilesFacade ff,
+            long fd,
+            long tsMapSize,
+            TableToken tableToken,
+            int partitionIndex,
+            long e
+    ) {
+        final long tsFileLen = ff.length(fd);
+        if (tsFileLen < tsMapSize) {
+            throw CairoException.critical(0).put("composite timestamp column file too short [table=")
+                    .put(tableToken).put(", partitionIndex=").put(partitionIndex)
+                    .put(", fileLen=").put(tsFileLen).put(", tsMapSize=").put(tsMapSize)
+                    .put(", e=").put(e).put(']');
+        }
+    }
+
+    /**
+     * Was {@code O3PartitionJob.executeCompositePlan}'s inline check on a FIXED-size column's file, after
+     * the plan's action loop finishes writing.
+     */
+    public static void assertCompositePlanColumnLength(
+            FilesFacade ff,
+            long fd,
+            long expectedBytes,
+            CharSequence tableName,
+            long partitionTimestamp,
+            CharSequence columnName,
+            int columnIndex,
+            long columnTop,
+            long e
+    ) {
+        final long actualBytes = ff.length(fd);
+        if (actualBytes < expectedBytes) {
+            throw CairoException.critical(0).put("composite plan undergrew a column file [table=")
+                    .put(tableName)
+                    .put(", partitionTs=").put(partitionTimestamp)
+                    .put(", column=").put(columnName)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(", columnTop=").put(columnTop)
+                    .put(", e=").put(e)
+                    .put(", expectedBytes=").put(expectedBytes)
+                    .put(", actualBytes=").put(actualBytes)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Was {@code O3PartitionJob.executeCompositePlan}'s inline check on a VAR-size column's AUX file,
+     * after the plan's action loop finishes writing.
+     */
+    public static void assertCompositePlanVarColumnAuxLength(
+            FilesFacade ff,
+            long auxFd,
+            long expectedAuxBytes,
+            CharSequence tableName,
+            long partitionTimestamp,
+            CharSequence columnName,
+            int columnIndex,
+            long columnTop,
+            long e
+    ) {
+        final long actualAuxBytes = ff.length(auxFd);
+        if (actualAuxBytes < expectedAuxBytes) {
+            throw CairoException.critical(0).put("composite plan undergrew a column's aux file [table=")
+                    .put(tableName)
+                    .put(", partitionTs=").put(partitionTimestamp)
+                    .put(", column=").put(columnName)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(", columnTop=").put(columnTop)
+                    .put(", e=").put(e)
+                    .put(", expectedAuxBytes=").put(expectedAuxBytes)
+                    .put(", actualAuxBytes=").put(actualAuxBytes)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Was {@code O3PartitionJob.executeCompositePlan}'s inline check on a VAR-size column's DATA file,
+     * after the plan's action loop finishes writing.
+     */
+    public static void assertCompositePlanVarColumnDataLength(
+            FilesFacade ff,
+            long dataFd,
+            long expectedDataBytes,
+            CharSequence tableName,
+            long partitionTimestamp,
+            CharSequence columnName,
+            int columnIndex,
+            long columnTop,
+            long e
+    ) {
+        final long actualDataBytes = ff.length(dataFd);
+        if (actualDataBytes < expectedDataBytes) {
+            throw CairoException.critical(0).put("composite plan undergrew a column's data file [table=")
+                    .put(tableName)
+                    .put(", partitionTs=").put(partitionTimestamp)
+                    .put(", column=").put(columnName)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(", columnTop=").put(columnTop)
+                    .put(", e=").put(e)
+                    .put(", expectedDataBytes=").put(expectedDataBytes)
+                    .put(", actualDataBytes=").put(actualDataBytes)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Was {@code ColumnTypeConverter.convertFixedToFixed}'s inline check on the conversion source file.
+     */
+    public static void assertConversionSourceFileLength(
+            FilesFacade ff,
+            long srcFixFd,
+            long skipBytes,
+            long mapBytes,
+            long rowCount,
+            long srcColumnTypeSize
+    ) {
+        final long srcFileLen = ff.length(srcFixFd);
+        if (srcFileLen < skipBytes + mapBytes) {
+            throw CairoException.critical(0).put("composite conversion source file too short [srcFixFd=").put(srcFixFd)
+                    .put(", fileLen=").put(srcFileLen).put(", skipBytes=").put(skipBytes)
+                    .put(", mapBytes=").put(mapBytes).put(", rowCount=").put(rowCount)
+                    .put(", srcColumnTypeSize=").put(srcColumnTypeSize).put(']');
+        }
+    }
+
+    /**
+     * Was {@code ColumnTypeConverter.convertFromSymbol}'s inline check on the conversion source file.
+     */
+    public static void assertSymbolConversionSourceFileLength(
+            FilesFacade ff,
+            long srcFixFd,
+            long skipBytes,
+            long mapBytes,
+            long rowCount
+    ) {
+        final long srcFileLen = ff.length(srcFixFd);
+        if (srcFileLen < skipBytes + mapBytes) {
+            throw CairoException.critical(0).put("composite symbol conversion source file too short [srcFixFd=").put(srcFixFd)
+                    .put(", fileLen=").put(srcFileLen).put(", skipBytes=").put(skipBytes)
+                    .put(", mapBytes=").put(mapBytes).put(", rowCount=").put(rowCount)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Was {@code ContiguousFileVarFrameColumn.mapAllRows}'s inline check on the AUX file, before mapping
+     * it - the SOURCE side of a composite MERGE, over a piece an earlier commit may have left short.
+     */
+    public static void assertVarColumnAuxMapLength(
+            FilesFacade ff,
+            long auxFd,
+            long expectedAuxBytes,
+            int columnIndex,
+            long rowHi,
+            long columnTop
+    ) {
+        final long onDiskAuxLen = ff.length(auxFd);
+        if (onDiskAuxLen < expectedAuxBytes) {
+            throw CairoException.critical(0).put("var column aux file too short to map [columnIndex=").put(columnIndex)
+                    .put(", rowHi=").put(rowHi)
+                    .put(", columnTop=").put(columnTop)
+                    .put(", expectedAuxBytes=").put(expectedAuxBytes)
+                    .put(", onDiskAuxBytes=").put(onDiskAuxLen)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Was {@code ContiguousFileVarFrameColumn.mapAllRows}'s inline check on the DATA file, before mapping
+     * it.
+     */
+    public static void assertVarColumnDataMapLength(
+            FilesFacade ff,
+            long dataFd,
+            long expectedDataBytes,
+            int columnIndex,
+            long rowHi,
+            long columnTop
+    ) {
+        final long onDiskDataLen = ff.length(dataFd);
+        if (onDiskDataLen < expectedDataBytes) {
+            throw CairoException.critical(0).put("var column data file too short to map [columnIndex=").put(columnIndex)
+                    .put(", rowHi=").put(rowHi)
+                    .put(", columnTop=").put(columnTop)
+                    .put(", expectedDataBytes=").put(expectedDataBytes)
+                    .put(", onDiskDataBytes=").put(onDiskDataLen)
+                    .put(']');
+        }
+    }
+
+    /**
+     * Was {@code TableReader.reloadColumnAt}'s inline check on a var-size column's AUX file, before
+     * mapping it - the plain read path, independent of the composite write path above.
+     */
+    public static void assertReaderVarColumnAuxLength(
+            FilesFacade ff,
+            Path path,
+            long auxSize,
+            CharSequence tableName,
+            CharSequence columnName,
+            int columnIndex,
+            int partitionIndex,
+            long partitionTimestamp,
+            long columnTop,
+            long columnRowCount,
+            long partitionRowCount
+    ) {
+        final long onDiskAuxLen = ff.length(path.$());
+        if (onDiskAuxLen < auxSize) {
+            throw CairoException.critical(0).put("reader aux file too short [table=")
+                    .put(tableName)
+                    .put(", column=").put(columnName)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(", partitionIndex=").put(partitionIndex)
+                    .put(", partitionTimestamp=").put(partitionTimestamp)
+                    .put(", columnTop=").put(columnTop)
+                    .put(", columnRowCount=").put(columnRowCount)
+                    .put(", partitionRowCount=").put(partitionRowCount)
+                    .put(", expectedAuxBytes=").put(auxSize)
+                    .put(", onDiskAuxBytes=").put(onDiskAuxLen)
+                    .put(']');
+        }
+    }
+    // ============================================================================================
+    // END TEMPORARY file-length guards
+    // ============================================================================================
 
     // For debugging purposes
     public static boolean checkAscendingTimestamp(FilesFacade ff, long size, long fd) {

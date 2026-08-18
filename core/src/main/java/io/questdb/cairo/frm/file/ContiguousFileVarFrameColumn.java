@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
@@ -591,6 +592,14 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException("Remap not supported for frame columns yet");
         }
 
+        // Mapping past the aux or data file's real length reads unbacked pages, and on macOS that SIGBUSes
+        // the JVM instead of throwing - losing every Java-level detail about which column, which row range,
+        // and which commit undersized the file. This is reachable reading the SOURCE side of a composite
+        // MERGE, over a piece an earlier commit left short - see COMPOSITE_PARTITION_STATE.md.
+        if (newAuxMemSize > 0) {
+            DebugUtils.assertVarColumnAuxMapLength(ff, auxFd, newAuxMemSize, columnIndex, rowHi, columnTop);
+        }
+
         auxMapSize = newAuxMemSize;
         if (newAuxMemSize > 0) {
             auxMapAddr = TableUtils.mapRO(ff, auxFd, auxMapSize, 0, MEMORY_TAG);
@@ -598,6 +607,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
         dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop - 1);
         if (dataMapSize > 0) {
+            DebugUtils.assertVarColumnDataMapLength(ff, dataFd, dataMapSize, columnIndex, rowHi, columnTop);
             dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
         }
     }

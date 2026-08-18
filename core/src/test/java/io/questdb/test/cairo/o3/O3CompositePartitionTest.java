@@ -25,13 +25,17 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -188,8 +192,13 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
 
     /**
      * Rows that sort above everything the partition holds, but still inside its day. Every existing piece
-     * is KEPT and the batch becomes a piece of its own, so the commit writes only the rows it brought and
-     * leaves no dead space at all.
+     * is KEPT and the batch becomes a piece of its own - but the KEPT piece and the new one land back to
+     * back with no gap between them, so together they TILE {@code [0, physicalRows)}. A tiled partition
+     * needs no {@code _geometry} record at all: its boundaries carry nothing a plain row count doesn't
+     * already say (see {@code O3PartitionJob.processCompositePartition}'s {@code isComposite} check and
+     * "Non-composite is not a special case" in {@code COMPOSITE_PARTITION_STATE.md}), so the commit
+     * abandons the update it built and the partition reads back as an ordinary, non-composite one - one
+     * piece, not composite - even though internally it took two actions to get there.
      */
     @Test
     public void testChronologicalAppendRewritesNothing() throws Exception {
@@ -219,8 +228,13 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
 
             try (TableReader reader = engine.getReader(xt)) {
-                Assert.assertEquals("the batch should have become a piece of its own",
-                        2, reader.getGeometry().getPieceCount(0));
+                // The KEPT piece and the new one tile [0, physicalRows) with no gap, so the commit
+                // abandoned the geometry it built instead of publishing it - the partition reads back as
+                // an ordinary, single-piece one, which is the correct and cheaper outcome for a shape a
+                // plain row count already describes in full.
+                Assert.assertFalse("a tiled partition should not be composite",
+                        reader.getTxFile().isPartitionComposite(0));
+                Assert.assertEquals(1, reader.getGeometry().getPieceCount(0));
                 // Nothing was rewritten, so there is no dead space: every file row is a live row.
                 Assert.assertEquals(5860, reader.getTxFile().getPartitionSize(0));
                 Assert.assertEquals(5860, reader.getPartitionPhysicalRowCount(0));
@@ -234,6 +248,213 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             assertSameRows();
+        });
+    }
+
+    /**
+     * {@code ALTER TABLE ... ALTER COLUMN TYPE} over a directory that already has DEAD pieces - a merge
+     * relocated one to the tail, leaving its old copy behind, so every column's file spans more rows than
+     * are live. A conversion rewrites a FILE, not a query result, and it has to span that whole extent
+     * without either crashing on the dead bytes or letting them leak into a live row's value.
+     * <p>
+     * Three shapes at once: a plain fixed-to-fixed cast (walks the directory's own pieces and pads the
+     * gaps, never reading them), a var-to-fixed cast and a fixed-to-var cast (both still read the flat
+     * {@code [columnTop, E)} range as a whole, dead space included - this is the case the fixed-column
+     * rework does not yet cover).
+     */
+    @Test
+    public void testConvertColumnTypeAcrossDeadPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // This table is narrower than the WIDE_COLUMNS ones the rest of this class uses, so the split
+            // threshold - in rows derived from an average record size - needs a proportionally smaller
+            // setting before a cut is worth proposing at all.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // One day, three columns present from row 0: a FIXED one (i), a STRING one (s), a VARCHAR one
+            // (vs) - one of each shape the conversion has to handle.
+            final String base = "SELECT x::INT i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)";
+            // A later day, so 2020-02-03 is never the active partition and the backfill below goes through
+            // the O3 path rather than an append to the open one.
+            final String nextDay = "SELECT x::INT + 90000 i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            // A backdated batch relocates the piece it lands in to the tail, leaving the old copy behind
+            // as dead space.
+            final String backfill = "SELECT x::INT + 70000 i, " + STRING_EXPR + " s, " + VARCHAR_SHORT_EXPR + " vs," +
+                    " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("the partition should have dead pieces",
+                        reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            execute("ALTER TABLE x ALTER COLUMN i TYPE LONG");
+            execute("ALTER TABLE x ALTER COLUMN s TYPE VARCHAR");
+            execute("ALTER TABLE x ALTER COLUMN vs TYPE STRING");
+            drainWalQueue();
+            Assert.assertFalse("column type conversion over dead pieces suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(xt));
+
+            assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns("c\n6010\n");
+            // Every row's s/vs value is deterministic in x - a conversion that let dead bytes leak into a
+            // live row, instead of the row's own real value, would not match this count.
+            assertQuery("SELECT count() c FROM x WHERE s IS NOT NULL AND vs IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n4808\n");
+
+            // The oracle: the same rows, assembled without ever touching the composite machinery, already
+            // typed the way the real table ends up after conversion.
+            execute("CREATE TABLE o AS (SELECT i::LONG i, s::VARCHAR s, vs::STRING vs, ts FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM o ORDER BY ts, i",
+                    "SELECT * FROM x ORDER BY ts, i",
+                    LOG
+            );
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM o ORDER BY ts, i",
+                    "SELECT * FROM x ORDER BY ts, i",
+                    LOG
+            );
+        });
+    }
+
+    /**
+     * The byte-level proof behind the padding rule, over dead pieces, across every direction the rule
+     * applies to: FIXED (INT -> LONG), VAR (STRING <-> VARCHAR) and MIXED (LONG -> VARCHAR,
+     * VARCHAR -> LONG).
+     * <p>
+     * A FIXED destination pads its {@code .d} file with nulls for every dead row - the row still occupies
+     * a fixed-width slot whether it was converted or not, so the file always reaches the full physical
+     * extent. A VAR destination pads its {@code .i} (aux) file the same way, but keeps its {@code .d} file
+     * exactly as dense as it would be with no dead space at all: VARCHAR's null costs zero data bytes, so
+     * its {@code .d} file matches an oracle built from the live rows alone, byte for byte; STRING's null
+     * costs exactly {@code Integer.BYTES} (the length prefix), so its {@code .d} file matches the oracle
+     * plus one marker per dead row - never the dead row's own (unconverted) value.
+     * <p>
+     * {@code cLong -> VARCHAR} and {@code cVarNum -> LONG} exercise the MIXED (fixed source/var
+     * destination and var source/fixed destination) directions, piece-walked the same way as the pure
+     * fixed and pure var cases.
+     */
+    @Test
+    public void testColumnConversionKeepsVarDataDenseAcrossDeadSpace() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // cLong's values are all the same digit width (15, comfortably over VARCHAR's 9-byte inline
+            // ceiling), so a correct conversion's .d size is a plain multiplication rather than a sum over
+            // per-row lengths - and a naive one that converts dead rows too is off by a whole multiple of
+            // deadRows, not just a few stray bytes.
+            final String base = "SELECT x::INT i, x::INT cFix, ('long-string-' || x)::STRING cS," +
+                    " ('varchar-string-' || x)::VARCHAR cV, (700_000_000_000_000L + x) cLong, x::VARCHAR cVarNum," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)";
+            final String nextDay = "SELECT x::INT + 90000 i, x::INT + 90000 cFix, ('long-string-' || x)::STRING cS," +
+                    " ('varchar-string-' || x)::VARCHAR cV, (700_000_000_000_000L + x) cLong, x::VARCHAR cVarNum," +
+                    " timestamp_sequence('2020-02-06', 60*1000000L) ts FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            final String backfill = "SELECT x::INT + 70000 i, x::INT + 70000 cFix, ('long-string-' || x)::STRING cS," +
+                    " ('varchar-string-' || x)::VARCHAR cV, (700_000_000_000_000L + x) cLong, x::VARCHAR cVarNum," +
+                    " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("merge-append suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            final long liveRows;
+            final long physicalRows;
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("the partition should have dead pieces", reader.getGeometry().getPieceCount(0) > 1);
+                liveRows = reader.getTxFile().getPartitionSize(0);
+                physicalRows = reader.getPartitionPhysicalRowCount(0);
+            }
+            final long deadRows = physicalRows - liveRows;
+            Assert.assertEquals(5960, liveRows);
+            Assert.assertTrue("no dead space to prove the rule against [deadRows=" + deadRows + ']', deadRows > 0);
+
+            // The oracle: the same live rows, converted the same way, with no composite machinery and
+            // therefore no dead space at all - the baseline every .d size below is measured against.
+            execute("CREATE TABLE o AS (SELECT i, cFix, cS, cV, cLong, cVarNum, ts FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            execute("ALTER TABLE x ALTER COLUMN cFix TYPE LONG");
+            execute("ALTER TABLE x ALTER COLUMN cS TYPE VARCHAR");
+            execute("ALTER TABLE x ALTER COLUMN cV TYPE STRING");
+            execute("ALTER TABLE x ALTER COLUMN cLong TYPE VARCHAR");
+            execute("ALTER TABLE x ALTER COLUMN cVarNum TYPE LONG");
+            drainWalQueue();
+            Assert.assertFalse("column type conversion over dead pieces suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(xt));
+
+            execute("ALTER TABLE o ALTER COLUMN cFix TYPE LONG");
+            execute("ALTER TABLE o ALTER COLUMN cS TYPE VARCHAR");
+            execute("ALTER TABLE o ALTER COLUMN cV TYPE STRING");
+            execute("ALTER TABLE o ALTER COLUMN cLong TYPE VARCHAR");
+            execute("ALTER TABLE o ALTER COLUMN cVarNum TYPE LONG");
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader xr = engine.getReader(xt);
+                 TableReader or = engine.getReader(engine.verifyTableName("o"))) {
+
+                // FIXED destination: every dead row still occupies its 8-byte slot, converted or not - the
+                // .d file always reaches the full physical extent, never just the live one.
+                Assert.assertTrue("cFix: .d file must reach the full physical extent",
+                        columnFileSize(xr, 0, "cFix") >= physicalRows * Long.BYTES);
+                // MIXED, var source into a fixed destination: same fixed-slot rule, exercised from a
+                // var-size source this time.
+                Assert.assertTrue("cVarNum: .d file must reach the full physical extent",
+                        columnFileSize(xr, 0, "cVarNum") >= physicalRows * Long.BYTES);
+
+                // VAR destination, VARCHAR: a null costs nothing in the data vector, so a correctly
+                // piece-walked conversion leaves .d exactly as large as it would be with no dead rows at
+                // all - measured off the aux vector's own offsets, which are immune to page rounding in
+                // the underlying file.
+                Assert.assertEquals("cS: dead space must not grow the VARCHAR .d file",
+                        dataVectorSizeAt(or, 0, "cS", liveRows - 1), dataVectorSizeAt(xr, 0, "cS", physicalRows - 1));
+                Assert.assertEquals("cLong: dead space must not grow the VARCHAR .d file",
+                        dataVectorSizeAt(or, 0, "cLong", liveRows - 1), dataVectorSizeAt(xr, 0, "cLong", physicalRows - 1));
+                // Closed form for cLong, since every value converts to the same 15-byte string: proves the
+                // oracle comparison above isn't passing by accident.
+                Assert.assertEquals(liveRows * 15, dataVectorSizeAt(xr, 0, "cLong", physicalRows - 1));
+
+                // VAR destination, STRING: a null costs exactly Integer.BYTES (the length prefix), one per
+                // dead row - never the dead row's own (unconverted) value.
+                Assert.assertEquals("cV: dead space must cost exactly one null marker per row in the STRING .d file",
+                        dataVectorSizeAt(or, 0, "cV", liveRows - 1) + deadRows * Integer.BYTES,
+                        dataVectorSizeAt(xr, 0, "cV", physicalRows - 1));
+            }
+
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i, cFix, cS, cV, cLong, cVarNum, ts FROM o ORDER BY ts, i",
+                    "SELECT i, cFix, cS, cV, cLong, cVarNum, ts FROM x ORDER BY ts, i",
+                    LOG
+            );
         });
     }
 
@@ -491,6 +712,54 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             assertQuery("SELECT min(ts) mn FROM x").expectSize().timestamp("mn")
                     .returns("mn\n2022-02-24T00:00:00.000000Z\n");
         });
+    }
+
+    /**
+     * The .d file's own logical size at the given (0-based) row, read off the .i (aux) vector's own
+     * offsets rather than the .d file's raw length - which can be page-rounded larger than what was
+     * actually written, and would make an exact-size assertion fragile for reasons that have nothing to
+     * do with the padding rule under test.
+     */
+    private static long dataVectorSizeAt(TableReader reader, int partitionIndex, String columnName, long row) {
+        final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+        final int columnType = reader.getMetadata().getColumnType(columnIndex);
+        // The column-version file is keyed by the column's WRITER index, not its positional index in the
+        // metadata - changeColumnType gives a converted column a brand new writer index (columnCount at
+        // conversion time), even though it keeps the same positional slot getColumnIndex() answers with.
+        final long columnNameTxn = reader.getColumnVersionReader()
+                .getColumnNameTxn(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(reader.getTableToken());
+        TableUtils.setPathForNativePartition(
+                path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn
+        );
+        long fd = TableUtils.openRO(ff, TableUtils.iFile(path, columnName, columnNameTxn), LOG);
+        try {
+            return ColumnType.getDriver(columnType).getDataVectorSizeAtFromFd(ff, fd, row);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * The raw .d file length for a fixed-size column. Fixed columns have no separate aux vector to read
+     * an exact logical size off, so this is used only for a "reaches at least the full extent" check, not
+     * for an exact one - the file can be legitimately page-rounded larger than {@code rowCount * width}.
+     */
+    private static long columnFileSize(TableReader reader, int partitionIndex, String columnName) {
+        final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+        final long columnNameTxn = reader.getColumnVersionReader()
+                .getColumnNameTxn(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(reader.getTableToken());
+        TableUtils.setPathForNativePartition(
+                path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn
+        );
+        return ff.length(TableUtils.dFile(path, columnName, columnNameTxn));
     }
 
     private static void assertSameRows() throws Exception {

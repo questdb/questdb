@@ -183,7 +183,7 @@ public class O3CompositeMergeStrategy {
 
         // Everything above the last piece's data becomes a new piece at the shared tail. When that batch
         // is a plain append the two pieces end up tiling the files with no hole between them, and the
-        // caller drops the geometry rather than record a boundary that says nothing - see needsGeometry in
+        // caller drops the geometry rather than record a boundary that says nothing - see isComposite in
         // O3PartitionJob. Nothing has to be decided here.
         if (o3 <= srcOooHi) {
             actionAt(actions, actionCount++).setNewPiece(o3, srcOooHi);
@@ -361,7 +361,15 @@ public class O3CompositeMergeStrategy {
         /**
          * The batch slice falls in a gap and becomes a new piece at the shared files' tail.
          */
-        NEW_PIECE
+        NEW_PIECE,
+        /**
+         * The piece falls entirely inside a replace-range commit's declared range and carries no O3 rows
+         * of its own: it is excluded from the new geometry rather than kept. Its bytes stay on disk as
+         * dead space - a drop moves nothing, exactly as a KEEP writes nothing - but the piece is gone from
+         * the partition's live view. {@link #computeActions} never emits this; a caller in replace mode
+         * downgrades a would-be KEEP to DROP once it knows the piece's bounds sit inside the range.
+         */
+        DROP
     }
 
     public static class Action {
@@ -372,6 +380,13 @@ public class O3CompositeMergeStrategy {
 
         public long getO3RowCount() {
             return o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
+        }
+
+        public void setDrop(int pieceIndex) {
+            this.type = ActionType.DROP;
+            this.pieceIndex = pieceIndex;
+            this.o3Lo = -1;
+            this.o3Hi = -1;
         }
 
         public void setKeep(int pieceIndex) {
@@ -401,6 +416,7 @@ public class O3CompositeMergeStrategy {
                 case KEEP -> "KEEP(p=" + pieceIndex + ")";
                 case MERGE -> "MERGE(p=" + pieceIndex + ", o3=[" + o3Lo + "," + o3Hi + "])";
                 case NEW_PIECE -> "NEW_PIECE(o3=[" + o3Lo + "," + o3Hi + "])";
+                case DROP -> "DROP(p=" + pieceIndex + ")";
             };
         }
     }

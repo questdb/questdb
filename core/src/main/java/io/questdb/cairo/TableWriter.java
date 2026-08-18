@@ -768,7 +768,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
 
         // create column files
-        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+        // A composite last partition can hold rows in [0, E) with zero LIVE (transient) rows - every one
+        // of them sits in a dead piece a merge-append relocated. The live count alone would say "nothing
+        // to do" and skip creating this column's file for the partition entirely, leaving a later reader
+        // that trusts the recorded top (E) to find no file at all.
+        if (txWriter.getTransientRowCount() > 0 || isLastPartitionComposite() || !PartitionBy.isPartitioned(partitionBy)) {
             try {
                 openNewColumnFiles(columnName, columnType, indexType, indexValueBlockCapacity);
             } catch (CairoException e) {
@@ -1273,15 +1277,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
 
             // open new column files
-            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+            // A composite last partition's columns[] stays closed - see openColumnFiles. The converted
+            // file was already written out to E by convertColumn above (ConvertOperatorImpl converts the
+            // whole physical range, dead space included, through its own fds - not columns[]), so there is
+            // nothing left for this block to do: ongoing appends to a composite last partition go through
+            // processCompositePartition's own fds instead, exactly like every other column of one.
+            if (!isLastPartitionComposite() && (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))) {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                // getColumnTop, which setColumnAppendPosition calls below, reads lastOpenPartitionTs. A
-                // composite last partition never runs openPartition - its writes go through
-                // processCompositePartition instead - so nothing else in this method sets it.
                 lastOpenPartitionTxnName = setStateForTimestamp(path, partitionTimestamp);
                 lastOpenPartitionTs = partitionTimestamp;
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
+                setColumnAppendPosition(columnIndex, getLastPartitionFileRowCount(txWriter.getTransientRowCount()), false);
                 path.trimTo(pathSize);
             }
 
@@ -1485,7 +1491,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * ordinary partition, larger for a COMPOSITE one.
      */
     public long getPartitionPhysicalRowCount(int partitionIndex) {
-        if (!txWriter.hasGeometryChain(partitionIndex)) {
+        if (!txWriter.isPartitionComposite(partitionIndex)) {
             return txWriter.getPartitionSize(partitionIndex);
         }
         return getGeometry().getE(partitionIndex);
@@ -6387,6 +6393,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void doClose(boolean truncate) {
+        // A composite last partition's own columns[] mapping can go stale: the composite frame executor
+        // grows the real file through its own, separate fd, and nothing tells columns[]'s tracked append
+        // position about it. The truncating close further down cuts each mapping back to wherever it was
+        // last positioned - correct for an ordinary partition, but for a composite one that position can
+        // be far short of E, and that close would silently throw away everything a later merge-append
+        // wrote. This has to run BEFORE anything below frees txWriter (isLastPartitionComposite reads it)
+        // or columns (getPrimaryColumn/getSecondaryColumn read it) - an earlier version of this check sat
+        // near the end of this method, after Misc.free(txWriter), so it always read a just-closed
+        // txWriter and always saw isLastPartitionComposite() as false, making it a complete no-op.
+        //
+        // Repositioning columns[] to the correct row (setColumnAppendPosition, tried previously) is not a
+        // fix either: for a var-size column it jumps by reading the aux vector through columns[]'s OWN
+        // mapping, which is exactly the stale mapping that never saw the composite executor's writes - it
+        // reads back whatever was there when this column was opened (typically nothing, for a column
+        // added on an already-composite partition), and "repositions" to that same wrong offset. The
+        // close then truncates the DATA file to it - table.d.<txn> ends up back at 0 bytes even though
+        // the aux vector (which for a fixed-size column IS the data, so nothing separate to desync) can
+        // look closer to right by comparison. Reproduced in ScratchAddColumnThenMergeTest: a STRING
+        // column added on a composite active partition, then extended by a merge-append, has its .d file
+        // truncated to 0 on writer close, and the next read SIGBUSes mapping past it.
+        //
+        // columns[] never wrote a single byte through these mappings on a composite last partition - the
+        // frame executor's own fds did all the writing - so there is no position of columns[]'s own to
+        // preserve. Closing without truncating leaves the file exactly as the frame executor left it,
+        // which is the only correct outcome; an untouched mapping is already safe to close that way too
+        // (see MemoryCMARWImpl.close, which no-ops when nothing was ever mapped).
+        if (truncate && !distressed && isLastPartitionComposite()) {
+            for (int i = 0; i < columnCount; i++) {
+                if (metadata.getColumnType(i) > 0) {
+                    getPrimaryColumn(i).close(false);
+                    MemoryMA secondary = getSecondaryColumn(i);
+                    if (secondary != null) {
+                        secondary.close(false);
+                    }
+                }
+            }
+        }
         // Run the lifecycle manager's pre-free hook before freeing anything. The writer pool
         // drains in-flight async-command publishers here so a direct destroy() (the WAL
         // drop-table purge path) cannot free the command queue underneath a publisher
@@ -6786,10 +6829,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw e;
                 }
             }
-            if (!isEmptyTable()
-                    && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
-                    && !isLastPartitionParquet()) {
-                openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount(txWriter.getTransientRowCount()));
+            if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
+                if (!isLastPartitionAppendBlocked()) {
+                    openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount(txWriter.getTransientRowCount()));
+                } else if (!isLastPartitionClosed()) {
+                    // The last partition just became append-blocked (composite or parquet) and columns[]
+                    // is STILL open from before that - a commit earlier in this same WAL batch legitimately
+                    // opened it while the partition was still ordinary. Nothing repositions it now (see
+                    // below), so it is left pointing at a stale, pre-promotion append offset. Left alone,
+                    // the next unrelated openPartition - switching columns[] to whatever partition becomes
+                    // active next, since these MemoryMA objects are reused across partitions - would call
+                    // MemoryMA.of() on it, which closes the CURRENT mapping first, and that close truncates
+                    // the file to the stale offset, discarding every byte the composite frame executor
+                    // appended since. Closing it now, without truncating, retires the stale position before
+                    // anything can act on it.
+                    closeActivePartition(false);
+                }
             }
 
             // Data is written out successfully, however, we can still fail to set append position, for
@@ -6798,10 +6853,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
             try {
                 // Set append position if this commit did not result in full table truncate
-                // which is possible with replace commits. A COMPOSITE partition takes a position too -
-                // it holds native files, and leaving them where the commit left them is what makes the
-                // close truncate a relocated piece away - but that position is E, not the live row count.
-                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
+                // which is possible with replace commits. A COMPOSITE last partition is skipped here, same
+                // as openPartition just above: its columns[] mapping stays closed, matching
+                // isLastPartitionAppendBlocked's contract. Its own writes already went through
+                // processCompositePartition's independent frame fds, which is what grew the files to E - if
+                // columns[] were reopened and repositioned here instead, openColumnFiles' plain
+                // MemoryMA.of() would close() the PREVIOUS mapping first, and that close truncates to
+                // whatever THIS mapping's own append offset was last tracked at, discarding every byte the
+                // frame executor appended since. Composite reads and writes never go through columns[] at
+                // all, so there is nothing here for it to position.
+                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionAppendBlocked()) {
                     setAppendPosition(getLastPartitionFileRowCount(txWriter.getTransientRowCount()), !metadata.isWalEnabled());
                 }
             } catch (Throwable e) {
@@ -6838,6 +6899,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeNullSetter(nullSetters, columnIndex);
         freeNullSetter(o3NullSetters1, columnIndex);
         freeNullSetter(o3NullSetters2, columnIndex);
+        // Same hazard as doClose's composite pre-close, but reached from DROP COLUMN, RENAME COLUMN and
+        // changeColumnType's own old-column cleanup: columns[] never wrote a byte through this column's
+        // mapping on a composite last partition, so closing it with the default truncating close (below,
+        // via Misc.free -> MemoryMA.close() -> close(true)) cuts the file back to columns[]'s stale
+        // position - potentially far short of what the composite frame executor actually wrote. Close
+        // without truncating first; the close below then no-ops on an already-closed mapping.
+        if (isLastPartitionComposite()) {
+            MemoryMA primary = columns.getQuick(pi);
+            if (primary != null && primary != NullMemory.INSTANCE) {
+                primary.close(false);
+            }
+            MemoryMA secondary = columns.getQuick(si);
+            if (secondary != null && secondary != NullMemory.INSTANCE) {
+                secondary.close(false);
+            }
+        }
         freeAndRemoveColumnPair(columns, pi, si);
         freeAndRemoveO3ColumnPair(o3MemColumns1, pi, si);
         freeAndRemoveO3ColumnPair(o3MemColumns2, pi, si);
@@ -6921,7 +6998,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private long getLastPartitionFileRowCount(long rowCount) {
         final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
-        if (lastPartitionIndex < 0 || !txWriter.hasGeometryChain(lastPartitionIndex)) {
+        if (lastPartitionIndex < 0 || !txWriter.isPartitionComposite(lastPartitionIndex)) {
             return rowCount;
         }
         return Math.max(rowCount, getGeometry().getE(lastPartitionIndex));
@@ -7636,7 +7713,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private boolean isLastPartitionComposite() {
         int partitionCount = txWriter.getPartitionCount();
-        return partitionCount > 0 && txWriter.hasGeometryChain(partitionCount - 1);
+        return partitionCount > 0 && txWriter.isPartitionComposite(partitionCount - 1);
     }
 
     private boolean isLastPartitionParquet() {
@@ -8298,10 +8375,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                 }
 
+                // A COMPOSITE partition is excluded for the same reason a parquet one is: every branch below
+                // positions the append memories at the partition's LIVE row count, and a composite partition's
+                // files run to E, with live rows in between. finishO3Commit repositions it at E once txWriter
+                // carries the reference. Read the reference off the sink rather than txWriter, which does not
+                // learn it until further down this loop, so a partition that BECAME composite in this commit
+                // would otherwise be missed.
+                final boolean isComposite = geometryRef != NO_GEOMETRY_REF
+                        || (partitionIndexRaw > -1 && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw));
+
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
-                    if (!partitionMutates) {
+                    if (!partitionMutates && !isComposite) {
                         // Replace resulted in trimming the partition.
                         // Now trim the column tops so that they don't exceed the partition size
+                        //
+                        // A composite directory is excluded: its live row count is not its files' extent,
+                        // which is the only thing a column top is ever measured against here, so trimming
+                        // against it would cut a top down using a number the directory's files never
+                        // shrank to match. The piece drop that shrank srcDataNewPartitionSize already left
+                        // every column's file exactly where it was - dead space, not a shorter file - so
+                        // there is nothing here for a column top to catch up with.
                         o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
                     }
 
@@ -8311,15 +8404,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         lastPartitionRemoved = true;
                     }
                 }
-
-                // A COMPOSITE partition is excluded for the same reason a parquet one is: every branch below
-                // positions the append memories at the partition's LIVE row count, and a composite partition's
-                // files run to E, with live rows in between. finishO3Commit repositions it at E once txWriter
-                // carries the reference. Read the reference off the sink rather than txWriter, which does not
-                // learn it until further down this loop, so a partition that BECAME composite in this commit
-                // would otherwise be missed.
-                final boolean isComposite = geometryRef != NO_GEOMETRY_REF
-                        || (partitionIndexRaw > -1 && txWriter.hasGeometryChainByRawIndex(partitionIndexRaw));
 
                 if (!isParquet && !isComposite && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
@@ -8385,8 +8469,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Close the last partition without truncating it.
+                        //
+                        // For a composite part1, "without truncating" means WITHOUT REPOSITIONING either:
+                        // columns[] never wrote a single byte of a piece the frame executor relocated or
+                        // merged, so there is no live-row-count position of its own to reposition to, and
+                        // reading one through columns[]'s own (stale) mapping - what a plain,
+                        // non-composite-aware close would do here - is the exact hazard doClose's own
+                        // composite guard exists to avoid. See closeActivePartition(long, boolean).
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                        closeActivePartition(committedLastPartitionSize);
+                        closeActivePartition(committedLastPartitionSize, isComposite);
                     }
                 }
 
@@ -8521,7 +8612,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                         long partitionSize = txWriter.getPartitionSize(0);
                         setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
-                        readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+                        if (!readCompositePartitionBoundaryTimestamp(0, path, tsColumnName, false)) {
+                            readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, tsColumnName, -1, partitionSize);
+                        }
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
 
@@ -8530,7 +8624,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
-                        readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+                        if (!readCompositePartitionBoundaryTimestamp(lastPartitionIndex, path, tsColumnName, true)) {
+                            readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, tsColumnName, -1, partitionSize);
+                        }
                         txWriter.maxTimestamp = attachMaxTimestamp;
                     }
                 } finally {
@@ -8919,6 +9016,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
+        // A composite last partition stays closed - openLastPartitionAndSetAppendPosition never calls this
+        // for one, and its own writes go through processCompositePartition's independent fds instead. A
+        // caller that opens a column here anyway leaves columns[] holding the one mapping nothing ever
+        // repositions, which a later MemoryMA.of() reuse or plain truncating close cuts back to file row 0.
+        assert !isLastPartitionComposite() : "openColumnFiles must not run for a composite last partition";
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
@@ -8979,19 +9081,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, indexType, plen, true, true);
             }
 
-            openColumnFiles(name, columnNameTxn, columnIndex, plen);
+            // A composite last partition stays closed - openColumnFiles refuses to run for one. Its files
+            // only have to EXIST for a later piece append to grow into (columnTop, below, ends up recorded
+            // at E - nothing before it is ever read), so this column's own mapping never opens at all,
+            // matching every OTHER column of the partition.
+            final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+            final boolean lastPartitionComposite = lastPartitionIndex > -1 && txWriter.isPartitionComposite(lastPartitionIndex);
+            if (lastPartitionComposite) {
+                touchColumnFiles(name, columnNameTxn, columnIndex, plen);
+            } else {
+                openColumnFiles(name, columnNameTxn, columnIndex, plen);
+            }
             // The top is a FILE row, and it has to sit above every row the partition's files hold - its
             // physical extent E - not merely above its LIVE rows. The two differ ONLY for a COMPOSITE
             // partition, where a merge relocated a piece to the tail: a top at the live count leaves that
             // piece ABOVE it, so every reader treats the column as PRESENT for the piece's rows and reads
             // them out of a file that was created empty. Everything else keeps the transient row count it
             // always had - the two numbers are not interchangeable mid-commit.
-            final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
-            final long columnTop = lastPartitionIndex > -1 && txWriter.hasGeometryChain(lastPartitionIndex)
+            final long columnTop = lastPartitionComposite
                     ? getGeometry().getE(lastPartitionIndex)
                     : txWriter.getTransientRowCount();
-            if (txWriter.getTransientRowCount() > 0) {
-                // write top offset to the column version file
+            if (columnTop > 0) {
+                // Gated on the TOP, not the live row count: a composite partition can carry
+                // columnTop == E with zero transient rows (every one of them sits in a dead piece), and
+                // the top still has to be recorded explicitly - otherwise a later (partitionTimestamp,
+                // columnIndex) lookup falls back to the table-wide default and reports a top of 0
+                // ("column present from row 0") for a partition whose file this method just created empty.
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, columnTop);
             }
 
@@ -8999,12 +9114,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
+                if (lastPartitionComposite) {
+                    // Mirrors indexLastPartition's own closed-partition branch: no live follower to wire up
+                    // (columnMem was never opened above), and nothing yet to index either - columnTop
+                    // already equals E, so [columnTop, E) holds no live rows this index needs to cover.
+                    indexer.configureWriter(path.trimTo(plen), name, columnNameTxn, columnTop, partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
+                } else {
+                    indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
+                }
                 configureCoveringIfNeeded(indexer, columnIndex, txWriter.getLastPartitionTimestamp());
             }
 
-            // configure append position for variable length columns
-            if (ColumnType.isVarSize(columnType)) {
+            // configure append position for variable length columns - only for an OPEN mapping; a
+            // composite last partition's aux file needs no bootstrap entry yet, since nothing above reads
+            // a var column whose top already equals E (see O3PartitionJob's own piece-growth check).
+            if (!lastPartitionComposite && ColumnType.isVarSize(columnType)) {
                 ColumnType.getDriver(columnType).configureAuxMemMA(getSecondaryColumn(columnCount - 1));
             }
 
@@ -9569,7 +9693,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // two. Appending at srcDataMax overwrites them, and the close that follows truncates
                     // whatever the append did not reach.
                     final boolean isComposite = partitionIndexRaw > -1
-                            && txWriter.hasGeometryChainByRawIndex(partitionIndexRaw);
+                            && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw);
 
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions — they must go through the O3 merge path.
@@ -11602,6 +11726,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", correlationId=").$(correlationId)
                     .I$();
         }
+    }
+
+    private boolean readCompositePartitionBoundaryTimestamp(int partitionIndex, Path partitionPath, CharSequence columnName, boolean readMax) {
+        final PartitionGeometry geometry = getGeometry();
+        if (!geometry.isComposite(partitionIndex)) {
+            return false;
+        }
+        final int ordinal = readMax ? geometry.getPieceCount(partitionIndex) - 1 : 0;
+        final long physicalRow = readMax
+                ? geometry.getPieceRowOffset(partitionIndex, ordinal) + geometry.getPieceRowCount(partitionIndex, ordinal) - 1
+                : geometry.getPieceRowOffset(partitionIndex, ordinal);
+        final long fd = openRO(ff, dFile(partitionPath, columnName, COLUMN_NAME_TXN_NONE), LOG);
+        try {
+            final long value = ff.readNonNegativeLong(fd, physicalRow * ColumnType.sizeOf(timestampType));
+            if (readMax) {
+                attachMaxTimestamp = value;
+            } else {
+                attachMinTimestamp = value;
+            }
+        } finally {
+            ff.close(fd);
+        }
+        return true;
     }
 
     private long readMinTimestamp() {
@@ -13971,6 +14118,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Creates a column's {@code .d} (and, for a var-size column, {@code .i}) file on disk without opening
+     * either as one of {@code columns[]}'s own append-tracked mappings. For a composite last partition -
+     * see {@link #openColumnFiles}, which a caller must not reach for one - the column's top is recorded at
+     * E, the partition's full physical extent, so the file only has to EXIST for a later piece append to
+     * grow into; nothing below E is ever read from it.
+     */
+    private void touchColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
+        try {
+            ff.close(TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, configuration.getWriterFileOpenOpts()));
+            if (getSecondaryColumn(columnIndex) != null) {
+                ff.close(TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, configuration.getWriterFileOpenOpts()));
+            }
+        } finally {
+            path.trimTo(pathTrimToLen);
+        }
+    }
+
     private void truncate(boolean keepSymbolTables) {
         rollback();
 
@@ -14486,10 +14651,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     void closeActivePartition(long size) {
+        closeActivePartition(size, false);
+    }
+
+    /**
+     * Closes the partition {@code columns[]} is currently mapping, positioning each column at {@code size}
+     * first - correct for an ORDINARY partition, whose {@code columns[]} mapping is what wrote every byte,
+     * so its own append position is the partition's true live extent.
+     * <p>
+     * A COMPOSITE partition breaks that: its rows past the first commit that ever made it composite went
+     * through the frame executor's own fds, not {@code columns[]}, so {@code columns[]}'s tracked position
+     * - what {@link #setColumnAppendPosition} would reposition a var-size column by reading through, and
+     * what the close below would then truncate to - can be far short of the files' real extent. {@code
+     * composite} skips the reposition and closes each mapping WITHOUT truncating instead, exactly as {@link
+     * #doClose}'s own composite guard does; an untouched mapping already no-ops on a non-truncating close,
+     * so this is sound for a column {@code columns[]} never wrote a single byte through.
+     */
+    private void closeActivePartition(long size, boolean composite) {
         for (int i = 0; i < columnCount; i++) {
-            setColumnAppendPosition(i, size, false);
-            Misc.free(getPrimaryColumn(i));
-            Misc.free(getSecondaryColumn(i));
+            if (composite) {
+                MemoryMA primary = getPrimaryColumn(i);
+                if (primary != null) {
+                    primary.close(false);
+                }
+                MemoryMA secondary = getSecondaryColumn(i);
+                if (secondary != null) {
+                    secondary.close(false);
+                }
+            } else {
+                setColumnAppendPosition(i, size, false);
+                Misc.free(getPrimaryColumn(i));
+                Misc.free(getSecondaryColumn(i));
+            }
         }
         releaseIndexerWriters();
     }

@@ -445,7 +445,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     /**
      * Publishes a partition's geometry pointer into its {@code _txn} record - slot 3, the same word that
      * holds a parquet file size for a parquet partition. The value comes from the composite write path and
-     * is opaque here: this class stores it, and only {@link TxReader#hasGeometryChain} and the resolver
+     * is opaque here: this class stores it, and only {@link TxReader#isPartitionComposite} and the resolver
      * take it apart.
      * <p>
      * Ordering is the crash-consistency contract and belongs to the caller: the {@code _geometry} record

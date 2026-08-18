@@ -504,20 +504,20 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
-     * Whether the partition has a {@code _geometry} record to resolve. Resident, ZERO I/O - it reads one
-     * long of the record that is already in memory, exactly as {@link #isPartitionParquet(int)} does. This
-     * is what keeps a table with no composite partition off {@code _geometry} entirely, and what makes the
-     * resolve lazy: nothing opens the file until a query or a commit lands on that partition.
+     * Whether the partition is composite - has a {@code _geometry} record to resolve. Resident, ZERO I/O -
+     * it reads one long of the record that is already in memory, exactly as {@link #isPartitionParquet(int)}
+     * does. This is what keeps a table with no composite partition off {@code _geometry} entirely, and what
+     * makes the resolve lazy: nothing opens the file until a query or a commit lands on that partition.
      * <p>
-     * Deliberately an over-approximation in one direction: a partition keeps its chain after folding back
+     * Deliberately an over-approximation in one direction: a partition stays composite after folding back
      * to a single piece, so this can be true for a partition whose geometry says one piece at file row 0.
      * That costs one read, never a wrong answer.
      */
-    public boolean hasGeometryChain(int partitionIndex) {
-        return hasGeometryChainByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    public boolean isPartitionComposite(int partitionIndex) {
+        return isPartitionCompositeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
-    public boolean hasGeometryChainByRawIndex(int indexRaw) {
+    public boolean isPartitionCompositeByRawIndex(int indexRaw) {
         if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
             return false;
         }

@@ -601,7 +601,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * reader must MAP: a piece can live anywhere in {@code [0, E)}.
      */
     public long getPartitionPhysicalRowCount(int partitionIndex) {
-        if (!txFile.hasGeometryChain(partitionIndex)) {
+        if (!txFile.isPartitionComposite(partitionIndex)) {
             return txFile.getPartitionSize(partitionIndex);
         }
         return getGeometry().getE(partitionIndex);
@@ -1867,6 +1867,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                         long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                         TableUtils.iFile(path.trimTo(plen), name, columnTxn);
+                        // Mapping past the aux file's real length reads unbacked pages, and on macOS that
+                        // SIGBUSes the JVM instead of throwing - losing every Java-level detail about which
+                        // table, column and partition undersized the file. A composite directory's dead
+                        // space and relocated pieces make this reachable in ways an ordinary partition's
+                        // never is (see COMPOSITE_PARTITION_STATE.md).
+                        DebugUtils.assertReaderVarColumnAuxLength(
+                                ff, path, auxSize, tableToken.getTableName(), name, columnIndex, partitionIndex,
+                                partitionTimestamp, columnTop, columnRowCount, partitionRowCount
+                        );
                         MemoryCMR auxMem = columns.getQuick(secondaryIndex);
                         // Keep aux files fds open, they are read every time TableReader partition is reopened
                         // to find out what memory to map of the data file.
@@ -1942,7 +1951,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * from several different places and the two are not interchangeable.
      */
     private long mappedRowCount(int partitionIndex, long liveRowCount) {
-        if (partitionIndex < 0 || !txFile.hasGeometryChain(partitionIndex)) {
+        if (partitionIndex < 0 || !txFile.isPartitionComposite(partitionIndex)) {
             return liveRowCount;
         }
         return getGeometry().getE(partitionIndex);

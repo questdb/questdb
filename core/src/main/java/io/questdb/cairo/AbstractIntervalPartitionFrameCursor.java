@@ -213,7 +213,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
             return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
         }
-        if (reader.getTxFile().hasGeometryChain(partitionIndex)) {
+        if (reader.getTxFile().isPartitionComposite(partitionIndex)) {
             return compositeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
         }
         return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);

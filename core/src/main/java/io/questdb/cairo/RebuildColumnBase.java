@@ -349,7 +349,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         final long liveRows = partitionIndex == txReader.getPartitionCount() - 1
                 ? txReader.getTransientRowCount()
                 : txReader.getPartitionSize(partitionIndex);
-        final long partitionSize = txReader.hasGeometryChain(partitionIndex)
+        final long partitionSize = txReader.isPartitionComposite(partitionIndex)
                 ? Math.max(liveRows, geometry.getE(partitionIndex))
                 : liveRows;
 

@@ -368,7 +368,7 @@ piece, over the one range of file rows that is both contiguous and sorted, and s
 pieces need no read at all - the stored `tsLo` / `tsHi` bracket them, so a piece wholly at or below the
 value contributes its whole clipped range and the first piece wholly above it ends the walk.
 
-`AbstractIntervalPartitionFrameCursor.initTimestampFinder` selects it on `hasGeometryChain`, after the
+`AbstractIntervalPartitionFrameCursor.initTimestampFinder` selects it on `isPartitionComposite`, after the
 parquet test. Six ported scenarios turned green on this alone, and it is what makes
 `O3CompositePartitionTest` fully green.
 
@@ -507,8 +507,8 @@ lets pass through as a bare forward scan whenever it is already sorted by the de
 `SqlCodeGenerator.generateOrderBy`) - returned the true first row instead of the phantom one, and disagreed
 with the table's own reported minimum.
 
-The fix mirrors the existing `tsHi` correction: when piece 0 comes from a partition with no `_geometry`
-chain yet (`!txReader.hasGeometryChain(partitionIndex)`), its `tsLo` is read from the mapped timestamp
+The fix mirrors the existing `tsHi` correction: when piece 0 comes from a partition that is not yet
+composite (`!txReader.isPartitionComposite(partitionIndex)`), its `tsLo` is read from the mapped timestamp
 column at file row 0 (`getPieceRowOffset` for that fallback is always 0 - "rooted at file row 0", per
 `PartitionGeometry`'s class doc) instead of trusted from the nominal-timestamp fallback. Every later commit
 over the same partition reads a real persisted `tsLo` from `_geometry` regardless of which action touches
@@ -528,13 +528,181 @@ fix: it reproduces identically with the ORIGINAL (unfixed) `tsLo` handling once 
 made non-fatal, so it was always reachable on this seed and was simply masked by the failure this section
 fixes. Needs its own investigation.
 
+### 23. `columns[]` never tracked the composite executor's own writes, and a truncating close threw them away - FIXED
+
+`executeCompositePlan` writes through its own `Frame`/`FrameColumn` pair, opened fresh against the
+partition's fds each call. `TableWriter`'s `columns[]` mappings for the same partition are a SEPARATE set
+of fds, opened once when the partition (or a column added to it) was opened, and nothing tells them the
+files grew underneath them. For an ordinary partition this is harmless: `columns[]` is what wrote the data
+in the first place, so its own append position already tracks the file's real length. A composite last
+partition breaks that: a column added while the partition was ALREADY composite (`ADD COLUMN` on a
+composite active partition, or a fresh column from `changeColumnType`) never has `columns[]` write a single
+byte through it - the executor's fds do all the writing - so `columns[]`'s position for that column sits
+wherever it was when the mapping was opened, typically row 0.
+
+`doClose`'s truncating branch and `freeColumnMemory` (DROP COLUMN, RENAME COLUMN, and `changeColumnType`'s
+own old-column cleanup) both close `columns[]`'s mappings with the default truncating `close()`
+(`MemoryCMARWImpl.close() { clear(); close(true); }`), which cuts each file back to `columns[]`'s stale
+position. A `new_col` extended to 16384 bytes by a merge-append came back from a real writer close (not a
+pool checkin) truncated to 0 bytes, and the next reader mapped past the real (now nonexistent) length -
+SIGBUS on macOS rather than a catchable exception, since the mapping itself succeeds and only the access
+faults.
+
+Repositioning `columns[]` first (`setColumnAppendPosition`, tried and rejected) is not a fix either: for a
+var-size column it has to read the aux vector to find where to jump to, and it reads that through
+`columns[]`'s OWN mapping - the exact one that never saw the executor's writes. It "repositions" to
+whatever was there when the column was opened, which is the same wrong answer the truncate was going to
+produce anyway.
+
+The fix is to not truncate at all on this path: before anything else runs (before `Misc.free(txWriter)`,
+since the check needs `isLastPartitionComposite()`, and before the columns are freed), close each
+`columns[]` mapping on a composite last partition with `close(false)` - no truncate. `columns[]` never
+wrote a byte through these mappings, so there is no position of its own to preserve; leaving the file
+exactly as the executor left it is the only correct outcome. An earlier attempt at this same check lived
+near the end of `doClose`, AFTER `Misc.free(txWriter)` - `isLastPartitionComposite()` reads `txWriter`, so
+by then it always read a just-freed writer and always evaluated to `false`, making the check a permanent
+no-op. `freeColumnMemory` needed the identical guard, since DROP COLUMN, RENAME COLUMN and
+`changeColumnType`'s old-column removal all reach the same truncating `Misc.free` through a path `doClose`
+does not cover.
+
+Reproduced deterministically in `ScratchAddColumnThenMergeTest`: a STRING column added on a composite
+active partition, then extended by a merge-append, had its `.d` file truncated to 0 on a forced writer
+close, and the next query SIGBUSed mapping past it.
+
+**Found and fixed alongside, in `ConvertOperatorImpl`/`ColumnTypeConverter`**: the piece-walking conversion
+path (section 17) only covered source and destination types on the SAME side of fixed/var - fixed-to-fixed,
+and STRING-to-VARCHAR / VARCHAR-to-STRING. A MIXED conversion (fixed source to a STRING/VARCHAR
+destination, or the reverse) fell through to the whole-partition path, which walks `[columnTop, E)` as one
+block and does not know to skip dead space between pieces - the same class of bug section 17 fixed for the
+same-kind case, just never extended to the mixed one. `convertColumn0`'s direction detection is now
+generalized (`srcPieceable` / `dstFixed` / `dstVarStringy` / `pieceWalkable`) so any of the four direction
+groups routes to a piece walk when the partition has more than one piece, and `ColumnTypeConverter` gained
+the two missing per-piece converters (`convertFixedToVarcharPiece` / `convertFixedToStringPiece` and
+`convertStringToFixedPiece` / `convertVarcharToFixedPiece`) needed to cover them. Dead space is padded the
+same way section 17 already established: a fixed destination gets nulls written into its `.d` file, a var
+destination gets its aux vector padded to repeat the prior offset while its `.d` file stays dense.
+
+**`testChronologicalAppendRewritesNothing` was a stale test expectation, not a bug.** Its assertion expected
+`pieceCount == 2` after a chronological append that took two internal actions (`KEEP` then `NEW_PIECE`).
+`processCompositePartition`'s `isComposite` computation deliberately abandons the geometry update
+(`geometry.abandonUpdate()`) whenever the resulting pieces perfectly tile `[0, physicalRows)` with no gaps
+between them, regardless of how many actions produced them - a documented optimization, not an oversight
+(see the "Non-composite is not a special case" decision above). A chronological append with no piece
+relocation always tiles cleanly, so the partition correctly reads back as ordinary (not composite,
+`pieceCount == 1`). Confirmed pre-existing via `git stash` (the failure reproduces identically with all of
+today's other changes stashed out). Fixed by updating the test's expectation to `pieceCount == 1` plus an
+explicit `assertFalse(reader.getTxFile().isPartitionComposite(0))`, with its docstring updated to explain why.
+
+### 24. Replace-range deletion, for a piece the commit itself contributes no rows to - BUILT for a non-last partition
+
+Fills most of the gap section 21 left open. `processCompositePartition`'s planner now takes the commit's own
+per-partition replace-range bounds (`o3TimestampLo`/`o3TimestampHi` - already computed by the caller for
+every replace-mode commit, per the "Two cut sources" decision above) and, when in replace mode, cuts any
+piece straddling either bound with the SAME `applyCutResolved` machinery a transaction-clustering cut
+already uses. Every piece then sits fully inside or fully outside the range. A `KEEP` action - the one a
+piece gets when this commit routes no O3 row to it - is downgraded to a new `ActionType.DROP` when its
+piece landed fully inside: the executor writes nothing for a `DROP`, exactly like a `KEEP`, but excludes the
+piece from the new geometry instead of carrying it forward. Dropped bytes stay on disk as dead space, same
+as a `MERGE`'s vacated region - nothing is moved, matching the grow-only design.
+
+A partition dropped down to zero surviving pieces reports `liveRows=0` through the existing sink protocol
+and sets `partitionMutates=1` (composite writes had always hardcoded this flag to 0, since ordinary
+grow-only writes never queue anything for removal) so `o3ConsumePartitionUpdateSink`'s existing
+`srcDataNewPartitionSize == 0` branch removes the partition the same way an ordinary replace-to-empty does.
+The `o3ConsumePartitionUpdateSink_trimPartitionColumnTops` call for a non-empty shrink is now skipped for a
+composite directory specifically (`!partitionMutates && !isComposite`): that trim measures a column top
+against the live row count, which is not a composite directory's physical extent, and the piece drop that
+shrank `liveRows` already left every column's file exactly where it was.
+
+**Scoped away from the table's own LAST partition, deliberately.** The table-wide `maxTimestamp` has no
+piece-accurate reporting path the way section 21 gave `minTimestamp` one - dropping a piece from a
+HISTORICAL partition can't move the table's ceiling, but dropping one from the ACTIVE partition can, and
+nothing here computes what it should move to. `processPartition`'s `last` flag gates the whole mechanism off
+for that one case, so it falls back to today's already-tolerated gap (no deletion) rather than trading it
+for a wrong `maxTimestamp` assert. In practice this is a narrow exclusion: a replace range with no O3 rows
+for the table's own last partition is already routed around this method entirely, by the existing
+`srcDataMax == 0 || append` skip a few lines above the composite dispatch - the excluded case is only a
+replace range that DOES carry O3 rows for the active partition (a mixed replace-and-insert commit), which
+is what first exposed the gap (`testWalWriteRollbackHeavy`, `pieces=5->2, drop=4` on `partitionIndex=0,
+last=true` was the reproduction that showed dropping pieces there is unsafe without one).
+
+### 25. Var-size columns SIGBUS instead of throwing, on both the composite write and read paths - GUARDED, not root-caused
+
+`O3PartitionJob.executeCompositePlan`'s post-write extent guard (section on "composite plan undergrew a
+column file") checked only fixed-size columns - `continue`d straight past `ColumnType.isVarSize`. Extended to
+cover var columns too: the aux file's real length is checked against
+`driver.getAuxVectorSize(e - columnTop)` and the data file's against `driver.getDataVectorSizeAtFromFd` read
+off the aux file, mirroring the fixed-column check exactly.
+
+That guard never actually fires in practice, which says the undergrowth this branch keeps hitting does not
+originate inside `executeCompositePlan`'s own write loop - every column reaches the guard's own idea of `e`
+correctly. The SIGBUS instead reproduces reading the SOURCE side of a later `MERGE`, in
+`ContiguousFileVarFrameColumn.mapAllRows` (via `rowZeroAuxAddr` / `getContiguousAuxAddr`), over a piece an
+EARLIER commit already left short - the corruption predates the crash by at least one commit. `mapAllRows`
+now checks the aux and data files' real on-disk length before mapping either, the same permanent-guard
+pattern as everywhere else in this file family, so the SIGBUS is a catchable `CairoException` naming the
+column, the row range and the byte counts instead of taking the JVM down blind.
+`TableReader.reloadColumnAt`'s var-size branch got the same treatment on the plain read path, since the
+identical crash reproduces there independently of the composite write path at all (see below).
+
+One real, confirmed contributor found and fixed: `TableWriter.closeActivePartition(long)` - called when an
+O3 split leaves the table's LAST partition no longer last (`o3ConsumePartitionUpdateSink`, the "close the
+last partition without truncating it" branch) - unconditionally repositioned every column via
+`setColumnAppendPosition` and closed with the DEFAULT truncating `close()`. For a composite partition this
+is exactly the hazard section 23 already named and fixed at `doClose` and `freeColumnMemory`: `columns[]`
+never wrote a byte through the composite executor's own writes, so it has no live-row-count position of its
+own, and truncating to whatever stale position it read leaves a var column's file cut back to wherever it
+last happened to sit - always a clean multiple of the allocation page size in every reproduction
+(16384, 32768, 65536 bytes), which is the signature of a file that stopped growing rather than one that was
+ever written wrong. This THIRD site wasn't covered by section 23's fix, which only ever checked the CURRENT
+last partition at `doClose`/`freeColumnMemory` time - not the partition a split is in the middle of retiring
+from "last" status. `closeActivePartition` now takes an explicit `composite` flag (the caller's own
+already-computed `isComposite` for the exact partition being closed, not a fresh `isLastPartitionComposite()`
+read - `txWriter`'s attached-partitions list can already reflect the NEW split-off partition as "last" by
+the time this runs) and closes without repositioning or truncating when it's set, same as the other two
+sites.
+
+**This did not fully close the bug.** Fuzz runs after the fix still reproduce "reader aux file too short" /
+"var column aux file too short to map" - caught cleanly now instead of crashing the JVM, but still wrong
+data underneath. At least one more site writes or closes a composite var column's file short; not found in
+this session. The three guards above are real, safe, permanent fixes on their own regardless - a JVM SIGBUS
+with no Java stack is undebuggable, a `CairoException` naming the column and the byte counts is a lead for
+the next session. Grep `reader aux file too short` / `var column .* file too short to map` /
+`composite plan undergrew a column` in a fuzz log to find the next repro; the numbers are always a clean
+multiple of the allocation page size on the "on-disk" side, which is the thread worth pulling.
+
+### 26. The composite executor never maintains a BITMAP/POSTING index - FOUND, not fixed
+
+`processCompositePartition`'s whole plan-execution block (`KEEP`/`MERGE`/`NEW_PIECE`, now `DROP`) has no
+reference to `IndexWriter`/`isColumnIndexed` anywhere, unlike the ordinary O3 append/merge path in the same
+file, which explicitly drives a BITMAP or POSTING `IndexWriter` for every column it writes. Every row a
+composite write lands - `MERGE` or `NEW_PIECE` alike - is therefore invisible to that column's index, which
+still only knows about rows written before the partition ever went composite. An indexed point-lookup
+(`WHERE indexed_col = 'x'`) against a composite partition silently misses every row the composite path
+wrote (`testAddDropColumnDropPartition`, `checkIndexRandomValueScan`: the WAL and non-WAL reference tables
+disagree on an indexed lookup, not a full scan).
+
+Not a small fix: a `MERGE` relocates a piece's rows to new row ids at the tail, so an incremental
+`IndexWriter.add(key, newRowid)` alone would leave the OLD rowids for that piece still posted under the
+same keys - BITMAP has no removal, so the index would read back with every relocated row duplicated. The
+correct fix most likely rebuilds the touched column's index over the whole directory after the plan
+executes, reusing `RebuildColumnBase.reindexAfterUpdate` (already piece/`E`-aware, per section 19) rather
+than a new incremental scheme - at the cost of an O(directory) rebuild per commit that touches an indexed
+column, on a feature that is opt-in and off by default. Not attempted this session: the call happens from an
+O3 WORKER thread inside `executeCompositePlan`, and whether `IndexBuilder`/`RebuildColumnBase` is safe to
+invoke from there (as opposed to the writer's own single thread, its only caller today) needs checking
+before wiring it in.
+
 ## Known gaps
 
-- **Replace-range commits over a composite-eligible partition perform no deletion.** A commit that declares
-  a replace range but contributes no rows of its own to a partition inside that range takes `KEEP` for every
-  existing piece, leaving the "replaced" data in place. Section 21 fixed the resulting min-timestamp
-  corruption and table suspension; the missing deletion itself is still open.
-
+- **Var-size columns can still read or write short on a composite partition.** See section 25. Caught as a
+  `CairoException` instead of a SIGBUS now; the write-side source is still open.
+- **The composite executor performs no index maintenance.** See section 26. A `MERGE` or `NEW_PIECE` action
+  never updates a BITMAP/POSTING index, so indexed point-lookups against composite-written rows miss them.
+- **Replace-range deletion is still a no-op for the table's own LAST partition when the commit carries O3
+  rows of its own for it.** See section 24's scoping note. The no-O3-rows case for the last partition was
+  already excluded upstream before this session; both are the same underlying gap - no piece-accurate
+  `maxTimestamp` reporting path exists yet.
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
 - **Two dedup scenarios fail unattributed** around the batch boundary. Leads, not diagnoses.

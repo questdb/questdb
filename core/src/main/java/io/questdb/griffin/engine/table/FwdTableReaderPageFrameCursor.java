@@ -278,10 +278,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // own place in those files. So a frame is cut at piece boundaries as well - exactly as a parquet
         // partition is cut at row-group boundaries just below - and carries that piece's SHIFT, which turns
         // a partition row into a file row. A frame spanning two pieces would address the dead space between
-        // them. The shift is 0 for a partition with no geometry, which is every partition of an unsplit
-        // table, and resolving it costs a read only for a partition that has one.
+        // them. The shift is 0 for a partition that is not composite, which is every partition of an
+        // unsplit table, and resolving it costs a read only for one that is.
         long pieceShift = 0;
-        if (reader.getTxFile().hasGeometryChain(reenterPartitionIndex)) {
+        if (reader.getTxFile().isPartitionComposite(reenterPartitionIndex)) {
             final PartitionGeometry geometry = reader.getGeometry();
             final int piece = geometry.findPieceByRow(reenterPartitionIndex, partitionLo);
             pieceShift = geometry.getPieceShift(reenterPartitionIndex, piece);
