@@ -18384,6 +18384,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // SP1E (2026-08-18): gate KEPT, and the reason is now measured rather than inferred. The RANGE
+        // half is fixed (hasSplitFragments, below) and the paths this method's callee builds are now
+        // cell-aware, but that is still not enough, and lifting this gate corrupts the table:
+        //
+        //   squashing partitions [table=c~1, target=2023-01-01, source=2023-01-01,              size=1]
+        //   squashing partitions [table=c~1, target=2023-01-01, source=2023-01-01,              size=1]
+        //   squashing partitions [table=c~1, target=2023-01-01, source=2023-01-01T010000-000001.1     ]
+        //
+        // -- a 3-cell day with ONE fragment, where squashSplitPartitions swallowed both SIBLING CELLS
+        // into the target before reaching the real fragment. Its source loop walks targetIndex + 1
+        // unconditionally, so for a composite table every sibling cell of the day is treated as a
+        // fragment of the target cell. Making squash correct needs that loop scoped to ONE cellKey, not
+        // just correct path rendering: a redesign of the merge, not a patch to it.
+        //
+        // WHY THIS IS EASY TO GET WRONG: the twin comparison PASSES through that corruption. Every row
+        // survives the bad merge, relocated into one cell, so rows and count() are identical to the
+        // plain twin -- only a structural assertion on cell COUNT catches it. Do not treat a green
+        // data-level test as evidence that a squash change is safe.
         if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support SQUASH PARTITIONS [table=")
@@ -18410,16 +18428,68 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
             long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
             if (logicalPartitionTimestamp != lastLogicalPartitionTimestamp) {
-                if (partitionIndex > lastLogicalPartitionIndex + 1) {
+                if (hasSplitFragments(lastLogicalPartitionIndex, partitionIndex)) {
                     squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
                 }
                 return;
             }
             partitionIndex++;
         }
-        if (partitionIndex > lastLogicalPartitionIndex + 1) {
+        if (hasSplitFragments(lastLogicalPartitionIndex, partitionIndex)) {
             squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
         }
+    }
+
+    /**
+     * Does the attached-partition range {@code [lo, hi)} -- already known to share one calendar FLOOR --
+     * hold more than one distinct RAW timestamp, i.e. at least one genuine split fragment?
+     *
+     * <p><b>Why this is not simply {@code hi > lo + 1}.</b> That entry-count test is what the scan used
+     * before, and it is correct for a plain table because there every attached entry carries its own raw
+     * timestamp. It is wrong for a composite table: the CELLS of one day are consecutive entries sharing
+     * ONE raw timestamp, so a never-split 3-cell day counts as three entries and reads as "two fragments
+     * to merge". The discriminator is the raw timestamp itself -- a true split fragment shares the day's
+     * floor but has a DIFFERENT raw timestamp, while a sibling cell has the SAME raw timestamp.
+     *
+     * <p><b>Invariant 1.</b> For a plain table the entries in the range are distinct by construction, so
+     * this returns {@code hi - lo > 1}, exactly the predicate it replaces -- no plain-table behaviour
+     * changes. Note the range is scanned pairwise rather than with a set: attached partitions are held in
+     * timestamp order, so equal raw timestamps are always adjacent.
+     */
+    private boolean hasSplitFragments(int lo, int hi) {
+        if (hi <= lo + 1) {
+            return false;
+        }
+        long prev = txWriter.getPartitionTimestampByIndex(lo);
+        for (int i = lo + 1; i < hi; i++) {
+            long ts = txWriter.getPartitionTimestampByIndex(i);
+            if (ts != prev) {
+                return true;
+            }
+            prev = ts;
+        }
+        return false;
+    }
+
+    /**
+     * Cell segment for {@code cellKey}, or {@code null} for a plain table -- where the 6-arg
+     * {@code setPathForNativePartition} overload then behaves exactly like the 5-arg one, so callers can
+     * use a single code path for both table shapes without changing plain-table behaviour (Invariant 1).
+     *
+     * <p><b>The returned sink is thread-local and is overwritten by the next call.</b> Pass it straight
+     * into the path call that consumes it -- that call copies the characters into the {@link Path} -- and
+     * never hold two of these live at once. The predicate mirrors
+     * {@link #renderCellSegment(CharSink, int)}'s own guard rather than {@code isRoutedComposite()}: the
+     * question here is whether a cell segment can be RENDERED at all, not whether DDL should be refused.
+     */
+    private @Nullable CharSequence cellSegmentOrNull(int cellKey) {
+        if (metadata.getPartitionSpec().getDimensionCount() <= 0) {
+            return null;
+        }
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.clear();
+        renderCellSegment(sink, cellKey);
+        return sink;
     }
 
     private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
@@ -18515,8 +18585,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // SP1E (2026-08-18): the skip is KEPT, now for a measured reason. The paths below are cell-aware
+        // as of this change, but the SOURCE LOOP is not: it walks targetPartitionIndex + 1
+        // unconditionally, which on a composite table means each of the day's SIBLING CELLS is merged
+        // into the target cell before the real fragment is ever reached. Measured on a 3-cell day with
+        // one fragment: three merges, two of them sibling cells. Scoping this loop to a single cellKey
+        // is the remaining work; until then skipping is still the correct behaviour, for the same
+        // reason as before -- a skipped squash leaves every fragment independently valid and queryable,
+        // whereas a cell-blind merge silently destroys the day's cell structure.
         if (isRoutedComposite()) {
-            LOG.info().$("composite table, skipping split-fragment squash (cell-blind merge, cell-aware squash deferred) [table=").$(tableToken).I$();
+            LOG.info().$("composite table, skipping split-fragment squash (merge loop not yet cell-scoped) [table=").$(tableToken).I$();
             return;
         }
 
@@ -18561,14 +18639,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
+        // Index-based, not by-timestamp: for a composite table several CELLS share one raw partition
+        // timestamp, so a by-timestamp lookup resolves to whichever of them the array happens to hold
+        // first. For a plain table there is exactly one entry per timestamp, so this is the same value
+        // the by-timestamp call returned (Invariant 1). Same reasoning for every by-timestamp lookup
+        // replaced below.
+        long targetPartitionNameTxn = txWriter.getPartitionNameTxn(targetPartitionIndex);
         // Plan 4b Task 1b: split-squash housekeeping is unexercised by any composite test today (same
         // scale-threshold reasoning as o3ConsumePartitionUpdateSink_processSplitPartitionRemoval's own
         // comment: it only ever fires on genuine O3 SPLIT partitions), threaded through for
         // defense-in-depth/consistency; always 0 for plain.
         int targetPartitionCellKey = txWriter.getPartitionCellKey(targetPartitionIndex);
-        setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
-        final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+        setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn, cellSegmentOrNull(targetPartitionCellKey));
+        final long originalSize = txWriter.getPartitionSize(targetPartitionIndex);
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
@@ -18577,7 +18660,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             if (copyTargetFrame) {
                 try {
-                    setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn);
+                    setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn, cellSegmentOrNull(targetPartitionCellKey));
                     createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
@@ -18611,9 +18694,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 squashedSeqTxn = Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(targetPartitionIndex + 1));
 
                 other.trimTo(pathSize);
-                long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                setPathForNativePartition(other, timestampType, partitionBy, sourcePartition, sourceNameTxn);
-                long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
+                long sourceNameTxn = txWriter.getPartitionNameTxn(targetPartitionIndex + 1);
+                setPathForNativePartition(other, timestampType, partitionBy, sourcePartition, sourceNameTxn, cellSegmentOrNull(sourcePartitionCellKey));
+                long partitionRowCount = txWriter.getPartitionSize(targetPartitionIndex + 1);
                 lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
                 if (lastPartitionSquashed) {
                     closeActivePartition(false);
@@ -18638,7 +18721,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw th;
                 }
 
-                txWriter.removeAttachedPartitions(sourcePartition);
+                txWriter.removeAttachedPartitions(sourcePartition, sourcePartitionCellKey);
                 columnVersionWriter.squashPartition(targetPartition, sourcePartition);
                 partitionRemoveCandidates.add(sourcePartition, sourceNameTxn, sourcePartitionCellKey);
                 if (sourcePartition == minSplitPartitionTimestamp) {

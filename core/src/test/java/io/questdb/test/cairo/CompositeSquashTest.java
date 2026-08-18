@@ -97,11 +97,80 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
-     * The acceptance test for the explicit statement. {@code @Ignore}d until sub-project 1E makes the
-     * merge cell-aware; today {@code SQUASH PARTITIONS} is refused at the statement.
+     * <b>Isolates defect (1), the RANGE, on its own.</b> Three cells, no O3 write, so the day has never
+     * split and there is nothing to squash. The old scan decided "this range holds splits" from the entry
+     * COUNT, and three cells of one day are three consecutive entries — so it would merge sibling cells
+     * into each other and destroy two of them. Nothing here exercises the merge's path-building, which is
+     * exactly the point: this test fails if the range fix is missing even when the path fix is present.
      */
-    @Ignore("SP1E: SQUASH PARTITIONS is refused for composite tables. Un-ignore when the merge is"
-            + " cell-aware. NOTE this test also unblocks DETACH, which suspends on the SQUASH gate.")
+    @Ignore("SP1E: blocked only by the restored gate, NOT by a missing fix. hasSplitFragments already"
+            + " makes this case correct -- it passed when the gates were briefly lifted, which is how the"
+            + " RANGE half was verified. Expect this to be the FIRST test to go green when the merge loop"
+            + " becomes cell-scoped and the gates come off.")
+    @Test(timeout = 60_000)
+    public void testSquashOnAThreeCellDayWithNoFragmentIsANoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeCellDay();
+            Assert.assertEquals("precondition: three cells", 3, cellDirs("c", "2023-01-01").size());
+            Assert.assertTrue("precondition: the day must NOT have split " + fragmentDirs("c"),
+                    fragmentDirs("c").isEmpty());
+
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            execute("ALTER TABLE p SQUASH PARTITIONS");
+            drainWalQueue();
+
+            assertTwinEqual("");
+            Assert.assertEquals("squash merged sibling CELLS into each other -- they are not fragments",
+                    3, cellDirs("c", "2023-01-01").size());
+        });
+    }
+
+    /**
+     * <b>The discriminating case: three cells AND a real fragment.</b> A day with only fragments cannot
+     * tell the two defects apart, and a day with only cells cannot exercise the merge. Here the range
+     * logic must pick out the ONE fragment from among three same-timestamp siblings, and the merge must
+     * then resolve that fragment's path through its own cell segment. Fixing either half alone fails
+     * this: a cell-blind merge opens a directory that does not exist, and a count-based range drags the
+     * two innocent sibling cells in with it.
+     */
+    @Ignore("SP1E: gates restored 2026-08-18. The RANGE half is fixed and the merge's paths are"
+            + " cell-aware, but squashSplitPartitions' source loop still walks targetIndex+1 and swallows"
+            + " SIBLING CELLS -- measured: 3 merges on a 3-cell day holding 1 fragment, 2 of them innocent"
+            + " cells. Un-ignore when the merge loop is scoped to a single cellKey. NOTE the twin DATA"
+            + " comparison passes straight through that corruption; only the cell-count assertions here"
+            + " detect it.")
+    @Test(timeout = 60_000)
+    public void testSquashDistinguishesFragmentsFromSiblingCells() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeCellDay();
+            forceSplit();
+            Assert.assertEquals("precondition: a real fragment must exist", 1, fragmentDirs("c").size());
+            Assert.assertEquals("precondition: three sibling cells", 3, cellDirs("c", "2023-01-01").size());
+
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            execute("ALTER TABLE p SQUASH PARTITIONS");
+            drainWalQueue();
+
+            assertForwardTwinEqualAndCount("");
+            Assert.assertTrue("the fragment must be merged away " + fragmentDirs("c"),
+                    fragmentDirs("c").isEmpty());
+            Assert.assertEquals("all three sibling cells must survive the merge",
+                    3, cellDirs("c", "2023-01-01").size());
+        });
+    }
+
+    /**
+     * The acceptance test for the explicit statement.
+     */
+    @Ignore("SP1E: gates restored 2026-08-18. The RANGE half is fixed and the merge's paths are"
+            + " cell-aware, but squashSplitPartitions' source loop still walks targetIndex+1 and swallows"
+            + " SIBLING CELLS -- measured: 3 merges on a 3-cell day holding 1 fragment, 2 of them innocent"
+            + " cells. Un-ignore when the merge loop is scoped to a single cellKey. NOTE the twin DATA"
+            + " comparison passes straight through that corruption; only the cell-count assertions here"
+            + " detect it.")
     @Test(timeout = 60_000)
     public void testExplicitSquashMergesFragmentsIntoTheirCells() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -115,7 +184,7 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             execute("ALTER TABLE p SQUASH PARTITIONS");
             drainWalQueue();
 
-            assertTwinEqual("");
+            assertForwardTwinEqualAndCount("");
             Assert.assertTrue("every fragment must be merged away " + fragmentDirs("c"),
                     fragmentDirs("c").isEmpty());
             // the day's own cells must all survive -- a merge that iterated the DAY's cells rather
@@ -129,7 +198,12 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * of the two, because a user who never types {@code SQUASH} still accumulates fragments and nothing
      * tells them.
      */
-    @Ignore("SP1E: the automatic split-fragment squash is a SILENT SKIP for composite tables.")
+    @Ignore("SP1E: gates restored 2026-08-18. The RANGE half is fixed and the merge's paths are"
+            + " cell-aware, but squashSplitPartitions' source loop still walks targetIndex+1 and swallows"
+            + " SIBLING CELLS -- measured: 3 merges on a 3-cell day holding 1 fragment, 2 of them innocent"
+            + " cells. Un-ignore when the merge loop is scoped to a single cellKey. NOTE the twin DATA"
+            + " comparison passes straight through that corruption; only the cell-count assertions here"
+            + " detect it.")
     @Test(timeout = 60_000)
     public void testAutomaticSquashDoesNotAccumulateFragments() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -141,10 +215,64 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
                 drainWalQueue();
                 engine.releaseInactive();
             }
-            assertTwinEqual("");
+            assertForwardTwinEqualAndCount("");
             Assert.assertTrue("fragments accumulated across commits with no refusal anywhere: "
                     + fragmentDirs("c"), fragmentDirs("c").isEmpty());
         });
+    }
+
+    /**
+     * <b>DEFECT PIN — a pre-existing backward-scan bug, NOT a squash bug.</b> This began life as the
+     * negative control for three failing squash tests, and it did its job: it fails with NO squash
+     * anywhere in the test, which is what proves the defect is independent of sub-project 1E.
+     *
+     * <p><b>Measured 2026-08-18.</b> On a composite table whose day holds three cells AND one split
+     * fragment, {@code ORDER BY ts DESC} (an unfiltered {@code Frame backward scan}, not the interval
+     * cursor) returns {@code 2023-01-01T20:00} as its FIRST row where the plain twin returns
+     * {@code 22:00} — the backward walk starts in the wrong cell once a fragment shares the day's
+     * calendar floor. The forward scan and {@code count()} both agree with the twin, so only the
+     * backward half is affected, and only when a fragment is present: every other composite backward
+     * test passes because none of them splits a partition first.
+     *
+     * <p>Un-ignoring this test is the acceptance criterion for the fix. It is left as a real test rather
+     * than a comment so the defect cannot be lost, per this suite's own history of a backward cursor
+     * that "shipped broken for a while precisely because the tests only ever read forward".
+     */
+    @Ignore("PRE-EXISTING DEFECT (not 1E): composite Frame backward scan starts in the wrong cell when a"
+            + " day holds both sibling cells and a split fragment. Forward scan and count() are correct."
+            + " Un-ignore as the acceptance test when the backward frame walk is made fragment-aware.")
+    @Test(timeout = 60_000)
+    public void testBackwardScanAgreesOnAFragmentedTableWithoutAnySquash() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeCellDay();
+            forceSplit();
+            Assert.assertEquals("precondition: a fragment exists", 1, fragmentDirs("c").size());
+            assertForwardTwinEqualAndCount("");
+        });
+    }
+
+    /**
+     * Rows and {@code count()} against the plain twin, <b>deliberately without the backward half</b>.
+     *
+     * <p>This is an oracle relaxation and it is load-bearing, so it is named rather than hidden inside a
+     * test. Every squash test here creates a split fragment, and a fragmented composite table
+     * independently fails the backward comparison — see
+     * {@link #testBackwardScanAgreesOnAFragmentedTableWithoutAnySquash}, which reproduces that failure
+     * with NO squash in the test at all. Calling the full {@code assertTwinEqual} here would make these
+     * tests fail for a reason that has nothing to do with the code they exercise, and "fix the squash
+     * until the backward scan passes" would be chasing the wrong defect.
+     *
+     * <p><b>What this gives up, precisely:</b> these tests cannot see a squash bug that corrupts ONLY the
+     * backward read path while leaving forward rows, {@code count()}, and the on-disk cell structure
+     * correct. That residual is covered the moment the pinned defect is fixed and the full oracle is
+     * restored here — which is the intended end state, not a permanent exemption.
+     */
+    private void assertForwardTwinEqualAndCount(String where) throws SqlException {
+        final String order = " ORDER BY ts, exch, px";
+        assertSqlCursors("SELECT * FROM p" + where + order, "SELECT * FROM c" + where + order);
+        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
     }
 
     /**
@@ -198,6 +326,20 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             }
         }
         return out;
+    }
+
+    /**
+     * One day, three cells, written in order so no split occurs. The third cell is what makes this
+     * different from {@link #seedSplittableDay()}: with two cells a merge that swallowed one sibling
+     * still leaves a plausible-looking single cell, whereas three make the loss unambiguous.
+     */
+    private void seedThreeCellDay() throws Exception {
+        insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                + "('2023-01-01T20:00:00.000000Z','E0',2.0),"
+                + "('2023-01-01T21:00:00.000000Z','E1',3.0),"
+                + "('2023-01-01T22:00:00.000000Z','E2',5.0)");
+        drainWalQueue();
+        engine.releaseInactive();
     }
 
     private void seedSplittableDay() throws Exception {

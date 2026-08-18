@@ -3021,7 +3021,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partitions'");
                 if (isPartitionsKeyword(tok)) {
                     // Sub-project 1B Task 0: refuse at the statement (invariant 6); the writer-side
-                    // gate stays as the non-SQL backstop.
+                    // gate stays as the non-SQL backstop. SP1E measured 2026-08-18 that lifting these
+                    // gates lets the merge swallow sibling cells -- see TableWriter#squashPartitionForce.
                     if (isRoutedCompositeTable(tableToken)) {
                         throw SqlException.$(tableNamePosition, "composite partitioning does not yet support SQUASH PARTITIONS [table=")
                                 .put(tableToken.getTableName()).put(']');
