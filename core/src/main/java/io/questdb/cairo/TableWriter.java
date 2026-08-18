@@ -187,6 +187,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Above this many footers on a partition's _pm chain, publishParquetIndexTokens
+    // logs an advisory rather than growing the chain silently. The O3 rewrite
+    // trigger (cairo.partition.encoder.parquet.o3.rewrite.unused.ratio / .max.bytes)
+    // is what normally keeps the chain far below this; the warning exists for the
+    // configuration that disables or greatly raises that trigger. Not a refusal:
+    // chain growth is a cost, not a correctness problem.
+    private static final int MAX_UNWARNED_PM_FOOTERS = 512;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -339,6 +346,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // getTxn() does not move until the commit, so equality with it is what makes
     // the list mean "published in the CURRENT uncommitted window".
     private long parquetIndexPublishBaseTxn = -1;
+    // How many times publishParquetIndexTokens has logged the "_pm chain is
+    // long" advisory over this writer's whole lifetime. The chain is expected
+    // to stay short -- the O3 rewrite trigger resets it -- so this should stay
+    // 0 outside a configuration that disables or greatly raises that trigger.
+    private long pmChainWarnCount;
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
     // at once; the writer-thread paths touch the same list only after the O3 workers
@@ -2734,6 +2746,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPhysicallyWrittenRowsSinceLastCommit() {
         return physicallyWrittenRowsSinceLastCommit.sum();
+    }
+
+    /**
+     * How many times this writer has logged the "_pm chain is long" advisory.
+     * Exposed so a test can assert the warning fired without coupling to its
+     * message wording.
+     */
+    @TestOnly
+    public long getPmChainWarnCount() {
+        return pmChainWarnCount;
     }
 
     public long getRowCount() {

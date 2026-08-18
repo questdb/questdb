@@ -227,6 +227,42 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * W6-I1: an {@code _pm} chain that nothing is resetting must be reported,
+     * not left to grow silently. The O3 rewrite trigger normally resets it; this
+     * test disables that trigger -- the only thing that does -- and drives
+     * enough O3 commits into the indexed partition to cross the warning
+     * threshold, then asserts the writer counted at least one warning.
+     */
+    @Test
+    public void testAnUnboundedChainIsReportedRatherThanGrowingSilently() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        // Disable the rewrite trigger, which is what otherwise resets the chain.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1000000");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, "1000000000000");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+            for (int i = 0; i < 400; i++) {
+                execute("INSERT INTO " + TABLE_NAME
+                        + " VALUES ('" + INDEXED_PARTITION + "T00:00:00.00000" + (i % 9 + 1) + "Z', 's7', 1.5, 9)");
+                drainWalQueue();
+            }
+            // Assert on the counter the warning is derived from, not on the
+            // log line: LogCapture's waiters are reserved for their own PR and
+            // a log assertion would couple this to message wording.
+            try (TableReader reader = engine.getReader(engine.verifyTableName(TABLE_NAME))) {
+                Assert.assertTrue(
+                        "the fixture must actually build a long chain, or the threshold is never crossed",
+                        footerCountOf(reader, 0) > 512
+                );
+            }
+            Assert.assertTrue(
+                    "an unbounded _pm chain must be reported before it becomes a problem",
+                    writerWarnedAboutChainLength()
+            );
+        });
+    }
+
     @Test
     public void testSwitchToParquetCopiesTheParquetMetaRatherThanSharingItsInode() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
@@ -3110,6 +3146,54 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             bus.getO3PurgeDiscoveryQueue().get(cursor);
             bus.getO3PurgeDiscoverySubSeq().done(cursor);
             drained++;
+        }
+    }
+
+    /**
+     * The number of footers on {@code partitionIndex}'s {@code _pm} chain,
+     * walked fresh with the same {@code resolveLastFooter} / {@code resolvePrevFooter}
+     * pair the orphan sweep's chain walk and {@code TableWriter}'s chain-length
+     * warning both use. Reads independently of the counter the warning
+     * increments, so a test can prove the fixture actually crosses the warning
+     * threshold rather than trusting the thing under test to say so.
+     */
+    private int footerCountOf(TableReader reader, int partitionIndex) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+            path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            final ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+            final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), pmReader);
+            Assert.assertTrue("_pm must be readable", addr != 0);
+            final long fileSize = pmReader.getFileSize();
+            try {
+                int footers = 0;
+                Assert.assertTrue(pmReader.resolveLastFooter());
+                do {
+                    footers++;
+                } while (pmReader.resolvePrevFooter());
+                return footers;
+            } finally {
+                pmReader.clear();
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+    }
+
+    /**
+     * Whether the pooled writer for {@link #TABLE_NAME} has ever emitted the
+     * {@code _pm} chain-length advisory. {@code TABLE_NAME} is a WAL table, so
+     * this is the same {@code TableWriter} instance {@code ApplyWal2TableJob}
+     * applied every commit above through -- the writer pool hands back the
+     * same object on a checkout while it stays idle in the pool -- and its
+     * counter is what the publish path itself incremented.
+     */
+    private boolean writerWarnedAboutChainLength() throws Exception {
+        try (TableWriter writer = engine.getWriter(engine.verifyTableName(TABLE_NAME), "test")) {
+            return writer.getPmChainWarnCount() > 0;
         }
     }
 
