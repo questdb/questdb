@@ -126,9 +126,9 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
                         + " WHEN ((" + op.v0 + " + x) % 3) = 1 THEN 'bb' ELSE '' END";
                 final String varCols = varSize
                         ? ", CASE WHEN ((" + op.v0 + " + x) % " + op.nullMod + ") = 1 THEN cast(NULL AS STRING)"
-                        + " ELSE (" + pad + ") || (" + op.v0 + " + x)::STRING END AS s"
-                        + ", CASE WHEN ((" + op.v0 + " + x) % " + op.nullMod + ") = 2 THEN cast(NULL AS VARCHAR)"
-                        + " ELSE (('\u00e9' || (" + pad + ")) || (" + op.v0 + " + x)::STRING)::VARCHAR END AS v"
+                          + " ELSE (" + pad + ") || (" + op.v0 + " + x)::STRING END AS s"
+                          + ", CASE WHEN ((" + op.v0 + " + x) % " + op.nullMod + ") = 2 THEN cast(NULL AS VARCHAR)"
+                          + " ELSE (('\u00e9' || (" + pad + ")) || (" + op.v0 + " + x)::STRING)::VARCHAR END AS v"
                         : "";
                 execute("INSERT INTO " + table
                         + " SELECT (" + op.startTs + " + x * " + op.step + ")::TIMESTAMP AS ts,"
@@ -251,7 +251,7 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             final String schema = varSize
                     ? " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value, s, v),"
-                    + " value DOUBLE, s STRING, v VARCHAR)"
+                      + " value DOUBLE, s STRING, v VARCHAR)"
                     : " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)";
             execute("CREATE TABLE reseal" + schema + " TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE append" + schema + " TIMESTAMP(ts) PARTITION BY DAY WAL");

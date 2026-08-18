@@ -91,7 +91,7 @@ public class MidPartitionAppendSplitDeclineTest extends AbstractCairoTest {
                 // near the END of a large partition: a big untouched prefix and
                 // a small rewritten suffix is the shape that splits
                 insertBothAt("2024-01-02", (long) SEED - 900L + (long) c * 7L, 100_000L + (long) c * ROWS, ROWS);
-                }
+            }
 
             // Setup discriminator: without this the test passes when no split
             // ever happened, i.e. while testing nothing it names.
