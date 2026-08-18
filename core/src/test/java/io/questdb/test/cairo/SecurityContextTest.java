@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -36,8 +37,10 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.junit.Test;
 
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 
 import static org.junit.Assert.*;
 
@@ -205,5 +208,57 @@ SecurityContextTest {
                 }
             }
         }
+    }
+
+    /**
+     * {@link SecurityContext#authorizeReconcileTable} is a {@code default} method that simply
+     * delegates to {@code authorizeSystemAdmin()} (C8). No concrete class in the tree inherits
+     * this default unoverridden today: {@link AllowAllSecurityContext} and
+     * {@link ReadOnlySecurityContext} above both override it explicitly (no-op / unconditional
+     * deny respectively, exercised by {@link #testAllowAllSecurityContext} /
+     * {@link #testReadOnlySecurityContext}), and every Enterprise {@code EntSecurityContext}
+     * implementor is required to override it too (the Enterprise interface redeclares the method
+     * as abstract). So the default method's own body has zero coverage anywhere else in the tree.
+     * <p>
+     * A concrete class cannot "un-override" a default method it inherited through a concrete
+     * superclass (e.g. {@code extends AllowAllSecurityContext} would keep dispatching to
+     * {@code AllowAllSecurityContext}'s own no-op override, and {@code SecurityContext.super...}
+     * is rejected by javac as a "redundant interface" in that shape). A {@link Proxy} sidesteps
+     * this: a dynamic proxy never auto-implements default methods, so routing
+     * {@code authorizeReconcileTable} through {@link InvocationHandler#invokeDefault} executes
+     * the interface's own default body directly, which in turn calls back through the same
+     * handler for {@code authorizeSystemAdmin()} -- toggled here to prove the delegation is
+     * genuinely load-bearing in both directions, not a no-op stub.
+     */
+    @Test
+    public void testDefaultAuthorizeReconcileTableDelegatesToAuthorizeSystemAdmin() {
+        final boolean[] systemAdminAllowed = {true};
+        final InvocationHandler handler = (proxy, method, args) -> {
+            switch (method.getName()) {
+                case "authorizeSystemAdmin":
+                    if (!systemAdminAllowed[0]) {
+                        throw CairoException.authorization().put("permission denied").setCacheable(true);
+                    }
+                    return null;
+                case "authorizeReconcileTable":
+                    // Executes SecurityContext.java's default body verbatim.
+                    return InvocationHandler.invokeDefault(proxy, method, args);
+                default:
+                    return method.invoke(AllowAllSecurityContext.INSTANCE, args);
+            }
+        };
+        final SecurityContext sc = (SecurityContext) Proxy.newProxyInstance(
+                SecurityContext.class.getClassLoader(), new Class<?>[]{SecurityContext.class}, handler);
+
+        systemAdminAllowed[0] = false;
+        try {
+            sc.authorizeReconcileTable(userTableToken);
+            fail("default authorizeReconcileTable must deny when authorizeSystemAdmin() denies");
+        } catch (CairoException e) {
+            assertTrue(e.getMessage().contains("permission denied"));
+        }
+
+        systemAdminAllowed[0] = true;
+        sc.authorizeReconcileTable(userTableToken); // must not throw
     }
 }

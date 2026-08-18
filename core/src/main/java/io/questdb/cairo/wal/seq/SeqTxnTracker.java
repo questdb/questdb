@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.mp.CountedConcurrentQueue;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
@@ -58,6 +59,18 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    // Genuine per-table mutual exclusion between WalPurgeJob's sequencer re-open
+    // (fetchSequencerPairs) and RECONCILE TABLE apply's non-atomic _meta/_meta.0/_txnlog* swap.
+    // walPurgeLocked below is only a plain flag WalPurgeJob checks ONCE at the start of a table's
+    // sweep -- a check-then-act race lets a sweep that read the flag false a moment before the
+    // apply set it true carry on into the sequencer re-open regardless. This lock is acquired a
+    // second time, immediately before that re-open, and held by the apply for its whole file-swap,
+    // so the two genuinely cannot interleave. Callers use ONLY the CAS-based no-arg tryLock()/
+    // unlock() pair (never the parking tryLock(timeout, unit) or lock()), so the class's own
+    // "undefined for more than 2 threads" contract never applies here even though more than 2
+    // threads (WalPurgeJob's sweep thread, and potentially more than one reconcile apply worker
+    // across time) can call in.
+    private final SimpleWaitingLock walPurgeSeqLock = new SimpleWaitingLock();
     // Live-view dedup-base signal. The apply
     // worker is the single writer per table, so plain volatile suffices (no CAS). A
     // coupled dedup-base live view reads these to decide whether an applied seqTxn range
@@ -344,6 +357,18 @@ public class SeqTxnTracker {
     }
 
     /**
+     * Non-blocking acquire of {@link #walPurgeSeqLock}. Both {@code WalPurgeJob} (guarding its
+     * sequencer re-open) and a RECONCILE TABLE apply (guarding its file-swap) call only this
+     * CAS-based no-arg form, in a loop with an external backoff, never the class's own
+     * parking {@code tryLock(timeout, unit)} -- see the field doc for why.
+     *
+     * @return {@code true} if the lock was free and is now held by the caller
+     */
+    public boolean tryLockWalPurgeSeq() {
+        return walPurgeSeqLock.tryLock();
+    }
+
+    /**
      * Atomically sets the hard-suspend state at the caller's {@code priority} (a
      * {@code SUSPEND_PRIORITY_*}). {@code flags} is the desired lock ({@code SUSPEND_FLAG_*} OR'd,
      * e.g. {@code SUSPEND_FLAG_APPLY | SUSPEND_FLAG_WRITE}); {@code 0} releases.
@@ -406,6 +431,15 @@ public class SeqTxnTracker {
                 return true;
             }
         }
+    }
+
+    /**
+     * Releases {@link #walPurgeSeqLock}. Throws {@code IllegalStateException} if the caller does not
+     * hold it -- callers must guard this with the same success flag {@link #tryLockWalPurgeSeq}
+     * returned, exactly like every other lock this class exposes.
+     */
+    public void unlockWalPurgeSeq() {
+        walPurgeSeqLock.unlock();
     }
 
     /**

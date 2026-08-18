@@ -471,8 +471,22 @@ public class TableSequencerAPI implements QuietCloseable {
         return getSeqTxnTracker(tableToken).tryAcquireSuspend(priority, flags);
     }
 
+    /**
+     * @see SeqTxnTracker#tryLockWalPurgeSeq()
+     */
+    public boolean tryLockWalPurgeSeq(final TableToken tableToken) {
+        return getSeqTxnTracker(tableToken).tryLockWalPurgeSeq();
+    }
+
     public boolean trySetSuspend(final TableToken tableToken, int priority, int flags) {
         return getSeqTxnTracker(tableToken).trySetSuspend(priority, flags);
+    }
+
+    /**
+     * @see SeqTxnTracker#unlockWalPurgeSeq()
+     */
+    public void unlockWalPurgeSeq(final TableToken tableToken) {
+        getSeqTxnTracker(tableToken).unlockWalPurgeSeq();
     }
 
     /**

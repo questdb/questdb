@@ -57,12 +57,28 @@ import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
+    /**
+     * Test-only synchronization hook. When set, {@link #fetchSequencerPairs()} calls it with the
+     * table it is about to act on right after reading the table-root {@code _txn} (closing the
+     * {@code TableMetadata} handle that call opened -- releasing it is what lets a concurrent
+     * reconcile apply's tenant-pool spin drain the metadata pool and proceed) and right before it
+     * calls {@link TableSequencerAPI#getCursor}, the actual sequencer re-open {@code
+     * tryLockWalPurgeSeq} guards. A test uses this to park a sweep exactly in that
+     * otherwise-unobservable window and drive a concurrent apply's file-swap into it. The consumer
+     * takes the table so a test targeting one table can ignore this static, JVM-wide hook firing for
+     * an unrelated table -- e.g. another node's own background sweep in the same test process.
+     * Never set in production.
+     */
+    @TestOnly
+    public static volatile Consumer<TableToken> preSequencerReopenHook = null;
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
@@ -197,7 +213,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // whose applied segments must keep getting reclaimed. The next purge pass picks the
             // table back up once the flag clears (a few hundred ms), so the skip defers nothing
             // beyond the swap window.
-            LOG.debug().$("skipping wal-purge-locked table during broad sweep [table=")
+            // INFO, not debug: RECONCILE TABLE apply is an infrequent, admin-driven event, so a
+            // skip here is a notable operator-relevant signal, not routine hot-path chatter. If a
+            // table's lock never clears (a wedged apply), these lines are the only trace an
+            // operator gets that WAL segments have stopped being reclaimed for it.
+            LOG.info().$("skipping wal-purge-locked table during broad sweep [table=")
                     .$(tableToken).I$();
             return;
         }
@@ -217,11 +237,31 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             if (logic.hasOnDiskSegments()) {
-                try {
-                    tableDropped = fetchSequencerPairs();
-                } catch (Throwable th) {
+                // Close, not just narrow, the race the isWalPurgeLocked() check above only narrows:
+                // that check is a single read at sweep entry, so a sweep that read it false a moment
+                // before a reconcile apply flipped it true would otherwise carry on regardless into
+                // fetchSequencerPairs() -- the only place this sweep re-opens the sequencer -- while
+                // the apply is mid-way through its non-atomic _meta/_meta.0/_txnlog*/_txn swap.
+                // tryLockWalPurgeSeq() is genuine per-table mutual exclusion: the apply holds the
+                // same lock for its whole file-swap (see ReconcileApplyService), so if this sweep
+                // wins the race it blocks the swap from starting until fetchSequencerPairs() below
+                // has finished reading, and if the apply already holds it, this bails out before
+                // touching any file, exactly like the entry check above would have.
+                if (!engine.getTableSequencerAPI().tryLockWalPurgeSeq(tableToken)) {
+                    LOG.info().$("skipping wal-purge-locked table before sequencer read [table=")
+                            .$(tableToken).I$();
                     logic.releaseLocks();
-                    throw th;
+                    return;
+                }
+                try {
+                    try {
+                        tableDropped = fetchSequencerPairs();
+                    } catch (Throwable th) {
+                        logic.releaseLocks();
+                        throw th;
+                    }
+                } finally {
+                    engine.getTableSequencerAPI().unlockWalPurgeSeq(tableToken);
                 }
                 if (engine.isClosing()) {
                     // fetchSequencerPairs() bails before it can populate the next-to-apply set once the
@@ -488,6 +528,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         .$(", writerTxn=").$(safeToPurgeTxn)
                         .I$();
 
+                final Consumer<TableToken> preSequencerReopen = preSequencerReopenHook;
+                if (preSequencerReopen != null) {
+                    preSequencerReopen.accept(tableToken);
+                }
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, safeToPurgeTxn)) {
                     int txnPartSize = transactionLogCursor.getPartitionSize();
