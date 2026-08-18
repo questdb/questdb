@@ -75,6 +75,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // offer and inspect WebSocket subprotocols but cannot set/read X-QWP-* headers.
     public static final Utf8String URL_PARAM_QWP_ACCEPT_ENCODING = new Utf8String("qwp_accept_encoding");
     public static final Utf8String URL_PARAM_QWP_BROWSER_HANDSHAKE = new Utf8String("qwp_browser_handshake");
+    public static final Utf8String URL_PARAM_QWP_MAX_BATCH_ROWS = new Utf8String("qwp_max_batch_rows");
     public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");

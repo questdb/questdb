@@ -278,6 +278,23 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         return QwpConstants.STATUS_INTERNAL_ERROR;
     }
 
+    /**
+     * Resolves the optional client batch-row preference. Native clients use
+     * the upgrade header; browsers use the URL parameter because the browser
+     * WebSocket API cannot set custom headers. Header precedence preserves the
+     * existing behavior for reverse proxies that supply both.
+     */
+    public static int negotiateMaxBatchRows(Utf8Sequence headerValue, Utf8Sequence urlParamValue) {
+        Utf8Sequence requestedValue = headerValue != null ? headerValue : urlParamValue;
+        if (requestedValue != null) {
+            int clientRequested = Numbers.parseNonNegativeIntQuiet(requestedValue);
+            if (clientRequested > 0) {
+                return Math.min(clientRequested, MAX_ROWS_PER_BATCH);
+            }
+        }
+        return MAX_ROWS_PER_BATCH;
+    }
+
     @Override
     public void close() {
         Misc.free(selectCache);
@@ -391,19 +408,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setCompression(negotiatedCodec, effectiveLevel);
-        // Optional client preference for per-batch row cap. Absent or malformed
-        // header falls back to the server's hard cap. Values outside [1, MAX]
-        // are clamped rather than rejected so one buggy client doesn't break
-        // the handshake -- the server-authoritative cap is always applied.
+        // Optional client preference for per-batch row cap. Browsers cannot
+        // set the header, so they carry the same preference in the URL. Absent
+        // or malformed values fall back to the server's hard cap. Values above
+        // the cap are clamped rather than rejecting the whole handshake.
         Utf8Sequence maxBatchRowsHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_MAX_BATCH_ROWS);
-        int effectiveMaxBatchRows = MAX_ROWS_PER_BATCH;
-        if (maxBatchRowsHeader != null) {
-            int clientRequested = Numbers.parseNonNegativeIntQuiet(maxBatchRowsHeader);
-            if (clientRequested > 0) {
-                effectiveMaxBatchRows = Math.min(clientRequested, MAX_ROWS_PER_BATCH);
-            }
-        }
+        Utf8Sequence maxBatchRowsUrlParam = maxBatchRowsHeader == null
+                ? requestHeader.getUrlParam(QwpIngressHttpProcessor.URL_PARAM_QWP_MAX_BATCH_ROWS)
+                : null;
+        int effectiveMaxBatchRows = negotiateMaxBatchRows(maxBatchRowsHeader, maxBatchRowsUrlParam);
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
