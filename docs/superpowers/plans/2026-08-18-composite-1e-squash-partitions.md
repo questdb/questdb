@@ -108,6 +108,39 @@ Instrument rather than assume. 1D found `FORCE DROP` and `removePartition` were 
 where the plan assumed one, and 2A found only one of `ColumnPurgeOperator`'s two sites could safely
 change.
 
+> **The scan read 2026-08-18, so Step 2 starts from the actual code.** `squashPartitionForce` walks
+> forward while the FLOOR matches and then squashes the whole range:
+>
+> ```java
+> while (partitionIndex < txWriter.getPartitionCount()) {
+>     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+>     long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+>     if (logicalPartitionTimestamp != lastLogicalPartitionTimestamp) {
+>         if (partitionIndex > lastLogicalPartitionIndex + 1) {
+>             squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
+>         }
+>         return;
+>     }
+>     partitionIndex++;
+> }
+> ```
+>
+> **Two distinct things are wrong for composite, not one:**
+>
+> 1. **The range is wrong.** A day with three cells is three consecutive entries sharing one raw
+>    timestamp, so the walk includes all three and `partitionIndex > lastLogicalPartitionIndex + 1`
+>    reads "there are splits here" when there are none. The range must count entries with DIFFERENT
+>    raw timestamps — a true fragment has the same floor and a different raw ts, a sibling cell has
+>    the SAME raw ts.
+> 2. **The merge is wrong.** `squashSplitPartitions` then builds every path with the bare 5-arg
+>    overload, so even a correctly-identified fragment would be merged through paths that name no real
+>    directory.
+>
+> Fixing only (1) yields a scan that finds the right fragments and still merges them through
+> nonexistent paths. Fixing only (2) yields correct paths applied to cells that were never fragments.
+> Both are required, and the tests must distinguish them — a day with 3 cells AND a real fragment is
+> the case that separates the two.
+
 - [ ] **Step 2: Merge per cell, matching fragment cells to target cells**
 
 For each cell present in the FRAGMENT, merge into the SAME cell of the target day. A fragment holds a
