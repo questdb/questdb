@@ -49,6 +49,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.BitSet;
+import io.questdb.std.BoolList;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -56,6 +57,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -90,11 +92,24 @@ import org.jetbrains.annotations.TestOnly;
  * </ul>
  */
 public class LiveViewWindow implements QuietCloseable {
-    // The dirty anchor map's only slot: a byte flagging the key as absent from the
-    // durable predecessor. Nothing reads an anchor value or a tombstone off that map
-    // - freezeCheckpointEntries goes to the live anchor map for both - so carrying
-    // the three slots below would be padding on every key the cadence touches.
+    // The dirty anchor map's two slots. Nothing reads an anchor value or a live
+    // tombstone off that map - freezeCheckpointEntries goes to the live anchor map for
+    // both - so carrying the four slots below would be padding on every key the
+    // cadence touches.
+    //
+    // DIRTY_SLOT_EVICTED: 1 means the frontier sweep dropped this key from the anchor
+    // map, so the seal freezes a removal for it instead of raising on the missing live
+    // value. Per-key rather than per-sweep on purpose: a dirty key that lost its anchor
+    // entry to anything but the sweep carries a 0 here and still raises.
+    // DIRTY_SLOT_NEW_SINCE_CHECKPOINT: 1 means the key is absent from the durable
+    // predecessor, which is what keeps the logical-size accounting exact without a probe
+    // into the anchor root.
+    private static final int DIRTY_SLOT_EVICTED = 1;
     private static final int DIRTY_SLOT_NEW_SINCE_CHECKPOINT = 0;
+    // The cadence value no key is ever marked with, so a value slot that was never
+    // written - and a map implementation zero-fills none of them - cannot read as
+    // "already dirty in this cadence". The counter starts at 1 and never emits it.
+    private static final short EPOCH_NONE = 0;
     // Slot 0: last-seen anchor value (LONG / TIMESTAMP).
     // Slot 1: byte flag — 0 means "uninitialized", 1 means "set". The MapValue's
     // intrinsic isNew() flips to false on first access; we use this explicit flag
@@ -104,7 +119,16 @@ public class LiveViewWindow implements QuietCloseable {
     // means "stale" (anchor crossed and no follow-up row visited the partition
     // since). The anchor-map compaction trigger reclaims
     // tombstoned entries.
+    // Slot 3: short cadence - the checkpoint cadence this key was last entered into
+    // the dirty map in, or EPOCH_NONE. Reading it off the value processRow has already
+    // loaded is what lets a repeat row skip re-serializing and re-probing the key into
+    // that second map. SHORT rather than LONG deliberately: MapFactory selects the map
+    // implementation on the raw key+value byte sum against
+    // cairo.sql.unordered.map.max.entry.size, and two more bytes land inside the
+    // alignment padding every unordered map already pays, where eight would push an
+    // INT-keyed fused view and a VARCHAR-keyed one onto OrderedMap.
     private static final int SLOT_ANCHOR_VALUE = 0;
+    private static final int SLOT_DIRTY_EPOCH = 3;
     private static final int SLOT_INITIALIZED = 1;
     private static final int SLOT_TOMBSTONE = 2;
 
@@ -120,9 +144,13 @@ public class LiveViewWindow implements QuietCloseable {
     // null when the anchor has none. Carried on the window because the segment is a
     // property of the anchor, not of any one function on it.
     private final @Nullable LiveViewCheckpointAnchorPlan checkpointAnchorPlan;
-    // Anchor-map size above which a frontier sweep is attempted (mirrors
-    // cairo.live.view.partition.compact.threshold). The sweep itself is gated on
-    // the anchor having advanced since the last sweep, so it fires at most once
+    // Per-function answer to "did this function accept every key the running sweep
+    // dropped?", indexed by position in functions. Allocated with the window and
+    // rewritten per sweep, so the sweep keeps its no-allocation property.
+    private final BoolList checkpointRemovalsRecorded = new BoolList();
+    // Anchor-map size above which a frontier sweep is attempted, and the stale count it
+    // needs (mirrors cairo.live.view.partition.compact.threshold). The sweep itself is
+    // gated on the anchor having advanced since the last sweep, so it fires at most once
     // per bucket boundary rather than per row.
     private final int compactThreshold;
     private final ObjList<WindowFunction> functions;
@@ -158,6 +186,13 @@ public class LiveViewWindow implements QuietCloseable {
     // view whose max timestamp stops advancing never publishes and grows the map
     // until the tracker trips.
     private Map checkpointDirtyAnchorMap;
+    // The cadence the dirty map is currently accumulating. Every clear of that map moves
+    // it on, which is what invalidates every SLOT_DIRTY_EPOCH the anchor map still holds
+    // in one store rather than by walking them. Never EPOCH_NONE.
+    private short checkpointDirtyEpoch = 1;
+    // Keys entered into the dirty map. Incremented once per insert attempt rather than
+    // per row, so a test can hold a cadence to one mark per distinct key.
+    private long checkpointDirtyMarkCount;
     private long checkpointLogicalStateBytes;
     private boolean isCheckpointFullScanRequired = true;
     // Frontier-gated compaction state. All mutated only on the refresh-worker
@@ -176,11 +211,21 @@ public class LiveViewWindow implements QuietCloseable {
     // guard; the runtime latch is a backstop for a monotone-looking anchor that
     // nonetheless produces a decrease at runtime.
     private boolean compactionViable;
+    // Lifetime sweep instrumentation. Read by the live view benchmarks and by tests
+    // to tell a sweep that reclaimed a large generation apart from one that found
+    // little, and to price the sweep against the seal that follows it.
+    private long compactedPartitionCount;
     private long compactionCount;
+    private long compactionMicros;
+    private long lastCompactionMapSize;
     private long currentBucketPartitionCount;
     private long previousBucketPartitionCount;
     private long stalePartitionCount;
     private boolean frontierInitialized;
+    // True once a sweep has put evicted keys into the dirty anchor map and the seal has
+    // not consumed them yet. What it decides is whether dropping the dirty set also hands
+    // the backing memory back - see clearCheckpointDirtyAnchorMap.
+    private boolean hasCheckpointEvictionsRecorded;
     private long lastCompactedFrontier = Long.MIN_VALUE;
     // Highest anchor value seen (the current bucket); prevFrontier is the bucket
     // before it. A sweep keeps partitions whose last anchor value is >= prevFrontier
@@ -240,6 +285,32 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public static ColumnTypes anchorMapValueTypes() {
         return AnchorMapValueTypes.INSTANCE;
+    }
+
+    /**
+     * Adds two logical byte counts, raising rather than wrapping. An incremental freeze
+     * both adds and subtracts, and a subtraction that underflows would publish a root
+     * charging a nonsense figure that every later cadence then builds on.
+     */
+    private static long checkedAdd(long a, long b) {
+        try {
+            return Math.addExact(a, b);
+        } catch (ArithmeticException e) {
+            throw CairoException.critical(0).put("live view checkpoint anchor byte count overflow");
+        }
+    }
+
+    /**
+     * Copies the first {@code length} bytes of the encoded key {@code keyBuffer} holds
+     * into a fresh array, which is the form both the put and the removal channels carry
+     * to publication.
+     */
+    private static byte[] copyEncodedKey(MemoryCARW keyBuffer, int length) {
+        final byte[] key = new byte[length];
+        for (int i = 0; i < length; i++) {
+            key[i] = keyBuffer.getByte(i);
+        }
+        return key;
     }
 
     /**
@@ -401,11 +472,11 @@ public class LiveViewWindow implements QuietCloseable {
         // allocation: the map has no owner until the constructor below takes it.
         RecordSink anchorKeySink = createAnchorKeySink(configuration, asm, mapKeyTypes);
         // createUnorderedMap (not createOrderedMap) so the anchor map keeps the fastest
-        // implementation its key shape and 10-byte value allow. It need not agree with
+        // implementation its key shape and value width allow. It need not agree with
         // any window function's choice -- MapFactory also selects on value size, so a
-        // function with a wider live-view payload legitimately lands elsewhere -- because
-        // compact() hands each function anchorKeySink and the rebuild bridges the two
-        // implementations through it. See retainPartitions.
+        // function with a wider live-view payload legitimately lands elsewhere --
+        // because compact() hands each function anchorKeySink and the rebuild bridges
+        // the two implementations through it. See retainPartitions.
         Map map = createTrackedAnchorMap(configuration, mapKeyTypes, memoryTracker);
         int returnType = anchorExpression.getType();
         int tag = ColumnType.tagOf(returnType);
@@ -420,7 +491,20 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(returnType));
         }
-        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, anchorKeySink, functions, isAnchorMonotone, checkpointAnchorPlan, memoryTracker);
+        return new LiveViewWindow(
+                configuration,
+                windowName,
+                anchorExpression,
+                returnType,
+                mapKeyTypes,
+                map,
+                sink,
+                anchorKeySink,
+                functions,
+                isAnchorMonotone,
+                checkpointAnchorPlan,
+                memoryTracker
+        );
     }
 
     /**
@@ -428,14 +512,17 @@ public class LiveViewWindow implements QuietCloseable {
      * restore can rehydrate the map through {@link #restoreCheckpointEntry}. The
      * caller validates the complete root first, so a framing failure cannot
      * leave the window with a half-restored map.
+     * <p>
+     * The window is left on the full scan, which is what a restore that abandons
+     * midway or reads a root other than the timeline head needs. A restore from the
+     * head calls {@link #onCheckpointPersisted(long, long)} once the map is whole to
+     * put the window back on the incremental path.
      */
     public void beginCheckpointRestore() {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
@@ -456,6 +543,51 @@ public class LiveViewWindow implements QuietCloseable {
                 && checkpointBaselineGeneration == generation;
     }
 
+    /**
+     * Clears the frontier sweep's eviction marker on up to {@code limit} dirty anchor
+     * keys that carry one, and returns how many it cleared. Such a key is still absent
+     * from the anchor map but no longer says why, which is the shape a bookkeeping bug
+     * elsewhere in the runtime would produce: the seal must refuse to read it as a
+     * removal rather than publish a root missing an entry no sweep took out.
+     * <p>
+     * No production path reaches this - it exists so a test can hold that refusal to its
+     * contract on one key while the sweep's other keys keep their markers, which is what
+     * a sweep-wide "something was evicted" flag would get wrong.
+     */
+    @TestOnly
+    public int clearCheckpointEvictionMarkers(int limit) {
+        if (checkpointDirtyAnchorMap == null || limit <= 0) {
+            return 0;
+        }
+        final MapRecordCursor cursor = checkpointDirtyAnchorMap.getCursor();
+        final MapRecord record = checkpointDirtyAnchorMap.getRecord();
+        int cleared = 0;
+        while (cleared < limit && cursor.hasNext()) {
+            final MapValue value = record.getValue();
+            if (value.getByte(DIRTY_SLOT_EVICTED) == 1) {
+                value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+                cleared++;
+            }
+        }
+        return cleared;
+    }
+
+    /**
+     * Moves the dirty-set cadence counter to {@code epoch}, so a test can stand a key's
+     * stamp and the counter's turn against each other without driving 32766 seals.
+     * <p>
+     * No production path reaches this. What it exposes is the one arm that can leave a
+     * stamp matching a cadence the dirty set no longer holds - the counter is a SHORT, so
+     * it comes back around - and that arm is reached in the field on a timescale of days
+     * rather than of rows, because a seal fires on a wall-clock cadence as well as on a
+     * row one. Setting the counter is what lets a case put a key's stamp exactly where the
+     * turn will land rather than somewhere it happens not to.
+     */
+    @TestOnly
+    public void setCheckpointDirtyEpoch(short epoch) {
+        checkpointDirtyEpoch = epoch;
+    }
+
     @Override
     public void close() {
         // The Map and RecordSink are exclusively owned by this object. The anchor
@@ -472,6 +604,12 @@ public class LiveViewWindow implements QuietCloseable {
      * since the durable predecessor for an incremental freeze. Tombstoned entries
      * are skipped. The keys and anchor values remain index-aligned.
      * <p>
+     * An incremental freeze also names the keys the frontier sweep dropped, in
+     * {@code removedKeysOut}: the root the freeze builds on top of still holds their
+     * entries, and nothing else in an incremental build would take them out. A complete
+     * freeze leaves the list empty - it removes by omission instead, since its puts are
+     * the whole truth.
+     * <p>
      * {@code keyBuffer} is caller-owned scratch the key codec writes through; it
      * is rewound per entry and holds nothing once this returns.
      */
@@ -479,24 +617,28 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull MemoryCARW keyBuffer,
             @NotNull ObjList<byte[]> keysOut,
             @NotNull LongList valuesOut,
-            boolean incremental
+            @NotNull ObjList<byte[]> removedKeysOut,
+            boolean isIncremental
     ) {
         keysOut.clear();
         valuesOut.clear();
-        long logicalBytes = incremental ? checkpointLogicalStateBytes : 0;
-        final Map scanMap = incremental ? checkpointDirtyAnchorMap : anchorMap;
+        removedKeysOut.clear();
+        long logicalBytes = isIncremental ? checkpointLogicalStateBytes : 0;
+        final Map scanMap = isIncremental ? checkpointDirtyAnchorMap : anchorMap;
         // A map record lays its value columns out ahead of its key columns, and the
         // two maps carry different value layouts, so the key tail starts at a
         // different index in each.
-        final int keyStartIndex = incremental
+        final int keyStartIndex = isIncremental
                 ? DirtyAnchorMapValueTypes.INSTANCE.getColumnCount()
                 : AnchorMapValueTypes.INSTANCE.getColumnCount();
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
         while (cursor.hasNext()) {
             final MapValue dirtyOrAnchorValue = record.getValue();
-            final boolean isNewSinceCheckpoint = incremental
+            final boolean isNewSinceCheckpoint = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT) == 1;
+            final boolean isRecordedEviction = isIncremental
+                    && dirtyOrAnchorValue.getByte(DIRTY_SLOT_EVICTED) == 1;
             keyBuffer.jumpTo(0);
             LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
             final long length = keyBuffer.getAppendOffset();
@@ -505,19 +647,35 @@ public class LiveViewWindow implements QuietCloseable {
                         .put("live view checkpoint anchor key length out of bounds, bytes=").put(length);
             }
             final MapValue anchorValue;
-            if (incremental) {
+            if (isIncremental) {
                 final MapKey liveKey = anchorMap.withKey();
                 LiveViewSnapshotKeyCodec.readKey(liveKey, keyBuffer, 0, partitionKeyTypes);
                 anchorValue = liveKey.findValue();
                 if (anchorValue == null) {
-                    // Only compact() and the clear() sites remove an anchor key, and
-                    // every one of them forces a full scan first, so a dirty key the
-                    // anchor map does not hold is a broken invariant rather than a
-                    // removal. Dropping it here would leave the incremental root
-                    // holding a stale anchor value for a key the live map has moved on
-                    // from: an incremental build removes nothing it was not handed.
-                    throw CairoException.critical(0)
-                            .put("live view checkpoint dirty anchor key is missing from the anchor map");
+                    if (!isRecordedEviction) {
+                        // compact() records every key it drops and the clear() sites all
+                        // force a full scan first, so a dirty key the anchor map does not
+                        // hold and that carries no eviction marker is a broken invariant
+                        // rather than a removal. Dropping it here would leave the
+                        // incremental root holding a stale anchor value for a key the live
+                        // map has moved on from: an incremental build removes nothing it
+                        // was not handed.
+                        throw CairoException.critical(0)
+                                .put("live view checkpoint dirty anchor key is missing from the anchor map");
+                    }
+                    final byte[] key = copyEncodedKey(keyBuffer, (int) length);
+                    removedKeysOut.add(key);
+                    if (!isNewSinceCheckpoint) {
+                        // The predecessor root holds this key, so the build takes its
+                        // entry out and the charge goes with it. A key created and evicted
+                        // inside one cadence was never published, and un-charging it would
+                        // drive the total below what the root actually holds.
+                        logicalBytes = checkedAdd(
+                                logicalBytes,
+                                -((long) key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE)
+                        );
+                    }
+                    continue;
                 }
             } else {
                 anchorValue = dirtyOrAnchorValue;
@@ -525,17 +683,28 @@ public class LiveViewWindow implements QuietCloseable {
             if (anchorValue.getByte(SLOT_TOMBSTONE) == 1) {
                 continue;
             }
-            final byte[] key = new byte[(int) length];
-            for (int i = 0; i < key.length; i++) {
-                key[i] = keyBuffer.getByte(i);
-            }
+            final byte[] key = copyEncodedKey(keyBuffer, (int) length);
             keysOut.add(key);
             valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
-            if (!incremental || isNewSinceCheckpoint) {
-                logicalBytes += key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE;
+            if (!isIncremental || isNewSinceCheckpoint) {
+                logicalBytes = checkedAdd(
+                        logicalBytes,
+                        (long) key.length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE
+                );
             }
         }
         return logicalBytes;
+    }
+
+    /**
+     * @return the {@link Map} implementation the window's one partition map landed on.
+     * {@code MapFactory} selects on {@code keySize + valueSize} against
+     * {@code cairo.sql.unordered.map.max.entry.size}, so fusing the components into the
+     * value can move an INT-keyed view off the fastest shape; this is what a benchmark
+     * reports per fused group to see whether it did
+     */
+    public String getAnchorMapImplementation() {
+        return anchorMap.getClass().getSimpleName();
     }
 
     /**
@@ -583,13 +752,98 @@ public class LiveViewWindow implements QuietCloseable {
         return checkpointDirtyAnchorMap == null ? 0 : checkpointDirtyAnchorMap.size();
     }
 
+    /**
+     * @return how many keys this window has entered into the dirty set over its lifetime.
+     * One per distinct key per cadence rather than one per row, so a cadence that
+     * processes many rows over few partitions advances it by the partitions
+     */
     @TestOnly
+    public long getCheckpointDirtyMarkCount() {
+        return checkpointDirtyMarkCount;
+    }
+
+    /**
+     * @return the dirty anchor map's current key capacity, or 0 when it holds none. What
+     * it exposes is the map's retained backing rather than what it holds: a publication
+     * empties the map but a plain clear keeps the capacity, so this is where a sweep's
+     * inflated peak would stay visible if nothing handed it back
+     */
+    @TestOnly
+    public int getCheckpointDirtyAnchorMapKeyCapacity() {
+        return checkpointDirtyAnchorMap == null ? 0 : checkpointDirtyAnchorMap.getKeyCapacity();
+    }
+
+    /**
+     * @return how many dirty anchor keys currently carry the frontier sweep's eviction
+     * marker, which is what the next seal turns into removals
+     */
+    @TestOnly
+    public int getCheckpointEvictionMarkerCount() {
+        if (checkpointDirtyAnchorMap == null) {
+            return 0;
+        }
+        final MapRecordCursor cursor = checkpointDirtyAnchorMap.getCursor();
+        final MapRecord record = checkpointDirtyAnchorMap.getRecord();
+        int marked = 0;
+        while (cursor.hasNext()) {
+            if (record.getValue().getByte(DIRTY_SLOT_EVICTED) == 1) {
+                marked++;
+            }
+        }
+        return marked;
+    }
+
+    /**
+     * @return what the last durably published root charges for the anchor map. An
+     * incremental seal carries this figure forward and adjusts it by the keys it froze
+     * and the ones it removed, while a restore recomputes it by walking the root it
+     * read, so the two agreeing across a restart is what proves the running arithmetic
+     * still describes what the root holds
+     */
+    @TestOnly
+    public long getCheckpointLogicalStateBytes() {
+        return checkpointLogicalStateBytes;
+    }
+
+    /**
+     * @return the lifetime number of anchor entries the frontier sweep has dropped.
+     * Divided by {@link #getCompactionCount()} it gives the mean reclaim per sweep,
+     * which is what decides whether the seal that follows a sweep is worth
+     * optimising. Survives a sweep; only a window rebuild resets it.
+     */
+    public long getCompactedPartitionCount() {
+        return compactedPartitionCount;
+    }
+
+    /**
+     * @return the lifetime number of frontier sweeps this window has run.
+     */
     public long getCompactionCount() {
         return compactionCount;
     }
 
+    /**
+     * @return the lifetime wall time of the frontier sweeps, in micros. The sweep
+     * walks the whole anchor map and rebuilds every function's partition map from
+     * the survivors, so this is the cost the reclaim itself charges, separate from
+     * the seal that follows it.
+     */
+    public long getCompactionMicros() {
+        return compactionMicros;
+    }
+
     public ObjList<WindowFunction> getFunctions() {
         return functions;
+    }
+
+    /**
+     * @return the anchor map entry count the most recent frontier sweep started from,
+     * or 0 when this window has swept none. Read together with
+     * {@link #getCompactedPartitionCount()} it gives the survivor count the seal after
+     * that sweep has to freeze.
+     */
+    public long getLastCompactionMapSize() {
+        return lastCompactionMapSize;
     }
 
     /**
@@ -629,13 +883,30 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Adopts the state the seal just published as this window's incremental
-     * baseline. Called only after the checkpoint superblock is durably published, so
-     * a seal that fails anywhere before that leaves the dirty map and the previous
-     * baseline intact and the next seal repeats the work.
+     * @return whether the next seal must freeze every live anchor entry rather than
+     * the touched ones. {@link #canFreezeCheckpointIncrementally(long)} is the seal's
+     * own gate and additionally demands the dirty map, which the first processed row
+     * allocates; this reads the flag on its own
+     */
+    @TestOnly
+    public boolean isCheckpointFullScanRequired() {
+        return isCheckpointFullScanRequired;
+    }
+
+    /**
+     * Adopts a durable root's state as this window's incremental baseline. Two
+     * callers reach it:
+     * <ul>
+     *     <li>the seal, only after the checkpoint superblock is durably published, so
+     *     a seal that fails anywhere before that leaves the dirty map and the previous
+     *     baseline intact and the next seal repeats the work;</li>
+     *     <li>the restore, once it has rehydrated the anchor map from the generation's
+     *     head root - the map then equals that root entry for entry, which is the same
+     *     position a seal leaves it in.</li>
+     * </ul>
      *
-     * @param logicalStateBytes what the published root charges for the anchor map
-     * @param generation        the generation the publication produced. The next seal
+     * @param logicalStateBytes what the root charges for the anchor map
+     * @param generation        the generation the root belongs to. The next seal
      *                          freezes incrementally only when it is sealing on top of
      *                          exactly this generation
      */
@@ -643,9 +914,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = generation;
         checkpointLogicalStateBytes = logicalStateBytes;
         isCheckpointFullScanRequired = false;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
     }
 
     /**
@@ -677,7 +946,19 @@ public class LiveViewWindow implements QuietCloseable {
         MapValue value = key.createValue();
 
         final boolean isNewPartition = value.isNew();
-        markCheckpointPartitionDirty(record, isNewPartition);
+        // The dirty map only has to name each key once per cadence, and the anchor value
+        // in hand already says whether this key was named. Skipping on a match is what
+        // keeps a repeat row from serializing the partition key a second time through the
+        // sink, hashing it again and probing a second map for an entry that is already
+        // there. A new entry is never read - its slot was allocated, not written, and no
+        // Map implementation zero-fills a value - so isNewPartition short-circuits ahead
+        // of the load. That is also what keeps the sweep's eviction-and-revival path
+        // honest: eviction takes the anchor entry out, so a revived key arrives new and
+        // re-enters the dirty map, clearing the eviction marker it left behind.
+        if (isNewPartition || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch) {
+            markCheckpointPartitionDirty(record, isNewPartition);
+            value.putShort(SLOT_DIRTY_EPOCH, checkpointDirtyEpoch);
+        }
         final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
         final long lastAnchor = initialized == 0 ? 0 : value.getLong(SLOT_ANCHOR_VALUE);
         final long currentAnchor = readAnchorValue(record);
@@ -749,9 +1030,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
         final long payloadStart = offset;
         final CharSequence storedName = source.getStrA(offset);
         if (storedName == null || !storedName.toString().equals(windowName)) {
@@ -843,6 +1122,7 @@ public class LiveViewWindow implements QuietCloseable {
             value.putLong(SLOT_ANCHOR_VALUE, restoredAnchor);
             value.putByte(SLOT_INITIALIZED, (byte) 1);
             value.putByte(SLOT_TOMBSTONE, (byte) 0);
+            value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
             restoreFrontierEntry(restoredAnchor);
             offset += Long.BYTES;
         }
@@ -883,6 +1163,7 @@ public class LiveViewWindow implements QuietCloseable {
         value.putLong(SLOT_ANCHOR_VALUE, anchorValue);
         value.putByte(SLOT_INITIALIZED, (byte) 1);
         value.putByte(SLOT_TOMBSTONE, (byte) 0);
+        value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
         restoreFrontierEntry(anchorValue);
     }
 
@@ -916,8 +1197,9 @@ public class LiveViewWindow implements QuietCloseable {
         final long liveCount = anchorMap.size() - tombstoneCount;
         sink.putLong(liveCount);
 
-        // MapRecord column layout is [value0, value1, value2, key0, ..., keyN-1] - keys
-        // sit after the three value slots (anchor LONG, initialized BYTE, tombstone BYTE).
+        // MapRecord column layout is [value0, value1, value2, value3, key0, ..., keyN-1] - keys
+        // sit after the four value slots (anchor LONG, initialized BYTE, tombstone BYTE,
+        // dirty-cadence SHORT).
         // The codec needs the key-start index to address them via record.getXxx(columnIndex).
         final int keyStartIndex = AnchorMapValueTypes.INSTANCE.getColumnCount();
         MapRecordCursor cursor = anchorMap.getCursor();
@@ -959,9 +1241,7 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
-        if (checkpointDirtyAnchorMap != null) {
-            checkpointDirtyAnchorMap.clear();
-        }
+        clearCheckpointDirtyAnchorMap();
         anchorMap.clear();
         tombstoneCount = 0;
         resetFrontier();
@@ -985,9 +1265,17 @@ public class LiveViewWindow implements QuietCloseable {
      * {@code prevFrontier} (the bucket before the current one), keeping the current
      * and previous buckets. Allocates a fresh anchor {@link Map}, copies the
      * surviving entries, then hands the survivor map to each function's
-     * {@link WindowFunction#retainPartitions(Map, RecordSink)} so the per-function
-     * partition maps drop the same keys, finally swaps the reference and frees the old
-     * map.
+     * {@link WindowFunction#retainPartitions(Map, RecordSink, boolean)} so the
+     * per-function partition maps drop the same keys, finally swaps the reference and
+     * frees the old map.
+     * <p>
+     * The eviction branch is also the only enumeration of the dropped keys the system
+     * gets - both rebuilds are survivor-driven and never visit one - so it records each
+     * key in the anchor's dirty set and in every function's, marked as an eviction. The
+     * next seal freezes those removals and stays incremental; before, the sweep pinned
+     * it to a complete freeze of every live key of every function. A function that
+     * declines to record a key gets {@code false} and falls back to that complete
+     * freeze on its own.
      * <p>
      * Safe only for a monotone anchor: a dropped partition's next in-WAL-order row
      * lands in a new bucket and resets anyway, and a late row routes through O3
@@ -1013,9 +1301,20 @@ public class LiveViewWindow implements QuietCloseable {
             // Non-monotone/NULL anchor, or no frontier advance yet -> no safe cutoff.
             return;
         }
-        checkpointBaselineGeneration = Numbers.LONG_NULL;
-        isCheckpointFullScanRequired = true;
+        final MicrosecondClock clock = cairoConfiguration.getMicrosecondClock();
+        final long startMicros = clock.getTicks();
+        lastCompactionMapSize = anchorMap.size();
         final long cutoff = prevFrontier;
+        final int functionCount = functions.size();
+        checkpointRemovalsRecorded.setAll(functionCount, true);
+        for (int i = 0; i < functionCount; i++) {
+            // A ring-shaped function's seal walks its whole map either way -
+            // freezeFunction gates the dirty-map path on !isRingShaped - so populating a
+            // removal set for it buys nothing and costs one map insert per evicted key.
+            if (functions.getQuick(i).supportsCheckpointRingState()) {
+                checkpointRemovalsRecorded.setQuick(i, false);
+            }
+        }
         if (scratchAnchorMap == null) {
             // Allocate the reusable second anchor map once; subsequent sweeps reuse it. The
             // sweep ping-pongs it with anchorMap, so it outlives the sweep and is charged to
@@ -1028,9 +1327,24 @@ public class LiveViewWindow implements QuietCloseable {
         }
         MapRecordCursor cursor = anchorMap.getCursor();
         MapRecord record = anchorMap.getRecord();
+        long evictedCount = 0;
         while (cursor.hasNext()) {
             MapValue srcValue = record.getValue();
             if (srcValue.getLong(SLOT_ANCHOR_VALUE) < cutoff) {
+                evictedCount++;
+                // The sweep is the only enumeration of the evicted keys anyone gets: the
+                // survivor-driven rebuild below never visits one. Recording them here is
+                // what lets the next seal freeze the removals instead of walking the whole
+                // live domain to discover them.
+                markCheckpointPartitionEvicted(record);
+                for (int i = 0; i < functionCount; i++) {
+                    if (checkpointRemovalsRecorded.get(i)) {
+                        checkpointRemovalsRecorded.setQuick(
+                                i,
+                                functions.getQuick(i).markCheckpointPartitionEvicted(record, anchorKeySink)
+                        );
+                    }
+                }
                 continue;
             }
             long srcKeyHash = record.keyHashCode();
@@ -1043,8 +1357,12 @@ public class LiveViewWindow implements QuietCloseable {
         // anchorKeySink is what lets a function whose partition map picked a different
         // Map implementation than the anchor map (MapFactory selects on value size as
         // well as key shape) probe it anyway; see WindowFunction.retainPartitions.
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).retainPartitions(scratchAnchorMap, anchorKeySink);
+        for (int i = 0; i < functionCount; i++) {
+            functions.getQuick(i).retainPartitions(
+                    scratchAnchorMap,
+                    anchorKeySink,
+                    checkpointRemovalsRecorded.get(i)
+            );
         }
         // Ping-pong: survivor map becomes live; the old anchor map becomes the
         // scratch for the next sweep. No allocation, no free.
@@ -1055,14 +1373,89 @@ public class LiveViewWindow implements QuietCloseable {
         stalePartitionCount = 0;
         lastCompactedFrontier = maxAnchorValue;
         compactionCount++;
+        compactedPartitionCount += evictedCount;
+        compactionMicros += clock.getTicks() - startMicros;
+    }
+
+    /**
+     * Empties the checkpoint dirty set, handing its backing memory back when the frontier
+     * sweep is what grew it.
+     * <p>
+     * {@link Map#clear()} keeps the capacity, which is what a cadence wants: the dirty set
+     * holds roughly the same touched-key count every time, so re-growing it per cadence
+     * would be pure churn. A sweep breaks that - it adds one entry per evicted key on top
+     * of the touched ones, and the trigger fires only when at least half the anchor map is
+     * reclaimable, so the peak is a multiple of the steady state and then stays resident
+     * against {@code cairo.live.view.refresh.memory.limit.bytes} for the view's lifetime.
+     * {@link Map#restoreInitialCapacity()} is the only primitive that gives it back -
+     * {@code setKeyCapacity} grows only - so the sweep-inflated cadence pays a re-grow next
+     * time and every other cadence keeps today's behaviour exactly.
+     */
+    private void clearCheckpointDirtyAnchorMap() {
+        // Ahead of the null guard rather than behind it. A live stamp does imply a
+        // non-null dirty map today - the only writer of one is preceded by the mark that
+        // creates the map, and every restore path writes EPOCH_NONE - so the guard would
+        // not skip a bump that matters. It is placed here anyway because what it protects
+        // is severe and silent: an emptied dirty set that left stamps standing has later
+        // rows skip a mark the map no longer holds, and the next incremental seal
+        // publishes a root missing those keys.
+        advanceCheckpointDirtyEpoch();
+        if (checkpointDirtyAnchorMap == null) {
+            return;
+        }
+        if (hasCheckpointEvictionsRecorded && checkpointDirtyAnchorMap.isOpen()) {
+            checkpointDirtyAnchorMap.restoreInitialCapacity();
+        }
+        // Unconditionally, and after the shrink rather than instead of it: OrderedMap's
+        // restoreInitialCapacity() clears only as a side effect of actually reallocating,
+        // so a map already at its initial capacity would keep every entry and the next
+        // seal would freeze the same removals a second time.
+        checkpointDirtyAnchorMap.clear();
+        hasCheckpointEvictionsRecorded = false;
+    }
+
+    /**
+     * Moves the dirty set on to a cadence no anchor entry has been stamped with, so every
+     * stamp the anchor map still holds stops matching in one store rather than by walking
+     * the map.
+     * <p>
+     * A SHORT counter wraps, and on the wrap the stamps left over from 32766 cadences ago
+     * would start matching again - which would have later rows skip a mark the dirty set
+     * no longer holds, and an incremental seal publish a root missing those keys. That is
+     * what the scan is for, and it is the only place the anchor map is walked for this.
+     * <p>
+     * The wrap is not remote. A seal fires on the row cadence <b>or</b> on
+     * {@code cairo.live.view.checkpoint.max.duration.micros}, five minutes by default, so
+     * a quiet view turns the counter over in about 114 days and one sealing every ten
+     * seconds in under four. It is reachable in the field rather than in theory, which is
+     * why {@link #setCheckpointDirtyEpoch(short)} exists to reach it in a test.
+     */
+    private void advanceCheckpointDirtyEpoch() {
+        if (checkpointDirtyEpoch == Short.MAX_VALUE) {
+            checkpointDirtyEpoch = 1;
+            if (anchorMap.isOpen()) {
+                final MapRecordCursor cursor = anchorMap.getCursor();
+                final MapRecord record = anchorMap.getRecord();
+                while (cursor.hasNext()) {
+                    record.getValue().putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
+                }
+            }
+            return;
+        }
+        checkpointDirtyEpoch++;
     }
 
     /**
      * Adds one partition key to the checkpoint dirty set and records whether it was new
      * relative to the last durable checkpoint. The marker keeps logical-size accounting
      * exact without probing the persistent anchor root.
+     * <p>
+     * Reached once per key per cadence rather than once per row - see the epoch test in
+     * {@link #processRow} - so what it costs scales with the key domain the cadence
+     * touches rather than with the rows it processes.
      */
     private void markCheckpointPartitionDirty(Record record, boolean isNewPartition) {
+        checkpointDirtyMarkCount++;
         if (checkpointDirtyAnchorMap == null) {
             checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
                     cairoConfiguration,
@@ -1076,6 +1469,44 @@ public class LiveViewWindow implements QuietCloseable {
         if (value.isNew()) {
             value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, isNewPartition ? (byte) 1 : (byte) 0);
         }
+        // Unconditionally, including on an entry that already existed: this row is what
+        // turns a key the sweep evicted earlier in the cadence back into an upsert.
+        // Writing it on a fresh entry also keeps the marker off whatever bytes the map's
+        // backing happened to hold - createValue() zero-fills on no implementation.
+        value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+    }
+
+    /**
+     * Adds one anchor key the frontier sweep has just dropped to the checkpoint dirty
+     * set, marked as an eviction so the next seal freezes a removal for it rather than
+     * raising on the missing live value.
+     * <p>
+     * {@code record} is the anchor map's own {@link MapRecord}, whose key columns sit
+     * after the value slots, so the key goes in through {@link #anchorKeySink} rather
+     * than {@link #partitionKeySink}. A key already in the dirty set keeps the
+     * new-since-checkpoint marker the row that put it there wrote: whether the
+     * predecessor root holds the key is what that marker says, and an eviction does not
+     * change it.
+     */
+    private void markCheckpointPartitionEvicted(Record record) {
+        hasCheckpointEvictionsRecorded = true;
+        if (checkpointDirtyAnchorMap == null) {
+            checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
+                    cairoConfiguration,
+                    partitionKeyTypes,
+                    memoryTracker
+            );
+        }
+        final MapKey key = checkpointDirtyAnchorMap.withKey();
+        key.put(record, anchorKeySink);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            // The sweep never drops a key the current bucket touched, so a key that
+            // reaches here without a dirty entry was last written before the predecessor
+            // root was published and that root holds it.
+            value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, (byte) 0);
+        }
+        value.putByte(DIRTY_SLOT_EVICTED, (byte) 1);
     }
 
     /**
@@ -1203,41 +1634,39 @@ public class LiveViewWindow implements QuietCloseable {
 
         @Override
         public int getColumnCount() {
-            return 3;
+            return 4;
         }
 
         @Override
         public int getColumnType(int columnIndex) {
-            switch (columnIndex) {
-                case SLOT_ANCHOR_VALUE:
-                    return ColumnType.LONG;
-                case SLOT_INITIALIZED:
-                    return ColumnType.BYTE;
-                case SLOT_TOMBSTONE:
-                    return ColumnType.BYTE;
-                default:
-                    throw new IndexOutOfBoundsException();
-            }
+            return switch (columnIndex) {
+                case SLOT_ANCHOR_VALUE -> ColumnType.LONG;
+                case SLOT_INITIALIZED -> ColumnType.BYTE;
+                case SLOT_TOMBSTONE -> ColumnType.BYTE;
+                case SLOT_DIRTY_EPOCH -> ColumnType.SHORT;
+                default -> throw new IndexOutOfBoundsException();
+            };
         }
     }
 
     /**
-     * Value layout of the checkpoint dirty-key map: one byte, the
-     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT} marker. The map's whole job is to
-     * name keys, and {@link #freezeCheckpointEntries} reads every anchor value it
-     * publishes out of the live anchor map, so nothing else belongs here.
+     * Value layout of the checkpoint dirty-key map: two bytes, the
+     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT} and {@link #DIRTY_SLOT_EVICTED}
+     * markers. The map's whole job is to name keys and say how each one got there,
+     * and {@link #freezeCheckpointEntries} reads every anchor value it publishes out
+     * of the live anchor map, so nothing else belongs here.
      */
     private static final class DirtyAnchorMapValueTypes implements ColumnTypes {
         static final DirtyAnchorMapValueTypes INSTANCE = new DirtyAnchorMapValueTypes();
 
         @Override
         public int getColumnCount() {
-            return 1;
+            return 2;
         }
 
         @Override
         public int getColumnType(int columnIndex) {
-            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT) {
+            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT || columnIndex == DIRTY_SLOT_EVICTED) {
                 return ColumnType.BYTE;
             }
             throw new IndexOutOfBoundsException();

@@ -61,17 +61,14 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
@@ -275,34 +272,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // As dateText, but at TIMESTAMP's microsecond precision.
     private static String timestampText(int day) {
         return String.format("2026-01-%02dT00:00:00.000000Z", day);
-    }
-
-    // Drives the named view's seed sweep to completion across however many
-    // turns the configured budget needs (each drainJob burst is capped at 64
-    // turns), reusing the caller's refresh job. Re-fetches the instance each
-    // pass so it survives a simulated restart that rebuilds the registry, and
-    // applies the LV WAL at the end. The caller owns the job's lifecycle: a
-    // seed test must drive the whole sweep through a single
-    // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
-    // fresh one is not a path production takes (the pool keeps jobs alive).
-
-    // Walks the LV's compiled factory to its WindowRecordCursorFactory and
-    // returns its window function list. Mirrors the unwrap logic in
-    // LiveViewRefreshJob; tests use this to reach non-anchored windows which
-    // do not show up via LiveViewInstance.getAnchorWindow().
-    private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
-        RecordCursorFactory f = instance.getCompiledFactory();
-        while (f != null) {
-            if (f instanceof WindowRecordCursorFactory wf) {
-                return wf.getWindowFunctions();
-            }
-            if (f instanceof QueryProgress) {
-                f = f.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
     // Names the base table's WAL directory that currently holds the WAL-level symbol dictionary of
@@ -1111,6 +1080,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     // Same as assertMaxMinTimestampDateFrameRoundTrip but for the unbounded-preceding
     // (anchored) shape; the function lives on the anchor window, not the main factory.
+    // An extremum over an anchored unbounded frame joins the fused plan, so this helper
+    // hands the state back before it exercises the function's own snapshot codec - see the
+    // comment on the bind below.
     private void assertMaxMinTimestampDateUnboundedRoundTrip(
             String fnName,
             String valueType,
@@ -1606,11 +1578,84 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertNoRefreshFaults("lv");
     }
 
-    // Differential oracle for the throw-then-retry idempotency test: the LV must
-    // equal its running-sum window recomputed straight over the base table.
-    // A persist failure mid-flush that neither dropped nor duplicated a row keeps
-    // this equality; a double-emit or a lost row breaks it. ORDER BY sym, ts is a
-    // total order (timestamps are unique per sym).
+    /**
+     * Drives the fixture the stale-percent cases share and asserts what the trigger did with
+     * it. Eight partitions open in day 1, {@code dayTwoSymCount} of them follow the frontier
+     * into day 2, and one day-3 row then puts the rest a full bucket behind it:
+     * stalePartitionCount {@code 8 - dayTwoSymCount} against an eight-entry map.
+     * {@code compactThreshold} sits at or below that count, so both count arms are clear and the
+     * stale-percent arm alone decides.
+     * <p>
+     * The stale share is a parameter because a single share cannot pin an endpoint: at three
+     * of eight the arm fires for every setting up to 37 and holds for every setting from 38,
+     * so a case there says nothing a case at 25 or 50 has not already said. One of eight and
+     * seven of eight are what put each endpoint on its own side of a boundary.
+     */
+    private void assertFrontierSweepTrigger(
+            int dayTwoSymCount,
+            int compactThreshold,
+            long expectedSweeps,
+            long expectedAnchorMapSize
+    ) throws Exception {
+        // Single-digit hours below, and sym 1 needs a day-2 row before its day-3 row.
+        assert dayTwoSymCount >= 1 && dayTwoSymCount <= 8;
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, compactThreshold);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // The anchor buckets by day, so each row's own value is its whole frame and the
+            // answers below are the inserts read back - which is the point: a sweep reclaims
+            // state no live row depends on, so it can never move a result.
+            final StringBuilder dayOne = new StringBuilder("INSERT INTO base (ts, x, sym) VALUES ");
+            final StringBuilder later = new StringBuilder("INSERT INTO base (ts, x, sym) VALUES ");
+            final StringBuilder expected = new StringBuilder("ts\tsym\ts\n");
+            for (int i = 1; i <= 8; i++) {
+                dayOne.append(i > 1 ? ", " : "")
+                        .append("('2026-08-01T0").append(i - 1).append(":00:00.000000Z', ")
+                        .append(10 * i).append(", ").append(i).append(')');
+                expected.append("2026-08-01T0").append(i - 1).append(":00:00.000000Z\t")
+                        .append(i).append('\t').append(10 * i).append(".0\n");
+            }
+            for (int i = 1; i <= dayTwoSymCount; i++) {
+                later.append(i > 1 ? ", " : "")
+                        .append("('2026-08-02T0").append(i - 1).append(":00:00.000000Z', ")
+                        .append(10 * i + 1).append(", ").append(i).append(')');
+                expected.append("2026-08-02T0").append(i - 1).append(":00:00.000000Z\t")
+                        .append(i).append('\t').append(10 * i + 1).append(".0\n");
+            }
+            later.append(", ('2026-08-03T00:00:00.000000Z', 12, 1)");
+            expected.append("2026-08-03T00:00:00.000000Z\t1\t12.0\n");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute(dayOne.toString());
+                execute(later.toString());
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
+                Assert.assertNotNull(window);
+                Assert.assertEquals(
+                        "the half-the-map arm decides whether " + (8 - dayTwoSymCount) + " of eight is enough",
+                        expectedSweeps,
+                        window.getCompactionCount()
+                );
+                Assert.assertEquals(expectedAnchorMapSize, window.getAnchorMapSize());
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, sym")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expected.toString());
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     // The live view TABLE's own durable row count, read straight off a reader rather than
     // through a query. A query over the view routes through the in-mem tier, whose seam can
     // mask rows the table actually holds - which is exactly what a re-flushed lead produces.
@@ -1620,6 +1665,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         }
     }
 
+    // Differential oracle for the throw-then-retry idempotency test: the LV must
+    // equal its running-sum window recomputed straight over the base table.
+    // A persist failure mid-flush that neither dropped nor duplicated a row keeps
+    // this equality; a double-emit or a lost row breaks it. ORDER BY sym, ts is a
+    // total order (timestamps are unique per sym).
     private void assertRunningSumLvMatchesRecompute() throws SqlException {
         TestUtils.assertSqlCursors(
                 engine,
@@ -7271,10 +7321,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
-    // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
-    // on the non-version branch.
-
     /**
      * Reads the seed cursor the view's durable timeline generation carries, or
      * {@link Numbers#LONG_NULL} when it has no valid generation or the generation was published by
@@ -7326,6 +7372,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 .concat("_ring");
     }
 
+    // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
+    // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
+    // on the non-version branch.
     private void truncateLiveViewStateFile(FilesFacade ff, TableToken lvToken) {
         try (Path sPath = new Path()) {
             sPath.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
@@ -12931,12 +12980,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // per-sweep allocation). A dropped partition that later revives does so in
         // a new bucket and starts fresh, which is the correct anchored-window reset.
         //
+        // The sum takes an expression argument so it stays a residual and keeps a
+        // map of its own: a fused group is swept through the window's one value,
+        // which LiveViewWindowStateRuntimeTest covers, and its projections have no
+        // second map for this case to watch shrink.
+        //
         // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "SELECT ts, sym, sum(x + 0) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -13113,6 +13167,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotNull(window);
                 Assert.assertEquals("the first sweep drops the three day-1-only partitions", 1L, window.getCompactionCount());
                 Assert.assertEquals(3L, window.getAnchorMapSize());
+                // The reclaim instrumentation the benchmark reports: a sweep that walked a
+                // six-entry map and dropped half of it. A count taken from the survivor side
+                // (or from the map after the ping-pong) would read 3 and 3 here.
+                Assert.assertEquals(3L, window.getCompactedPartitionCount());
+                Assert.assertEquals(6L, window.getLastCompactionMapSize());
 
                 execute("INSERT INTO base (ts, x, sym) VALUES " +
                         "('2026-08-04T00:00:00.000000Z', 13, 1), " +
@@ -13131,10 +13190,31 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         window.getCompactionCount()
                 );
                 Assert.assertEquals(3L, window.getAnchorMapSize());
+                Assert.assertEquals(3L, window.getCompactedPartitionCount());
+                Assert.assertEquals(6L, window.getLastCompactionMapSize());
             }
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testFrontierSweepFiresOnANearlyWhollyStaleMap() throws Exception {
+        // Seven of eight partitions stale, which clears the half-the-map arm, so the sweep
+        // drops all seven and leaves the one partition still following the frontier. The
+        // contrast to the case below, which holds at three of eight: the pair is what makes
+        // either assertion about the arm rather than about the frontier accounting, since a
+        // change to the accounting would move both numbers together and break both.
+        assertFrontierSweepTrigger(1, 2, 1L, 1L);
+    }
+
+    @Test
+    public void testFrontierSweepHoldsBelowHalfTheMap() throws Exception {
+        // Eight day-1 partitions, five of which follow the frontier into day 2. The day-3 row
+        // then leaves stalePartitionCount at 3 against an eight-entry map, which clears the
+        // absolute threshold (2) and leaves the half-the-map arm alone to decide. Three of
+        // eight is not half, so no sweep fires.
+        assertFrontierSweepTrigger(5, 2, 0L, 8L);
     }
 
     @Test
@@ -13354,12 +13434,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //   sym 1 ts 08-03T00:00 -> 08-03T01:00 -> 08-03  (frontier day2 -> day3, sweep)
         //   sym 2 ts 08-03T01:00 -> 08-03T02:00 -> 08-03  (revives in a new bucket)
         //
+        // The sum takes an expression argument for the same reason as its sibling:
+        // a residual keeps a partition map of its own for the lockstep assertion
+        // below, where a fused projection would have none.
+        //
         // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "SELECT ts, sym, sum(x + 0) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', dateadd('h', 1, ts)))");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -16426,8 +16510,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 Assert.assertEquals("restored day-1 generation is reclaimed on the next advance", 1L, window.getCompactionCount());
+                // One map now: the sum's accumulator is a slice of the window's own
+                // entry, so the sweep reclaims both by reclaiming one.
                 Assert.assertEquals(3L, window.getAnchorMapSize());
-                Assert.assertEquals(3L, window.getFunctions().getQuick(0).getPartitionMap().size());
             }
 
             execute("DROP LIVE VIEW lv");
@@ -16791,7 +16876,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 preLastProcessed = instance.getLastProcessedSeqTxn();
-                preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
+                // The sum's accumulator is a slice of the window's own entry, so the map
+                // that carries the per-partition state is the window's one map.
+                preFunctionMapSize = instance.getAnchorWindow().getAnchorMapSize();
                 Assert.assertNotEquals("head checkpoint was written before restart", Numbers.LONG_NULL, preHeadLvSeqTxn);
                 Assert.assertEquals("two partitions seeded pre-restart", 2L, preFunctionMapSize);
             }
@@ -16838,9 +16925,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     reloaded.getLastProcessedSeqTxn()
             );
             Assert.assertEquals(
-                    "function partition map rehydrated to its pre-restart size",
+                    "window partition map rehydrated to its pre-restart size",
                     preFunctionMapSize,
-                    reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+                    reloaded.getAnchorWindow().getAnchorMapSize()
             );
 
             execute("DROP LIVE VIEW lv");
@@ -17474,10 +17561,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         Numbers.LONG_NULL,
                         preHeadLvSeqTxn
                 );
+                // The counters live in the window's one fused value now, so the count of
+                // partitions holding them is the window's.
                 Assert.assertEquals(
                         "two partition keys seeded pre-restart",
                         2L,
-                        instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+                        instance.getAnchorWindow().getAnchorMapSize()
                 );
             }
 
@@ -21371,9 +21460,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRejectLimitInSelect() throws Exception {
-        // A LIMIT clause wraps the window factory so the live-view validation no
-        // longer sees a bare windowed scan; the LV select must be a simple scan
-        // of the base, so LIMIT is rejected.
+        // A LIMIT clause wraps the window factory, and unlike a projection the refresh
+        // path cannot rebuild it: a limit is a property of the whole result set, not of
+        // the row in hand. The reject names LIMIT rather than claiming the query has no
+        // window function - it plainly has one, and pointing at the wrong thing sends the
+        // author hunting for a missing OVER clause.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
@@ -21383,7 +21474,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         "wrong message [msg=" + e.getFlyweightMessage() + ']',
-                        Chars.contains(e.getFlyweightMessage(), "live view select must contain at least one window function")
+                        Chars.contains(e.getFlyweightMessage(), "LIMIT over a window function is not supported yet")
                 );
             }
         });

@@ -1566,14 +1566,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
-    // Drives the named view's seed sweep to completion on the caller's job,
-    // re-fetching the instance each pass so it survives a restart, then applies
-    // the LV WAL. Mirrors the smoke test helper.
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing
-    // the clock each pass so deferred flushes land, and applying the LV's own
-    // WAL after each burst.
-
     // Removal traffic for the dedup arm that keeps the recompute oracle sound.
     // Inserts a small batch into a far-future partition (strictly above all real
     // data and the current frontier) and drops it BEFORE the LV refreshes, so the

@@ -43,10 +43,22 @@ import java.io.Closeable;
  * HashMap mapping char sequences to integers using unmanaged memory to store keys, values and offsets.
  */
 public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
+    /**
+     * The key buffer's ceiling: keys are addressed by 32-bit word offsets, so the buffer
+     * cannot exceed four bytes per addressable word. An owner that wants the default passes
+     * this, and {@link #hasKeyCapacity} is what reports the exhaustion it implies.
+     */
+    public static final long MAX_KEY_BUFFER_CAPACITY = (long) Integer.MAX_VALUE << 2;
     public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int NO_ENTRY_OFFSET = 0;
     private final double loadFactor;
+    private final long maxKeyBufferCapacity;
+    // Tag every buffer this map owns is charged to, so memory_metrics() can
+    // attribute it. Fixed for the map's lifetime: the grow and shrink paths
+    // reallocate under the same tag they allocated under, and a mismatch would
+    // corrupt the counter rather than merely misreport it.
+    private final int memoryTag;
     private final int noEntryValue;
     private final DirectString sview = new DirectString();
     // address of the offset and hashcode buffer, the content follows this layout:
@@ -107,19 +119,81 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * @param avgKeySize      hint for key buffer sizing, in chars
      */
     public DirectCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue, int avgKeySize) {
+        this(initialCapacity, loadFactor, noEntryValue, avgKeySize, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    /**
+     * Creates the map giving full control over sizing knobs and the tag its
+     * native buffers are charged to.
+     *
+     * @param initialCapacity expected number of keys
+     * @param loadFactor      load factor triggering rehash
+     * @param noEntryValue    value returned when the key is missing
+     * @param avgKeySize      hint for key buffer sizing, in chars
+     * @param memoryTag       tag the native buffers are charged to
+     */
+    public DirectCharSequenceIntHashMap(
+            int initialCapacity,
+            double loadFactor,
+            int noEntryValue,
+            int avgKeySize,
+            int memoryTag
+    ) {
+        this(initialCapacity, loadFactor, noEntryValue, avgKeySize, memoryTag, MAX_KEY_BUFFER_CAPACITY);
+    }
+
+    /**
+     * @param maxKeyBufferCapacity the key buffer's ceiling, at most
+     *                             {@link #MAX_KEY_BUFFER_CAPACITY} and 4-byte aligned. Once
+     *                             reached, {@link #hasKeyCapacity} answers false and the
+     *                             owner decides what to do about it - {@code SymbolMapWriter}
+     *                             drops the map and falls back to its on-disk index. An owner
+     *                             that wants the maximum passes it explicitly
+     */
+    public DirectCharSequenceIntHashMap(
+            int initialCapacity,
+            double loadFactor,
+            int noEntryValue,
+            int avgKeySize,
+            int memoryTag,
+            long maxKeyBufferCapacity
+    ) {
+        this.memoryTag = memoryTag;
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
+        if (maxKeyBufferCapacity < 8
+                || maxKeyBufferCapacity > MAX_KEY_BUFFER_CAPACITY
+                || (maxKeyBufferCapacity & 3) != 0) {
+            throw new IllegalArgumentException("8 <= maxKeyBufferCapacity <= 8589934588 and 4-byte aligned");
+        }
         this.mapCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
+        this.maxKeyBufferCapacity = maxKeyBufferCapacity;
+        this.noEntryValue = noEntryValue;
         final int len = Numbers.ceilPow2((int) (this.mapCapacity / loadFactor));
         mask = len - 1;
         this.capacity = (long) len << 3;
-        this.address = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
-        this.kvCapacity = Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L));
-        this.kvAddress = Unsafe.malloc(this.kvCapacity, MemoryTag.NATIVE_DEFAULT);
-        this.noEntryValue = noEntryValue;
-        clear();
+        // Every allocating step lives inside this guard. Unsafe.malloc() and
+        // Unsafe.realloc() turn a native OOM - or a breach of RSS_MEM_LIMIT - into a
+        // thrown CairoException, and a constructor that throws leaves no reachable
+        // instance for the caller to close(). Without the guard the buffers this
+        // constructor already acquired leak for the lifetime of the process and keep
+        // counting against RSS_MEM_LIMIT, so every retry under memory pressure lowers
+        // the ceiling further. Catch Throwable, not CairoException: Unsafe asserts on
+        // the memory tag, so an AssertionError can unwind the same path.
+        try {
+            this.address = Unsafe.malloc(capacity, memoryTag);
+            this.kvCapacity = Math.min(
+                    Numbers.ceilPow2((long) initialCapacity * (((long) avgKeySize << 1) + 8L)),
+                    maxKeyBufferCapacity
+            );
+            this.kvAddress = Unsafe.malloc(this.kvCapacity, memoryTag);
+            clear();
+        } catch (Throwable th) {
+            freeBuffers();
+            throw th;
+        }
     }
 
     /**
@@ -131,7 +205,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             final long oldCapacity = kvCapacity;
             // We only shrink the capacity by 2 to avoid unnecessary grow-back later
             long newKvCapacity = kvCapacity >> 1;
-            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, newKvCapacity, memoryTag);
             kvCapacity = newKvCapacity;
         }
         free = mapCapacity;
@@ -144,16 +218,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * Releases the native buffers; the map must not be used afterwards.
      */
     public void close() {
-        if (this.address != 0) {
-            Unsafe.free(address, this.capacity, MemoryTag.NATIVE_DEFAULT);
-            this.address = 0;
-            this.capacity = 0;
-        }
-        if (this.kvAddress != 0) {
-            Unsafe.free(kvAddress, kvCapacity, MemoryTag.NATIVE_DEFAULT);
-            this.kvAddress = 0;
-            this.kvCapacity = 0;
-        }
+        freeBuffers();
     }
 
     /**
@@ -210,6 +275,15 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         final int len = Unsafe.getInt(ptr + 4);
         sview.of(ptr + 8, len);
         return sview;
+    }
+
+    /**
+     * Returns whether the key buffer can represent one more entry for {@code key}.
+     */
+    public boolean hasKeyCapacity(@NotNull CharSequence key) {
+        final long requiredCapacity = (((long) key.length() << 1) + 11) & ~3L;
+        final long currentCapacity = (long) currentOffset << 2;
+        return requiredCapacity <= maxKeyBufferCapacity - currentCapacity;
     }
 
     /**
@@ -289,8 +363,9 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * Inserts a key using a previously calculated slot.
      */
     public void putAt(int index, @NotNull CharSequence key, int value, int hashCode) {
-        final int offset = this.writeKey(key, value);
-        putAt0(index, offset, hashCode);
+        if (!tryPutAt(index, key, value, hashCode)) {
+            throw CairoException.nonCritical().put("maximum direct map key storage exceeded");
+        }
     }
 
     /**
@@ -306,7 +381,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         long oldCapacity = capacity;
         long oldAddress = address;
         long newCapacity = (long) len << 3;
-        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
+        long newAddress = Unsafe.malloc(newCapacity, memoryTag);
 
         mapCapacity = newMapCapacity;
         free = newFree;
@@ -327,7 +402,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             }
         }
 
-        Unsafe.free(oldAddress, oldCapacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(oldAddress, oldCapacity, memoryTag);
     }
 
     /**
@@ -335,6 +410,22 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public int size() {
         return size;
+    }
+
+    /**
+     * Inserts a key using a previously calculated slot, unless the key buffer's
+     * 32-bit word offsets can no longer represent the result.
+     *
+     * @return true when the key was inserted, false when it would exceed the
+     * maximum representable key-buffer offset
+     */
+    public boolean tryPutAt(int index, @NotNull CharSequence key, int value, int hashCode) {
+        if (!hasKeyCapacity(key)) {
+            return false;
+        }
+        final int offset = this.writeKey(key, value);
+        putAt0(index, offset, hashCode);
+        return true;
     }
 
     /**
@@ -360,6 +451,24 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             }
         }
         return true;
+    }
+
+    /**
+     * Releases whichever native buffers this map currently owns and is safe to call
+     * on a half-built map, so both {@link #close()} and the constructor's failure path
+     * can share it. Private, so the constructor is not calling an overridable method.
+     */
+    private void freeBuffers() {
+        if (this.address != 0) {
+            Unsafe.free(address, this.capacity, memoryTag);
+            this.address = 0;
+            this.capacity = 0;
+        }
+        if (this.kvAddress != 0) {
+            Unsafe.free(kvAddress, kvCapacity, memoryTag);
+            this.kvAddress = 0;
+            this.kvCapacity = 0;
+        }
     }
 
     private int getHashCode(int index) {
@@ -423,15 +532,21 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     private int writeKey(@NotNull CharSequence key, int value) {
-        // We need to store the key (2 bytes per char), its length (4 bytes) and the value (4 bytes) aligned to 4 bytes.
-        int requiredCapacity = ((key.length() << 1) + 11) & ~3;
-        if (kvCapacity < ((long) currentOffset << 2) + requiredCapacity) {
+        // We need to store the key (2 bytes per char), its length (4 bytes) and
+        // the value (4 bytes), aligned to 4 bytes. Keep the arithmetic wide so
+        // gigantic CharSequences cannot wrap before the capacity check.
+        final long requiredCapacity = (((long) key.length() << 1) + 11) & ~3L;
+        final long currentCapacity = (long) currentOffset << 2;
+        if (kvCapacity < currentCapacity + requiredCapacity) {
             final long oldSize = kvCapacity;
-            long newKvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
-            kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            long newKvCapacity = Math.min(
+                    Numbers.ceilPow2(currentCapacity + requiredCapacity),
+                    maxKeyBufferCapacity
+            );
+            kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, memoryTag);
             kvCapacity = newKvCapacity;
         }
-        final long lo = kvAddress + ((long) currentOffset << 2);
+        final long lo = kvAddress + currentCapacity;
         Unsafe.putInt(lo, value);
         Unsafe.putInt(lo + 4, key.length());
         for (int i = 0; i < key.length(); i++) {
@@ -439,7 +554,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         }
 
         final int oldOffset = currentOffset;
-        currentOffset += requiredCapacity >> 2;
+        currentOffset = (int) ((currentCapacity + requiredCapacity) >> 2);
 
         return oldOffset;
     }
