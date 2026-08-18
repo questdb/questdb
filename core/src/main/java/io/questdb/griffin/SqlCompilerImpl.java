@@ -4747,7 +4747,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(sqlId, executionContext);
             }
         } catch (Throwable th) {
-            freeTableNameFunctions(executionModel);
+            try {
+                freeTableNameFunctions(executionModel, th);
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -5790,34 +5796,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void freeTableNameFunctions(ExecutionModel executionModel) {
+        freeTableNameFunctions(executionModel, null);
+    }
+
+    /**
+     * Releases the table-name functions a statement still owns. EXPLAIN keeps the real statement
+     * one level down and answers null to {@link ExecutionModel#getQueryModel()}, so unwrap it first
+     * or its query graph goes unvisited.
+     */
+    private void freeTableNameFunctions(ExecutionModel executionModel, @Nullable Throwable failure) {
         if (executionModel instanceof ExplainModel explainModel) {
-            freeTableNameFunctions(explainModel.getInnerExecutionModel());
+            freeTableNameFunctions(explainModel.getInnerExecutionModel(), failure);
         } else if (executionModel != null) {
-            freeTableNameFunctions(executionModel.getQueryModel());
+            SqlCodeGenerator.freeTableNameFunctions(executionModel.getQueryModel(), failure);
         }
     }
 
     private void freeTableNameFunctions(IQueryModel queryModel) {
-        if (queryModel == null) {
-            return;
-        }
-
-        do {
-            final ObjList<IQueryModel> joinModels = queryModel.getJoinModels();
-            if (joinModels.size() > 1) {
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    freeTableNameFunctions(joinModels.getQuick(i));
-                }
-            }
-
-            final IQueryModel unionModel = queryModel.getUnionModel();
-            if (unionModel != null) {
-                freeTableNameFunctions(unionModel);
-            }
-
-            Misc.free(queryModel.getTableNameFunction());
-            queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
+        SqlCodeGenerator.freeTableNameFunctions(queryModel, null);
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {

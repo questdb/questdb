@@ -828,8 +828,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Closes table-function factories that the optimizer attached to a query graph but generation
      * did not transfer. Transfer sites null the model field, so detaching each remaining field
      * before close prevents duplicate ownership across shared model references.
+     * <p>
+     * {@code failure} carries the in-flight exception when cleanup runs on an error path: a close
+     * failure attaches to it as a suppressed exception rather than masking it. Callers cleaning up
+     * on a success or retry path have no such exception and pass null, which lets a close failure
+     * propagate.
      */
-    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @Nullable Throwable failure) {
         if (queryModel == null) {
             return;
         }
@@ -848,7 +853,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final RecordCursorFactory tableNameFunction = current.getTableNameFunction();
             current.setTableNameFunction(null);
-            Misc.free(tableNameFunction, failure);
+            if (failure != null) {
+                Misc.free(tableNameFunction, failure);
+            } else {
+                Misc.free(tableNameFunction);
+            }
 
             final ObjList<ExpressionNode> expressionModels = current.getExpressionModels();
             for (int i = 0, n = expressionModels.size(); i < n; i++) {
