@@ -51,6 +51,13 @@ public final class SymbolFunctionMemoizer extends SymbolFunction implements Memo
     }
 
     @Override
+    public void clearMemo() {
+        validIntValue = false;
+        validAValue = false;
+        validBValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -143,13 +150,6 @@ public final class SymbolFunctionMemoizer extends SymbolFunction implements Memo
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validIntValue = false;
-        validAValue = false;
-        validBValue = false;
     }
 
     @Override

@@ -42,6 +42,11 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
     }
 
     @Override
+    public void clearMemo() {
+        validValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -68,11 +73,6 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validValue = false;
     }
 
     @Override
