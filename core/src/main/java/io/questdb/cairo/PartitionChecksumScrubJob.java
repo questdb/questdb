@@ -1,0 +1,181 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.str.Path;
+
+/**
+ * Verifies per-partition block hashes in the background, at a bounded rate.
+ * <p>
+ * This is the only place block hashes are actually checked. Partition open is deliberately structural
+ * (lengths only) because column files are mmap'd and hashing there would put O(bytes) on the query
+ * path, so without this job the vector is written and never read.
+ * <p>
+ * Three rules keep it from doing harm:
+ * <ul>
+ *   <li><b>Throttled.</b> At most {@code cairo.partition.checksum.scrub.bytes.per.second} bytes are
+ *       hashed per wall-clock second. 0 disables the job.</li>
+ *   <li><b>A vanished file is not corruption.</b> Purges, drops and O3 rewrites race the scrub
+ *       constantly; a file that disappears mid-scan yields no verdict.</li>
+ *   <li><b>An uncovered partition is not a fault.</b> Absent coverage is the upgrade-on-write state,
+ *       skipped silently.</li>
+ * </ul>
+ */
+public class PartitionChecksumScrubJob extends SynchronizedJob {
+    private static final Log LOG = LogFactory.getLog(PartitionChecksumScrubJob.class);
+
+    private final long bytesPerSecond;
+    private final CairoConfiguration configuration;
+    private final CairoEngine engine;
+    private final FilesFacade ff;
+    private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+    private long bytesHashedTotal;
+    private long budgetBytes;
+    private long budgetStampMs;
+    private int tableCursor;
+
+    public PartitionChecksumScrubJob(CairoEngine engine) {
+        this.engine = engine;
+        this.configuration = engine.getConfiguration();
+        this.ff = configuration.getFilesFacade();
+        this.bytesPerSecond = configuration.getPartitionChecksumScrubBytesPerSecond();
+    }
+
+    /** Bytes hashed since this job was created. Lets a test assert the job did real work. */
+    public long bytesHashed() {
+        return bytesHashedTotal;
+    }
+
+    /** Runs the scrub to completion over every table, ignoring the throttle. For tests. */
+    public void runFully() {
+        engine.getTableTokens(tableTokens, false);
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            scrubTable(tableTokens.get(i), Long.MAX_VALUE);
+        }
+    }
+
+    @Override
+    protected boolean runSerially() {
+        if (!configuration.isPartitionChecksumEnabled() || bytesPerSecond <= 0) {
+            return false;
+        }
+        final long nowMs = configuration.getMillisecondClock().getTicks();
+        if (budgetStampMs == 0) {
+            budgetStampMs = nowMs;
+        }
+        final long elapsedMs = nowMs - budgetStampMs;
+        if (elapsedMs > 0) {
+            budgetBytes = Math.min(bytesPerSecond, budgetBytes + bytesPerSecond * elapsedMs / 1000);
+            budgetStampMs = nowMs;
+        }
+        if (budgetBytes <= 0) {
+            return false;
+        }
+
+        engine.getTableTokens(tableTokens, false);
+        if (tableTokens.size() == 0) {
+            return false;
+        }
+        if (tableCursor >= tableTokens.size()) {
+            tableCursor = 0; // resumable: start the sweep again rather than tracking a global cursor
+        }
+        final TableToken token = tableTokens.get(tableCursor++);
+        final long spent = scrubTable(token, budgetBytes);
+        budgetBytes -= spent;
+        return spent > 0;
+    }
+
+    /** Hashes up to {@code budget} bytes of one table's sealed partitions. Returns bytes hashed. */
+    private long scrubTable(TableToken token, long budget) {
+        long spent = 0;
+        final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token);
+        final int tableLen = path.size();
+        try (PartitionChecksumSidecar sidecar = new PartitionChecksumSidecar()) {
+            final java.io.File tableDir = new java.io.File(path.toString());
+            final java.io.File[] partitions = tableDir.listFiles();
+            if (partitions == null) {
+                return 0;
+            }
+            for (java.io.File p : partitions) {
+                if (spent >= budget) {
+                    break;
+                }
+                if (!p.isDirectory()) {
+                    continue;
+                }
+                spent += scrubPartition(token, p, sidecar, budget - spent);
+            }
+        } catch (Throwable th) {
+            // The scrub is diagnostic. It must never take a worker thread, or a table, down.
+            LOG.error().$("partition checksum scrub failed [table=").$(token)
+                    .$(", error=").$(th.getMessage()).I$();
+        } finally {
+            path.trimTo(tableLen);
+        }
+        return spent;
+    }
+
+    private long scrubPartition(TableToken token, java.io.File dir, PartitionChecksumSidecar sidecar, long budget) {
+        long spent = 0;
+        try (Path chk = new Path(); Path data = new Path()) {
+            chk.of(dir.getAbsolutePath()).concat(PartitionChecksumSidecar.FILE_NAME);
+            if (!ff.exists(chk.$())) {
+                return 0; // uncovered: upgrade-on-write, not a fault
+            }
+            sidecar.of(ff, chk, configuration.getPartitionChecksumBlockSize());
+            if (sidecar.coverage() != ChecksumTrailer.PRESENT_OK) {
+                return 0;
+            }
+            for (int i = 0, n = sidecar.fileCount(); i < n && spent < budget; i++) {
+                data.of(dir.getAbsolutePath()).concat(sidecar.fileName(i));
+                final long len = ff.length(data.$());
+                if (len < 0) {
+                    continue; // vanished under us: a purge racing the scrub is not corruption
+                }
+                final int verdict = sidecar.verifyFile(ff, data.$(), i);
+                spent += Math.min(len, sidecar.fileLength(i));
+                if (verdict == ChecksumTrailer.MISMATCH) {
+                    engine.getCorruptPartitionRegistry().condemn(
+                            token,
+                            dir.getName(),
+                            sidecar.fileName(i) + " block " + sidecar.lastMismatchBlock()
+                    );
+                    break; // one verdict per partition is enough to fail its queries
+                }
+            }
+            bytesHashedTotal += spent;
+        } finally {
+            sidecar.close();
+        }
+        return spent;
+    }
+
+}

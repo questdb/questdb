@@ -249,6 +249,7 @@ public class CairoEngine implements Closeable, WriterSource {
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
+    private final CorruptPartitionRegistry corruptPartitionRegistry = new CorruptPartitionRegistry();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
@@ -2328,6 +2329,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public MessageBus getMessageBus() {
         return messageBus;
+    }
+
+    /**
+     * Partitions the checksum scrub has condemned. Consulted when a partition opens, so a query
+     * touching a corrupt partition fails rather than returning wrong rows.
+     */
+    public CorruptPartitionRegistry getCorruptPartitionRegistry() {
+        return corruptPartitionRegistry;
     }
 
     public MetadataCache getMetadataCache() {
