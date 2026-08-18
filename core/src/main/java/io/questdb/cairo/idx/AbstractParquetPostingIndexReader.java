@@ -296,16 +296,38 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * How many implicit-null rows fall inside {@code [minValue, nullMaxValue]}.
+     * <p>
      * Rows before {@code columnTop} carry no value and are not in the index at
      * all, so key 0 (NULL) owns them implicitly. Bounded by
      * {@code nullMaxValue}, the UNCLAMPED caller max, because the prefix is
      * independent of the index and of {@code getEntryMaxValue}.
+     * <p>
+     * <b>The window's lower bound counts.</b> {@code minValue} is the page
+     * frame's {@code rowLo} and is non-zero for every frame that starts
+     * mid-partition; the prefix rows below it are outside the caller's window.
+     * The caller adds this straight into a {@code count(*)} total, so counting
+     * them over-reports rather than degrading.
+     * <p>
+     * {@code nullMaxValue + 1} is guarded rather than computed: at
+     * {@code Long.MAX_VALUE} it wraps to {@code Long.MIN_VALUE}, which
+     * {@code Math.min} then picks -- and since {@code Numbers.LONG_NULL} IS
+     * {@code Long.MIN_VALUE}, the result leaves the primitive as the "cannot
+     * answer" sentinel with no sign that anything overflowed. That is the value
+     * production passes for an unbounded window.
+     * <p>
+     * Mirrors {@code AbstractPostingIndexReader.countMatchesClamped}'s prefix
+     * term exactly, including the {@code minValue < columnTop} guard.
      */
-    protected long nullPrefixCount(int key, long nullMaxValue) {
-        if (key != 0 || columnTop <= 0 || nullMaxValue < 0) {
+    protected long nullPrefixCount(int key, long minValue, long nullMaxValue) {
+        if (key != 0 || columnTop <= 0 || minValue >= columnTop || nullMaxValue < 0) {
             return 0;
         }
-        return Math.min(columnTop, nullMaxValue + 1);
+        final long nullCount = Math.min(
+                columnTop,
+                nullMaxValue == Long.MAX_VALUE ? Long.MAX_VALUE : nullMaxValue + 1
+        );
+        return Math.max(0L, nullCount - minValue);
     }
 
     /**
@@ -698,7 +720,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         if (key < 0 || maxValueClamped < minValue) {
             return Numbers.LONG_NULL;
         }
-        long total = nullPrefixCount(key, nullMaxValue);
+        long total = nullPrefixCount(key, minValue, nullMaxValue);
         final long range = rowGroupRangeForKey(key);
         if (range == IndexMetaFileReader.KEY_ABSENT) {
             return total;
@@ -1012,7 +1034,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         }
         // The implicit-null prefix comes first in row order and is not in the
         // index at all, so the k-th match may land inside it.
-        final long nulls = nullPrefixCount(key, nullMaxValue);
+        final long nulls = nullPrefixCount(key, minValue, nullMaxValue);
         if (k < nulls) {
             return k;
         }

@@ -234,6 +234,22 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                     for (long[] w : windows) {
                         assertSameCursorSequence(nativeFwd, parquetFwd, key, w[0], w[1], IndexReader.DIR_FORWARD);
                         assertSameCursorSequence(nativeBwd, parquetBwd, key, w[0], w[1], IndexReader.DIR_BACKWARD);
+                        // The primitives answer the same question the forward
+                        // cursor walks, so they are asserted against the same
+                        // oracle and against that cursor.
+                        assertSamePrefixCount(
+                                (PostingIndexReader) nativeFwd, (PostingIndexReader) parquetFwd,
+                                nativeFwd, parquetFwd, key, w[0], w[1], w[1]
+                        );
+                        // nullMaxValue is the UNCLAMPED caller max and is a
+                        // separate parameter, so it has to be exercised apart
+                        // from the clamped one -- including at Long.MAX_VALUE,
+                        // where a nullMaxValue + 1 wraps to Long.MIN_VALUE and
+                        // the count comes back hugely negative.
+                        assertSamePrefixCount(
+                                (PostingIndexReader) nativeFwd, (PostingIndexReader) parquetFwd,
+                                nativeFwd, parquetFwd, key, w[0], Long.MAX_VALUE, w[1]
+                        );
                     }
                 }
             }
@@ -339,6 +355,56 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         Assert.assertEquals("posting count disagreed " + where, expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
             Assert.assertEquals("row id disagreed at " + i + ' ' + where, expected.getQuick(i), actual.getQuick(i));
+        }
+    }
+
+    /**
+     * {@code countMatchesClamped} over a reader carrying an implicit-null
+     * prefix, against the native answer AND against what the forward cursor
+     * actually walks. Both comparisons are needed: agreeing with the native
+     * reader alone would still admit a count the reader's own cursor
+     * contradicts, and that disagreement is what the covered parallel decode
+     * turns into a hard failure.
+     */
+    private void assertSamePrefixCount(
+            PostingIndexReader nativeReader, PostingIndexReader parquetReader,
+            IndexReader nativeCursors, IndexReader parquetCursors,
+            int key, long min, long nullMax, long maxClamped
+    ) {
+        final String where = "[key=" + key + ", min=" + min + ", nullMax=" + nullMax
+                + ", maxClamped=" + maxClamped + ']';
+        final long expected = nativeReader.countMatchesClamped(key, min, nullMax, maxClamped);
+        final long actual = parquetReader.countMatchesClamped(key, min, nullMax, maxClamped);
+        Assert.assertNotEquals("-1 is consumed as a count, never as a sentinel " + where, -1, actual);
+        if (expected == Numbers.LONG_NULL) {
+            // The native reader bails in strictly more cases than this one, so
+            // its declining says nothing about the parquet answer.
+            return;
+        }
+        // LONG_NULL is Long.MIN_VALUE, so an overflowed count is indistinguishable
+        // from "cannot answer" and degrades silently to a cursor walk instead of
+        // reporting a negative total. Requiring an answer wherever the native
+        // reader manages one is what makes that visible.
+        Assert.assertNotEquals(
+                "the parquet primitive must answer where the native one does " + where,
+                Numbers.LONG_NULL, actual
+        );
+        Assert.assertTrue("a count can never be negative " + where + " got " + actual, actual >= 0);
+        Assert.assertEquals("countMatchesClamped disagreed " + where, expected, actual);
+        // Only when the two bounds coincide does the count describe exactly the
+        // window the cursor walks; with a separate nullMax it may legitimately
+        // include prefix rows past maxClamped.
+        if (nullMax == maxClamped) {
+            final LongList walked = new LongList();
+            final LongList ignored = new LongList();
+            drain(parquetCursors, key, min, maxClamped, null, walked, ignored);
+            Assert.assertEquals(
+                    "the count must equal what this reader's own cursor walks " + where,
+                    walked.size(), actual
+            );
+            walked.clear();
+            drain(nativeCursors, key, min, maxClamped, null, walked, ignored);
+            Assert.assertEquals("premise: the native cursor must agree too " + where, walked.size(), expected);
         }
     }
 
