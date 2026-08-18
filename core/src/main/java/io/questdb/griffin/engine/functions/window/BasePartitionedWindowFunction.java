@@ -109,8 +109,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     protected long tombstoneCount;
     protected int tombstoneValueIndex = -1;
     // The fused window-state slots this function reads out of the group owner's one map
-    // value, or -1 when it owns its state as it always has. Installed by the plan through
-    // bindWindowStateSlots and cleared the same way, both on the refresh worker.
+    // value, or -1 when it owns its state as it always has. Installed once at compile
+    // time: WindowMapState.createGroups binds every projection through
+    // bindWindowStateSlots, and nothing unbinds one afterwards.
     //
     // The component's base is the "am I fused" answer because every binding has one: the
     // counter used to serve, and stopped when the extremum families arrived - they carry a
@@ -234,10 +235,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
         if (isWindowStateOwned()) {
-            // The window holds this function's state in its own map, so the sweep drops
-            // the accumulator by dropping the fused entry and records the removal in the
-            // window's one dirty set. There is nothing of this function's left to record,
-            // and true is the honest answer: the removal is tracked, just not here.
+            // A fused function keeps nothing here to record: its own map stays closed for
+            // its whole life and the group holds the one accumulator. True is the answer
+            // that keeps the caller off the conservative complete freeze a false imposes.
+            // The branch is defensive - LiveViewWindow's frontier sweep is the only caller,
+            // and a live-view compile forms no group at all, since SqlCodeGenerator
+            // captures no WindowMapSpec for one.
             return true;
         }
         if (tombstoneValueIndex < 0 || !hasCheckpointDirtyTracking) {
@@ -268,9 +271,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public void markPartitionAlive(Record record) {
         if (isWindowStateOwned()) {
-            // Nothing of this function's is tombstoned or marked dirty any more: the
-            // window loads the one value this row touches, keeps it alive and marks it
-            // once, for the group.
+            // A fused function's own map stays closed, so it carries no tombstone bit to
+            // clear and no dirty set to mark, and the group keeps neither. Defensive for
+            // the same reason the eviction hook above is: LiveViewWindow.processRow is the
+            // only caller and a live-view compile binds no function into a group.
             return;
         }
         markCheckpointPartitionDirty(record);
@@ -304,9 +308,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public void onCheckpointRestoreBegin() {
         // A fused function's map stays closed, for the reason reopen() leaves it closed:
-        // the group's owner holds the one value layout, and this function has no state of
-        // its own for a restore to replace. An owner that does hand the state back opens
-        // this map itself first, so the clear below is that path's.
+        // the group holds the one value layout, and this function has no state of its own
+        // for a restore to replace. The isOpen() term is what keeps the clear off such a
+        // map - nothing reopens one, here or in reopen().
         if (map != null && (!isWindowStateOwned() || map.isOpen())) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
@@ -337,10 +341,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
 
     @Override
     public void reopen() {
-        // A fused function's map stays closed: the window allocated one value layout for
-        // the whole group and reopening this one would charge the per-view tracker for a
-        // map no row ever writes to. The legacy-checkpoint adapter is the one path that
-        // reopens it, and it closes it again as soon as it has hoisted the state across.
+        // A fused function's map stays closed: the group allocated one value layout for
+        // every function in it, and reopening this one would charge the per-query
+        // MemoryTracker for a map no row ever writes to. No other path reopens it either -
+        // onCheckpointRestoreBegin's clear also stands off a map that is not open.
         if (map != null && !isWindowStateOwned()) {
             map.reopen();
         }
@@ -361,8 +365,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             boolean hasRecordedCheckpointRemovals
     ) {
         if (isWindowStateOwned()) {
-            // The sweep rebuilt the window's fused map, and this function's accumulator
-            // rode across inside the entries it kept. There is no second map to prune.
+            // A fused function's own map stays closed, so it holds no key a sweep could
+            // prune, and the group's map is not this method's to walk. Defensive, like the
+            // eviction and aliveness hooks above.
             return;
         }
         if (!hasRecordedCheckpointRemovals) {

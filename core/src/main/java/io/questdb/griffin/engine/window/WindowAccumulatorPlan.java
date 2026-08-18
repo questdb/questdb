@@ -46,8 +46,8 @@ import org.jetbrains.annotations.Nullable;
  *   then:                 components in canonical identity order
  * </pre>
  * The prefix is {@link #getSlotPrefix()} and is zero for an ordinary query, which owns
- * nothing beyond the accumulators. A live view's is its three anchor slots. Components are
- * ordered by {@link WindowAccumulatorDescriptor#compareIdentity} and never by SELECT-list
+ * nothing beyond the accumulators and is the only owner this build compiles for. Components
+ * are ordered by {@link WindowAccumulatorDescriptor#compareIdentity} and never by SELECT-list
  * order, so reordering the outputs of one query cannot move a component's slot base.
  *
  * <h2>Nothing here is bound</h2>
@@ -164,19 +164,26 @@ public final class WindowAccumulatorPlan {
     }
 
     /**
-     * The number of slots the group's owner reserved ahead of the components. Zero for an
-     * ordinary query.
+     * The number of slots the group's owner reserved ahead of the components. An ordinary
+     * query reserves none, so this is zero for every plan the compiler builds.
      */
     public int getSlotPrefix() {
         return slotPrefix;
     }
 
     /**
-     * The group identity every function of this plan shares, or null when the plan's owner
-     * proves that identity its own way - a live view holds an encoded window identity and a
-     * key schema, and compiles no {@link WindowMapSpec} at all. A {@link WindowMapState} is
-     * only ever built over a plan that carries one, since the spec is where its map key
-     * comes from.
+     * The group identity every function of this plan shares. Every plan
+     * {@link WindowAccumulatorPlanBuilder#compileGroups} produces carries one: the walk skips
+     * a function whose {@link WindowMapSpec} is null and opens a builder per spec over the
+     * rest. A {@link WindowMapState} is only ever built over a plan that carries one, since
+     * the spec is where its map key comes from.
+     * <p>
+     * No caller can observe null today. The nullability is the two-argument
+     * {@link WindowAccumulatorPlanBuilder} constructor's - it is what admits a spec-less
+     * builder - and {@code compileGroups} is the only site in the repository that opens a
+     * builder at all, through the one-argument constructor that requires a spec. Both readers
+     * say so rather than branch: {@link WindowMapState}'s constructor and
+     * {@code CachedWindowMapGroups.isForward} assert the result is non-null.
      */
     public @Nullable WindowMapSpec getSpec() {
         return spec;
@@ -188,9 +195,9 @@ public final class WindowAccumulatorPlan {
      * making separately.
      * <p>
      * It is what an owner's activation rule reads. A one-function plan scores one - it
-     * moves a map rather than removing one - and is worth compiling for a test or for a
-     * live view composing a wider group, but not worth binding a runtime through: the
-     * abstraction would cost a query something and buy it nothing.
+     * moves a map rather than removing one - and is worth compiling for a test, but not
+     * worth binding a runtime through: the abstraction would cost a query something and buy
+     * it nothing.
      */
     public int getStructuralReduction() {
         return projectionFunctions.size() + (projectionFunctions.size() - components.size());

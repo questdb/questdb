@@ -65,7 +65,7 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
         // base explicitly declared NOCACHE. The trace follows the mapping's cross index
         // instead and keeps the flag.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 65536 NOCACHE, x DOUBLE) " +
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 65_536 NOCACHE, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, g AS acct, sum(x) OVER w AS s FROM base " +
@@ -109,7 +109,7 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
         // The customer's shape: a multi-million-cardinality NOCACHE account column.
         // Before the propagation the view's column came out CACHE.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 2097152 NOCACHE INDEX CAPACITY 4, x DOUBLE) " +
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 2_097_152 NOCACHE INDEX CAPACITY 4, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 5s START FROM NOW AS " +
                     "SELECT ts, g, sum(x) OVER w AS s, count(g) OVER w AS c FROM base " +
@@ -178,13 +178,35 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSymbolCapacityIsNotInherited() throws Exception {
+        // Pins the deliberate half of the decision. A base capacity of 2M leaves
+        // the view at the server default, because inheriting it measured 5-7x
+        // slower on refresh for no heap saving - see LiveViewTableStructure
+        // .getSymbolCapacity. Flip this expectation only with a measurement.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 2_097_152 NOCACHE, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, g, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR DAILY '00:00')");
+
+            assertQuery("SELECT symbolCapacity FROM (SHOW COLUMNS FROM lv) WHERE \"column\" = 'g'")
+                    .noRandomAccess()
+                    .returns("""
+                            symbolCapacity
+                            128
+                            """);
+        });
+    }
+
+    @Test
     public void testSymbolThroughOutputProjectionPropagatesCacheFlag() throws Exception {
         // The other side of the window: wrapping the window function in an expression
         // puts a projection above the window, so every output column - the pass-through
         // SYMBOL included - is reached through that projection's functions rather than
         // straight off the window factory. The trace has to cross it too.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 65536 NOCACHE, x DOUBLE) " +
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 65_536 NOCACHE, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, g, x - sum(x) OVER w AS dev FROM base " +
@@ -202,28 +224,6 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testSymbolCapacityIsNotInherited() throws Exception {
-        // Pins the deliberate half of the decision. A base capacity of 2M leaves
-        // the view at the server default, because inheriting it measured 5-7x
-        // slower on refresh for no heap saving - see LiveViewTableStructure
-        // .getSymbolCapacity. Flip this expectation only with a measurement.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL CAPACITY 2097152 NOCACHE, x DOUBLE) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, g, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR DAILY '00:00')");
-
-            assertQuery("SELECT symbolCapacity FROM (SHOW COLUMNS FROM lv) WHERE \"column\" = 'g'")
-                    .noRandomAccess()
-                    .returns("""
-                            symbolCapacity
-                            128
-                            """);
-        });
-    }
-
-    @Test
     public void testTwoSymbolColumnsResolveIndependently() throws Exception {
         // Proves the mapping is per column rather than positional or first-match:
         // the two base SYMBOL columns differ in cache flag, and the view projects
@@ -231,7 +231,7 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (" +
                     "ts TIMESTAMP, " +
-                    "acct SYMBOL CAPACITY 1048576 NOCACHE, " +
+                    "acct SYMBOL CAPACITY 1_048_576 NOCACHE, " +
                     "region SYMBOL CAPACITY 512 CACHE, " +
                     "x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +

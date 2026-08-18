@@ -223,8 +223,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
      * subset this build gives a runtime, and a plan the kill switch or the
      * Map-implementation rule turned away stays compiled - which is what lets a test assert
      * that such a group was worked out and simply given to nobody, rather than assert an
-     * absence. A live-view compile never produces one at all: a live view's accumulators
-     * are owned by its own window runtime, and one accumulator may have one owner.
+     * absence. A live-view compile never produces one at all: a live-view function keeps its
+     * accumulator in the private partition map that {@code LiveViewWindow} and the checkpoint
+     * framework drive, so the compiler forms no group for it.
      */
     public @Nullable ObjList<WindowAccumulatorPlan> getWindowAccumulatorPlans() {
         return windowAccumulatorPlans;

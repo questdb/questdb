@@ -104,70 +104,21 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     // Four accounts in one anchor bucket. Every sweep case starts here: the trigger
     // demands at least half the map be reclaimable, so three of these have to fall
     // behind the frontier before anything fires.
-    // Enough accounts that a sweep's evicted set dwarfs what one cadence touches, which is
-    // the only shape in which the dirty sets' retained capacity is observable at all.
-    private static final int SWEEP_CAPACITY_ACCOUNTS = 2_000;
     private static final String SEED_FOUR_ACCOUNTS =
             "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
                     + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
                     + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
                     + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)";
+    // Enough accounts that a sweep's evicted set dwarfs what one cadence touches, which is
+    // the only shape in which the dirty sets' retained capacity is observable at all.
+    private static final int SWEEP_CAPACITY_ACCOUNTS = 2_000;
 
     @Test
-    public void testAnchorBucketCrossingCarriesTheNewAnchorValueThroughARestart() throws Exception {
-        // One boundary per commit, so each step below is its own seal.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            createView(
-                    NOON_ANCHOR,
-                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
-                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
-                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0)"
-            );
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-
-                // Two of the three accounts cross into the 12:00 bucket, one does not.
-                // The crossing rewrites their anchor value in place, which is the
-                // incremental anchor path: a root that kept the old value would restore
-                // a window that thinks it is still in the morning bucket.
-                commit("('2026-01-01T12:00:00.000000Z', 'acct-1', 1.0), "
-                        + "('2026-01-01T12:00:01.000000Z', 'acct-2', 2.0)", job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-                assertDirtySetsClearedByPublish();
-            }
-
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                Assert.assertTrue(
-                        "the view must restore its accumulators from the checkpoint timeline",
-                        viewInstance().isCheckpointRestoreSucceeded()
-                );
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-
-                // The row that reads the restored anchor value back. It sits in the same
-                // 12:00 bucket the crossing opened, so a stale anchor value would look
-                // like a fresh crossing here and zero acct-1's accumulator - a diff
-                // against the recompute rather than a silent saving.
-                commit("('2026-01-01T13:00:00.000000Z', 'acct-1', 3.0), "
-                        + "('2026-01-01T13:00:01.000000Z', 'acct-3', 4.0)", job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-
-                // And one more crossing, now on top of restored state.
-                commit("('2026-01-02T12:00:00.000000Z', 'acct-1', 5.0), "
-                        + "('2026-01-02T12:00:01.000000Z', 'acct-4', 6.0)", job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-                assertDirtySetsClearedByPublish();
-            }
-        });
-    }
-
-    @Test
-    public void testFailedPublishKeepsTheTouchedKeysForTheNextSeal() throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+    public void testARepeatedKeyEntersTheDirtySetOncePerCadence() throws Exception {
+        // Four rows per boundary, as in testTheCadenceCounterWrappingStillNamesEveryTouchedKey
+        // and testTouchedKeysAreTheOnlyDirtyStateBetweenSeals, so a commit smaller than that
+        // refreshes without sealing and the marks a cadence made stay readable.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
         assertMemoryLeak(() -> {
             createView(
                     NOON_ANCHOR,
@@ -179,57 +130,50 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 assertDirtySetsClearedByPublish();
-                final long baselineGeneration = anchorWindow().getCheckpointBaselineGeneration();
-                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
 
-                // The seal reaches durable metadata and then dies, so it never calls
-                // onCheckpointPersisted. The dirty sets are the runtime's only record
-                // of what the failed seal was going to write; clearing them on the way
-                // out would leave those keys unwritten by every later seal too.
-                job.setCheckpointTimelineTestFailureStage(
-                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH
+                // Three rows, one key, inside one cadence. The dirty set names the key
+                // once, and the marks it costs are one rather than three: a repeat row
+                // reads the cadence off the anchor value processRow has already loaded
+                // and never serializes the key into the second map at all.
+                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T11:00:05.000000Z', 'acct-1', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-1', 3.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCheckpointDirtyAnchorMapSize());
+                Assert.assertEquals(
+                        "a repeat row must not enter its key into the dirty set again",
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
                 );
-                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0)", job);
-                Assert.assertTrue(
-                        "the injected failure must be counted as a failed seal",
-                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
+
+                // The fourth row crosses the boundary and seals, which empties the dirty
+                // set. The cadence has to move on with it: a key whose anchor entry still
+                // carried the sealed cadence would skip its mark for good, and the next
+                // incremental seal would publish a root missing it.
+                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+
+                final long marksAfterSeal = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:08.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertEquals(
+                        "the first row of a new cadence must enter its key again",
+                        1,
+                        anchorWindow().getCheckpointDirtyAnchorMapSize()
                 );
                 Assert.assertEquals(
-                        "a failed publish must not adopt a new baseline",
-                        baselineGeneration,
-                        anchorWindow().getCheckpointBaselineGeneration()
-                );
-                Assert.assertTrue(
-                        "the failed seal's touched keys must still be dirty",
-                        anchorWindow().getCheckpointDirtyAnchorMapSize() > 0
-                );
-                assertFunctionDirtySize(1);
-
-                // A second key moves while the failure is still injected. Both keys are
-                // now owed to the root.
-                commit("('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0)", job);
-                assertFunctionDirtySize(2);
-                Assert.assertEquals(2, anchorWindow().getCheckpointDirtyAnchorMapSize());
-
-                job.setCheckpointTimelineTestFailureStage(0);
-                commit("('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0)", job);
-                assertDirtySetsClearedByPublish();
-                Assert.assertTrue(
-                        "the recovering seal must publish a new generation",
-                        anchorWindow().getCheckpointBaselineGeneration() > baselineGeneration
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksAfterSeal
                 );
                 assertViewMatchesRecompute(NOON_ANCHOR);
             }
 
-            // The proof that the three keys the failed seals owed were all written: a
-            // restart reads the root and nothing else.
+            // ...and the key the second cadence named has to reach the durable root, which
+            // is what says the skipped marks cost the seal nothing.
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
                 Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
                 driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 7.0)", job);
                 assertViewMatchesRecompute(NOON_ANCHOR);
             }
         });
@@ -372,6 +316,126 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * The sweep must never be what starts a function's dirty tracking. An unbounded-rows
+     * avg or ksum whose own markPartitionAlive skipped
+     * {@code markCheckpointPartitionDirty} named none of the keys its rows moved, so a
+     * dirty set the sweep built out of eviction markers alone opened the incremental gate
+     * on it: the seal froze the removals and nothing else, and every partition whose
+     * accumulator had advanced between the two seals kept its stale durable image. The
+     * runtime went on answering correctly out of memory, so only a restart showed it.
+     * <p>
+     * Both calls here are residual - an expression argument, as in
+     * {@link #createUnfusedView} - so what the case reads is each function's own dirty
+     * set and its own root rather than the window's fused entry.
+     */
+    @Test
+    public void testASweptResidualAvgStillFreezesTheKeysItsRowsMoved() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createUnfusedAvgView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(4);
+                final long generation = publishedGeneration();
+
+                // Two bucket advances with only acct-1 following along, both under the
+                // four-row boundary, so the second one sweeps without sealing.
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                Assert.assertEquals(
+                        "only the account that followed the frontier survives",
+                        1,
+                        anchorWindow().getAnchorMapSize()
+                );
+                assertIncrementalGateOpen(generation);
+
+                // Four keys rather than three: the survivor these two commits moved is
+                // named alongside the three the sweep dropped. A dirty set the sweep
+                // started on its own holds the evictions and nothing else.
+                assertFunctionDirtySize(4);
+                assertEvictionMarkerCount(3);
+
+                // Two more rows into the survivor's live bucket - the accumulator advance
+                // the seal owes the root - and the fourth row of the cadence seals.
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
+                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(1);
+                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
+
+                // A row in the bucket the survivor is already accumulating in, so it reads
+                // the restored accumulator rather than starting a fresh one. A root left
+                // holding the pre-sweep image answers 7.5 here where the oracle says 3.5.
+                commit("('2026-01-03T04:00:00.000000Z', 'acct-1', 5.0)", job);
+                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testAnchorBucketCrossingCarriesTheNewAnchorValueThroughARestart() throws Exception {
+        // One boundary per commit, so each step below is its own seal.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                // Two of the three accounts cross into the 12:00 bucket, one does not.
+                // The crossing rewrites their anchor value in place, which is the
+                // incremental anchor path: a root that kept the old value would restore
+                // a window that thinks it is still in the morning bucket.
+                commit("('2026-01-01T12:00:00.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T12:00:01.000000Z', 'acct-2', 2.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                assertDirtySetsClearedByPublish();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(
+                        "the view must restore its accumulators from the checkpoint timeline",
+                        viewInstance().isCheckpointRestoreSucceeded()
+                );
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                // The row that reads the restored anchor value back. It sits in the same
+                // 12:00 bucket the crossing opened, so a stale anchor value would look
+                // like a fresh crossing here and zero acct-1's accumulator - a diff
+                // against the recompute rather than a silent saving.
+                commit("('2026-01-01T13:00:00.000000Z', 'acct-1', 3.0), "
+                        + "('2026-01-01T13:00:01.000000Z', 'acct-3', 4.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                // And one more crossing, now on top of restored state.
+                commit("('2026-01-02T12:00:00.000000Z', 'acct-1', 5.0), "
+                        + "('2026-01-02T12:00:01.000000Z', 'acct-4', 6.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                assertDirtySetsClearedByPublish();
+            }
+        });
+    }
+
     @Test
     public void testDirtyKeyMissingWithoutASweepStillFails() throws Exception {
         // Four rows per boundary, so the three rows below leave the dirty sets standing
@@ -407,6 +471,76 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                         "a dirty key with no live state and no eviction marker must fail the seal",
                         viewInstance().getCheckpointSealFailures() > sealFailuresBefore
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testFailedPublishKeepsTheTouchedKeysForTheNextSeal() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                final long baselineGeneration = anchorWindow().getCheckpointBaselineGeneration();
+                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
+
+                // The seal reaches durable metadata and then dies, so it never calls
+                // onCheckpointPersisted. The dirty sets are the runtime's only record
+                // of what the failed seal was going to write; clearing them on the way
+                // out would leave those keys unwritten by every later seal too.
+                job.setCheckpointTimelineTestFailureStage(
+                        LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH
+                );
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0)", job);
+                Assert.assertTrue(
+                        "the injected failure must be counted as a failed seal",
+                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
+                );
+                Assert.assertEquals(
+                        "a failed publish must not adopt a new baseline",
+                        baselineGeneration,
+                        anchorWindow().getCheckpointBaselineGeneration()
+                );
+                Assert.assertTrue(
+                        "the failed seal's touched keys must still be dirty",
+                        anchorWindow().getCheckpointDirtyAnchorMapSize() > 0
+                );
+                assertFunctionDirtySize(1);
+
+                // A second key moves while the failure is still injected. Both keys are
+                // now owed to the root.
+                commit("('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0)", job);
+                assertFunctionDirtySize(2);
+                Assert.assertEquals(2, anchorWindow().getCheckpointDirtyAnchorMapSize());
+
+                job.setCheckpointTimelineTestFailureStage(0);
+                commit("('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0)", job);
+                assertDirtySetsClearedByPublish();
+                Assert.assertTrue(
+                        "the recovering seal must publish a new generation",
+                        anchorWindow().getCheckpointBaselineGeneration() > baselineGeneration
+                );
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // The proof that the three keys the failed seals owed were all written: a
+            // restart reads the root and nothing else.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 7.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
             }
         });
     }
@@ -544,74 +678,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * The sweep must never be what starts a function's dirty tracking. An unbounded-rows
-     * avg or ksum whose own markPartitionAlive skipped
-     * {@code markCheckpointPartitionDirty} named none of the keys its rows moved, so a
-     * dirty set the sweep built out of eviction markers alone opened the incremental gate
-     * on it: the seal froze the removals and nothing else, and every partition whose
-     * accumulator had advanced between the two seals kept its stale durable image. The
-     * runtime went on answering correctly out of memory, so only a restart showed it.
-     * <p>
-     * Both calls here are residual - an expression argument, as in
-     * {@link #createUnfusedView} - so what the case reads is each function's own dirty
-     * set and its own root rather than the window's fused entry.
-     */
-    @Test
-    public void testASweptResidualAvgStillFreezesTheKeysItsRowsMoved() throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
-        assertMemoryLeak(() -> {
-            createUnfusedAvgView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                assertDirtySetsClearedByPublish();
-                assertHeadRootPartitionCount(4);
-                final long generation = publishedGeneration();
-
-                // Two bucket advances with only acct-1 following along, both under the
-                // four-row boundary, so the second one sweeps without sealing.
-                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
-                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
-                Assert.assertEquals(1, anchorWindow().getCompactionCount());
-                Assert.assertEquals(
-                        "only the account that followed the frontier survives",
-                        1,
-                        anchorWindow().getAnchorMapSize()
-                );
-                assertIncrementalGateOpen(generation);
-
-                // Four keys rather than three: the survivor these two commits moved is
-                // named alongside the three the sweep dropped. A dirty set the sweep
-                // started on its own holds the evictions and nothing else.
-                assertFunctionDirtySize(4);
-                assertEvictionMarkerCount(3);
-
-                // Two more rows into the survivor's live bucket - the accumulator advance
-                // the seal owes the root - and the fourth row of the cadence seals.
-                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
-                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
-                assertDirtySetsClearedByPublish();
-                assertHeadRootPartitionCount(1);
-                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
-            }
-
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
-                driveRefreshToQuiescence(job);
-                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
-
-                // A row in the bucket the survivor is already accumulating in, so it reads
-                // the restored accumulator rather than starting a fresh one. A root left
-                // holding the pre-sweep image answers 7.5 here where the oracle says 3.5.
-                commit("('2026-01-03T04:00:00.000000Z', 'acct-1', 5.0)", job);
-                assertUnfusedAvgViewMatchesRecompute(MIDNIGHT_ANCHOR);
-            }
-        });
-    }
-
     @Test
     public void testKeyEvictedThenRecreatedInOneCadenceIsUpserted() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
@@ -709,156 +775,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 assertLogicalStateBytesEqual(sealedLogicalBytes);
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute(MIDNIGHT_ANCHOR);
-            }
-        });
-    }
-
-    /**
-     * The fail-safe the three-argument retention default exists for. A function that
-     * keeps an incremental baseline, implements retention and never learns to record the
-     * sweep's evictions would publish a root still naming keys the runtime dropped, so
-     * the sweep's entry point refuses rather than delegates.
-     */
-    @Test
-    public void testRetentionWithoutRemovalTrackingCannotStayIncremental() {
-        final RetainingFunctionStub incremental = new RetainingFunctionStub(false);
-        try {
-            incremental.retainPartitions(null, null, false);
-            Assert.fail("retention without removal tracking must not stay incremental");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "without checkpoint removal tracking");
-        }
-        Assert.assertFalse(
-                "the guard must refuse before the retention itself runs",
-                incremental.isRetained
-        );
-
-        // Recording the removals is what opens the door.
-        incremental.retainPartitions(null, null, true);
-        Assert.assertTrue(incremental.isRetained);
-
-        // A function already committed to a complete freeze needs no door: the freeze
-        // walks its whole map and finds the dropped keys on its own.
-        final RetainingFunctionStub fullScan = new RetainingFunctionStub(true);
-        fullScan.retainPartitions(null, null, false);
-        Assert.assertTrue(fullScan.isRetained);
-    }
-
-    /**
-     * The same fail-safe one step earlier, at the hook the sweep calls per evicted key. A
-     * partitioned function that offers everything but the marking - a tombstone slot and
-     * a scratch-map factory, with a markPartitionAlive that names nothing - must have the
-     * hook decline for it, because the dirty set it would otherwise build names none of
-     * the keys the function's own rows moved.
-     */
-    @Test
-    public void testTheSweepCannotStartDirtyTrackingOnItsOwn() throws Exception {
-        assertMemoryLeak(() -> {
-            final LongKeyRecordStub record = new LongKeyRecordStub();
-            final NonMarkingFunctionStub function = new NonMarkingFunctionStub();
-            try {
-                // The state a published seal leaves behind, and the only state an
-                // incremental freeze can build on at all.
-                function.onCheckpointPersisted(0, 7);
-                Assert.assertFalse(function.isCheckpointFullScanRequired());
-
-                record.value = 1;
-                Assert.assertFalse(
-                        "a function that names no touched key must decline the eviction hook",
-                        function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
-                );
-                Assert.assertNull(
-                        "declining must leave no dirty set for the seal to read",
-                        function.getCheckpointDirtyPartitionMap()
-                );
-
-                // The same function once it does mark, which is what says the guard reads
-                // the tracking rather than refusing outright.
-                function.markDirty(record);
-                Assert.assertEquals(1, function.getCheckpointDirtyPartitionMap().size());
-                record.value = 2;
-                Assert.assertTrue(
-                        function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
-                );
-                Assert.assertEquals(2, function.getCheckpointDirtyPartitionMap().size());
-            } finally {
-                function.reset();
-            }
-
-            // reset() hands the dirty set back, so the tracking has to go with it: a rebound
-            // cursor earns it again through the marking or not at all.
-            Assert.assertNull(function.getCheckpointDirtyPartitionMap());
-            Assert.assertFalse(
-                    "reset() must take the tracking with the map it freed",
-                    function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
-            );
-            function.reset();
-        });
-    }
-
-    @Test
-    public void testUnrelatedDirtyAnchorKeyMissingAfterASweepStillFails() throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
-        assertMemoryLeak(() -> {
-            createView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                assertDirtySetsClearedByPublish();
-                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
-
-                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
-                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
-                Assert.assertEquals(1, anchorWindow().getCompactionCount());
-                assertEvictionMarkerCount(3);
-
-                // One of the three keys the sweep dropped loses its provenance while the
-                // other two keep theirs. A sweep-wide "something was evicted" flag would
-                // wave this one through and publish a root missing an entry no sweep took
-                // out; the per-key marker is what makes it a hard error.
-                Assert.assertEquals(1, anchorWindow().clearCheckpointEvictionMarkers(1));
-                Assert.assertEquals(2, anchorWindow().getCheckpointEvictionMarkerCount());
-                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
-                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
-                Assert.assertTrue(
-                        "a dirty anchor key missing without its own marker must fail the seal",
-                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testUnrelatedDirtyFunctionKeyMissingAfterASweepStillFails() throws Exception {
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
-        assertMemoryLeak(() -> {
-            // A residual function, because its own dirty map is what this case breaks -
-            // see createUnfusedView.
-            createUnfusedView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                assertDirtySetsClearedByPublish();
-                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
-
-                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
-                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
-                Assert.assertEquals(1, anchorWindow().getCompactionCount());
-
-                // The same break, one channel over: the anchor keeps every marker it
-                // recorded and freezes cleanly, so the raise has to come from the function.
-                Assert.assertTrue(clearFunctionEvictionMarkers() > 0);
-                Assert.assertEquals(
-                        "the anchor's own markers must be untouched",
-                        3,
-                        anchorWindow().getCheckpointEvictionMarkerCount()
-                );
-                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
-                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
-                Assert.assertTrue(
-                        "a dirty partition key missing without its own marker must fail the seal",
-                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
-                );
             }
         });
     }
@@ -963,110 +879,41 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * The fail-safe the three-argument retention default exists for. A function that
+     * keeps an incremental baseline, implements retention and never learns to record the
+     * sweep's evictions would publish a root still naming keys the runtime dropped, so
+     * the sweep's entry point refuses rather than delegates.
+     */
     @Test
-    public void testTombstonedTouchedKeyIsRemovedFromTheRoot() throws Exception {
-        // Four rows per boundary, so the seed seals and the batch below is one boundary.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
-        assertMemoryLeak(() -> {
-            // A residual function, because the removal branch this case holds to its
-            // contract is the per-function one - see createUnfusedView.
-            createUnfusedView(
-                    NOON_ANCHOR,
-                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
-                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
-                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
-                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
-            );
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                assertDirtySetsClearedByPublish();
-                assertHeadRootPartitionCount(4);
+    public void testRetentionWithoutRemovalTrackingCannotStayIncremental() {
+        final RetainingFunctionStub incremental = new RetainingFunctionStub(false);
+        try {
+            incremental.retainPartitions(null, null, false);
+            Assert.fail("retention without removal tracking must not stay incremental");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "without checkpoint removal tracking");
+        }
+        Assert.assertFalse(
+                "the guard must refuse before the retention itself runs",
+                incremental.isRetained
+        );
 
-                // No supported path leaves a tombstone standing at a seal: resetPartition
-                // is the only writer of the bit, and processRow cancels it through
-                // markPartitionAlive on the very same row. The removal branch would
-                // therefore never run, so poke the bits in directly and hold the branch
-                // to its contract - it deletes the key from the root, which is the one
-                // thing that must not happen by accident.
-                tombstoneEveryPartition();
-                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
-                        + "('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0), "
-                        + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
-                        + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
-                assertDirtySetsClearedByPublish();
-                assertHeadRootPartitionCount(0);
-            }
-        });
-    }
+        // Recording the removals is what opens the door.
+        incremental.retainPartitions(null, null, true);
+        Assert.assertTrue(incremental.isRetained);
 
-    @Test
-    public void testARepeatedKeyEntersTheDirtySetOncePerCadence() throws Exception {
-        // Four rows per boundary, as in the case below, so a commit smaller than that
-        // refreshes without sealing and the marks a cadence made stay readable.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
-        assertMemoryLeak(() -> {
-            createView(
-                    NOON_ANCHOR,
-                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
-                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
-                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
-                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
-            );
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                assertDirtySetsClearedByPublish();
-
-                // Three rows, one key, inside one cadence. The dirty set names the key
-                // once, and the marks it costs are one rather than three: a repeat row
-                // reads the cadence off the anchor value processRow has already loaded
-                // and never serializes the key into the second map at all.
-                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
-                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
-                        + "('2026-01-01T11:00:05.000000Z', 'acct-1', 2.0), "
-                        + "('2026-01-01T11:00:06.000000Z', 'acct-1', 3.0)", job);
-                Assert.assertEquals(1, anchorWindow().getCheckpointDirtyAnchorMapSize());
-                Assert.assertEquals(
-                        "a repeat row must not enter its key into the dirty set again",
-                        1,
-                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
-                );
-
-                // The fourth row crosses the boundary and seals, which empties the dirty
-                // set. The cadence has to move on with it: a key whose anchor entry still
-                // carried the sealed cadence would skip its mark for good, and the next
-                // incremental seal would publish a root missing it.
-                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 4.0)", job);
-                assertDirtySetsClearedByPublish();
-
-                final long marksAfterSeal = anchorWindow().getCheckpointDirtyMarkCount();
-                commit("('2026-01-01T11:00:08.000000Z', 'acct-1', 5.0)", job);
-                Assert.assertEquals(
-                        "the first row of a new cadence must enter its key again",
-                        1,
-                        anchorWindow().getCheckpointDirtyAnchorMapSize()
-                );
-                Assert.assertEquals(
-                        1,
-                        anchorWindow().getCheckpointDirtyMarkCount() - marksAfterSeal
-                );
-                assertViewMatchesRecompute(NOON_ANCHOR);
-            }
-
-            // ...and the key the second cadence named has to reach the durable root, which
-            // is what says the skipped marks cost the seal nothing.
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute(NOON_ANCHOR);
-            }
-        });
+        // A function already committed to a complete freeze needs no door: the freeze
+        // walks its whole map and finds the dropped keys on its own.
+        final RetainingFunctionStub fullScan = new RetainingFunctionStub(true);
+        fullScan.retainPartitions(null, null, false);
+        Assert.assertTrue(fullScan.isRetained);
     }
 
     @Test
     public void testTheCadenceCounterWrappingStillNamesEveryTouchedKey() throws Exception {
-        // Four rows per boundary, as in the cases around it.
+        // Four rows per boundary, as in testARepeatedKeyEntersTheDirtySetOncePerCadence and
+        // testTouchedKeysAreTheOnlyDirtyStateBetweenSeals.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
         assertMemoryLeak(() -> {
             createView(
@@ -1122,6 +969,94 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    /**
+     * The same fail-safe {@link #testRetentionWithoutRemovalTrackingCannotStayIncremental} holds,
+     * one step earlier, at the hook the sweep calls per evicted key. A partitioned function that
+     * offers everything but the marking - a tombstone slot and a scratch-map factory, with a
+     * markPartitionAlive that names nothing - must have the hook decline for it, because the
+     * dirty set it would otherwise build names none of the keys the function's own rows moved.
+     */
+    @Test
+    public void testTheSweepCannotStartDirtyTrackingOnItsOwn() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final NonMarkingFunctionStub function = new NonMarkingFunctionStub();
+            try {
+                // The state a published seal leaves behind, and the only state an
+                // incremental freeze can build on at all.
+                function.onCheckpointPersisted(0, 7);
+                Assert.assertFalse(function.isCheckpointFullScanRequired());
+
+                record.value = 1;
+                Assert.assertFalse(
+                        "a function that names no touched key must decline the eviction hook",
+                        function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
+                );
+                Assert.assertNull(
+                        "declining must leave no dirty set for the seal to read",
+                        function.getCheckpointDirtyPartitionMap()
+                );
+
+                // The same function once it does mark, which is what says the guard reads
+                // the tracking rather than refusing outright.
+                function.markDirty(record);
+                Assert.assertEquals(1, function.getCheckpointDirtyPartitionMap().size());
+                record.value = 2;
+                Assert.assertTrue(
+                        function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
+                );
+                Assert.assertEquals(2, function.getCheckpointDirtyPartitionMap().size());
+            } finally {
+                function.reset();
+            }
+
+            // reset() hands the dirty set back, so the tracking has to go with it: a rebound
+            // cursor earns it again through the marking or not at all.
+            Assert.assertNull(function.getCheckpointDirtyPartitionMap());
+            Assert.assertFalse(
+                    "reset() must take the tracking with the map it freed",
+                    function.markCheckpointPartitionEvicted(record, LongKeyRecordStub.SINK)
+            );
+            function.reset();
+        });
+    }
+
+    @Test
+    public void testTombstonedTouchedKeyIsRemovedFromTheRoot() throws Exception {
+        // Four rows per boundary, so the seed seals and the batch below is one boundary.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            // A residual function, because the removal branch this case holds to its
+            // contract is the per-function one - see createUnfusedView.
+            createUnfusedView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(4);
+
+                // No supported path leaves a tombstone standing at a seal: resetPartition
+                // is the only writer of the bit, and processRow cancels it through
+                // markPartitionAlive on the very same row. The removal branch would
+                // therefore never run, so poke the bits in directly and hold the branch
+                // to its contract - it deletes the key from the root, which is the one
+                // thing that must not happen by accident.
+                tombstoneEveryPartition();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertHeadRootPartitionCount(0);
             }
         });
     }
@@ -1187,6 +1122,84 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 );
             }
         });
+    }
+
+    @Test
+    public void testUnrelatedDirtyAnchorKeyMissingAfterASweepStillFails() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
+
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                assertEvictionMarkerCount(3);
+
+                // One of the three keys the sweep dropped loses its provenance while the
+                // other two keep theirs. A sweep-wide "something was evicted" flag would
+                // wave this one through and publish a root missing an entry no sweep took
+                // out; the per-key marker is what makes it a hard error.
+                Assert.assertEquals(1, anchorWindow().clearCheckpointEvictionMarkers(1));
+                Assert.assertEquals(2, anchorWindow().getCheckpointEvictionMarkerCount());
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
+                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
+                Assert.assertTrue(
+                        "a dirty anchor key missing without its own marker must fail the seal",
+                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testUnrelatedDirtyFunctionKeyMissingAfterASweepStillFails() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            // A residual function, because its own dirty map is what this case breaks -
+            // see createUnfusedView.
+            createUnfusedView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
+
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+
+                // The same break, one channel over: the anchor keeps every marker it
+                // recorded and freezes cleanly, so the raise has to come from the function.
+                Assert.assertTrue(clearFunctionEvictionMarkers() > 0);
+                Assert.assertEquals(
+                        "the anchor's own markers must be untouched",
+                        3,
+                        anchorWindow().getCheckpointEvictionMarkerCount()
+                );
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-1', 3.0), "
+                        + "('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
+                Assert.assertTrue(
+                        "a dirty partition key missing without its own marker must fail the seal",
+                        viewInstance().getCheckpointSealFailures() > sealFailuresBefore
+                );
+            }
+        });
+    }
+
+    private static void assertPartitionCount(
+            String what,
+            int expected,
+            LiveViewCheckpointPartitionMapReader partitions,
+            LiveViewCheckpointPageRef partitionMapRoot
+    ) {
+        final int[] count = {0};
+        partitions.iterateAll(partitionMapRoot, partition -> count[0]++);
+        Assert.assertEquals(what + " partition count", expected, count[0]);
     }
 
     private static Path checkpointsDir(LiveViewInstance instance) {
@@ -1400,17 +1413,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 Assert.assertTrue("the view declares per-partition checkpoint state", stateRoots > 0);
             }
         }
-    }
-
-    private static void assertPartitionCount(
-            String what,
-            int expected,
-            LiveViewCheckpointPartitionMapReader partitions,
-            LiveViewCheckpointPageRef partitionMapRoot
-    ) {
-        final int[] count = {0};
-        partitions.iterateAll(partitionMapRoot, partition -> count[0]++);
-        Assert.assertEquals(what + " partition count", expected, count[0]);
     }
 
     /**
@@ -1733,6 +1735,31 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * The key capacity the anchor's dirty set and every dirty-tracking function's
+     * currently retain, in a fixed order so two readings compare directly. Capacity, not
+     * size: a publication empties these maps either way, and what the sweep leaves behind
+     * is the backing they hold on to.
+     */
+    private LongList readDirtySetKeyCapacities() {
+        final LongList out = new LongList();
+        out.add(anchorWindow().getCheckpointDirtyAnchorMapKeyCapacity());
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (function.isWindowStateOwned()) {
+                continue;
+            }
+            final Map dirty = function.getCheckpointDirtyPartitionMap();
+            if (dirty == null) {
+                continue;
+            }
+            out.add(dirty.getKeyCapacity());
+        }
+        Assert.assertTrue("no window function tracks dirty partitions", out.size() > 1);
+        return out;
+    }
+
+    /**
      * Copies the two newest logical boundaries of the published generation into
      * {@code headOut} and {@code predecessorOut}, so a case can name a root the
      * refresh job would never select on its own.
@@ -1761,31 +1788,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 );
             }
         }
-    }
-
-    /**
-     * The key capacity the anchor's dirty set and every dirty-tracking function's
-     * currently retain, in a fixed order so two readings compare directly. Capacity, not
-     * size: a publication empties these maps either way, and what the sweep leaves behind
-     * is the backing they hold on to.
-     */
-    private LongList readDirtySetKeyCapacities() {
-        final LongList out = new LongList();
-        out.add(anchorWindow().getCheckpointDirtyAnchorMapKeyCapacity());
-        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowFunction function = functions.getQuick(i);
-            if (function.isWindowStateOwned()) {
-                continue;
-            }
-            final Map dirty = function.getCheckpointDirtyPartitionMap();
-            if (dirty == null) {
-                continue;
-            }
-            out.add(dirty.getKeyCapacity());
-        }
-        Assert.assertTrue("no window function tracks dirty partitions", out.size() > 1);
-        return out;
     }
 
     /**

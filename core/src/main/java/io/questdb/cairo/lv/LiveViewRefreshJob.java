@@ -4243,8 +4243,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // logically truncates rows above replayLowTs, so the
                         // counter rewinds in step with the table.
                         instance.setLvRowsTotal(anchorLvRowPosition);
-                        Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
+                        // Rows leave the window in the window factory's shape; the
+                        // output projection turns them into the view's own schema,
+                        // which is what the copier was generated for. Drive the
+                        // projected cursor rather than the window one - it is what
+                        // advances the projection's per-row memoization before the
+                        // record is read. Without the wrap the copier reads the
+                        // window's own columns positionally, so a projected view
+                        // silently stores a different window column in each of its
+                        // computed columns. wrapWindowOutput does not rewind and
+                        // returns windowCursor itself when the view has no
+                        // projection, so the unprojected replay is unchanged.
+                        final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                        Record outRecord = outCursor.getRecord();
+                        while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                 replayMaxTs = ts;
@@ -4851,7 +4863,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         .skipRows(repairSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                             }
                             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-                            while (windowCursor.hasNext()) {
+                            // Drive the projected cursor rather than the window one - it is
+                            // what advances the projection's per-row memoization before the
+                            // record is read. Nothing else invalidates a memoizer's cache:
+                            // wrapWindowOutput's of() re-inits the functions but leaves the
+                            // cached value valid, so the replay would emit the value the
+                            // preceding drain left behind for every row it re-emits.
+                            while (outCursor.hasNext()) {
                                 // The turn budget below ends a localized repair, but only a
                                 // localized one: an unlocalized rebuild recomputes the whole
                                 // view in this loop and may not yield, so the breaker is the

@@ -54,6 +54,21 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDesignatedTimestampFilterRejectSurvivesAProjection() throws Exception {
+        // A WHERE on the designated timestamp compiles into an interval scan whose
+        // predicate lives in the frame cursor rather than in a residual filter Function.
+        // The refresh path applies only the residual filter, so every base row would slip
+        // through. The projection above the window does not change that.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertRejected(
+                    "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS c FROM base WHERE ts > '2026-08-07'",
+                    "live view select cannot filter on the designated timestamp yet"
+            );
+        });
+    }
+
+    @Test
     public void testMultiPassWindowRejectSurvivesAProjection() throws Exception {
         // The multi-pass gate looks at the node the window is expected at. With a
         // projection on top, the cached factory sits one level down, and a root-only check
@@ -238,21 +253,6 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
             assertRejected(
                     "SELECT ts, sym, row_number() OVER (PARTITION BY sym ORDER BY ts) + 1 AS c FROM base",
                     "live view unbounded window must have an ANCHOR clause"
-            );
-        });
-    }
-
-    @Test
-    public void testDesignatedTimestampFilterRejectSurvivesAProjection() throws Exception {
-        // A WHERE on the designated timestamp compiles into an interval scan whose
-        // predicate lives in the frame cursor rather than in a residual filter Function.
-        // The refresh path applies only the residual filter, so every base row would slip
-        // through. The projection above the window does not change that.
-        assertMemoryLeak(() -> {
-            createBase();
-            assertRejected(
-                    "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS c FROM base WHERE ts > '2026-08-07'",
-                    "live view select cannot filter on the designated timestamp yet"
             );
         });
     }

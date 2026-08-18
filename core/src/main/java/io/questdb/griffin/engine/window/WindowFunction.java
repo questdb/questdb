@@ -148,9 +148,9 @@ public interface WindowFunction extends Function {
      * Absorbs one row into this function's accumulator, which lives in the group's
      * fused map value rather than in a map of its own.
      * <p>
-     * Called once per row by whichever runtime owns the group's map -
-     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} is the only one today - and
-     * only on the one function the plan chose as a component's <b>contributor</b>.
+     * Called once per row by {@link WindowMapState#computeNext(Record)}, the runtime that
+     * owns the group's map, and only on the one function the plan chose as a component's
+     * <b>contributor</b>.
      * Every other projection on the same component reads the state this call updates
      * and writes nothing, which is what stops {@code sum(x)} beside {@code avg(x)}
      * counting the row twice.
@@ -809,12 +809,13 @@ public interface WindowFunction extends Function {
      * Materializes this output's current value from the group's fused map value, so the
      * getters can answer without a map probe of their own.
      * <p>
-     * Called once per row by whichever runtime owns the group's map -
-     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} is the only one today - on
-     * every projection of the group and after every contributor has run. Running it
-     * there rather than from {@code computeNext} is what removes the ordering dependency
-     * on the SELECT list: the accumulators are whole before the first output reads one,
-     * however the outputs happen to be ordered.
+     * Called once per row by the runtime that owns the group's map -
+     * {@link WindowMapState#computeNext(Record)}, or {@link WindowMapState#projectPass2(Record)}
+     * for a two-pass group - on every projection of the group and after every contributor
+     * has run. Running it from the group's owner rather than from this function's own
+     * {@link #computeNext(Record)} is what removes the ordering dependency on the SELECT
+     * list: the accumulators are whole before the first output reads one, however the
+     * outputs happen to be ordered.
      * <p>
      * {@code record} is the base row the value was loaded for. Almost every projection
      * ignores it and reads the slots alone; the one that does not is a

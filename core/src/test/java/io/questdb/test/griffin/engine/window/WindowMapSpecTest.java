@@ -78,6 +78,26 @@ public class WindowMapSpecTest {
     private static final ObjectPool<ExpressionNode> NODES = new ObjectPool<>(ExpressionNode.FACTORY, 16);
 
     @Test
+    public void testAPartitionTermThisBuildCannotNameDeclines() throws SqlException {
+        // A node kind the identity does not name. Each of these could be given one later, and
+        // none of them can be given one by omission - so the window forms no group and its
+        // functions keep the maps they own outside one.
+        Assert.assertNull(spec(builder().partitionBy(node(ExpressionNode.BIND_VARIABLE, "$1"))));
+        Assert.assertNull(spec(builder().partitionBy(node(ExpressionNode.QUERY, "select"))));
+        // A name that resolves to no column of the metadata the term was compiled against.
+        Assert.assertNull(spec(builder().partitionBy(literal("absent"))));
+        // A tree this build renders perfectly well, whose compiled function answers a
+        // different partition on every evaluation. Sharing one evaluation between two calls
+        // would be a different query, so the term declines on the function rather than on the
+        // tree.
+        Assert.assertNull(spec(builder().partitionBy(
+                node(ExpressionNode.FUNCTION, "rnd_int"),
+                new RandomStub(),
+                ColumnType.INT
+        )));
+    }
+
+    @Test
     public void testAnExpressionOrderTermDeclines() throws SqlException {
         // The term resolves to no base column, and two windows ordered by two expressions
         // nothing compared must not be read as ordered alike.
@@ -122,26 +142,6 @@ public class WindowMapSpecTest {
         Assert.assertNull(column.getPartitionByFunctions());
         Assert.assertEquals("#" + COLUMN_K + ":" + ColumnType.VARCHAR, column.getPartitionKeyIdentity());
         Assert.assertFalse(column.isSameSpec(left));
-    }
-
-    @Test
-    public void testAPartitionTermThisBuildCannotNameDeclines() throws SqlException {
-        // A node kind the identity does not name. Each of these could be given one later, and
-        // none of them can be given one by omission - so the window forms no group and its
-        // functions keep the maps they own outside one.
-        Assert.assertNull(spec(builder().partitionBy(node(ExpressionNode.BIND_VARIABLE, "$1"))));
-        Assert.assertNull(spec(builder().partitionBy(node(ExpressionNode.QUERY, "select"))));
-        // A name that resolves to no column of the metadata the term was compiled against.
-        Assert.assertNull(spec(builder().partitionBy(literal("absent"))));
-        // A tree this build renders perfectly well, whose compiled function answers a
-        // different partition on every evaluation. Sharing one evaluation between two calls
-        // would be a different query, so the term declines on the function rather than on the
-        // tree.
-        Assert.assertNull(spec(builder().partitionBy(
-                node(ExpressionNode.FUNCTION, "rnd_int"),
-                new RandomStub(),
-                ColumnType.INT
-        )));
     }
 
     @Test

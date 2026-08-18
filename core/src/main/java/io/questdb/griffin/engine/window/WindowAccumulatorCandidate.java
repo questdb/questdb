@@ -39,13 +39,13 @@ import org.jetbrains.annotations.Nullable;
  * a {@code count(k)} over the very column its window partitions by is a
  * {@link WindowAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY guarded} reading of a
  * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} component rather than a counter of
- * its own. Splitting that walk across the two owners is how the two would come to disagree
- * about which calls fuse, so both ask here.
+ * its own. Resolving that walk in one place is what keeps every caller agreeing about which
+ * calls fuse.
  * <p>
- * What stays with each owner is what it means to be eligible in the first place - an
- * ordinary query asks for a private partition map to replace, a live view asks for anchored,
- * inline-budget checkpoint state - and what the group is keyed by, which is the
- * {@link PartitionKeyGuard} the caller supplies. Neither is a fact about the accumulator.
+ * What stays with the caller is what it means to be eligible in the first place - an ordinary
+ * query asks for a private partition map to replace - and what the group is keyed by, which
+ * is the {@link PartitionKeyGuard} the caller supplies. Neither is a fact about the
+ * accumulator.
  */
 public final class WindowAccumulatorCandidate {
     private final WindowAccumulatorDescriptor component;
@@ -217,10 +217,9 @@ public final class WindowAccumulatorCandidate {
      * only of a {@code count} whose argument type could carry the guard, and only where the
      * group already holds a row-count host.
      * <p>
-     * The two owners prove it from different places - an ordinary query from the
-     * {@link WindowMapSpec} it bucketed the group by, a live view from the key layout and the
-     * PARTITION BY functions each function carries - which is why it is asked rather than
-     * derived.
+     * The caller proves it from wherever it holds the group's key - an ordinary query from
+     * the {@link WindowMapSpec} it bucketed the group by - which is why the candidate asks
+     * for the answer rather than deriving it.
      */
     @FunctionalInterface
     public interface PartitionKeyGuard {

@@ -10254,12 +10254,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // may share one partition map, which is what the shadow plan built
                         // after this loop works out.
                         //
-                        // Not for a live-view compile. A compatible live-view function is
-                        // already owned by LiveViewWindow, through the plan built a few
-                        // lines below this loop, and binding it to a second generic owner
-                        // would create two sources of truth for one accumulator. Unifying
-                        // the two owners is a later refactor, not an implicit side effect
-                        // of compiling a second plan beside the first.
+                        // Not for a live-view compile. A live-view function keeps its
+                        // accumulator in its own private partition map, which
+                        // LiveViewWindow.processRow resets on an anchor cross and the
+                        // checkpoint framework freezes and restores. Binding that function
+                        // into a group leaves the private map closed, so both would then
+                        // drive state nothing maintains.
                         if (windowMapSpecs != null) {
                             windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                                     executionContext.getWindowContext(),
@@ -10510,9 +10510,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
             // the spec of a function a sort group collected.
             //
-            // Not for a live-view compile, for the same reason the streaming path skips it: a
-            // compatible live-view function is already owned by LiveViewWindow, and one
-            // accumulator may have one owner.
+            // Not for a live-view compile. The guard is defensive - validateLiveViewFactory
+            // rejects at CREATE every shape that compiles to a cached factory - and it holds
+            // for the same reason the streaming path skips the capture: binding a live-view
+            // function into a group leaves closed the private partition map that
+            // LiveViewWindow and the checkpoint framework drive.
             final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
             final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
             final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;

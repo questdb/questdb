@@ -1242,6 +1242,19 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
     }
 
+    /**
+     * False: {@link #setUpStatic} pins this class's {@code MillisecondClock} to
+     * {@code MillisecondClockImpl.INSTANCE}, so the storage engine's spin deadlines measure real
+     * time here no matter how far the soaks fast-forward the microsecond clock. That keeps
+     * {@link AbstractLiveViewTest#setUp} from raising {@code spinLockTimeout} past a simulated year,
+     * which would cost this class - the only live view suite running readers against a real clock -
+     * its 5s reader-side "Transaction read timeout" and leave only the 20-minute class timeout.
+     */
+    @Override
+    protected boolean isMillisecondClockSimulated() {
+        return false;
+    }
+
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
         TableWriter.Row row = walWriter.newRow(ts);
         if (symIdx < 0) {

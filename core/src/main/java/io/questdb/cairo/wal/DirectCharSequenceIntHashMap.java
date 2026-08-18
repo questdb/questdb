@@ -278,6 +278,15 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     /**
+     * Returns whether the key buffer can represent one more entry for {@code key}.
+     */
+    public boolean hasKeyCapacity(@NotNull CharSequence key) {
+        final long requiredCapacity = (((long) key.length() << 1) + 11) & ~3L;
+        final long currentCapacity = (long) currentOffset << 2;
+        return requiredCapacity <= maxKeyBufferCapacity - currentCapacity;
+    }
+
+    /**
      * Returns the index of a free slot where this key can be placed.
      * Returns the negative offset of the key if it's already present.
      *
@@ -338,15 +347,6 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     /**
-     * Returns whether the key buffer can represent one more entry for {@code key}.
-     */
-    public boolean hasKeyCapacity(@NotNull CharSequence key) {
-        final long requiredCapacity = (((long) key.length() << 1) + 11) & ~3L;
-        final long currentCapacity = (long) currentOffset << 2;
-        return requiredCapacity <= maxKeyBufferCapacity - currentCapacity;
-    }
-
-    /**
      * Inserts or overwrites {@code key} with {@code value}.
      */
     public void put(@NotNull CharSequence key, int value) {
@@ -366,22 +366,6 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         if (!tryPutAt(index, key, value, hashCode)) {
             throw CairoException.nonCritical().put("maximum direct map key storage exceeded");
         }
-    }
-
-    /**
-     * Inserts a key using a previously calculated slot, unless the key buffer's
-     * 32-bit word offsets can no longer represent the result.
-     *
-     * @return true when the key was inserted, false when it would exceed the
-     * maximum representable key-buffer offset
-     */
-    public boolean tryPutAt(int index, @NotNull CharSequence key, int value, int hashCode) {
-        if (!hasKeyCapacity(key)) {
-            return false;
-        }
-        final int offset = this.writeKey(key, value);
-        putAt0(index, offset, hashCode);
-        return true;
     }
 
     /**
@@ -426,6 +410,22 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public int size() {
         return size;
+    }
+
+    /**
+     * Inserts a key using a previously calculated slot, unless the key buffer's
+     * 32-bit word offsets can no longer represent the result.
+     *
+     * @return true when the key was inserted, false when it would exceed the
+     * maximum representable key-buffer offset
+     */
+    public boolean tryPutAt(int index, @NotNull CharSequence key, int value, int hashCode) {
+        if (!hasKeyCapacity(key)) {
+            return false;
+        }
+        final int offset = this.writeKey(key, value);
+        putAt0(index, offset, hashCode);
+        return true;
     }
 
     /**

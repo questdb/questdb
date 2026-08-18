@@ -115,13 +115,13 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     // and the slice's address and read cursor move with it.
     private static final String NATURAL_RANGE_FRAME_WINDOW =
             " from t window w as (partition by k order by ts "
-                    + "range between 3000000 microseconds preceding and current row)";
+                    + "range between 3_000_000 microseconds preceding and current row)";
     private static final String NATURAL_LAGGING_RANGE_FRAME_WINDOW =
             " from t window w as (partition by k order by ts "
-                    + "range between 5000000 microseconds preceding and 2000000 microseconds preceding)";
+                    + "range between 5_000_000 microseconds preceding and 2_000_000 microseconds preceding)";
     private static final String NATURAL_UNBOUNDED_LO_RANGE_FRAME_WINDOW =
             " from t window w as (partition by k order by ts "
-                    + "range between unbounded preceding and 2000000 microseconds preceding)";
+                    + "range between unbounded preceding and 2_000_000 microseconds preceding)";
     // A whole-partition window that needs a sort of its own, so its two-pass group runs inside
     // a sort group's traversal rather than in the natural-order loops. The same ORDER BY as
     // ORDERED_WINDOW, which is what puts the two in one sort bucket.
@@ -142,6 +142,55 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
             + "p as (partition by k order by ts desc rows between unbounded preceding and unbounded following)";
 
     @Test
+    public void testABoundedRangeSumAnswersTheSameOnBothCursors() throws Exception {
+        // Not a fusion assertion, and here because no fusion assertion can be one. Every other
+        // comparison in this class holds the fused arm against the unfused arm of the same cursor,
+        // so a shape that answered wrongly on both would pass all of them - and a bounded RANGE
+        // {@code sum} did exactly that: the two sum classes over a RANGE frame inherited the avg
+        // class's pass1, which writes the average, and pass1 is what the cached cursors call and
+        // the streaming one does not. The reference here is therefore the other cursor.
+        //
+        // Both spellings, because the omission was in both: the partitioned class this box fuses
+        // and the unpartitioned one beside it, which owns no map and joins no group.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            final String window = " window w as (partition by k order by ts "
+                    + "range between 3_000_000 microseconds preceding and current row), "
+                    + "u as (order by ts range between 3_000_000 microseconds preceding and current row)";
+            final String outputs = "sum(x) over w, avg(x) over w, sum(x) over u, avg(x) over u";
+            final String streamingSql = "select ts, " + outputs + " from t" + window;
+            // The two arms are a reference for each other only while they land on different
+            // cursors, and nothing about the readings themselves says they did. Were a change to
+            // what declines the streaming fast path to move this arm onto a cached cursor, the
+            // comparison below would hold a cached reading against another cached reading and
+            // pass with the cross-cursor property it exists to check no longer under it.
+            assertIsStreamingCursor(streamingSql);
+            final String streaming = WindowMapStateTest.render(streamingSql);
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                for (int fusion = 0; fusion < 2; fusion++) {
+                    setProperty(
+                            PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED,
+                            fusion == 0 ? "true" : "false"
+                    );
+                    // FORCING_CALL is what moves the same SELECT list onto a cached cursor; its
+                    // own column is dropped from the comparison by taking the streaming reference
+                    // without it and the cached one with it in front.
+                    final String cachedSql = "select ts, " + FORCING_CALL + " forced, " + outputs + " from t" + window;
+                    assertCachedFactoryKind(cachedSql, light == 1);
+                    final String cached = WindowMapStateTest.render(cachedSql);
+                    Assert.assertEquals(
+                            "light=" + light + " fusion=" + fusion,
+                            WindowMapStateTest.body(streaming),
+                            dropSecondColumn(WindowMapStateTest.body(cached))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAFailedOpenLeavesNoGroupHoldingBacking() throws Exception {
         // The cached open allocates a record chain, a sort buffer and the group maps, and a
         // per-query breach can land on any of them. Whichever it lands on, the close the
@@ -158,7 +207,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        drain(cursor);
+                        WindowMapStateTest.drain(cursor);
                         Assert.fail("expected a per-query memory breach");
                     } catch (CairoException e) {
                         Assert.assertTrue(
@@ -174,7 +223,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(ROW_COUNT, drain(cursor));
+                    Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                 }
             }
         });
@@ -208,7 +257,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     final WindowMapState cumulative = otherState(groups, pass2State);
                     Assert.assertFalse(cumulative.isTwoPass());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = drain(cursor);
+                        final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
                         Assert.assertEquals(rows, cumulative.getLookupCount());
                         Assert.assertEquals(2 * rows, pass2State.getLookupCount());
@@ -252,7 +301,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertEquals(1, groups.getUnorderedPass2States().size());
                     Assert.assertSame(state, groups.getUnorderedPass2States().getQuick(0));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                         Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
                     }
                 }
@@ -269,7 +318,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertNull(groups.getForwardUnorderedStates());
                     Assert.assertNull(groups.getUnorderedPass2States());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                         Assert.assertEquals(2 * ROW_COUNT, state.getLookupCount());
                     }
                 }
@@ -432,55 +481,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testABoundedRangeSumAnswersTheSameOnBothCursors() throws Exception {
-        // Not a fusion assertion, and here because no fusion assertion can be one. Every other
-        // comparison in this class holds the fused arm against the unfused arm of the same cursor,
-        // so a shape that answered wrongly on both would pass all of them - and a bounded RANGE
-        // {@code sum} did exactly that: the two sum classes over a RANGE frame inherited the avg
-        // class's pass1, which writes the average, and pass1 is what the cached cursors call and
-        // the streaming one does not. The reference here is therefore the other cursor.
-        //
-        // Both spellings, because the omission was in both: the partitioned class this box fuses
-        // and the unpartitioned one beside it, which owns no map and joins no group.
-        assertMemoryLeak(() -> {
-            createTable();
-            insertRows();
-            final String window = " window w as (partition by k order by ts "
-                    + "range between 3000000 microseconds preceding and current row), "
-                    + "u as (order by ts range between 3000000 microseconds preceding and current row)";
-            final String outputs = "sum(x) over w, avg(x) over w, sum(x) over u, avg(x) over u";
-            final String streamingSql = "select ts, " + outputs + " from t" + window;
-            // The two arms are a reference for each other only while they land on different
-            // cursors, and nothing about the readings themselves says they did. Were a change to
-            // what declines the streaming fast path to move this arm onto a cached cursor, the
-            // comparison below would hold a cached reading against another cached reading and
-            // pass with the cross-cursor property it exists to check no longer under it.
-            assertIsStreamingCursor(streamingSql);
-            final String streaming = render(streamingSql);
-            for (int light = 0; light < 2; light++) {
-                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
-                for (int fusion = 0; fusion < 2; fusion++) {
-                    setProperty(
-                            PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED,
-                            fusion == 0 ? "true" : "false"
-                    );
-                    // FORCING_CALL is what moves the same SELECT list onto a cached cursor; its
-                    // own column is dropped from the comparison by taking the streaming reference
-                    // without it and the cached one with it in front.
-                    final String cachedSql = "select ts, " + FORCING_CALL + " forced, " + outputs + " from t" + window;
-                    assertCachedFactoryKind(cachedSql, light == 1);
-                    final String cached = render(cachedSql);
-                    Assert.assertEquals(
-                            "light=" + light + " fusion=" + fusion,
-                            body(streaming),
-                            dropSecondColumn(body(cached))
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testEveryWholePartitionShapeMatchesTheUnfusedPath() throws Exception {
         // The same differential over the two-pass families, in both bucket spellings and on
         // both factories. The references are the unfused whole-partition path: asked for on
@@ -575,7 +575,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertEquals(2, plan.getSlotCount());
                     Assert.assertTrue(plan.getProjection(2).isDerived());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = drain(cursor);
+                        final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
                         Assert.assertEquals(rows, state.getLookupCount());
                         Assert.assertEquals(rows, state.getContributorUpdateCount());
@@ -615,7 +615,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertEquals(2, state.getPlan().getComponentCount());
                     Assert.assertEquals(2, state.getPlan().getProjectionCount());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = drain(cursor);
+                        final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
                         Assert.assertEquals(rows, state.getLookupCount());
                     }
@@ -652,7 +652,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertFalse("the group allocated before a tracker was bound", state.isMapOpen());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(state.isMapOpen());
-                        final long rows = drain(cursor);
+                        final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
                         Assert.assertEquals(rows, state.getLookupCount());
                         Assert.assertEquals(2 * rows, state.getContributorUpdateCount());
@@ -666,7 +666,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     // to net to zero however many times the factory is re-executed.
                     for (int i = 0; i < 10; i++) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            Assert.assertEquals("iteration " + i, ROW_COUNT, drain(cursor));
+                            Assert.assertEquals("iteration " + i, ROW_COUNT, WindowMapStateTest.drain(cursor));
                             Assert.assertEquals(ROW_COUNT, state.getLookupCount());
                         }
                     }
@@ -749,7 +749,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             states.getQuick(0).getPlan().getSpec().isSameSpec(states.getQuick(1).getPlan().getSpec())
                     );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = drain(cursor);
+                        final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
                         Assert.assertEquals(rows, states.getQuick(1).getLookupCount());
                     }
@@ -774,7 +774,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
-                final String fused = render(orderedSumAndCount());
+                final String fused = WindowMapStateTest.render(orderedSumAndCount());
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
                 try (SqlCompiler compiler = engine.getSqlCompiler();
                      RecordCursorFactory factory = select(compiler, orderedSumAndCount(), sqlExecutionContext)) {
@@ -784,7 +784,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertEquals(2, groups.getPlans().getQuick(0).getComponentCount());
                     Assert.assertEquals(0, groups.getStates().size());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                         final ObjList<WindowFunction> functions = windowFunctions(factory);
                         Assert.assertEquals(2, functions.size());
                         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -797,7 +797,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         }
                     }
                 }
-                Assert.assertEquals(fused, render(orderedSumAndCount()));
+                Assert.assertEquals(fused, WindowMapStateTest.render(orderedSumAndCount()));
             }
         });
     }
@@ -816,7 +816,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
-                final String fused = render(sql);
+                final String fused = WindowMapStateTest.render(sql);
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
                 try (SqlCompiler compiler = engine.getSqlCompiler();
                      RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
@@ -825,7 +825,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertEquals(1, groups.getPlans().size());
                     Assert.assertEquals(0, groups.getStates().size());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        Assert.assertEquals(ROW_COUNT, drain(cursor));
+                        Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                         final ObjList<WindowFunction> functions = windowFunctions(factory);
                         Assert.assertEquals(2, functions.size());
                         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -838,7 +838,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         }
                     }
                 }
-                Assert.assertEquals(fused, render(sql));
+                Assert.assertEquals(fused, WindowMapStateTest.render(sql));
             }
         });
     }
@@ -870,7 +870,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertEquals(2, plan.getSlotCount());
                     Assert.assertTrue(plan.getProjection(2).isDerived());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = drain(cursor);
+                        final long rows = WindowMapStateTest.drain(cursor);
                         Assert.assertEquals(ROW_COUNT, rows);
                         // Two probes a row rather than one, because the group looks its key up
                         // once in each traversal - against the six the three unfused functions
@@ -959,13 +959,17 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         for (int i = 0; i < outputs.length; i++) {
             final String reference = "select ts" + lead + ", " + outputs[i] + window;
             assertIsBound(reference, false);
-            references[i] = body(render(reference));
+            references[i] = WindowMapStateTest.body(WindowMapStateTest.render(reference));
         }
-        final String expected = zipLastColumns(references);
+        final String expected = WindowMapStateTest.zipLastColumns(references);
         // A comparison of two empty renderings would pass and prove nothing, and every way the
         // helpers above could go wrong ends in one.
         Assert.assertFalse("the references produced no rows", expected.trim().isEmpty());
-        Assert.assertEquals(fused.toString(), expected, body(render(fused.toString())));
+        Assert.assertEquals(
+                fused.toString(),
+                expected,
+                WindowMapStateTest.body(WindowMapStateTest.render(fused.toString()))
+        );
     }
 
     private static void assertIsBound(String sql, boolean bound) throws SqlException {
@@ -999,16 +1003,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     root instanceof WindowRecordCursorFactory
             );
         }
-    }
-
-    /**
-     * Everything after the header. The queries carry different column aliases - {@code count}
-     * alone versus {@code count} beside {@code count1} - and the header is not what the
-     * comparison is about.
-     */
-    private static String body(String rendered) {
-        final int lineEnd = rendered.indexOf('\n');
-        return lineEnd < 0 ? "" : rendered.substring(lineEnd + 1);
     }
 
     /**
@@ -1048,14 +1042,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         return root;
     }
 
-    private static long drain(RecordCursor cursor) {
-        long rows = 0;
-        while (cursor.hasNext()) {
-            rows++;
-        }
-        return rows;
-    }
-
     private static CachedWindowMapGroups groups(RecordCursorFactory factory) {
         final RecordCursorFactory root = cachedFactory(factory);
         return root instanceof CachedWindowRecordCursorFactory f
@@ -1074,7 +1060,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     private static String plan(String sql) throws SqlException {
-        return render("explain " + sql);
+        return WindowMapStateTest.render("explain " + sql);
     }
 
     /**
@@ -1086,12 +1072,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         sink.put(record.getTimestamp(0)).put('\t');
         sink.put(record.getDouble(1)).put('\t');
         sink.put(record.getLong(2)).put('\n');
-    }
-
-    private static String render(String sql) throws SqlException {
-        final StringSink localSink = new StringSink();
-        printSql(sql, localSink);
-        return localSink.toString();
     }
 
     private static String reverseLines(String text) {
@@ -1111,43 +1091,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         return root instanceof CachedWindowRecordCursorFactory f
                 ? f.getAllWindowFunctions()
                 : ((CachedWindowLightRecordCursorFactory) root).getAllWindowFunctions();
-    }
-
-    /**
-     * Glues the last column of every reference onto the first one's rows, which is the fused
-     * query's row when they all carry the same leading columns - asserted here rather than
-     * assumed, since a mismatch there would silently weaken every comparison.
-     */
-    private static String zipLastColumns(String[] bodies) {
-        final String[][] rows = new String[bodies.length][];
-        for (int i = 0; i < bodies.length; i++) {
-            rows[i] = bodies[i].split("\n", -1);
-            Assert.assertEquals("reference row counts differ", rows[0].length, rows[i].length);
-        }
-        final StringBuilder out = new StringBuilder();
-        for (int r = 0; r < rows[0].length; r++) {
-            if (r > 0) {
-                out.append('\n');
-            }
-            final int split = rows[0][r].lastIndexOf('\t');
-            if (rows[0][r].isEmpty()) {
-                for (int i = 1; i < rows.length; i++) {
-                    Assert.assertTrue(rows[i][r].isEmpty());
-                }
-                continue;
-            }
-            out.append(rows[0][r]);
-            for (int i = 1; i < rows.length; i++) {
-                final int otherSplit = rows[i][r].lastIndexOf('\t');
-                Assert.assertEquals(
-                        "reference rows are not aligned",
-                        rows[0][r].substring(0, split),
-                        rows[i][r].substring(0, otherSplit)
-                );
-                out.append('\t').append(rows[i][r], otherSplit + 1, rows[i][r].length());
-            }
-        }
-        return out.toString();
     }
 
     /**

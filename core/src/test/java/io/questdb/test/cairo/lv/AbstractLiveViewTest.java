@@ -142,17 +142,25 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        // The tests hand-drive the clock, and CairoTestConfiguration derives the millisecond clock
-        // the engine's spin deadlines run on from that same simulated clock. So a soak whose refresh
-        // driver advances the clock by CLOCK_ADVANCE_MICROS per tick, on its own thread, fast-forwards
-        // every concurrent reader's deadline with it: a reader that loses one benign race in
-        // TableReader.readTxnSlow - the writer commits between its txn read and its scoreboard acquire -
-        // re-checks a deadline the driver has already blown by tens of simulated seconds and throws
-        // "Transaction read timeout" milliseconds after entering the loop. Raising the budget past any
-        // span a test can simulate takes the simulated clock out of the spin loops. It costs no real
-        // liveness cover: the clock is simulated, so the timeout never measured real time here anyway,
-        // and AbstractTest's JUnit timeout rule still fails a genuinely stuck reader.
-        spinLockTimeout = 365L * 24 * 60 * 60 * 1000; // a simulated year
+        if (isMillisecondClockSimulated()) {
+            // These tests hand-drive the clock, and CairoTestConfiguration derives the millisecond clock
+            // the engine's spin deadlines run on from that same simulated clock. So a soak whose refresh
+            // driver advances the clock by CLOCK_ADVANCE_MICROS per tick, on its own thread, fast-forwards
+            // every concurrent reader's deadline with it: a reader that loses one benign race in
+            // TableReader.readTxnSlow - the writer commits between its txn read and its scoreboard acquire -
+            // re-checks a deadline the driver has already blown by tens of simulated seconds and throws
+            // "Transaction read timeout" milliseconds after entering the loop. Raising the budget past any
+            // span such a test can simulate takes the simulated clock out of the spin loops. It costs no
+            // real liveness cover THERE: the clock is simulated, so the deadline never measured real time
+            // in the first place, and AbstractCairoTest's 20-minute JUnit timeout rule still fails a
+            // genuinely stuck reader.
+            //
+            // isMillisecondClockSimulated() scopes the raise, because that argument is false for a
+            // subclass that pins the production wall clock instead: there the deadline measures real
+            // time, so raising it would trade a 5s reader-side "Transaction read timeout" naming the
+            // stalled table for the 20-minute class timeout - 240x coarser, with no reader diagnostic.
+            spinLockTimeout = 365L * 24 * 60 * 60 * 1000; // a simulated year
+        }
     }
 
     /**
@@ -216,6 +224,21 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             Assert.fail("seed of live view '" + viewName + "' did not complete within "
                     + SEED_COMPLETION_PASSES + " passes; the view is still SEEDING");
         }
+    }
+
+    /**
+     * Whether the millisecond clock this test's engine reads - the clock the storage engine measures
+     * every spin deadline against - is the simulated one the tests hand-drive through
+     * {@code setCurrentMicros}, rather than the production wall clock.
+     * <p>
+     * True by default, because {@link io.questdb.test.cairo.CairoTestConfiguration} derives its
+     * millisecond clock from the same microsecond clock {@code setCurrentMicros} moves. A subclass
+     * that installs a real {@code MillisecondClock} of its own must override this and return false:
+     * {@link #setUp} then leaves it {@link io.questdb.test.AbstractCairoTest#DEFAULT_SPIN_LOCK_TIMEOUT},
+     * which on a real clock is genuine liveness cover rather than an artifact of the simulated one.
+     */
+    protected boolean isMillisecondClockSimulated() {
+        return true;
     }
 
     /**
