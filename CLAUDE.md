@@ -12,13 +12,7 @@ time-series SQL extensions.
 
 ## Coding guidelines
 
-Java class members are grouped by kind (static vs. instance) and visibility, and
-sorted alphabetically. When adding new methods or fields, insert them in the
-correct alphabetical position among existing members of the same kind.
-
-Never insert `// ===` or `// ---` banner comments as section headings in any
-Java file — not in production code, not in test code. Methods are sorted
-alphabetically and will not stay grouped by category.
+Java class members are grouped by kind (static vs. instance) and visibility.
 
 Use the modern Java 17 features:
 

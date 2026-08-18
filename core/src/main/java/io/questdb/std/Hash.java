@@ -47,7 +47,20 @@ public final class Hash {
      * @return power of 2 integer
      */
     public static int boundedHash(CharSequence seq, int max) {
-        return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
+        return seq == null ? -1 : boundedHash(Chars.hashCode(seq), max);
+    }
+
+    /**
+     * Restricts an already computed {@link Chars#hashCode(CharSequence)} to be no greater than
+     * max. A caller that hashed the sequence for a map of its own passes that hash here rather
+     * than hashing the same characters a second time.
+     *
+     * @param hashCode {@link Chars#hashCode(CharSequence)} of the char sequence
+     * @param max      max value of the returned hash
+     * @return power of 2 integer
+     */
+    public static int boundedHash(int hashCode, int max) {
+        return (hashCode & 0xFFFFFFF) & max;
     }
 
     public static long hashInt64(int k) {

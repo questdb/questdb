@@ -41,6 +41,11 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
     }
 
     @Override
+    public void clearMemo() {
+        isValidValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -67,11 +72,6 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        isValidValue = false;
     }
 
     @Override

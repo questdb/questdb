@@ -24,11 +24,12 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.std.Hash;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-import java.nio.ByteBuffer;
-import java.util.HashSet;
+import java.util.Arrays;
 
 /**
  * {@code Q}, the output key domain of one localized repair: the partition keys the
@@ -51,44 +52,128 @@ import java.util.HashSet;
  * from a base row: a SYMBOL partition column is a resolved STRING on both sides, never
  * a reader-local integer.
  * <p>
- * Keys are held wrapped rather than copied, and never mutated once added, so
+ * Keys are held by reference rather than copied, and never mutated once added, so
  * {@link #copyFrom} shares the arrays it was handed. The repair plan derives one of
  * these per repair and the capture takes its own set from it, because the plan is
  * refilled by the next repair while a parked capture still owes its publication.
+ * <p>
+ * The set is open-addressed over the key arrays themselves, in the shape
+ * {@code AbstractCharSequenceHashSet} uses, rather than a {@code HashSet} of wrappers.
+ * Membership is asked once per key per function root the boundary writes, so the probe
+ * count is the key domain times the roots, and a wrapper allocated per probe would be
+ * charged to every publication. Matching is on content: the key a seal probes with is a
+ * fresh array encoded off its own map record, never the array the repair plan added.
  */
 public final class LiveViewCheckpointOutputKeyDomain implements Mutable {
-    private final HashSet<ByteBuffer> keys = new HashSet<>();
+    private static final double LOAD_FACTOR = 0.4;
+    private static final int MIN_INITIAL_CAPACITY = 16;
+    private int capacity;
+    private int free;
+    private byte[][] keys;
+    private int mask;
+
+    public LiveViewCheckpointOutputKeyDomain() {
+        capacity = MIN_INITIAL_CAPACITY;
+        free = capacity;
+        final int slotCount = Numbers.ceilPow2((int) (capacity / LOAD_FACTOR));
+        keys = new byte[slotCount][];
+        mask = slotCount - 1;
+    }
 
     /**
      * Joins one encoded partition key to the domain. The array must not be mutated
-     * afterwards: the set holds it rather than a copy.
+     * afterwards: the set holds it rather than a copy. Adding a key the domain already
+     * holds leaves it as it is.
      */
     public void add(@NotNull byte[] key) {
-        keys.add(ByteBuffer.wrap(key));
+        final int index = keyIndex(key);
+        if (index < 0) {
+            return;
+        }
+        keys[index] = key;
+        if (--free < 1) {
+            rehash();
+        }
     }
 
+    /**
+     * Empties the domain, keeping the slot array it has grown to so a reused capture does
+     * not pay for the growth again.
+     */
     @Override
     public void clear() {
-        keys.clear();
+        Arrays.fill(keys, null);
+        free = capacity;
     }
 
     public boolean contains(@NotNull byte[] key) {
-        return keys.contains(ByteBuffer.wrap(key));
+        return keyIndex(key) < 0;
     }
 
     /**
      * Replaces this domain with {@code other}'s, sharing its key arrays.
      */
     public void copyFrom(@NotNull LiveViewCheckpointOutputKeyDomain other) {
-        keys.clear();
-        keys.addAll(other.keys);
+        clear();
+        final byte[][] otherKeys = other.keys;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            final byte[] key = otherKeys[i];
+            if (key != null) {
+                add(key);
+            }
+        }
     }
 
     public boolean isEmpty() {
-        return keys.isEmpty();
+        return size() == 0;
     }
 
     public int size() {
-        return keys.size();
+        return capacity - free;
+    }
+
+    /**
+     * The slot {@code key} belongs in when the domain does not hold it, or
+     * {@code -slot - 1} when it does.
+     */
+    private int keyIndex(byte[] key) {
+        final int index = Hash.spread(Arrays.hashCode(key)) & mask;
+        final byte[] slot = keys[index];
+        if (slot == null) {
+            return index;
+        }
+        if (Arrays.equals(slot, key)) {
+            return -index - 1;
+        }
+        return probe(key, index);
+    }
+
+    private int probe(byte[] key, int index) {
+        do {
+            index = (index + 1) & mask;
+            final byte[] slot = keys[index];
+            if (slot == null) {
+                return index;
+            }
+            if (Arrays.equals(slot, key)) {
+                return -index - 1;
+            }
+        } while (true);
+    }
+
+    private void rehash() {
+        final byte[][] oldKeys = keys;
+        capacity *= 2;
+        free = capacity;
+        final int slotCount = Numbers.ceilPow2((int) (capacity / LOAD_FACTOR));
+        keys = new byte[slotCount][];
+        mask = slotCount - 1;
+        for (int i = 0, n = oldKeys.length; i < n; i++) {
+            final byte[] key = oldKeys[i];
+            if (key != null) {
+                keys[keyIndex(key)] = key;
+                free--;
+            }
+        }
     }
 }

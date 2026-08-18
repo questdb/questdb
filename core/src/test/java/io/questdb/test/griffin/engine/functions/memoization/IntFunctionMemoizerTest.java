@@ -53,12 +53,12 @@ public class IntFunctionMemoizerTest {
     }
 
     @Test
-    public void testRedrawsAfterMemoize() {
+    public void testRedrawsAfterClearMemo() {
         CountingIntFunction fn = new CountingIntFunction();
         IntFunctionMemoizer memoizer = new IntFunctionMemoizer(fn);
 
         Assert.assertEquals(1, memoizer.getInt(null));
-        memoizer.memoize(null);
+        memoizer.clearMemo();
         Assert.assertEquals(2, memoizer.getInt(null));
         Assert.assertEquals(2L, memoizer.getLong(null));
         Assert.assertEquals(2, fn.evaluations);
