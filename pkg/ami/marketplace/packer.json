@@ -23,7 +23,7 @@
         "filters": {
           "virtualization-type": "hvm",
           "architecture": "x86_64",
-          "name": "al2023-ami-202*-x86_64",
+          "name": "al2023-ami-202*-kernel-6.18-x86_64",
           "block-device-mapping.volume-type": "gp3",
           "root-device-type": "ebs"
         },
@@ -31,6 +31,16 @@
         "most_recent": true
       },
       "launch_block_device_mappings": [
+        {
+          "device_name": "/dev/xvdb",
+          "volume_size": 50,
+          "delete_on_termination": true,
+          "volume_type": "gp3",
+          "iops": 3000,
+          "throughput": 250
+        }
+      ],
+      "ami_block_device_mappings": [
         {
           "device_name": "/dev/xvdb",
           "volume_size": 50,
@@ -63,7 +73,7 @@
         "filters": {
           "virtualization-type": "hvm",
           "architecture": "arm64",
-          "name": "al2023-ami-202*-arm64",
+          "name": "al2023-ami-202*-kernel-6.18-arm64",
           "block-device-mapping.volume-type": "gp3",
           "root-device-type": "ebs"
         },
@@ -71,6 +81,16 @@
         "most_recent": true
       },
       "launch_block_device_mappings": [
+        {
+          "device_name": "/dev/xvdb",
+          "volume_size": 50,
+          "delete_on_termination": true,
+          "volume_type": "gp3",
+          "iops": 3000,
+          "throughput": 250
+        }
+      ],
+      "ami_block_device_mappings": [
         {
           "device_name": "/dev/xvdb",
           "volume_size": 50,
