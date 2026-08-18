@@ -47,14 +47,16 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
-            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
-            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
-            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
-            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
-            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
-            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
+            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
+            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
+            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
+            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
+            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
+            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
+            + " which the frame uses to resolve per-column name txns, and dropping it returned"
+            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
+            + " that takes a cellSegment, not a call-site substitution.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
@@ -74,14 +76,16 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * distinct rows and must both survive -- a dedup that collapsed them would be losing data that the
      * plain twin keeps, because on the plain table the dimension column is just another column.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
-            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
-            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
-            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
-            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
-            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
-            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
+            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
+            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
+            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
+            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
+            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
+            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
+            + " which the frame uses to resolve per-column name txns, and dropping it returned"
+            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
+            + " that takes a cellSegment, not a call-site substitution.")
     @Test(timeout = 60_000)
     public void testSameTimestampInDifferentCellsBothSurvive() throws Exception {
         assertMemoryLeak(() -> {
@@ -100,14 +104,16 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * timestamp. This is the shape {@code getDedupRowsWithAdditionalKeys} has to get right: the key set
      * spans a column that also decides which cell a row lives in.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
-            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
-            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
-            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
-            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
-            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
-            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
+            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
+            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
+            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
+            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
+            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
+            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
+            + " which the frame uses to resolve per-column name txns, and dropping it returned"
+            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
+            + " that takes a cellSegment, not a call-site substitution.")
     @Test(timeout = 60_000)
     public void testUpsertWithinACellWhileSiblingHoldsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -128,14 +134,16 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * Dedup across an O3 write, which is where dedup and the composite cell router interact: the
      * incoming batch is out of order AND spans two cells.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18: the dedup KEY-column path is now cell-aware"
-            + " (O3PartitionJob#getDedupRows*), which removed the FIRST crash --"
-            + " Vect.mergeDedupTimestampWithLongIndexIntKeys SIGBUS, caused by opening the day-level"
-            + " 0-byte stray <column>.d and mapping past its end. With the gates lifted it now gets"
-            + " further and dies in a DIFFERENT native frame: is_fixed_column_merge_identical<int>."
-            + " So at least one more dedup address is still day-scoped -- most likely the O3-side or the"
-            + " symbol/int key comparison. testDedupAcrossAnO3Write also shows a wrong ANSWER (upsert"
-            + " not applied: expected px=44, got px=1), so ranges are suspect as well as addresses.")
+    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
+            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
+            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
+            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
+            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
+            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
+            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
+            + " which the frame uses to resolve per-column name txns, and dropping it returned"
+            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
+            + " that takes a cellSegment, not a call-site substitution.")
     @Test(timeout = 60_000)
     public void testDedupAcrossAnO3Write() throws Exception {
         assertMemoryLeak(() -> {

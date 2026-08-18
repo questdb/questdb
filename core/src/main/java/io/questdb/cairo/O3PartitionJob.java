@@ -1842,6 +1842,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static long getDedupRows(
             @Nullable CharSequence cellSegment,
+            int cellKey,
             long partitionTimestamp,
             long srcNameTxn,
             long srcTimestampAddr,
@@ -1870,6 +1871,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } else {
             return getDedupRowsWithAdditionalKeys(
                     cellSegment,
+                    cellKey,
                     partitionTimestamp,
                     srcNameTxn,
                     srcTimestampAddr,
@@ -1890,6 +1892,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static long getDedupRowsWithAdditionalKeys(
             @Nullable CharSequence cellSegment,
+            int cellKey,
             long partitionTimestamp,
             long srcNameTxn,
             long srcTimestampAddr,
@@ -1921,9 +1924,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
                     final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    // Per-CELL, like the path built below. These two feed the SAME address the native
+                    // comparison walks: columnTop shifts the mapped base
+                    // (Math.abs(fixMappedAddress) - columnTop * columnSize) and columnNameTxn selects
+                    // WHICH file is mapped. Resolved cellKey-0-blind they described a different cell
+                    // than the merge ranges, which is how the second crash --
+                    // is_fixed_column_merge_identical<int> -- survived fixing the path alone.
+                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, cellKey, i, mergeDataHi + 1);
                     CharSequence columnName = metadata.getColumnName(i);
-                    long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+                    long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, i);
 
                     long addr = DedupColumnCommitAddresses.setColValues(
                             dedupColSinkAddr,
@@ -3185,6 +3194,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     final long dedupRows = getDedupRows(
                             cellSegment,
+                            cellKey,
                             oldPartitionTimestamp,
                             srcNameTxn,
                             srcTimestampAddr,
