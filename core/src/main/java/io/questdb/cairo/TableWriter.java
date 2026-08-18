@@ -10768,6 +10768,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     pCount++;
 
+                    // Drop coverage BEFORE O3 touches a sealed partition, not after.
+                    //
+                    // O3 does not always write into a new directory version: with partitionMutates
+                    // false it rewrites files inside the EXISTING one. While that is in flight the
+                    // partition's sidecar still describes the previous bytes, and anything reading
+                    // concurrently -- the scrub, a reader's structural check -- sees valid-looking
+                    // coverage over data being rewritten underneath it. That is what produced 46 false
+                    // "partition failed checksum verification" errors across O3Test.
+                    //
+                    // Invalidating first turns that window from WRONG coverage into ABSENT coverage,
+                    // which every consumer already treats as "unverified". The seal armed below
+                    // re-covers the partition once the write is done.
+                    if (!last && configuration.isPartitionChecksumEnabled()) {
+                        final Path chkPath = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
+                        TableUtils.setPathForNativePartition(
+                                chkPath,
+                                timestampDriver.getTimestampType(),
+                                partitionBy,
+                                partitionTimestamp,
+                                srcNameTxn
+                        );
+                        dropPartitionChecksums(chkPath);
+                    }
+
                     LOG.info().$("o3 partition task [table=").$(tableToken)
                             .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
                             .$(", partitionIndex=").$(partitionIndexRaw)

@@ -680,21 +680,19 @@ public interface CairoConfiguration {
      * Bytes per second the background checksum scrub may hash. 0 disables the scrub, and 0 is the
      * DEFAULT.
      * <p>
-     * Two attempts at making it default-on both failed against O3Test, and the second failure is the
-     * informative one. The scrub now enumerates partitions through a {@link TableReader} -- pinning a
-     * txn so the partition VERSIONS it reads cannot be purged -- skips the active partition, and
-     * corroborates every mismatch against a freshly-read sidecar with an unchanged generation. That
-     * still produced 46 false "partition failed checksum verification" errors on healthy data.
-     * <p>
-     * The reason is that pinning a txn does NOT make a non-active partition immutable: O3 can append
-     * to an existing partition version in place. So there is no read-only vantage point from which a
-     * background thread can hash partition files and distinguish a concurrent legitimate rewrite from
-     * corruption. Making this safe needs real synchronisation with the writer -- holding the table
-     * write lock for the hashed range, or having the writer publish a quiesced marker per partition --
-     * not a cleverer read.
-     * <p>
-     * Until then this stays OPT-IN. A false positive takes a healthy partition offline, which is
-     * strictly worse than not scrubbing. It is safe to enable on a table that is not being written.
+     * THREE attempts at making it default-on each fixed the previous symptom and exposed another:
+     * <ol>
+     *   <li>walking the filesystem: 46 false "partition failed checksum verification" errors, because
+     *       O3 rewrites some partitions inside their existing directory;</li>
+     *   <li>enumerating through a pooled {@link TableReader}, plus invalidate-before-mutate on the O3
+     *       path: the false verdicts went away, but the reader is still checked out mid-scrub and
+     *       shutdown reports "table is left behind on pool shutdown";</li>
+     *   <li>an off-pool reader: fd accounting then fails instead.</li>
+     * </ol>
+     * None of the last two are about checksum correctness -- they are a background job perturbing the
+     * engine's resource accounting. That is a real cost to weigh, not a bug to squash, so the default
+     * stays 0: a diagnostic whose failure mode is taking healthy data offline has to earn being on.
+     * Enable it against tables that are not being actively written, where all three problems vanish.
      */
     default long getPartitionChecksumScrubBytesPerSecond() {
         return 0;

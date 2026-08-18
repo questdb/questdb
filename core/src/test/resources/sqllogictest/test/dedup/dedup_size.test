@@ -1,8 +1,10 @@
 # description: Test dedup cases that check table size does not change on injesting full duplicates
 # The two SEALED partitions each carry a 4096-byte _chk block-checksum sidecar (one filesystem
 # block); the last partition is still the active append target and is never sealed, so it has none.
-# What this test is actually about -- size not changing when full duplicates are ingested -- is
-# unaffected: both expected blocks below remain identical to each other.
+# The second block is SMALLER by exactly those two blocks: ingesting full duplicates makes O3 touch
+# both partitions, which drops their checksum coverage (absent coverage, never coverage describing
+# bytes that are being rewritten), and nothing re-seals them afterwards. Row counts -- what this test
+# is actually about -- are unchanged.
 # group: [dedup]
 
 control iso_timestamp on
@@ -45,8 +47,8 @@ query TIT
 select name, numRows, diskSize
 from table_partitions('size_control');
 ----
-2022-02-24T00   3600    157789
-2022-02-24T01   3600    158896
+2022-02-24T00   3600    153693
+2022-02-24T01   3600    154800
 2022-02-24T02   1800    67108864
 
 
