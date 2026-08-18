@@ -173,15 +173,6 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                 envelope.start(newDetachedContext(server, envelope.name()));
                 Assert.assertTrue(workerEntered.await(5, TimeUnit.SECONDS));
 
-                final Thread releaser = new Thread(() -> {
-                    try {
-                        Thread.sleep(500);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                    releaseWorker.countDown();
-                });
-                releaser.start();
                 try {
                     envelope.stop(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10));
                     Assert.fail("expected http-min halt timeout");
@@ -189,9 +180,7 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                     Assert.assertEquals("http-min worker pool did not halt", e.getMessage());
                 } finally {
                     releaseWorker.countDown();
-                    releaser.join(5_000);
                 }
-                Assert.assertFalse(releaser.isAlive());
                 envelope.stop(System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
             }
         });

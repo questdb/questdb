@@ -279,7 +279,7 @@ public class QueryRegistry {
             throw th;
         }
 
-        executionContext.getCircuitBreaker().copyCancelledFlagTo(e.previousCancelledBinding);
+        executionContext.copyCancelledFlagsTo(e.previousCancelledBinding, e.previousSimpleCancelledBinding);
         executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
         return queryId;
     }
@@ -303,13 +303,9 @@ public class QueryRegistry {
 
         final Entry e = registry.remove(queryId);
         if (e != null) {
-            final AtomicBoolean previousCancelledFlag = e.previousCancelledBinding.getFlag();
-            if (previousCancelledFlag instanceof FiberCancellationSignal previousSignal
-                    && previousSignal.getGeneration()
-                    != e.previousCancelledBinding.getGeneration(previousCancelledFlag)) {
-                e.previousCancelledBinding.clear();
-            }
-            executionContext.restoreCancelledFlag(e.cancelled, e.previousCancelledBinding);
+            clearStaleSignalBinding(e.previousCancelledBinding);
+            clearStaleSignalBinding(e.previousSimpleCancelledBinding);
+            executionContext.restoreCancelledFlag(e.cancelled, e.previousCancelledBinding, e.previousSimpleCancelledBinding);
             // Release the per-workload memory tracker if this register() call
             // acquired it. A null e.memoryTracker means the registration was
             // nested under an outer workload that owns the tracker; in that
@@ -336,6 +332,14 @@ public class QueryRegistry {
         } else {
             // this might happen if query was cancelled
             LOG.error().$("query to unregister not found [id=").$(queryId).I$();
+        }
+    }
+
+    private static void clearStaleSignalBinding(CancellationBinding binding) {
+        final AtomicBoolean flag = binding.getFlag();
+        if (flag instanceof FiberCancellationSignal signal
+                && signal.getGeneration() != binding.getGeneration(flag)) {
+            binding.clear();
         }
     }
 
@@ -397,6 +401,7 @@ public class QueryRegistry {
 
         private final FiberCancellationSignal cancelled = new FiberCancellationSignal();
         private final CancellationBinding previousCancelledBinding = new CancellationBinding();
+        private final CancellationBinding previousSimpleCancelledBinding = new CancellationBinding();
         private final StringSink query = new StringSink();
         private long cancelledGeneration;
         private long changedAtNs;
@@ -445,6 +450,7 @@ public class QueryRegistry {
             memoryTracker = null;
             poolName = null;
             previousCancelledBinding.clear();
+            previousSimpleCancelledBinding.clear();
             workerId = -1;
             principal = null;
             state = State.IDLE;

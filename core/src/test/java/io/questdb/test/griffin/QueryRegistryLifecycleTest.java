@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.CarrierIdentity;
@@ -902,6 +903,40 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 Assert.assertSame(entry, registry.getEntry(newId));
                 registry.unregister(newId, context);
                 Assert.assertEquals(1, registry.getPoolSize());
+            }
+        });
+    }
+
+    @Test
+    public void testUnregisterRestoresEachBreakersOwnBinding() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (
+                    NetworkSqlExecutionCircuitBreaker networkCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                            engine,
+                            engine.getConfiguration().getCircuitBreakerConfiguration()
+                    );
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, networkCircuitBreaker);
+                Assert.assertNull(networkCircuitBreaker.getCancelledFlag());
+                context.setUseSimpleCircuitBreaker(true);
+                final AtomicBoolean simpleOwnFlag = context.getCircuitBreaker().getCancelledFlag();
+                Assert.assertNotNull(simpleOwnFlag);
+
+                // UPDATE registers under the simple breaker and unregisters after switching back
+                final long queryId = registry.register("UPDATE t SET x = 1", context);
+                context.setUseSimpleCircuitBreaker(false);
+                registry.unregister(queryId, context);
+
+                Assert.assertNull(networkCircuitBreaker.getCancelledFlag());
+                Assert.assertSame(simpleOwnFlag, context.getSimpleCircuitBreaker().getCancelledFlag());
+
+                // a PG CancelRequest between statements must not latch the simple breaker's flag
+                networkCircuitBreaker.cancel();
+                networkCircuitBreaker.clearCancelSentinel();
+                Assert.assertFalse(simpleOwnFlag.get());
+                networkCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             }
         });
     }

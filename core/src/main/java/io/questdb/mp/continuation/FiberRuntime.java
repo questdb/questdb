@@ -109,7 +109,9 @@ public final class FiberRuntime {
             Fiber.verifyRuntimeAccess();
         } catch (LinkageError e) {
             throw new IllegalStateException(
-                    "fiber-host mode requires --add-exports=java.base/jdk.internal.vm=io.questdb",
+                    "fiber-host mode requires --add-exports=java.base/jdk.internal.vm=io.questdb"
+                            + " on a module-path launch, or --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
+                            + " on a class-path launch; set *.worker.fiber.enabled=false to run legacy pools",
                     e
             );
         }

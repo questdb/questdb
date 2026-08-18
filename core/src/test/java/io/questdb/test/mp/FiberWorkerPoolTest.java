@@ -61,6 +61,134 @@ import java.util.concurrent.atomic.AtomicReference;
 public class FiberWorkerPoolTest {
 
     @Test
+    public void testBoundedHaltDoesNotMountParkedFiberAfterWorkersExit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int continuationWon = 2;
+            final int haltWon = 1;
+            final String poolName = "fiber-bounded-dead-worker-halt-test";
+            final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return poolName;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return WorkerPoolMode.FIBER_HOST;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return true;
+                }
+
+                @Override
+                public boolean isDaemonPool() {
+                    return true;
+                }
+            });
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final CountDownLatch outcomeSelected = new CountDownLatch(1);
+            final CountDownLatch releaseContinuation = new CountDownLatch(1);
+            final CountDownLatch workerCleanerEntered = new CountDownLatch(1);
+            final AtomicBoolean isTaskLaunched = new AtomicBoolean();
+            final AtomicInteger outcome = new AtomicInteger();
+            final AtomicInteger resumeReason = new AtomicInteger(-1);
+            final AtomicReference<Boolean> haltResult = new AtomicReference<>();
+            final AtomicReference<Thread> workerThread = new AtomicReference<>();
+            final AtomicReference<Throwable> haltFailure = new AtomicReference<>();
+            final FiberTask task = new FiberTask() {
+                private final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+
+                @Override
+                protected boolean runStep() {
+                    final Fiber fiber = Objects.requireNonNull(Fiber.current());
+                    final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+                    final long token = fiber.beginWaitBuild(1);
+                    final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 1);
+                    try {
+                        if (registration.register(waitQueue) != SourceRegistrationResult.ACCEPTED) {
+                            throw new IllegalStateException("wait registration failed");
+                        }
+                        resumeReason.set(fiber.suspendWait(token));
+                        if (outcome.compareAndSet(0, continuationWon)) {
+                            outcomeSelected.countDown();
+                        }
+                        try {
+                            if (!releaseContinuation.await(10, TimeUnit.SECONDS)) {
+                                throw new AssertionError("timed out waiting to release Fiber continuation");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                        return true;
+                    } finally {
+                        registration.cancel();
+                        coordinator.abort(token);
+                        coordinator.consume(token);
+                    }
+                }
+            };
+            pool.assign(workerContext -> {
+                if (isTaskLaunched.compareAndSet(false, true)) {
+                    Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                    return true;
+                }
+                if (runtime.getParkedFiberCount() == 1) {
+                    throw new RuntimeException("deterministic worker failure");
+                }
+                return true;
+            });
+            pool.assignThreadLocalCleaner(0, () -> {
+                workerThread.set(Thread.currentThread());
+                workerCleanerEntered.countDown();
+            });
+            final Thread halter = new Thread(() -> {
+                try {
+                    haltResult.set(pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(100)));
+                    if (outcome.compareAndSet(0, haltWon)) {
+                        outcomeSelected.countDown();
+                    }
+                } catch (Throwable th) {
+                    haltFailure.set(th);
+                    outcomeSelected.countDown();
+                }
+            }, poolName + "-halter");
+            halter.setDaemon(true);
+            pool.start();
+            try {
+                Assert.assertTrue(workerCleanerEntered.await(10, TimeUnit.SECONDS));
+                final Thread exitedWorker = workerThread.get();
+                Assert.assertNotNull(exitedWorker);
+                exitedWorker.join(10_000L);
+                Assert.assertFalse(exitedWorker.isAlive());
+                Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                halter.start();
+                Assert.assertTrue(outcomeSelected.await(10, TimeUnit.SECONDS));
+            } finally {
+                releaseContinuation.countDown();
+                pool.halt();
+                halter.join(10_000L);
+            }
+            Assert.assertFalse(halter.isAlive());
+            if (haltFailure.get() != null) {
+                throw new AssertionError(haltFailure.get());
+            }
+            Assert.assertEquals(haltWon, outcome.get());
+            Assert.assertEquals(Boolean.FALSE, haltResult.get());
+            Assert.assertEquals(FiberWaitCoordinator.REASON_SHUTDOWN, resumeReason.get());
+            Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
+        });
+    }
+
+    @Test
     public void testCloseUsesTerminalHalt() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicBoolean isBoundedHaltCalled = new AtomicBoolean();

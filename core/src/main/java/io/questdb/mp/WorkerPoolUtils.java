@@ -76,8 +76,8 @@ public class WorkerPoolUtils {
      *                                 query work. A pool that also hosts protocol fibers must not
      *                                 own the dispatcher: those fibers are the ones publishing into
      *                                 it, and {@link PageFrameReduceDispatcher#tryAcquirePublication()}
-     *                                 refuses same-runtime fan-out, which would fail every parallel
-     *                                 query instead of reducing in line.
+     *                                 refuses same-runtime fan-out, which would demote every parallel
+     *                                 query to serial local reduction on the owner's carrier.
      */
     public static void setupQueryJobs(
             WorkerPool sharedPoolQuery,

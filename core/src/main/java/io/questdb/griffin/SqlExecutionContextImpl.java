@@ -246,6 +246,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public synchronized void copyCancelledFlagsTo(CancellationBinding circuitBreakerTarget, CancellationBinding simpleCircuitBreakerTarget) {
+        circuitBreaker.copyCancelledFlagTo(circuitBreakerTarget);
+        simpleCircuitBreaker.copyCancelledFlagTo(simpleCircuitBreakerTarget);
+    }
+
+    @Override
     public Rnd getAsyncRandom() {
         if (SuspensionScope.getMode() == SuspensionScope.Mode.FIBER) {
             final Fiber fiber = Fiber.current();
@@ -540,12 +546,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public synchronized void restoreCancelledFlag(AtomicBoolean expected, CancellationBinding previous) {
+    public synchronized void restoreCancelledFlag(
+            AtomicBoolean expected,
+            CancellationBinding circuitBreakerPrevious,
+            CancellationBinding simpleCircuitBreakerPrevious
+    ) {
         if (circuitBreaker.getCancelledFlag() == expected) {
-            circuitBreaker.setCancelledFlag(previous);
+            circuitBreaker.setCancelledFlag(circuitBreakerPrevious);
         }
         if (simpleCircuitBreaker.getCancelledFlag() == expected) {
-            simpleCircuitBreaker.setCancelledFlag(previous);
+            simpleCircuitBreaker.setCancelledFlag(simpleCircuitBreakerPrevious);
         }
     }
 

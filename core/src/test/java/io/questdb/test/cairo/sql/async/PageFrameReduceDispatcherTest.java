@@ -596,6 +596,99 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForeignRuntimeFiberOwnerDispatchesInsteadOfLocalReduce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT
+                            x,
+                            x::varchar AS k,
+                            timestamp_sequence(0, 1_000_000) AS ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts)
+                    """);
+            drainWalQueue();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+
+            final FiberRuntime ownerRuntime = new FiberRuntime(1);
+            final FiberRuntime queryRuntime = new FiberRuntime(4);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    queryRuntime
+            );
+            try {
+                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final AtomicInteger rowCount = new AtomicInteger();
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = compiler.compile("SELECT * FROM tab WHERE x > 0", sqlExecutionContext).getRecordCursorFactory()
+                ) {
+                    TestUtils.assertFactoryInTree(factory, AsyncFilteredRecordCursorFactory.class);
+                    final FiberTask ownerTask = new FiberTask() {
+                        @Override
+                        protected void onError(Throwable th) {
+                            failure.set(th);
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    rowCount.incrementAndGet();
+                                }
+                            } catch (SqlException e) {
+                                throw new AssertionError(e);
+                            }
+                            return true;
+                        }
+                    };
+
+                    final int shardCount = engine.getMessageBus().getPageFrameReduceShardCount();
+                    final LongList publicationCursors = new LongList(shardCount);
+                    for (int shard = 0; shard < shardCount; shard++) {
+                        publicationCursors.add(engine.getMessageBus().getPageFrameReducePubSeq(shard).current());
+                    }
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
+                    final long deadline = System.nanoTime() + 5_000_000_000L;
+                    while (!ownerTask.isDone() && System.nanoTime() < deadline) {
+                        ownerRuntime.drain(8);
+                        for (int shard = 0; shard < shardCount; shard++) {
+                            dispatcher.consumeOrdered(
+                                    -1,
+                                    engine.getMessageBus().getPageFrameReduceQueue(shard),
+                                    engine.getMessageBus().getPageFrameReduceSubSeq(shard),
+                                    null
+                            );
+                        }
+                        queryRuntime.drain(8);
+                    }
+
+                    Assert.assertTrue(ownerTask.isDone());
+                    Assert.assertNull(failure.get());
+                    Assert.assertEquals(1000, rowCount.get());
+                    // a foreign-runtime fiber owner publishes into the dispatcher's queue;
+                    // the same-runtime twin asserts the inverse (publication cursors frozen)
+                    boolean hasPublishedFrame = false;
+                    for (int shard = 0; shard < shardCount; shard++) {
+                        hasPublishedFrame |= engine.getMessageBus().getPageFrameReducePubSeq(shard).current()
+                                > publicationCursors.getQuick(shard);
+                    }
+                    Assert.assertTrue(hasPublishedFrame);
+                    Assert.assertEquals(0, ownerRuntime.getOutstandingTaskCount());
+                    Assert.assertEquals(0, queryRuntime.getOutstandingTaskCount());
+                }
+            } finally {
+                close(ownerRuntime);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
     public void testForeignRuntimeOwnerCanPublish() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);

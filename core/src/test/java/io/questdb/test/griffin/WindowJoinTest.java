@@ -3760,6 +3760,21 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym\tagg\tcd
                             NFLX\tNFLX\t1
                             """);
+            assertQuery("""
+                    SELECT t.sym, string_distinct_agg(p.sym::string, ',') agg, approx_percentile(p.price, 0.5) ap
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    ON (t.sym = p.sym)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE t.sym = 'NFLX'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tagg\tap
+                            NFLX\tNFLX\t672.0
+                            """);
         });
     }
 

@@ -545,9 +545,9 @@ public class ServerMain implements Closeable {
             } catch (Throwable th) {
                 printStackTraceSafely(th);
             }
+            boolean isServerClosed = false;
             try {
                 Throwable closeFailure = null;
-                boolean isServerClosed = false;
                 for (int i = 0; i < SHUTDOWN_CLOSE_ATTEMPTS && !isServerClosed; i++) {
                     try {
                         closeAttempt(shutdownDeadline);
@@ -578,12 +578,15 @@ public class ServerMain implements Closeable {
             } catch (Throwable th) {
                 printStackTraceSafely(th);
             } finally {
+                final String message = isServerClosed
+                        ? "QuestDB is shutdown."
+                        : "QuestDB shutdown is incomplete; process exiting anyway.";
                 try {
-                    System.err.println("QuestDB is shutdown.");
+                    System.err.println(message);
                 } catch (Throwable ignore) {
                 }
                 try {
-                    System.out.println("QuestDB is shutdown.");
+                    System.out.println(message);
                 } catch (Throwable ignore) {
                 }
             }
@@ -680,6 +683,13 @@ public class ServerMain implements Closeable {
                         .I$();
             } catch (Throwable ignore) {
             }
+            // stderr is synchronous; the async log ring may never drain if the process exits deferred
+            try {
+                System.err.println("QuestDB shutdown deferred [timerShardsHalted=" + isTimerShardsHaltComplete
+                        + ", startupWorkHalted=" + isStartupWorkHaltComplete
+                        + ", lifecycleStopped=" + isLifecycleStopComplete + ']');
+            } catch (Throwable ignore) {
+            }
             if (isBounded) {
                 return;
             }
@@ -730,6 +740,11 @@ public class ServerMain implements Closeable {
                         .$("QuestDB shutdown deferred [minHttpHalted=").$(isMinHttpHaltComplete)
                         .$(", workerPoolsHalted=").$(isWorkerPoolHaltComplete)
                         .I$();
+            } catch (Throwable ignore) {
+            }
+            try {
+                System.err.println("QuestDB shutdown deferred [minHttpHalted=" + isMinHttpHaltComplete
+                        + ", workerPoolsHalted=" + isWorkerPoolHaltComplete + ']');
             } catch (Throwable ignore) {
             }
             if (isBounded) {

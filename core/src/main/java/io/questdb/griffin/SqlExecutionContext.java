@@ -113,6 +113,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    default void copyCancelledFlagsTo(CancellationBinding circuitBreakerTarget, CancellationBinding simpleCircuitBreakerTarget) {
+        getCircuitBreaker().copyCancelledFlagTo(circuitBreakerTarget);
+        getSimpleCircuitBreaker().copyCancelledFlagTo(simpleCircuitBreakerTarget);
+    }
+
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
     }
@@ -338,14 +343,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void reset();
 
-    default void restoreCancelledFlag(AtomicBoolean expected, CancellationBinding previous) {
+    default void restoreCancelledFlag(
+            AtomicBoolean expected,
+            CancellationBinding circuitBreakerPrevious,
+            CancellationBinding simpleCircuitBreakerPrevious
+    ) {
         final SqlExecutionCircuitBreaker circuitBreaker = getCircuitBreaker();
         final SqlExecutionCircuitBreaker simpleCircuitBreaker = getSimpleCircuitBreaker();
         if (circuitBreaker.getCancelledFlag() == expected) {
-            circuitBreaker.setCancelledFlag(previous);
+            circuitBreaker.setCancelledFlag(circuitBreakerPrevious);
         }
         if (simpleCircuitBreaker != circuitBreaker && simpleCircuitBreaker.getCancelledFlag() == expected) {
-            simpleCircuitBreaker.setCancelledFlag(previous);
+            simpleCircuitBreaker.setCancelledFlag(simpleCircuitBreakerPrevious);
         }
     }
 
