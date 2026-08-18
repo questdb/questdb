@@ -6445,10 +6445,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.advisory().$("EXPIRE ROWS set on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
                     .$safe(tableToken.getTableName()).I$();
         }
-        // A view that other materialized views derive from must not gain an EXPIRE policy: those dependents
-        // read this view's RAW rows on refresh (the read filter is disabled then), so they would copy rows
-        // this policy expires. Reject rather than leak expired rows downstream. (The forward direction --
-        // CREATE a view over an already-policied base -- is rejected at create time.)
+        // A view that other views -- materialized or live -- derive from must not gain an EXPIRE policy:
+        // those dependents read this view's RAW rows on refresh (the read filter is disabled then), so they
+        // would copy rows this policy expires. Reject rather than leak expired rows downstream. (The forward
+        // direction -- CREATE a view over an already-policied base -- is rejected at create time.)
         // The rejection is WAL-recoverable: this same check re-runs when OperationExecutor recompiles the
         // stored ALTER SQL at apply time, and a dependent that a concurrent CREATE registered after the
         // statement-time check passed makes it fire then. A plain SqlException there is non-recoverable, so
@@ -6461,7 +6461,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.walRecoverable(tableNamePosition).put("cannot set an EXPIRE ROWS policy on '")
                     .put(tableToken.getTableName())
                     .put("': it is the base of ").put(dependents.size())
-                    .put(" materialized view(s), which would copy expired rows on refresh");
+                    .put(" view(s), including '").put(dependents.getQuick(0).getTableName())
+                    .put("', which would copy expired rows on refresh");
         }
         final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {

@@ -903,7 +903,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view a set expire rows when v < 2.0",
                     24,
-                    "materialized view(s), which would copy expired rows on refresh"
+                    "view(s), including 'b', which would copy expired rows on refresh"
             );
             Assert.assertNull("policy must not have been set on a", expiryPredicate("a"));
         });
