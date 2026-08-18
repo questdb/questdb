@@ -1,0 +1,350 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cutlass.qwp.e2e;
+
+import io.questdb.client.Sender;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.time.temporal.ChronoUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+/**
+ * Soak test that interleaves the two reconnect paths a QWP {@link QwpWebSocketSender}
+ * can take -- and proves neither one's state reset leaks onto the other:
+ * <ul>
+ *   <li><b>Recycle reconnect</b> (client-driven, see {@link QwpSymbolDictRecycleE2ETest}):
+ *       once the producer-visible symbol dictionary reaches
+ *       {@code symbol_dict_reset_threshold} distinct symbols, the sender tears
+ *       down its engine, rolls its FSN epoch base, rebuilds a fresh dictionary
+ *       and reconnects -- entirely on its own clock, driven by how many novel
+ *       symbols the producer has handed it.</li>
+ *   <li><b>Ordinary reconnect</b> (server-driven, see
+ *       {@link QwpIngressServerRestartFuzzTest}): an unplanned server bounce
+ *       drops the wire; the sender's I/O loop reconnects with a delta
+ *       catch-up that re-registers whatever the CURRENT epoch's dictionary
+ *       holds, preserving the epoch baseline (no recycle).</li>
+ * </ul>
+ * A single long-lived sender undergoes both kinds of reconnect repeatedly, in
+ * an order this test does not control: one background thread bounces the
+ * server on a seeded random schedule while the producer thread keeps writing,
+ * so a restart can land mid-recycle and a recycle can land mid-catch-up. That
+ * overlap is the risk surface -- a recycle's engine teardown/epoch roll must
+ * never observe (or be observed by) an in-flight ordinary reconnect, and vice
+ * versa.
+ * <p>
+ * Duplicates are expected and tolerated exactly like
+ * {@link QwpIngressServerRestartFuzzTest}: a restart mid-flight can make the
+ * sender replay frames the server already committed but had not yet acked.
+ * The target table carries the same {@code DEDUP UPSERT KEYS(ts, id)} safety
+ * net, so replays collapse and the final row count is exact, not just a
+ * lower bound.
+ * <p>
+ * There is no dedicated "ack delay" injection seam anywhere in this harness
+ * (checked both {@link RestartableQwpServer} and the QWP client builder) --
+ * a server restart landing while a batch is in flight already produces
+ * delayed and (from the sender's perspective) lost acks, which is exactly
+ * what {@link #testRecycleAndReconnectFuzz} exercises via the periodic
+ * blocking {@code drain()} calls below.
+ */
+public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
+
+    private static final int BATCH_SIZE = 25;
+    private static final Log LOG = LogFactory.getLog(QwpSymbolDictRecycleReconnectFuzzTest.class);
+    // Server defaults from DefaultIODispatcherConfiguration, mirroring
+    // QwpIngressServerRestartFuzzTest -- RestartableQwpServer does not
+    // override these, so the actual buffers are this size.
+    private static final int RECV_BUFFER_SIZE = 131_072;
+    private static final int SEND_BUFFER_SIZE = 131_072;
+    // Comfortably above the reset threshold -- as in QwpSymbolDictRecycleE2ETest,
+    // this keeps most in-epoch growth on genuinely novel symbols. Total rows
+    // over a multi-second continuous run vastly exceed SYMBOL_CARDINALITY, so
+    // plenty of later rows still land as true back-references (the property
+    // QwpIngressServerRestartFuzzTest's TAG_CARDINALITY bound exists to test).
+    private static final int SYMBOL_CARDINALITY = 400;
+    private static final int SYMBOL_DICT_RESET_THRESHOLD = 70;
+    private static final String TABLE_NAME = "qwp_symbol_dict_recycle_reconnect_fuzz";
+    // Every this many batches, block on drain() instead of a fire-and-forget
+    // flush(). A drain that straddles a bounce is exactly the delayed/lost-ack
+    // scenario this suite has no other seam for (see class javadoc).
+    private static final int TARGET_DRAIN_EVERY_N_BATCHES = 20;
+
+    private int recvChunk;
+    private int sendChunk;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        // Independent recv / send fragmentation chunks (asymmetric, min=1),
+        // same rationale as QwpIngressServerRestartFuzzTest: chunk=1 makes
+        // every wire byte its own socket event, exposing park-resume bugs in
+        // both the WS parser and the recycle/catch-up frame builders.
+        recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
+        sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        LOG.info().$("QwpSymbolDictRecycleReconnectFuzzTest fragmentation recvChunk=").$(recvChunk)
+                .$(", sendChunk=").$(sendChunk).$();
+    }
+
+    @Test
+    public void testRecycleAndReconnectFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            createTargetTable();
+            int port = RestartableQwpServer.pickFreePort();
+            String sfDir = temp.newFolder("qwp-recycle-reconnect-fuzz").getAbsolutePath();
+
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            // 15..30 server bounces, randomly paced -- large enough to
+            // interleave densely with the tens of recycles the threshold
+            // below is sized to produce, small enough to keep the run under
+            // a handful of seconds.
+            int restartTarget = 15 + rnd.nextInt(16);
+            long tsBase = 1_700_000_000_000_000_000L;
+            long tsStepNanos = 1_000L; // 1us per row, well under DAY partition
+
+            String connect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
+                    + ";symbol_dict_reset_threshold=" + SYMBOL_DICT_RESET_THRESHOLD
+                    + ";reconnect_max_duration_millis=120000"
+                    + ";close_flush_timeout_millis=120000;";
+
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+                server.start();
+
+                AtomicBoolean stopProducer = new AtomicBoolean();
+                AtomicReference<Throwable> producerError = new AtomicReference<>();
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                AtomicLong rowsProduced = new AtomicLong();
+                AtomicLong resetsPerformedHolder = new AtomicLong();
+                AtomicLong symbolDictEpochHolder = new AtomicLong();
+                AtomicInteger restartsDone = new AtomicInteger();
+                CountDownLatch producerDone = new CountDownLatch(1);
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+                CountDownLatch firstBatchAcked = new CountDownLatch(1);
+
+                Thread producer = new Thread(() -> {
+                    try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(connect)) {
+                        long id = 0;
+                        int batchesSinceDrain = 0;
+                        while (!stopProducer.get()) {
+                            for (int i = 0; i < BATCH_SIZE; i++) {
+                                long currentId = id++;
+                                writeRow(sender, currentId, tsBase, tsStepNanos);
+                            }
+                            batchesSinceDrain++;
+                            if (batchesSinceDrain >= TARGET_DRAIN_EVERY_N_BATCHES) {
+                                // Blocking wait for acks -- may straddle a
+                                // bounce mid-wait. See class javadoc.
+                                Assert.assertTrue("periodic drain must succeed within 10s even across a bounce",
+                                        sender.drain(10_000));
+                                batchesSinceDrain = 0;
+                            } else {
+                                sender.flush();
+                            }
+                            rowsProduced.set(id);
+                            if (firstBatchAcked.getCount() > 0) {
+                                // Deterministic barrier, same rationale as
+                                // QwpIngressServerRestartFuzzTest: the first
+                                // batch's registrations must be acked (and
+                                // trimmed) before the first bounce, or the
+                                // bounce's catch-up is never load-bearing --
+                                // an unacked first batch just replays with
+                                // its own delta intact.
+                                Assert.assertTrue("first batch must drain before the first bounce",
+                                        sender.drain(30_000));
+                                firstBatchAcked.countDown();
+                            }
+                            Os.sleep(2);
+                        }
+                        // Drain everything before close() captures final stats,
+                        // so the counters below reflect a fully-settled sender.
+                        // Deliberately NOT sampling getTotalReconnectsSucceeded()
+                        // here: recycleForDictReset() closes and discards
+                        // cursorSendLoop on every recycle and rebuilds a fresh
+                        // one, so that counter (and its siblings) resets to zero
+                        // on every recycle -- it reflects only "since the last
+                        // recycle", not this sender's whole lifetime, and a
+                        // single end-of-run sample of it would be meaningless
+                        // noise across a run with dozens of recycles.
+                        resetsPerformedHolder.set(sender.getSymbolDictResetsPerformed());
+                        symbolDictEpochHolder.set(sender.getSymbolDictEpoch());
+                    } catch (Throwable t) {
+                        producerError.set(t);
+                    } finally {
+                        producerDone.countDown();
+                        Path.clearThreadLocals();
+                    }
+                }, "qwp-recycle-reconnect-fuzz-producer");
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        // Same rationale as QwpIngressServerRestartFuzzTest: wait
+                        // for the first batch to be acked and trimmed so every
+                        // bounce below exercises real catch-up, not a race with
+                        // the initial connect.
+                        Assert.assertTrue("producer's first batch never drained",
+                                firstBatchAcked.await(60, TimeUnit.SECONDS));
+                        for (int i = 0; i < restartTarget; i++) {
+                            Os.sleep(40 + rnd.nextInt(160)); // 40..199ms uptime
+                            server.stop();
+                            Os.sleep(15 + rnd.nextInt(60));  // 15..74ms downtime
+                            server.start();
+                            restartsDone.incrementAndGet();
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-recycle-reconnect-fuzz-bouncer");
+
+                producer.start();
+                bouncer.start();
+
+                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                    stopProducer.set(true);
+                    throw new AssertionError("bouncer did not finish within 120s, restartsDone=" + restartsDone.get());
+                }
+                if (bouncerError.get() != null) {
+                    stopProducer.set(true);
+                    throw new AssertionError("bouncer failed after restartsDone=" + restartsDone.get(), bouncerError.get());
+                }
+
+                // Grace window against a now-stable server before stopping the
+                // producer, same as QwpIngressServerRestartFuzzTest.
+                Os.sleep(200);
+                stopProducer.set(true);
+
+                if (!producerDone.await(180, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producer did not finish within 180s (rowsProduced="
+                            + rowsProduced.get() + ")");
+                }
+                if (producerError.get() != null) {
+                    throw new AssertionError("producer must not surface failures across recycle/restart "
+                            + "interleaving (rowsProduced=" + rowsProduced.get() + ")", producerError.get());
+                }
+
+                long expected = rowsProduced.get();
+                long resetsPerformed = resetsPerformedHolder.get();
+                long symbolDictEpoch = symbolDictEpochHolder.get();
+                int restarts = restartsDone.get();
+                if (expected <= 0) {
+                    throw new AssertionError("producer wrote zero rows");
+                }
+                LOG.info().$("fuzz run complete: rowsProduced=").$(expected)
+                        .$(", serverRestarts=").$(restarts)
+                        .$(", symbolDictResetsPerformed=").$(resetsPerformed)
+                        .$(", symbolDictEpoch=").$(symbolDictEpoch).$();
+
+                // Both event kinds must actually have fired many times, or the
+                // interleaving this test exists to stress never happened.
+                Assert.assertTrue("expected the reset threshold to be crossed many times over "
+                                + expected + " rows, but symbolDictResetsPerformed=" + resetsPerformed,
+                        resetsPerformed >= 10);
+                Assert.assertEquals("bouncer must have completed its full randomized restart schedule",
+                        restartTarget, restarts);
+
+                drainWalQueue();
+                engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
+
+                // Dedup safety net: no loss (count == expected) and no
+                // under-collapsed replay (count == count_distinct(id)), same
+                // oracle shape as QwpIngressServerRestartFuzzTest.
+                assertQuery(
+                        "SELECT count() c, count_distinct(id) d, min(id) lo, max(id) hi"
+                                + " FROM " + TABLE_NAME)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(
+                                "c\td\tlo\thi\n"
+                                        + expected + "\t" + expected + "\t0\t" + (expected - 1) + "\n"
+                        );
+
+                assertSymbolsIntact(expected);
+            }
+        });
+    }
+
+    /**
+     * Per-row oracle from {@link QwpSymbolDictRecycleE2ETest}: every row's
+     * symbol must be exactly what its id implies. A dictionary shifted (or
+     * NULLed) by even one entry across a recycle or a restart's catch-up
+     * reads back wrong here even though the row-count oracle stays correct.
+     */
+    private void assertSymbolsIntact(long expected) throws Exception {
+        assertQuery("SELECT count() FROM " + TABLE_NAME
+                        + " WHERE sym IS NULL OR sym <> concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n0\n");
+
+        // Positive control, same rationale as QwpSymbolDictRecycleE2ETest:
+        // pairs with the zero-mismatch query above so a degenerate predicate
+        // can't pass both checks vacuously.
+        assertQuery("SELECT count() FROM " + TABLE_NAME
+                        + " WHERE sym = concat('s', (id % " + SYMBOL_CARDINALITY + ")::string)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + expected + "\n");
+    }
+
+    private void createTargetTable() {
+        try {
+            execute(
+                    "CREATE TABLE " + TABLE_NAME + " ("
+                            + "id LONG, "
+                            + "sym SYMBOL, "
+                            + "ts TIMESTAMP"
+                            + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
+                            + "DEDUP UPSERT KEYS(ts, id)"
+            );
+        } catch (Exception e) {
+            throw new AssertionError("failed to create target table", e);
+        }
+    }
+
+    private void writeRow(QwpWebSocketSender sender, long id, long tsBaseNanos, long tsStepNanos) {
+        sender.table(TABLE_NAME)
+                .symbol("sym", "s" + (id % SYMBOL_CARDINALITY))
+                .longColumn("id", id)
+                .at(tsBaseNanos + id * tsStepNanos, ChronoUnit.NANOS);
+    }
+}
