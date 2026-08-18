@@ -9073,7 +9073,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 try {
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    // SP1B (N1): resolve the PREVIOUS partition's own directory. For a composite table
+                    // that partition is a CELL -- its data lives at <day>/<cell>.<txn>, never at
+                    // <day>.<txn> -- so the cell-blind 5-arg overload used here previously pointed at a
+                    // path that does not exist, and the tail's recomputed min/max came back wrong (or
+                    // the read failed outright with "file does not exist"). getPartitionCellKey returns
+                    // 0 for a plain table and renderCellSegment is only called when there is a
+                    // dimension to render, so the plain path is unchanged.
+                    if (isRoutedComposite()) {
+                        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                        cellSegmentSink.clear();
+                        renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(prevIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex), cellSegmentSink);
+                    } else {
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    }
                     readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
