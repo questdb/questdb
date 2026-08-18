@@ -18606,6 +18606,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.updatePartitionSizeByRawIndex(dayIndex * txWriter.getLongsPerAttachedPartition(), dayTs, daySize + srcSize);
             txWriter.removeAttachedPartitions(fragTs, cellKey);
             partitionRemoveCandidates.add(fragTs, srcNameTxn, cellKey);
+            // Leave both scratch paths at table-root length. processPartitionRemoveCandidates0 does NOT
+            // trim before building each candidate path -- setPathForNativePartition APPENDS (path.slash()
+            // then the date component) -- so any residue left here is prepended to every purge path in
+            // the same drain. Leaving `other` pointing at the fragment produced exactly that:
+            //   /c~1/<fragment>/<fragment>/E0.1   errno=2
+            // and the fragment then leaked on disk with its attached entry already removed.
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
         }
         // Once per FRAGMENT, not once per cell: this drops every cell recorded at fragTs.
         columnVersionWriter.squashPartition(dayTs, fragTs);
@@ -18614,6 +18622,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setPartitionSeqTxn(dayFirst, Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(dayFirst)));
         }
         removeEmptyDayContainer(fragTs);
+        // removeEmptyDayContainer trims on entry but not on exit, so it leaves `other` at the fragment
+        // container. processPartitionRemoveCandidates0 does not trim before building candidate paths
+        // (setPathForNativePartition APPENDS), so that residue is prepended to every purge path in the
+        // drain -- which is what produced /c~1/<fragment>/<fragment>/E0.1 and leaked the fragment.
+        path.trimTo(pathSize);
+        other.trimTo(pathSize);
         return true;
     }
 
@@ -18739,13 +18753,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reason as before -- a skipped squash leaves every fragment independently valid and queryable,
         // whereas a cell-blind merge silently destroys the day's cell structure.
         if (isRoutedComposite()) {
-            // SP1E: squashSplitPartitionsComposite below MERGES CORRECTLY (verified: exactly the
-            // fragment's own cell, siblings untouched, twin data and ordering intact) but the fragment
-            // DIRECTORY is not purged -- the candidate path renders doubled, e.g.
-            //   /c~1/2023-01-01T010000-000001/2023-01-01T010000-000001/E0.1
-            // Until that is fixed the fragment leaks on disk while its attached entry is gone, which is
-            // worse than not squashing. Skipping remains correct meanwhile.
-            LOG.info().$("composite table, skipping split-fragment squash (fragment purge path unresolved) [table=").$(tableToken).I$();
+            // SP1E: squashSplitPartitionsComposite below merges correctly and now purges the fragment
+            // container too, but the AUTOMATIC and EXPLICIT entry points interact: once housekeeping has
+            // merged and removed a fragment, a subsequent ALTER ... SQUASH re-enters
+            // squashPartitionForce and still references <fragment>/<cell>, which no longer exists
+            // ("Partition '...' does not exist in table directory"). Sequencing those two is the
+            // remaining work; skipping stays correct meanwhile.
+            LOG.info().$("composite table, skipping split-fragment squash (entry-point sequencing unresolved) [table=").$(tableToken).I$();
             return;
         }
 
