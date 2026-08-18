@@ -51,7 +51,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 |---|---|---|
 | 1 | `DROP PARTITION` — **SUPPORTED 2026-08-18**; whole-day in 1B, per-cell (`LIST '<day>/<cell>'`) in 1C | 1 — partition-lifecycle (done) |
 | 2 | `FORCE DROP PARTITION` — **SUPPORTED 2026-08-18 (1D)**; whole days, and its LIST parser already makes a cell-qualified name unreachable | 1 — partition-lifecycle (done) |
-| 3 | `DETACH PARTITION` | 1 — partition-lifecycle |
+| 3 | `DETACH PARTITION` — **BLOCKED BY #5**: measured 2026-08-18, with its gates lifted DETACH suspends on the SQUASH gate, thrown from `detachPartition` itself. Squash must be cell-aware first | 1 — partition-lifecycle (needs 1E) |
 | 4 | `ATTACH PARTITION` | 1 — partition-lifecycle |
 | 5 | `SQUASH PARTITIONS` (split-fragment squash; today a silent skip) | 1 — partition-lifecycle |
 | 6 | TTL-based partition eviction — **SUPPORTED 2026-08-18 (1D)**; whole days only, per-dimension TTL remains deferred by decision | 1 — partition-lifecycle (done) |

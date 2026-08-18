@@ -4,6 +4,14 @@
 
 **Goal:** Make split-fragment squash cell-aware, closing the last of sub-project 1's partition-lifecycle gates that does not need new on-disk machinery — both the explicit `ALTER TABLE … SQUASH PARTITIONS` and the automatic squash that runs during commit.
 
+> **This plan BLOCKS `DETACH PARTITION`.** Measured 2026-08-18: with the DETACH gates lifted, the
+> statement is accepted and the table then SUSPENDS on a different gate entirely —
+> `composite partitioning does not yet support SQUASH PARTITIONS`, thrown from
+> `TableWriter#detachPartition` (~2381). `DETACH` calls squash internally, so no amount of work on
+> DETACH's own machinery (the nested `.detached` container, re-interning by value) can land until
+> squash is cell-aware. The lifecycle spec lists DETACH and ATTACH as independent items; that
+> ordering constraint is not in it.
+
 **Architecture:** Measured 2026-08-18 with `CAIRO_O3_PARTITION_SPLIT_MIN_SIZE = 1`. A composite table **does** split, and the fragment is itself cell-structured:
 
 ```
