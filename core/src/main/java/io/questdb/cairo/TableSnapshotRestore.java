@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -45,6 +46,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -61,6 +63,7 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.Utf8s;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -961,6 +964,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
+        removeIndexArtifactsOrphanedByRegeneration(path, partitionDirLen);
 
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskReader);
@@ -1429,6 +1433,49 @@ public class TableSnapshotRestore implements QuietCloseable {
         } finally {
             path.close();
         }
+    }
+
+    /**
+     * Removes any {@code <col>.pidx.<indexTxn>.parquet} / {@code ._im} pair left
+     * in a partition whose {@code _pm} was just regenerated.
+     * <p>
+     * The regenerated chain is a fresh single footer built from
+     * {@code data.parquet}, carrying no covering section, so nothing published
+     * references these files any more. They are also out of the sweep's reach:
+     * its fallback arm only reclaims a pair whose index txn is ABOVE the current
+     * writer txn, and a restored partition's index txns are at or below the
+     * restored txn. Left alone they would sit in the partition directory
+     * forever.
+     * <p>
+     * Deleting here is safe specifically because a restore has the table to
+     * itself -- no reader can be bound to one of these pairs at this point.
+     * Names are collected before any removal because the visitor must not
+     * disturb the path being iterated.
+     */
+    private void removeIndexArtifactsOrphanedByRegeneration(Path path, int partitionDirLen) {
+        final ObjList<String> orphans = new ObjList<>();
+        final StringSink fileName = Misc.getThreadLocalSink();
+        path.trimTo(partitionDirLen).$();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)) {
+                orphans.add(Chars.toString(fileName));
+            }
+        });
+        for (int i = 0, n = orphans.size(); i < n; i++) {
+            path.trimTo(partitionDirLen).concat(orphans.getQuick(i)).$();
+            if (ff.removeQuiet(path.$())) {
+                LOG.info().$("removed covering index artifact orphaned by _pm regeneration [path=").$(path).I$();
+            } else {
+                LOG.info().$("could not remove covering index artifact orphaned by _pm regeneration [path=").$(path)
+                        .$(", errno=").$(ff.errno()).I$();
+            }
+        }
+        path.trimTo(partitionDirLen);
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {

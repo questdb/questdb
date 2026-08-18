@@ -1298,6 +1298,92 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * W6-I3: regenerating a {@code _pm} in place must not silently strip a
+     * partition's covering-index tokens.
+     * <p>
+     * {@code mapResolvableParquetMeta} removes an unresolvable {@code _pm} and
+     * regenerates it from {@code data.parquet}. The regenerated file is a fresh
+     * one-footer chain carrying no covering section, in a directory whose
+     * {@code <col>.pidx.<txn>.parquet} pairs are untouched. That matters because
+     * a parquet-form seal does NOT write the native {@code .pk}/{@code .pv}
+     * chain: if the token is lost, an indexed read has no index to fall back to.
+     * <p>
+     * This asserts the restored table still answers the indexed query with the
+     * same rows it had before. A silently empty result here is a wrong answer,
+     * not a degraded one.
+     */
+    @Test
+    public void testCheckpointRestoreDoesNotSilentlyDropCoveringIndexTokens() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tcov (
+                        val DOUBLE,
+                        sym SYMBOL,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO tcov VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T06:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-01T12:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-01T18:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE tcov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tcov ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+
+            sink.clear();
+            printSql("SELECT count() FROM tcov WHERE sym = 'A'");
+            final String expectedCount = sink.toString();
+
+            TableToken tableToken = engine.verifyTableName("tcov");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            // The seal must actually have produced parquet-form artifacts, or
+            // there is no token to lose and the test proves nothing.
+            File[] pidx = partDir.listFiles((d, n) -> n.contains(".pidx."));
+            Assert.assertNotNull("no pidx artifacts in the partition directory", pidx);
+            Assert.assertTrue("the fixture must seal to the parquet form", pidx.length > 0);
+
+            // Force the regeneration path: an absent _pm is the same branch a
+            // torn or stale one takes.
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            // The regenerated chain publishes no covering token, so the pairs it
+            // leaves behind are unreferenced AND out of the sweep's reach: the
+            // sweep only reclaims artifacts whose index txn is above the writer
+            // txn, and a restored partition's are at or below it. Left in place
+            // they occupy the partition directory forever.
+            File[] pidxAfter = partDir.listFiles((d, n) -> n.contains(".pidx."));
+            Assert.assertEquals(
+                    "regenerating the _pm must reclaim the index artifacts it orphans, "
+                            + "not leave them permanently unreclaimable",
+                    0,
+                    pidxAfter == null ? 0 : pidxAfter.length);
+            assertQuery("SELECT count() FROM tcov WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedCount);
+        });
+    }
+
     @Test
     public void testCheckpointRestoreGeneratesMissingParquetMetaFile() throws Exception {
         // Exercises the _pm regeneration path in generateMissingParquetMetaFiles():
