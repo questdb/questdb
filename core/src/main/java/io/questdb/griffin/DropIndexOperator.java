@@ -33,8 +33,11 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.dFile;
 
@@ -45,6 +48,7 @@ public class DropIndexOperator {
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final LongList rollbackColumnVersions = new LongList();
+    private final IntList rollbackCellKeys = new IntList();
     private final int rootLen;
     private final TableWriter tableWriter;
 
@@ -68,28 +72,39 @@ public class DropIndexOperator {
         int timestampType = tableWriter.getMetadata().getTimestampType();
         int partitionBy = tableWriter.getPartitionBy();
         int partitionCount = tableWriter.getPartitionCount();
+        final boolean composite = tableWriter.isComposite();
         byte indexType = tableWriter.getMetadata().getColumnIndexType(columnIndex);
         try {
             purgingOperator.clear();
             rollbackColumnVersions.clear();
+            rollbackCellKeys.clear();
             for (int pIndex = 0; pIndex < partitionCount; pIndex++) {
                 long pTimestamp = tableWriter.getPartitionTimestamp(pIndex);
                 long pVersion = tableWriter.getPartitionNameTxn(pIndex);
-                long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
+                // Per-CELL. On a composite table several cells share one raw partition timestamp, so
+                // the by-timestamp lookups below answer for cellKey 0 and the bare path names the day
+                // CONTAINER. That made src and hardLink resolve to the SAME file and DROP INDEX failed
+                // with errno=17. A composite attached entry IS a cell, so resolving by pIndex is exact;
+                // for a plain table cellKey is 0 and cellSegment null, i.e. unchanged behaviour.
+                final int cellKey = tableWriter.getPartitionCellKey(pIndex);
+                final String cellSegment = composite ? renderCellSegment(cellKey) : null;
+                long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, cellKey, columnIndex);
                 long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1);
                 byte partitionFormat = tableWriter.getPartitionFormat(pIndex);
 
                 if (columnTop != -1) {
                     // bump up column version, metadata will be updated later
-                    tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
+                    // Cell-scoped: the 3-arg form bumps cellKey 0's version, so on a composite table the
+                    // read below returned the UNCHANGED version for this cell and src == hardLink.
+                    tableWriter.upsertColumnVersion(pTimestamp, cellKey, columnIndex, columnTop);
 
                     if (partitionFormat == PartitionFormat.NATIVE) {
-                        final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
+                        final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, cellKey, columnIndex);
                         // create hard link to column data
                         // src
-                        partitionDFile(path, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
+                        partitionDFile(path, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnVersion, cellSegment);
                         // hard link
-                        partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
+                        partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion, cellSegment);
                         if (ff.hardLink(path.$(), other.$()) == -1) {
                             throw CairoException.critical(ff.errno())
                                     .put("cannot hardLink [src=").put(path)
@@ -97,10 +112,11 @@ public class DropIndexOperator {
                                     .put(']');
                         }
                         rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
+                        rollbackCellKeys.add(cellKey);
                     }
 
                     // add to cleanup tasks, the index will be removed in due time
-                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, indexType, columnVersion, pTimestamp, pVersion);
+                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, indexType, columnVersion, pTimestamp, pVersion, cellSegment);
                 }
             }
         } catch (Throwable th) {
@@ -114,7 +130,10 @@ public class DropIndexOperator {
                     final long columnDropIndexVersion = rollbackColumnVersions.getQuick(i + 1);
                     final long pTimestamp = rollbackColumnVersions.getQuick(i + 2);
                     final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 3);
-                    partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
+                    // Same cell the link was created under, or the rollback deletes nothing (or, worse,
+                    // the wrong cell's file).
+                    final String rollbackCell = composite ? renderCellSegment(rollbackCellKeys.getQuick(i / 4)) : null;
+                    partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion, rollbackCell);
                     if (!ff.removeQuiet(other.$())) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
                     }
@@ -127,6 +146,17 @@ public class DropIndexOperator {
         }
     }
 
+    /**
+     * Renders {@code cellKey}'s directory segment. A fresh String per call rather than the writer's
+     * thread-local sink, because these values are STORED (in the purge queue and the rollback list)
+     * and outlive the loop iteration that produced them.
+     */
+    private String renderCellSegment(int cellKey) {
+        final StringSink sink = new StringSink();
+        tableWriter.renderCellSegment(sink, cellKey);
+        return sink.toString();
+    }
+
     private static void partitionDFile(
             Path path,
             int rootLen,
@@ -135,14 +165,16 @@ public class DropIndexOperator {
             long partitionTimestamp,
             long partitionNameTxn,
             CharSequence columnName,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment
     ) {
         TableUtils.setPathForNativePartition(
                 path.trimTo(rootLen),
                 timestampType,
                 partitionBy,
                 partitionTimestamp,
-                partitionNameTxn
+                partitionNameTxn,
+                cellSegment
         );
         dFile(path, columnName, columnNameTxn);
     }

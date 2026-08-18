@@ -2612,11 +2612,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // and its two column versions both come from the cellKey-0-only
         // getColumnNameTxn(timestamp, columnIndex), so they collide. Making it cell-aware means
         // threading cellKey through DropIndexOperator's walk -- a change in that class, not here.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support DROP INDEX [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
+        
 
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
@@ -3111,6 +3107,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public int getPartitionSquashCountByPartitionTimestamp(long partitionTimestamp) {
         final int index = txWriter.getPartitionIndex(partitionTimestamp);
         return index >= 0 ? txWriter.getPartitionSquashCount(index) : -1;
+    }
+
+    /**
+     * Cell ordinal of an attached partition entry, or 0 for a plain table. Exposed for
+     * {@link io.questdb.griffin.DropIndexOperator}, which walks partitions by index and must resolve
+     * each one's cell directory rather than the shared day container.
+     */
+    public int getPartitionCellKey(int partitionIndex) {
+        return txWriter.getPartitionCellKey(partitionIndex);
+    }
+
+    /**
+     * True when this writer's table is a REAL composite table, i.e. it has dimensions AND has routed at
+     * least one cell. Exposed for {@link io.questdb.griffin.DropIndexOperator} so it can pick the
+     * cell-aware path without duplicating the predicate -- see the private overload's own doc for why
+     * this is narrower than {@code dimCount > 0}.
+     */
+    public boolean isComposite() {
+        return isRoutedComposite();
     }
 
     public long getPartitionTimestamp(int partitionIndex) {
@@ -5015,6 +5030,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
         columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
+    }
+
+    /**
+     * Cell-scoped {@link #upsertColumnVersion(long, int, long)}. The 2-arg form writes the record for
+     * cellKey 0, so on a composite table it bumps a DIFFERENT cell's version than the caller is working
+     * on -- which is why DROP INDEX read the same column version before and after the bump and then
+     * tried to hard-link a file onto itself.
+     */
+    public void upsertColumnVersion(long partitionTimestamp, int cellKey, int columnIndex, long columnTop) {
+        columnVersionWriter.upsert(partitionTimestamp, cellKey, columnIndex, txWriter.txn, columnTop);
     }
 
     /**

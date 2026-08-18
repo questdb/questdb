@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -213,23 +214,29 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * SP2 (2026-08-18): DROP INDEX is no longer gated. Asserts the round trip -- add then drop -- so the
+     * flag has to actually move in BOTH directions rather than merely not throwing.
+     */
     @Test
-    public void testDropIndexGated() throws Exception {
+    public void testDropIndexRoundTripsWithAddIndex() throws Exception {
         assertMemoryLeak(() -> {
-            // ADD INDEX is itself gated (retroactive rebuild is unsafe), so to reach a composite
-            // table with an actual index to drop, the index must be declared AT CREATE time -- the
-            // one ADD-INDEX-shaped operation this sweep did NOT find broken (nothing to retroactively
-            // rebuild: the table is empty at CREATE), matching CompositeEndToEndTest's own established
-            // workaround for the same constraint (N2).
-            execute("create table c (ts timestamp, exch symbol index, px double) timestamp(ts) partition by day, exch wal");
-            execute("insert into c values " +
-                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)");
+            createRoutedTwoCellTable("c");
+            final TableToken token = engine.verifyTableName("c");
+            execute("alter table c alter column exch add index");
             drainWalQueue();
             assertWalTableNotSuspended("c");
-            assertCompositeGateFires(
-                    "alter table c alter column exch drop index",
-                    "c",
-                    "composite partitioning does not yet support DROP INDEX");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("exch must be indexed after ADD INDEX",
+                        reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("exch")));
+            }
+            execute("alter table c alter column exch drop index");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse("exch must NOT be indexed after DROP INDEX",
+                        reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("exch")));
+            }
         });
     }
 

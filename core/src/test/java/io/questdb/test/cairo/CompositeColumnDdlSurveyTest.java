@@ -112,11 +112,6 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
     /**
      * DROP INDEX, the counterpart of {@link #surveyAddIndex()}.
      */
-    @Ignore("SP2: DROP INDEX is no longer silent -- it now fails LOUDLY with the root cause visible:"
-            + " cannot hardLink [src=<day>/sym.d.1, hardLink=<day>/sym.d.1] errno=17, i.e. src == dest."
-            + " DropIndexOperator#partitionDFile builds both paths cell-blind (day container, not cell)"
-            + " and both column versions come from the cellKey-0-only getColumnNameTxn(ts, columnIndex)."
-            + " Fix is to thread cellKey through DropIndexOperator's walk.")
     @Test(timeout = 60_000)
     public void surveyDropIndex() throws Exception {
         assertMemoryLeak(() -> {
