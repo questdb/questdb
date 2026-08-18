@@ -103,7 +103,30 @@ public abstract class AbstractCompositeTwinTest extends AbstractCairoTest {
     protected void assertTwinEqual(String where, String forwardOrder) throws SqlException {
         assertSqlCursors("SELECT * FROM p" + where + forwardOrder, "SELECT * FROM c" + where + forwardOrder);
         assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
+        assertForwardTsOrderTwinEqual(where);
         assertBackwardTwinEqual(where);
+    }
+
+    /**
+     * The FORWARD timestamp sequence under a single-column {@code ORDER BY ts}, and the reason it is a
+     * separate check from the full row comparison above.
+     *
+     * <p><b>This exists because its absence hid a wrong-answer bug.</b> The forward comparison orders by
+     * {@code ts, exch, px}. A multi-column sort is never elided, so it re-sorts whatever the scan emits
+     * and therefore CANNOT observe the order the scan produced. Single-column {@code ORDER BY ts} is
+     * elided against a scan the optimiser believes is already timestamp-ordered — so it, and only it,
+     * compares the raw scan order. Measured 2026-08-18: with a split fragment present, a composite table
+     * returned {@code 01:00, 21:00, 22:00, 10:00, 20:00} from {@code ORDER BY ts} while the full forward
+     * comparison passed, because the multi-column sort silently repaired the stream.
+     *
+     * <p>Only the timestamp column is projected, exactly as the backward half does: rows that tie on
+     * {@code ts} have no defined order among themselves, so comparing whole rows here would fail on
+     * ties rather than on ordering. This is the forward twin of {@link #assertBackwardTwinEqual}, which
+     * already had it — the asymmetry was the gap.
+     */
+    protected void assertForwardTsOrderTwinEqual(String where) throws SqlException {
+        final String asc = " ORDER BY ts";
+        assertSqlCursors("SELECT ts FROM p" + where + asc, "SELECT ts FROM c" + where + asc);
     }
 
     /**

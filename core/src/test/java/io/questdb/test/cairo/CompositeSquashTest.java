@@ -155,7 +155,7 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             execute("ALTER TABLE p SQUASH PARTITIONS");
             drainWalQueue();
 
-            assertForwardTwinEqualAndCount("");
+            assertTwinEqual("");
             Assert.assertTrue("the fragment must be merged away " + fragmentDirs("c"),
                     fragmentDirs("c").isEmpty());
             Assert.assertEquals("all three sibling cells must survive the merge",
@@ -185,7 +185,7 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             execute("ALTER TABLE p SQUASH PARTITIONS");
             drainWalQueue();
 
-            assertForwardTwinEqualAndCount("");
+            assertTwinEqual("");
             Assert.assertTrue("every fragment must be merged away " + fragmentDirs("c"),
                     fragmentDirs("c").isEmpty());
             // the day's own cells must all survive -- a merge that iterated the DAY's cells rather
@@ -216,7 +216,7 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
                 drainWalQueue();
                 engine.releaseInactive();
             }
-            assertForwardTwinEqualAndCount("");
+            assertTwinEqual("");
             Assert.assertTrue("fragments accumulated across commits with no refusal anywhere: "
                     + fragmentDirs("c"), fragmentDirs("c").isEmpty());
         });
@@ -280,30 +280,12 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             seedThreeCellDay();
             forceSplit();
             Assert.assertEquals("precondition: a fragment exists", 1, fragmentDirs("c").size());
-            assertForwardTwinEqualAndCount("");
+            // The FULL oracle, deliberately -- ordering is the whole point of this test. An earlier
+            // blanket relaxation across the fragment-creating tests swapped this for the forward-only
+            // helper and silently disarmed the detector: the negative control then "passed" with the
+            // fix reverted, which is how the mistake surfaced.
+            assertTwinEqual("");
         });
-    }
-
-    /**
-     * Rows and {@code count()} against the plain twin, <b>deliberately without the backward half</b>.
-     *
-     * <p>This is an oracle relaxation and it is load-bearing, so it is named rather than hidden inside a
-     * test. Every squash test here creates a split fragment, and a fragmented composite table
-     * independently fails the backward comparison — see
-     * {@link #testBackwardScanAgreesOnAFragmentedTableWithoutAnySquash}, which reproduces that failure
-     * with NO squash in the test at all. Calling the full {@code assertTwinEqual} here would make these
-     * tests fail for a reason that has nothing to do with the code they exercise, and "fix the squash
-     * until the backward scan passes" would be chasing the wrong defect.
-     *
-     * <p><b>What this gives up, precisely:</b> these tests cannot see a squash bug that corrupts ONLY the
-     * backward read path while leaving forward rows, {@code count()}, and the on-disk cell structure
-     * correct. That residual is covered the moment the pinned defect is fixed and the full oracle is
-     * restored here — which is the intended end state, not a permanent exemption.
-     */
-    private void assertForwardTwinEqualAndCount(String where) throws SqlException {
-        final String order = " ORDER BY ts, exch, px";
-        assertSqlCursors("SELECT * FROM p" + where + order, "SELECT * FROM c" + where + order);
-        assertSqlCursors("SELECT count() FROM p" + where, "SELECT count() FROM c" + where);
     }
 
     /**
