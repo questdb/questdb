@@ -313,13 +313,12 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 // pathological serialization where all recycling is starved
                 // while the server bounces and then bursts afterward (arithmetically
                 // reachable at ~2.5ms/batch and a recycle per ~70 rows).
+                // The floor on this sample is asserted only after the producer's
+                // own error check below -- a producer that died mid-run must
+                // surface its real exception, not a low-recycle-count headline.
                 QwpWebSocketSender senderAtBounceEnd = senderRef.get();
                 long resetsAtBounceEnd = senderAtBounceEnd != null
                         ? senderAtBounceEnd.getSymbolDictResetsPerformed() : 0L;
-                Assert.assertTrue("expected the reset threshold to be crossed many times DURING the "
-                                + restartsDone.get() + " server restarts, but symbolDictResetsPerformed="
-                                + resetsAtBounceEnd + " when the bounce schedule finished",
-                        resetsAtBounceEnd >= 10);
 
                 // Grace window against a now-stable server before stopping the
                 // producer, same as QwpIngressServerRestartFuzzTest.
@@ -334,6 +333,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                     throw new AssertionError("producer must not surface failures across recycle/restart "
                             + "interleaving (rowsProduced=" + rowsProduced.get() + ")", producerError.get());
                 }
+
+                Assert.assertTrue("expected the reset threshold to be crossed many times DURING the "
+                                + restartsDone.get() + " server restarts, but symbolDictResetsPerformed="
+                                + resetsAtBounceEnd + " when the bounce schedule finished",
+                        resetsAtBounceEnd >= 10);
 
                 long expected = rowsProduced.get();
                 long resetsPerformed = resetsPerformedHolder.get();
