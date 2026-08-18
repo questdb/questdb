@@ -254,6 +254,22 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * Marks every key holding at least one posting inside
+     * {@code [rowLo, rowHi]}, returning how many were NEWLY marked.
+     * <p>
+     * <b>Row-group pruning is not enough here.</b> Skipping a group whose extent
+     * misses the window is exact, but a group that STRADDLES it holds keys whose
+     * own postings all sit outside it, and marking those is a wrong answer
+     * rather than a slack one: the caller returns the symbols outright, and the
+     * inflated count satisfies its {@code foundCount < totalExpected} scan loop
+     * early, so later partitions are never visited. The native reader gates each
+     * key on {@code flatKeyHasValueInRange}; this does the same, per key run.
+     * <p>
+     * A group lying wholly inside the window needs no such test, so it keeps the
+     * cheap {@code key_id}-only decode. That covers {@link #collectDistinctKeys}
+     * -- whose range admits everything -- so the full-partition fast path still
+     * reads one four-byte column and nothing else.
+     *
      * @see #collectDistinctKeys(DirectBitSet)
      */
     @Override
@@ -264,7 +280,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         }
         int found = 0;
         // The implicit-null prefix is not in the index, so key 0 has to be
-        // marked from columnTop rather than from any row.
+        // marked from columnTop rather than from any row. A deliberate
+        // divergence from the native reader, which marks key 0 only from a real
+        // posting: those rows genuinely are NULL, so this is the more correct of
+        // the two. It cannot be observed today -- a parquet-sealed index always
+        // carries a zero column top -- and is kept so that the four answers this
+        // class gives about the prefix stay consistent with one another.
         if (columnTop > 0 && rowLo < columnTop && !foundKeys.get(0)) {
             foundKeys.set(0);
             found++;
@@ -275,24 +296,69 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 if (rows <= 0 || isRowGroupPruned(rg, rowLo, rowHi)) {
                     continue;
                 }
-                final long keyIdPtr = probe.decodeKeyIdColumn(rg, rows);
-                // Key-major, so a linear walk that only tests the boundary
-                // marks each distinct key once without a set.
-                int previous = -1;
-                for (long i = 0; i < rows; i++) {
-                    final int k = Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2));
-                    if (k == previous) {
-                        continue;
+                if (isWholeGroupInRange(rg, rowLo, rowHi)) {
+                    final long keyIdPtr = probe.decodeKeyIdColumn(rg, rows);
+                    // Key-major, so a linear walk that only tests the boundary
+                    // marks each distinct key once without a set.
+                    int previous = -1;
+                    for (long i = 0; i < rows; i++) {
+                        final int k = Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2));
+                        if (k == previous) {
+                            continue;
+                        }
+                        previous = k;
+                        if (k >= 0 && k < foundKeys.capacity() && !foundKeys.get(k)) {
+                            foundKeys.set(k);
+                            found++;
+                        }
                     }
-                    previous = k;
-                    if (k >= 0 && k < foundKeys.capacity() && !foundKeys.get(k)) {
+                    continue;
+                }
+                // The group straddles the window, so row_id has to be decoded
+                // too and each key's own run consulted.
+                probe.decodeGroup(rg);
+                final long keyIdPtr = probe.rowGroupBuffers.getChunkDataPtr(0);
+                final long rowIdPtr = probe.rowGroupBuffers.getChunkDataPtr(1);
+                long i = 0;
+                while (i < rows) {
+                    final int k = Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2));
+                    long end = i + 1;
+                    while (end < rows && Unsafe.getUnsafe().getInt(keyIdPtr + (end << 2)) == k) {
+                        end++;
+                    }
+                    if (k >= 0 && k < foundKeys.capacity() && !foundKeys.get(k)
+                            && keyHasPostingInRange(rowIdPtr, i, end, rowLo, rowHi)) {
                         foundKeys.set(k);
                         found++;
                     }
+                    i = end;
                 }
             }
         }
         return found;
+    }
+
+    /**
+     * True when the key run {@code [lo, hi)} of the decoded {@code row_id} chunk
+     * holds a posting inside {@code [rowLo, rowHi]}.
+     * <p>
+     * Exact, not conservative. Comparing the run's first and last id against the
+     * window would admit a run that brackets it without meeting it -- the ids
+     * ascend but are not consecutive. So this is the same lower-bound search the
+     * native {@code flatKeyHasValueInRange} performs: find the first id at or
+     * above {@code rowLo} and test it against {@code rowHi}.
+     */
+    private static boolean keyHasPostingInRange(long rowIdPtr, long lo, long hi, long rowLo, long rowHi) {
+        final long end = hi;
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) < rowLo) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo < end && Unsafe.getUnsafe().getLong(rowIdPtr + (lo << 3)) <= rowHi;
     }
 
     /**

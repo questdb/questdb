@@ -32,6 +32,7 @@ import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexReader;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -254,6 +255,88 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * {@code collectDistinctKeysInRange} must report the keys that occur in the
+     * range, not the keys that occur in a row group the range touches.
+     * <p>
+     * {@code PostingIndexDistinctRecordCursorFactory} calls the ranged form for
+     * every frame that is not a whole partition, so this is what
+     * {@code SELECT DISTINCT sym} under a timestamp filter reads. Over-reporting
+     * is doubly wrong there: the extra symbols are returned outright, and the
+     * inflated count satisfies the factory's {@code foundCount < totalExpected}
+     * scan loop early, so later partitions are never visited.
+     * <p>
+     * The fixture's symbols cycle every seven rows, so a window narrower than a
+     * cycle provably holds only some of them while the row group holding it
+     * holds them all -- which is exactly the gap between row-group pruning and a
+     * per-posting test.
+     */
+    @Test
+    public void testDistinctKeysInRangeMatchTheNativeReader() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            createArm("native_distinct_arm");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            createArm("parquet_distinct_arm");
+
+            try (
+                    TableReader nativeReader = engine.getReader(engine.verifyTableName("native_distinct_arm"));
+                    TableReader parquetReader = engine.getReader(engine.verifyTableName("parquet_distinct_arm"))
+            ) {
+                final int nativeCol = nativeReader.getMetadata().getColumnIndex("sym");
+                final int parquetCol = parquetReader.getMetadata().getColumnIndex("sym");
+                final IndexReader nativeIdx = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD);
+                final IndexReader parquetIdx = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "the parquet arm must actually dispatch to the parquet reader",
+                        parquetIdx instanceof AbstractParquetPostingIndexReader
+                );
+
+                final long[][] ranges = {
+                        {0, Long.MAX_VALUE},
+                        {0, 2},
+                        {0, 10},
+                        {100, 106},
+                        {1000, 1001},
+                        {30_000, 30_003},
+                        {ROW_COUNT - 5, ROW_COUNT - 1},
+                        {ROW_COUNT, Long.MAX_VALUE},
+                };
+                for (long[] r : ranges) {
+                    assertSameDistinctKeys(nativeIdx, parquetIdx, r[0], r[1]);
+                }
+            }
+        });
+    }
+
+    private void assertSameDistinctKeys(IndexReader nativeReader, IndexReader parquetReader, long rowLo, long rowHi) {
+        final String where = "[rowLo=" + rowLo + ", rowHi=" + rowHi + ']';
+        try (
+                DirectBitSet expected = new DirectBitSet(64);
+                DirectBitSet actual = new DirectBitSet(64)
+        ) {
+            final int expectedFound = nativeReader.collectDistinctKeysInRange(expected, rowLo, rowHi);
+            final int actualFound = parquetReader.collectDistinctKeysInRange(actual, rowLo, rowHi);
+            final StringBuilder expectedKeys = new StringBuilder();
+            final StringBuilder actualKeys = new StringBuilder();
+            for (int k = 0; k < 64; k++) {
+                if (expected.get(k)) {
+                    expectedKeys.append(k).append(' ');
+                }
+                if (actual.get(k)) {
+                    actualKeys.append(k).append(' ');
+                }
+            }
+            Assert.assertEquals(
+                    "the marked key set disagreed " + where, expectedKeys.toString(), actualKeys.toString()
+            );
+            // The count is what the caller's scan loop terminates on, so an
+            // inflated one skips partitions even when the bit set happens to
+            // match.
+            Assert.assertEquals("the newly-found count disagreed " + where, expectedFound, actualFound);
+        }
     }
 
     /**
