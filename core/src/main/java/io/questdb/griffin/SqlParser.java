@@ -145,7 +145,7 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountAndWindowExpressionsRef = this::rewriteCountAndWindowExpressions;
     private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
@@ -4504,6 +4504,7 @@ public class SqlParser {
                 WindowExpression windowSpec = windowExpressionPool.next();
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
+                rewriteWindowExpression(windowSpec);
 
                 // Validate base window reference (window inheritance):
                 // the base must be defined earlier in the same WINDOW clause (no forward references)
@@ -6283,6 +6284,13 @@ public class SqlParser {
         }
     }
 
+    private void rewriteCountAndWindowExpressions(ExpressionNode node) throws SqlException {
+        if (node.windowExpression != null) {
+            rewriteWindowExpression(node.windowExpression);
+        }
+        rewriteCount(node);
+    }
+
     private ExpressionNode rewriteDeclaredVariables(
             ExpressionNode expr,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
@@ -6371,7 +6379,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteCountRef);
+        traversalAlgo.traverse(parent, rewriteCountAndWindowExpressionsRef);
         traversalAlgo.traverse(parent, rewriteCaseRef);
         traversalAlgo.traverse(parent, rewriteConcatRef);
         traversalAlgo.traverse(parent, rewritePgCastRef);
@@ -6468,6 +6476,31 @@ public class SqlParser {
 
         // At this point, we know that the expression is compatible with our rewrite.
         node.lhs = innerCastNode.lhs;
+    }
+
+    private void rewriteWindowExpression(WindowExpression windowExpression) throws SqlException {
+        final ObjList<ExpressionNode> partitionBy = windowExpression.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            rewriteWindowSubExpression(partitionBy.getQuick(i));
+        }
+        final ObjList<ExpressionNode> orderBy = windowExpression.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            rewriteWindowSubExpression(orderBy.getQuick(i));
+        }
+        rewriteWindowSubExpression(windowExpression.getRowsLoExpr());
+        rewriteWindowSubExpression(windowExpression.getRowsHiExpr());
+    }
+
+    private void rewriteWindowSubExpression(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        traversalAlgo.traverse(node, rewriteCountAndWindowExpressionsRef);
+        traversalAlgo.traverse(node, rewriteCaseRef);
+        traversalAlgo.traverse(node, rewriteConcatRef);
+        traversalAlgo.traverse(node, rewritePgCastRef);
+        traversalAlgo.traverse(node, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(node, rewritePgNumericRef);
     }
 
     @NotNull

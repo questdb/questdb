@@ -66,6 +66,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -91,7 +93,13 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ObjList<Future<?>> futures = new ObjList<>();
     private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    @TestOnly
+    @Nullable
+    private volatile Runnable beforeFutureGetHook;
     private ColumnVersionReader columnVersionReader;
+    @TestOnly
+    @Nullable
+    private volatile Runnable futureGetInterruptedHook;
     // Set at the top of each rebuildTableFiles call (Plan 4d); true iff the CURRENT table is a
     // composite table that has genuinely routed at least one cell (dimCount > 0 AND the _cell
     // registry's committed count > 0 -- see the assignment site for the full derivation). Read by
@@ -225,18 +233,29 @@ public class TableSnapshotRestore implements QuietCloseable {
             LOG.info().$("awaiting ").$(futures.size()).$(" parallel tasks to complete").I$();
         }
 
+        boolean isInterrupted = Thread.interrupted();
+        boolean isWaitInterrupted = false;
         boolean failed = false;
         String firstErrorMessage = null;
-        boolean interrupted = false;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
-                futures.getQuick(i).get();
+                final Future<?> future = futures.getQuick(i);
+                final Runnable hook = beforeFutureGetHook;
+                if (hook != null) {
+                    hook.run();
+                }
+                future.get();
             } catch (InterruptedException e) {
                 // Keep draining: abandoning a running task risks a use-after-free
                 // on the shared readers. get() cleared the interrupt status, so
                 // retry (the abort flag bounds the wait) and restore it after.
                 abortParallelTasks.set(true);
-                interrupted = true;
+                isInterrupted = true;
+                isWaitInterrupted = true;
+                final Runnable hook = futureGetInterruptedHook;
+                if (hook != null) {
+                    hook.run();
+                }
                 //noinspection AssignmentToForLoopParameter
                 i--;
             } catch (Throwable e) {
@@ -259,9 +278,9 @@ public class TableSnapshotRestore implements QuietCloseable {
         // (enterprise restore continues after quarantining a failed table).
         abortParallelTasks.set(false);
 
-        if (interrupted) {
+        if (isInterrupted) {
             Thread.currentThread().interrupt();
-            if (!failed) {
+            if (isWaitInterrupted && !failed) {
                 LOG.error().$("parallel task await interrupted").I$();
                 throw CairoException.critical(0).put("parallel task interrupted");
             }
@@ -641,6 +660,12 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .put("Recovery failed. Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
         }
         LOG.info().$("restored table registry [src=").$(srcPath).$(", dst=").$(dstPath).I$();
+    }
+
+    @TestOnly
+    public void setFutureGetHooks(@Nullable Runnable beforeGetHook, @Nullable Runnable interruptedHook) {
+        this.beforeFutureGetHook = beforeGetHook;
+        this.futureGetInterruptedHook = interruptedHook;
     }
 
     /**

@@ -5755,6 +5755,44 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryWithPopulatedSymbolSelfUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table x (s symbol, ts #TIMESTAMP) timestamp(ts) partition by day wal"
+            );
+            execute(
+                    "create materialized view x_1d with base x as (" +
+                            "  select s, count() c, ts" +
+                            "  from (" +
+                            "    select s, ts from x" +
+                            "    union all" +
+                            "    select s, ts from x" +
+                            "  ) timestamp(ts)" +
+                            "  sample by 1d" +
+                            ") partition by month"
+            );
+
+            // Create the view against an empty base, then drive its incremental refresh
+            // with SYMBOL values and NULL. UNION ALL contributes each base row twice.
+            execute(
+                    "insert into x values" +
+                            " ('a', '2024-01-01T00:01')," +
+                            " (NULL, '2024-01-01T00:02')," +
+                            " ('b', '2024-01-01T00:03')," +
+                            " ('a', '2024-01-01T00:04')"
+            );
+            drainWalAndMatViewQueues();
+
+            assertQuery("select s, c from x_1d where s is not null order by s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\tc\na\t4\nb\t2\n");
+            assertQuery("select s, c from x_1d where s is null")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\tc\n\t2\n");
+        });
+    }
+
+    @Test
     public void testRangeRefresh() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

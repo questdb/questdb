@@ -4013,6 +4013,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 Os.sleep(10);
             }
 
+            // Hold the readers open until each has seen the populated view. The o3 arm can publish
+            // the whole window in a single terminal REPLACE_RANGE commit - an O3 replay recomputes
+            // the view and rewrites the tier in one go - so the view is empty right up to the moment
+            // the catch-up loop above returns, and the commit that ends that loop is also the first
+            // one a reader could observe. Winding the readers down here therefore hands the vacuity
+            // guard below a run in which they only ever saw empty snapshots, and it fails a healthy
+            // run. Bounded, and it exits the moment both readers have their row, so it costs nothing
+            // on the arm that accumulates incrementally.
+            for (int i = 0; i < 1_000
+                    && (nativeRowsValidated.get() == 0 || wrapperRowsValidated.get() == 0)
+                    && errors.isEmpty(); i++) {
+                Os.sleep(10);
+            }
+
             running.set(false);
             driver.join();
             nativeReader.join();
