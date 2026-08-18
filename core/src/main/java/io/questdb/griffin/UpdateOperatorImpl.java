@@ -115,9 +115,25 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         // isDormantWithPreexistingData(), so a dormant composite table is also conservatively
         // refused, matching this sweep's other conservative gates), before any row is touched. Plain
         // tables are completely unaffected.
+        // PERMANENT, decided 2026-08-18 -- not a deferral. UPDATE is out of scope for composite
+        // partitioning by design, alongside non-WAL composite tables.
+        //
+        // The reason is worth keeping, because it is load-bearing elsewhere. UPDATE is the ONLY
+        // remaining operation that would supersede a column generation WITHOUT changing its
+        // partition's nameTxn (ALTER COLUMN TYPE, RENAME COLUMN and CONVERT PARTITION all do so too
+        // and are themselves gated; ADD COLUMN mints a generation for a NEW column and supersedes
+        // nothing). With UPDATE permanently out, a composite column file's lifetime coincides with its
+        // partition's, which is what lets column-file cleanup reuse the cell-aware partition purge
+        // instead of migrating the positional schema of sys.column_versions_purge_log -- a BYPASS WAL
+        // system table shared with plain tables that has no migration path.
+        //
+        // So this ban is not merely a scope reduction: it converts a correctness argument that would
+        // otherwise have to be re-derived by every future author of purge code into a specification
+        // that holds by construction. If UPDATE is ever reinstated for composite, that reasoning must
+        // be revisited FIRST -- see docs/superpowers/plans/2026-08-18-composite-2a-column-file-cell-awareness.md.
         if (tableWriter.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
             throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support UPDATE [table=")
+                    .put("composite partitioning does not support UPDATE [table=")
                     .put(tableToken.getTableName()).put(']');
         }
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();

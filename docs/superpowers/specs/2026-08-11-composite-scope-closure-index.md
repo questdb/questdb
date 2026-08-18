@@ -69,7 +69,7 @@ cells) and on 5 (Enterprise CTAS). 7 depends on 1 (refresh after partition remov
 | 18 | `commitPendingParquetToNativeConversions` (gate added by the 2026-08-10 merge audit) | 3 — parquet-format |
 | 19 | POSTING index seal on a partition | 3 — parquet-format |
 | 20 | Covering POSTING index reseal on a PARQUET partition | 3 — parquet-format |
-| 21 | `UPDATE` | 4 — row-level-ops |
+| 21 | `UPDATE` | 4 — row-level-ops (**PERMANENT**, decided 2026-08-18: out of scope by design, like non-WAL. Keeps composite column lifetimes tied to partition lifetimes, which is what lets column purge stay cell-aware without migrating a positional system-table schema) |
 | 22 | DEDUP (`CREATE` and `ALTER … DEDUP ENABLE`) | 4 — row-level-ops |
 | 23 | REPLACE-range commit mode | 4 — row-level-ops |
 | 24 | `CREATE TABLE AS SELECT` | 5 — create-time |
@@ -181,7 +181,7 @@ composite partitioning does not yet support ORDER BY on an indexed symbol column
 composite partitioning does not yet support REINDEX TABLE
 composite partitioning does not yet support RENAME COLUMN
 composite partitioning does not yet support SQUASH PARTITIONS
-composite partitioning does not yet support UPDATE
+composite partitioning does not support UPDATE
 composite partitioning does not yet support a POSTING index seal on this partition
 composite partitioning does not yet support a covering POSTING index reseal on a PARQUET partition
 composite partitioning does not yet support an EXPRESSION dimension referencing column '

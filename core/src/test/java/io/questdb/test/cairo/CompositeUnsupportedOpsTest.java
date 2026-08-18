@@ -177,7 +177,8 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
             assertCompositeGateFires(
                     "update c set px = px + 1",
                     "c",
-                    "composite partitioning does not yet support UPDATE");
+                    // PERMANENT as of 2026-08-18 -- "does not support", not "does not yet".
+                    "composite partitioning does not support UPDATE");
         });
     }
 
