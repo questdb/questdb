@@ -58,13 +58,13 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
     public void enableCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     @After
     public void disableCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     /**
@@ -86,7 +86,7 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             insertBoth("2024-01-03", 200, 200);
             insertBoth("2024-01-02", 400, SEED);
 
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             for (int c = 0; c < COMMITS; c++) {
                 insertBoth("2024-01-02", 400L + SEED + (long) c * ROWS, ROWS);
             }
@@ -94,8 +94,8 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             assertIndexAgreesWithColumn();
             assertMatchesControl();
             Assert.assertTrue("the append path must fire on a non-WAL table (appends="
-                            + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
-                    PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                            + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
         });
     }
 
@@ -121,7 +121,7 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             WorkerPoolUtils.setupAsyncMunmapJob(pool, engine);
             pool.start(LOG);
             try {
-                PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+                PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
                 for (int c = 0; c < COMMITS; c++) {
                     // one txn per day, drained together: the commit spans four
                     // mid partitions at once
@@ -139,8 +139,48 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             assertIndexAgreesWithColumn();
             assertMatchesControl();
             Assert.assertTrue("the append path must fire under parallel O3 (appends="
-                            + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
-                    PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                            + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
+        });
+    }
+
+    /**
+     * The same parallel-O3 contract on the LAST partition, which is this PR's
+     * route. DEDUP disqualifies the WAL fast-lag gate, so these pure appends
+     * fall back to O3 and reach the deferral - on the partition every commit
+     * touches, with four workers recording deferrals concurrently.
+     */
+    @Test
+    public void testParallelO3LastPartitionDedup() throws Exception {
+        final WorkerPool pool = new TestWorkerPool(4, node1.getMetrics());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (value), value DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE TABLE ctl (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, value DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            insertBoth("2024-01-01", 0, SEED);
+            drainWalQueue();
+
+            WorkerPoolUtils.setupWriterJobs(pool, engine);
+            WorkerPoolUtils.setupAsyncMunmapJob(pool, engine);
+            pool.start(LOG);
+            try {
+                PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
+                for (int c = 0; c < COMMITS; c++) {
+                    insertBoth("2024-01-01", (long) SEED + (long) c * ROWS, ROWS);
+                    drainWalQueue();
+                }
+            } finally {
+                pool.halt();
+            }
+            drainWalQueue();
+
+            assertNotSuspended();
+            assertIndexAgreesWithColumn();
+            assertMatchesControl();
+            Assert.assertTrue("the append path must fire on the last partition under parallel O3"
+                            + " (appends=" + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
         });
     }
 
@@ -163,7 +203,7 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             execute("ALTER TABLE ctl CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
 
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             for (int c = 0; c < COMMITS; c++) {
                 insertBoth("2024-01-02", 500L + SEED + (long) c * ROWS, ROWS);
                 drainWalQueue();
@@ -174,8 +214,8 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             Assert.assertEquals("test setup: the partition must actually be parquet", 1, parquetCount);
             Assert.assertTrue("appends into the NATIVE mid partition must still fire alongside a"
                             + " parquet partition (appends="
-                            + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
-                    PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                            + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
 
             assertNotSuspended();
             assertIndexAgreesWithColumn();
@@ -207,7 +247,7 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
             execute("ALTER TABLE t ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (value)");
             drainWalQueue();
 
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             for (int c = 0; c < COMMITS; c++) {
                 insertBoth3("2024-01-02", 400L + SEED + (long) c * ROWS, ROWS);
                 drainWalQueue();
@@ -215,8 +255,8 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
 
             assertNotSuspended();
             Assert.assertTrue("the append path must fire with two covering indexes (appends="
-                            + PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() + ')',
-                    PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get() > 0);
+                            + PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() + ')',
+                    PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get() > 0);
             // Pin that BOTH columns are really served as COVERED reads. Without
             // this, a plan that stopped using either index would turn every
             // comparison below into two identical non-covering scans.

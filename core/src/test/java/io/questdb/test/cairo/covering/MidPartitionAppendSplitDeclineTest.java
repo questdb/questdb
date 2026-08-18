@@ -54,13 +54,13 @@ public class MidPartitionAppendSplitDeclineTest extends AbstractCairoTest {
     @Before
     public void enableCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     @After
     public void disableCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
-        PostingIndexWriter.COVERING_MIDPART_APPEND_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     /**
@@ -84,7 +84,7 @@ public class MidPartitionAppendSplitDeclineTest extends AbstractCairoTest {
             insertBoth("2024-01-03", 200, 200);
             insertBoth("2024-01-02", 400, SEED);
 
-            PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.set(0);
+            PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
             for (int c = 0; c < COMMITS; c++) {
                 // land BEHIND the partition max, which forces a merge/split
                 // rather than an append
@@ -101,7 +101,7 @@ public class MidPartitionAppendSplitDeclineTest extends AbstractCairoTest {
             // ... and the append path must have refused every one of them:
             // canSkipRebuildForPartition requires o3SplitPartitionSize == 0.
             Assert.assertEquals("a split must never take the covered append path",
-                    0, PostingIndexWriter.COVERING_MIDPART_APPEND_COUNT.get());
+                    0, PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get());
 
             assertNotSuspended();
             assertIndexAgreesWithColumn();
