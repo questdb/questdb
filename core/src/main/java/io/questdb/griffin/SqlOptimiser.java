@@ -6496,6 +6496,10 @@ public class SqlOptimiser implements Mutable {
 
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
     private void optimiseOrderBy(IQueryModel model, int topLevelOrderByMnemonic) {
+        optimiseOrderBy(model, topLevelOrderByMnemonic, -1);
+    }
+
+    private void optimiseOrderBy(IQueryModel model, int topLevelOrderByMnemonic, int coveredUnionSuffixOrderDirection) {
         if (!model.isOptimisable()) {
             return;
         }
@@ -6587,9 +6591,12 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        boolean isTsOrderPushed = orderByDirectionAdvice.size() == 1
-                && isDesignatedTimestampUnionAllBranch(model, orderByAdvice)
-                && pushTimestampOrderIntoUnionBranches(model.getUnionModel(), orderByDirectionAdvice.getQuick(0));
+        final boolean isTsOrderPushEligible = orderByDirectionAdvice.size() == 1
+                && isDesignatedTimestampUnionAllBranch(model, orderByAdvice);
+        final int tsOrderDirection = isTsOrderPushEligible ? orderByDirectionAdvice.getQuick(0) : -1;
+        final boolean isTsOrderPushed = isTsOrderPushEligible
+                && (coveredUnionSuffixOrderDirection == tsOrderDirection
+                || pushTimestampOrderIntoUnionBranches(model.getUnionModel(), tsOrderDirection));
 
         if (
                 model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW
@@ -6625,7 +6632,14 @@ public class SqlOptimiser implements Mutable {
             union.copyOrderByAdvice(orderByAdvice);
             union.copyOrderByDirectionAdvice(orderByDirectionAdvice);
             union.setOrderByAdviceMnemonic(orderByMnemonic);
-            optimiseOrderBy(union, isTsOrderPushed ? OrderByMnemonic.ORDER_BY_REQUIRED : orderByMnemonic);
+            final int coveredDirectionForSibling = isTsOrderPushed
+                    ? tsOrderDirection
+                    : coveredUnionSuffixOrderDirection;
+            optimiseOrderBy(
+                    union,
+                    isTsOrderPushed ? OrderByMnemonic.ORDER_BY_REQUIRED : orderByMnemonic,
+                    coveredDirectionForSibling
+            );
         }
     }
 

@@ -82,8 +82,14 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        assert mergeCursor != null;
         try {
+            // The generator leaves a nested merge without a cursor so that an outer merge can take its
+            // branches apart instead of stacking cursors. Only a merge that reaches the outer merge
+            // directly gets taken apart though: an opaque wrapper - a computed projection, a LIMIT, a
+            // window - retains the nested merge and executes it as an ordinary branch, and execution is
+            // then the first point that needs the cursor. Create it here rather than expecting every
+            // wrapper to prepare its base, which the wrappers this factory did not introduce do not do.
+            createCursor();
             for (int i = 0, n = sourceFactories.size(); i < n; i++) {
                 RecordCursor sourceCursor = sourceFactories.getQuick(i).getCursor(executionContext);
                 try {
@@ -132,14 +138,19 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
         return true;
     }
 
+    /**
+     * Creates the merge cursor when the factory is known to be executable, which is what the generator
+     * does the moment it stops holding the factory open for flattening. Idempotent, and closes the
+     * factory on failure because the generator has not yet handed it to an owner that would free it.
+     * {@link #getCursor(SqlExecutionContext)} creates the cursor on its own, so calling this is an
+     * optimisation, not a precondition.
+     */
     public void prepareCursor() {
-        if (mergeCursor == null) {
-            try {
-                mergeCursor = new MergeUnionAllRecordCursor(castFunctions, timestampIndex, isAscending);
-            } catch (Throwable th) {
-                close();
-                throw th;
-            }
+        try {
+            createCursor();
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -207,5 +218,11 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
     @Override
     protected CharSequence getOperation() {
         return "Union All Merge";
+    }
+
+    private void createCursor() {
+        if (mergeCursor == null) {
+            mergeCursor = new MergeUnionAllRecordCursor(castFunctions, timestampIndex, isAscending);
+        }
     }
 }

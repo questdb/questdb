@@ -549,7 +549,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    private boolean isGeneratingUnionAllOperand;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -1306,7 +1305,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // timestamp order is requested directly via order-by advice on this union model or transitively
         final boolean isTsOrderRequested =
                 isTimestampOrderRequested(model, metadataA, timestampIndex, scanDirection)
-                        || factoryA instanceof MergeUnionAllRecordCursorFactory;
+                        || factoryA instanceof MergeUnionAllRecordCursorFactory
+                        || (factoryA instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
+                        && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory);
         return timestampIndex != -1
                 && timestampIndex == metadataB.getTimestampIndex()
                 && metadataA.getColumnType(timestampIndex) == metadataB.getColumnType(timestampIndex)
@@ -1978,7 +1979,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadataB,
             boolean symbolDisallowed,
             IntList symbolUnionColumns,
-            boolean isSeedRequired
+            boolean isSeedRequired,
+            @Nullable IntList pendingSymbolColumnsB
     ) {
         int columnCount = metadataA.getColumnCount();
         assert columnCount == metadataB.getColumnCount();
@@ -1989,6 +1991,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int candidateCount = symbolUnionColumns.size();
         int nextCandidate = !isSeedRequired && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
         int retainedCandidateCount = 0;
+        int pendingIndexB = 0;
+        final int pendingCountB = pendingSymbolColumnsB != null ? pendingSymbolColumnsB.size() : 0;
+        int nextPendingB = pendingCountB > 0 ? pendingSymbolColumnsB.getQuick(0) : -1;
         // This compatibility pass already has to read every column in a UNION segment. Seed the
         // sorted SYMBOL candidate list here, then compact it in place on later legs so tracking
         // adds no second metadata traversal and no work proportional to eliminated candidates.
@@ -1998,12 +2003,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
                 castIsRequired = true;
             }
+            // Operand B can be a UNION ALL segment that an outer merge still holds pending: it reads
+            // STRING now, but pendingSymbolColumnsB lists the columns every branch behind it holds as
+            // SYMBOL, so those columns remain SYMBOL candidates for this segment too. Both lists are
+            // sorted, so one cursor walks B's list alongside the column scan.
+            boolean isSymbolB = isSymbol(typeB);
+            if (i == nextPendingB) {
+                isSymbolB = true;
+                nextPendingB = ++pendingIndexB < pendingCountB ? pendingSymbolColumnsB.getQuick(pendingIndexB) : -1;
+            }
             if (isSeedRequired) {
-                if (isSymbol(typeA) && isSymbol(typeB)) {
+                if (isSymbol(typeA) && isSymbolB) {
                     symbolUnionColumns.add(i);
                 }
             } else if (i == nextCandidate) {
-                if (isSymbol(typeB)) {
+                if (isSymbolB) {
                     symbolUnionColumns.setQuick(retainedCandidateCount++, i);
                 }
                 nextCandidate = ++candidateIndex < candidateCount
@@ -7314,12 +7328,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), mergeFactory, executionContext, symbolUnionColumns);
         }
-        // An inner UNION ALL operand remains internally widened and unmaterialized so an outer N-way
-        // merge can flatten its leaves without constructing successively larger cursor arrays. The
-        // outermost segment constructs one heap and performs one SYMBOL projection.
-        if (isGeneratingUnionAllOperand) {
-            return mergeFactory;
-        }
+        // Finalise every merge before a parent binds its metadata. The N-way builder can unwrap the
+        // SYMBOL projection when this factory is an immediate operand of another compatible merge.
         mergeFactory.prepareCursor();
         return maybeResymboliseUnion(mergeFactory, symbolUnionColumns);
     }
@@ -8208,16 +8218,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        final boolean savedGeneratingUnionAllOperand = isGeneratingUnionAllOperand;
-        final boolean hasUnionAllTail = model.getUnionModel() != null
-                && model.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL;
-        final RecordCursorFactory factory;
-        try {
-            isGeneratingUnionAllOperand |= hasUnionAllTail;
-            factory = generateQuery0(model, executionContext, processJoins);
-        } finally {
-            isGeneratingUnionAllOperand = savedGeneratingUnionAllOperand;
-        }
+        final RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
             return generateSetFactory(model, factory, executionContext, null);
         }
@@ -10859,13 +10860,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (symbolUnionColumns == null && factoryA instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
                 symbolUnionColumns = mergeFactory.getSymbolUnionColumns();
             }
-            final boolean savedGeneratingUnionAllOperand = isGeneratingUnionAllOperand;
-            try {
-                isGeneratingUnionAllOperand |= setOperationType == IQueryModel.SET_OPERATION_UNION_ALL;
-                factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
-            } finally {
-                isGeneratingUnionAllOperand = savedGeneratingUnionAllOperand;
-            }
+            factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
 
             if (setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
                 prepareMergeUnionAllFactory(factoryA);
@@ -10885,6 +10880,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();
             final int positionB = model.getUnionModel().getModelPosition();
+            // A right-nested operand can be a merge segment this generator still holds pending, in
+            // which case its metadata reads the segment's internal STRING widening rather than the
+            // SYMBOL a finalised segment exposes. Carry its SYMBOL candidates into the compatibility
+            // pass so the enclosing segment keeps them and re-symbolises them at the end. factoryA
+            // needs no equivalent: a pending factoryA either arrives with symbolUnionColumns from the
+            // chain, or has them recovered above.
+            final IntList pendingSymbolColumnsB = factoryB instanceof MergeUnionAllRecordCursorFactory pendingMergeB
+                    ? pendingMergeB.getSymbolUnionColumns()
+                    : null;
 
             switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
@@ -10895,7 +10899,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadataB,
                             true,
                             nextSymbolUnionColumns,
-                            isSeedRequired
+                            isSeedRequired,
+                            pendingSymbolColumnsB
                     );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
@@ -10923,7 +10928,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadataB,
                             true,
                             nextSymbolUnionColumns,
-                            isSeedRequired
+                            isSeedRequired,
+                            pendingSymbolColumnsB
                     );
                     if (canMergeUnionAll(model, factoryA, factoryB, metadataA, metadataB)) {
                         final RecordMetadata mergeMetadata;

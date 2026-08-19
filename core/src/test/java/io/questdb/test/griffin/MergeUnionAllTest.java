@@ -418,6 +418,103 @@ public class MergeUnionAllTest extends AbstractCairoTest {
         });
     }
 
+    // An outer merge flattens a nested merge only when the nested one reaches it directly. An opaque
+    // wrapper - a computed projection, a LIMIT, a window - retains the nested merge instead and executes
+    // it as an ordinary branch, so the nested merge has to be executable on its own.
+    @Test
+    public void testNestedMergeBehindOpaqueWrapperExecutes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE union_wrapped AS (
+                        SELECT x - 1 AS x, x::TIMESTAMP ts FROM long_sequence(6)
+                    ) TIMESTAMP(ts)
+                    """);
+
+            final String projectionWrapped = """
+                    SELECT x FROM (
+                        (SELECT x, ts FROM union_wrapped WHERE x = 0)
+                        UNION ALL
+                        (
+                            SELECT x + 0 AS x, ts FROM (
+                                (SELECT x, ts FROM union_wrapped WHERE x = 1)
+                                UNION ALL
+                                (SELECT x, ts FROM union_wrapped WHERE x = 2)
+                            ) ORDER BY ts
+                        )
+                    ) ORDER BY ts
+                    """;
+            assertPlanShape(projectionWrapped, 2, 0);
+            assertQuery(projectionWrapped).noRandomAccess().returns("x\n0\n1\n2\n");
+
+            final String projectionWrappedOnTheLeft = """
+                    SELECT x FROM (
+                        (
+                            SELECT x + 0 AS x, ts FROM (
+                                (SELECT x, ts FROM union_wrapped WHERE x = 1)
+                                UNION ALL
+                                (SELECT x, ts FROM union_wrapped WHERE x = 2)
+                            ) ORDER BY ts
+                        )
+                        UNION ALL
+                        (SELECT x, ts FROM union_wrapped WHERE x = 3)
+                    ) ORDER BY ts
+                    """;
+            assertPlanShape(projectionWrappedOnTheLeft, 2, 0);
+            assertQuery(projectionWrappedOnTheLeft).noRandomAccess().returns("x\n1\n2\n3\n");
+
+            final String limitWrapped = """
+                    SELECT x FROM (
+                        (SELECT x, ts FROM union_wrapped WHERE x = 0)
+                        UNION ALL
+                        (
+                            SELECT x, ts FROM (
+                                (SELECT x, ts FROM union_wrapped WHERE x = 1)
+                                UNION ALL
+                                (SELECT x, ts FROM union_wrapped WHERE x = 2)
+                            ) ORDER BY ts LIMIT 5
+                        )
+                    ) ORDER BY ts
+                    """;
+            assertPlanShape(limitWrapped, 2, 0);
+            assertQuery(limitWrapped).noRandomAccess().returns("x\n0\n1\n2\n");
+
+            final String windowWrapped = """
+                    SELECT x FROM (
+                        (SELECT x, ts FROM union_wrapped WHERE x = 0)
+                        UNION ALL
+                        (
+                            SELECT sum(x) OVER (ORDER BY ts) AS x, ts FROM (
+                                (SELECT x, ts FROM union_wrapped WHERE x = 1)
+                                UNION ALL
+                                (SELECT x, ts FROM union_wrapped WHERE x = 2)
+                            ) ORDER BY ts
+                        )
+                    ) ORDER BY ts
+                    """;
+            assertPlanShape(windowWrapped, 2, 0);
+            assertQuery(windowWrapped).noRandomAccess().returns("x\n0.0\n1.0\n3.0\n");
+
+            // the outer union does not merge here at all - the nested merge is still the outer union's
+            // operand, so it is still generated without a cursor
+            final String groupByWrappedUnderConcat = """
+                    SELECT x FROM (
+                        (SELECT x, ts FROM union_wrapped WHERE x = 0)
+                        UNION ALL
+                        (
+                            SELECT count() AS x, max(ts) AS ts FROM (
+                                (SELECT x, ts FROM union_wrapped WHERE x = 1)
+                                UNION ALL
+                                (SELECT x, ts FROM union_wrapped WHERE x = 2)
+                                ORDER BY ts
+                            )
+                        )
+                    )
+                    """;
+            assertPlanShape(groupByWrappedUnderConcat, 1, 0);
+            assertQuery(groupByWrappedUnderConcat).noRandomAccess().returns("x\n0\n2\n");
+        });
+    }
+
     @Test
     public void testPlainUnionWithoutOrderStaysConcat() throws Exception {
         assertMemoryLeak(() -> {
@@ -473,6 +570,101 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("t\nSYMBOL\n");
+        });
+    }
+
+    @Test
+    public void testNestedSymbolMergeBehindOpaqueWrapperReportsSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE sym_wrapped AS (
+                        SELECT x - 1 AS x, ('s' || x)::SYMBOL sym, ('t' || x)::SYMBOL sym2, x::TIMESTAMP ts
+                        FROM long_sequence(4)
+                    ) TIMESTAMP(ts)
+                    """);
+            final String b0 = "(SELECT x, sym, sym2, ts FROM sym_wrapped WHERE x = 0)";
+            final String b1 = "(SELECT x, sym, sym2, ts FROM sym_wrapped WHERE x = 1)";
+            final String b2 = "(SELECT x, sym, sym2, ts FROM sym_wrapped WHERE x = 2)";
+
+            final String projectionWrapped = "SELECT * FROM (" + b0
+                    + " UNION ALL (SELECT x + 0 AS x, sym, sym2, ts FROM (" + b1 + " UNION ALL " + b2
+                    + ") ORDER BY ts)) ORDER BY ts";
+            assertMergedSymbolTypes(projectionWrapped, "SYMBOL\tSYMBOL\n", 2);
+
+            final String projectionWrappedOnTheLeft = "SELECT * FROM ((SELECT x + 0 AS x, sym, sym2, ts FROM ("
+                    + b0 + " UNION ALL " + b1 + ") ORDER BY ts) UNION ALL " + b2 + ") ORDER BY ts";
+            assertMergedSymbolTypes(projectionWrappedOnTheLeft, "SYMBOL\tSYMBOL\n", 2);
+
+            final String limitWrapped = "SELECT * FROM (" + b0 + " UNION ALL (SELECT * FROM (" + b1
+                    + " UNION ALL " + b2 + ") ORDER BY ts LIMIT 5)) ORDER BY ts";
+            assertMergedSymbolTypes(limitWrapped, "SYMBOL\tSYMBOL\n", 2);
+        });
+    }
+
+    // A UNION ALL segment that an outer merge still holds pending exposes the segment's internal
+    // STRING widening rather than SYMBOL. The outer segment has to pick that pending segment's SYMBOL
+    // candidates up, otherwise a right-nested or balanced all-SYMBOL union reports STRING where the
+    // flat and left-associated forms - and the unordered concat form - report SYMBOL.
+    @Test
+    public void testNestedSymbolSegmentsReportSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE sym_nested AS (
+                        SELECT x - 1 AS x, ('s' || x)::SYMBOL sym, ('t' || x)::SYMBOL sym2, x::TIMESTAMP ts
+                        FROM long_sequence(4)
+                    ) TIMESTAMP(ts)
+                    """);
+            final String b0 = "(SELECT x, sym, sym2, ts FROM sym_nested WHERE x = 0)";
+            final String b1 = "(SELECT x, sym, sym2, ts FROM sym_nested WHERE x = 1)";
+            final String b2 = "(SELECT x, sym, sym2, ts FROM sym_nested WHERE x = 2)";
+            final String b3 = "(SELECT x, sym, sym2, ts FROM sym_nested WHERE x = 3)";
+            // one branch reads sym2 as STRING, so sym2 is genuinely STRING while sym stays SYMBOL
+            final String b1MixedSym2 = "(SELECT x, sym, sym2::STRING sym2, ts FROM sym_nested WHERE x = 1)";
+
+            final String rightNested = "SELECT * FROM (" + b0 + " UNION ALL (" + b1 + " UNION ALL " + b2 + ")) ORDER BY ts";
+            assertMergedSymbolTypes(rightNested, "SYMBOL\tSYMBOL\n");
+            assertQuery(rightNested)
+                    .withPlanContaining("Union All Merge")
+                    .withPlanNotContaining("Encode sort")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tsym\tsym2\tts
+                            0\ts1\tt1\t1970-01-01T00:00:00.000001Z
+                            1\ts2\tt2\t1970-01-01T00:00:00.000002Z
+                            2\ts3\tt3\t1970-01-01T00:00:00.000003Z
+                            """);
+
+            final String rightNestedDesc = "SELECT * FROM (" + b0 + " UNION ALL (" + b1 + " UNION ALL " + b2 + ")) ORDER BY ts DESC";
+            assertMergedSymbolTypes(rightNestedDesc, "SYMBOL\tSYMBOL\n");
+
+            final String rightNestedDeeper = "SELECT * FROM (" + b0 + " UNION ALL (" + b1
+                    + " UNION ALL (" + b2 + " UNION ALL " + b3 + "))) ORDER BY ts";
+            assertMergedSymbolTypes(rightNestedDeeper, "SYMBOL\tSYMBOL\n");
+
+            final String balanced = "SELECT * FROM ((" + b0 + " UNION ALL " + b1 + ") UNION ALL ("
+                    + b2 + " UNION ALL " + b3 + ")) ORDER BY ts";
+            assertMergedSymbolTypes(balanced, "SYMBOL\tSYMBOL\n");
+
+            final String rightNestedWithTail = "SELECT * FROM (" + b0 + " UNION ALL (" + b1 + " UNION ALL " + b2
+                    + ") UNION ALL " + b3 + ") ORDER BY ts";
+            assertMergedSymbolTypes(rightNestedWithTail, "SYMBOL\tSYMBOL\n");
+
+            final String leftAssociated = "SELECT * FROM ((" + b0 + " UNION ALL " + b1 + ") UNION ALL " + b2 + ") ORDER BY ts";
+            assertMergedSymbolTypes(leftAssociated, "SYMBOL\tSYMBOL\n");
+
+            // a column that is not SYMBOL on every branch stays STRING, whichever side widens it
+            final String rightNestedMixed = "SELECT * FROM (" + b0 + " UNION ALL (" + b1MixedSym2 + " UNION ALL " + b2 + ")) ORDER BY ts";
+            assertMergedSymbolTypes(rightNestedMixed, "SYMBOL\tSTRING\n");
+            assertQuery(rightNestedMixed)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tsym\tsym2\tts
+                            0\ts1\tt1\t1970-01-01T00:00:00.000001Z
+                            1\ts2\tt2\t1970-01-01T00:00:00.000002Z
+                            2\ts3\tt3\t1970-01-01T00:00:00.000003Z
+                            """);
         });
     }
 
@@ -848,6 +1040,19 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                             z\t40.0\t40.0
                             """);
         });
+    }
+
+    // Asserts the column types an all-SYMBOL union segment exposes, and that keeping the SYMBOL
+    // candidates has not cost the segment its single flattened merge.
+    private void assertMergedSymbolTypes(String query, String expectedTypes) throws Exception {
+        assertMergedSymbolTypes(query, expectedTypes, 1);
+    }
+
+    private void assertMergedSymbolTypes(String query, String expectedTypes, int mergeCount) throws Exception {
+        assertPlanShape(query, mergeCount, 0);
+        assertQuery("SELECT typeOf(sym) sym_type, typeOf(sym2) sym2_type FROM (" + query + ") LIMIT 1")
+                .noRandomAccess()
+                .returns("sym_type\tsym2_type\n" + expectedTypes);
     }
 
     private void assertPlanShape(String query, int mergeCount, int sortCount) throws Exception {

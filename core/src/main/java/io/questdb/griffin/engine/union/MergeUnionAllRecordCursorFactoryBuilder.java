@@ -123,6 +123,18 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
             RecordMetadata targetMetadata,
             CastFunctionFactory castFunctionFactory
     ) throws SqlException {
+        if (factory instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
+                && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory) {
+            final RecordCursorFactory detachedBase = symbolCastFactory.detachBase();
+            try {
+                Misc.free(symbolCastFactory);
+            } catch (Throwable th) {
+                Misc.free(detachedBase);
+                throw th;
+            }
+            factory = detachedBase;
+        }
+
         if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
             final RecordMetadata sourceMetadata = mergeFactory.getMetadata();
             final OperandState state = mergeFactory.detachOperands();

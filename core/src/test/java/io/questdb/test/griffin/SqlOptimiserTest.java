@@ -5288,6 +5288,38 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByAdvicePrunedAcrossMixedUnionChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE union_mixed_a (x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE union_mixed_b (x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE union_mixed_c (x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO union_mixed_a VALUES (1, 1), (4, 4)");
+            execute("INSERT INTO union_mixed_b VALUES (2, 2), (5, 5)");
+            execute("INSERT INTO union_mixed_c VALUES (3, 3), (6, 6)");
+
+            assertQuery("""
+                    SELECT x FROM (
+                        (SELECT x, ts FROM union_mixed_a)
+                        UNION ALL
+                        (SELECT x, ts FROM union_mixed_b)
+                        UNION
+                        (SELECT x + 0 AS x, ts FROM union_mixed_c)
+                    ) ORDER BY ts DESC
+                    """)
+                    .withPlanNotContaining("Frame backward scan on: union_mixed_c")
+                    .returns("""
+                            x
+                            6
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByFromToParallelSampleByRewriteWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
@@ -5308,6 +5340,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Union All Merge
                               order: [ts asc]
+                              branches: 2
                                 Sample By Fill
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
