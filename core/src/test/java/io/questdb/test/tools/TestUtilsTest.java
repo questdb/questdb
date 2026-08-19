@@ -176,6 +176,7 @@ public final class TestUtilsTest extends AbstractCairoTest {
         while (TestUtils.workerPoolModeForTestIdentity(identity) != WorkerPoolMode.FIBER_HOST) {
             identity += 'y';
         }
+
         TestUtils.setWorkerPoolTestIdentity(identity);
         final Thread child = new Thread(() -> {
             try {
