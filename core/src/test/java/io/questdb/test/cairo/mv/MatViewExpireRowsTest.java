@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.Job;
@@ -52,6 +53,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1975,6 +1977,73 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 applyThread.join(30_000);
             }
         });
+    }
+
+    @Test
+    public void testViewCompileFinishesOnceThePolicyEpochSettles() throws Exception {
+        // Every compile loop re-runs its model when the row-expiry policy epoch moves under it. That the
+        // loop then FINISHES is the half no test pinned: the concurrency fuzz accepts "too many row-expiry
+        // policy changes" as an outcome, so a retry that could never succeed would still pass it. Here the
+        // barrier advances the epoch on exactly the first maxRecompileAttempts attempts - the whole budget -
+        // and the attempt after that must compile.
+        assertMemoryLeak(() -> {
+            final int maxAttempts = configuration.getMaxSqlRecompileAttempts();
+            createPolicedViewBase();
+
+            final AtomicInteger attempts = new AtomicInteger();
+            SqlCompilerImpl.setViewFactoryGenerationBarrier(() -> {
+                if (attempts.getAndIncrement() < maxAttempts) {
+                    engine.getMetadataCache().publishExpiryPolicyUpdate();
+                }
+            });
+            try {
+                execute("CREATE VIEW v1 AS SELECT k, v FROM mv");
+            } finally {
+                SqlCompilerImpl.setViewFactoryGenerationBarrier(null);
+            }
+            assertEquals("the compile must spend the whole budget and then finish", maxAttempts + 1, attempts.get());
+            assertNotNull(engine.getTableTokenIfExists("v1"));
+            assertQuery("SELECT k, v FROM v1 ORDER BY k").noLeakCheck().returns("k\tv\nB\t9.0\n");
+        });
+    }
+
+    @Test
+    public void testViewCompileGivesUpWhenThePolicyEpochNeverSettles() throws Exception {
+        // The other half of the same contract: the retry is bounded. Churn that never stops ends in a plain
+        // error after the budget rather than looping forever, and leaves no view behind.
+        assertMemoryLeak(() -> {
+            final int maxAttempts = configuration.getMaxSqlRecompileAttempts();
+            createPolicedViewBase();
+
+            final AtomicInteger attempts = new AtomicInteger();
+            SqlCompilerImpl.setViewFactoryGenerationBarrier(() -> {
+                attempts.getAndIncrement();
+                engine.getMetadataCache().publishExpiryPolicyUpdate();
+            });
+            try {
+                execute("CREATE VIEW v1 AS SELECT k, v FROM mv");
+                Assert.fail("expected the retry budget to run out");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during view compilation");
+            } finally {
+                SqlCompilerImpl.setViewFactoryGenerationBarrier(null);
+            }
+            assertEquals("the loop must stop after the budget, not spin", maxAttempts + 1, attempts.get());
+            assertNull(engine.getTableTokenIfExists("v1"));
+        });
+    }
+
+    // Base table plus a policied passthrough mat view "mv" whose keep-set is the single row B/9.0.
+    private void createPolicedViewBase() throws Exception {
+        execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base VALUES
+                ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                ('B', 9.0, '2024-01-02T00:00:00.000000Z')""");
+        drainWalAndMatViewQueues();
+        execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 5.0");
+        drainWalAndMatViewQueues();
+        assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nB\t9.0\n");
     }
 
     private void assertTtlKept(String viewName, int expectedDays) {

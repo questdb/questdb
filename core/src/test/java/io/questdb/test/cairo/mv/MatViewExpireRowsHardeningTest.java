@@ -1469,6 +1469,46 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCleanupSkipsAViewWithFewerThanTwoPartitions() throws Exception {
+        // Two shapes that no KEEP-policy test can reach, because a structural policy returns before the
+        // sweep opens a reader: an EMPTY view, where the newest-partition index the sweep reads would be
+        // -1, and a single-partition view, whose one partition is the active one. Both must be a no-op,
+        // and the single-partition view keeps its expired row on disk with only the read filter hiding it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 5.0");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\n0\n");
+            Assert.assertFalse("an empty view has no partition to reclaim", runCleanup("mv"));
+
+            execute("""
+                    INSERT INTO base VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (9.0, '2024-01-01T01:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n1\t2\n");
+            assertQuery("SELECT v FROM mv").noLeakCheck().returns("v\n9.0\n");
+
+            Assert.assertFalse("the lone active partition is protected", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n1\t2\n");
+            assertQuery("SELECT v FROM mv").noLeakCheck().returns("v\n9.0\n");
+
+            // A second day makes the first partition non-active, and only then does the sweep reclaim.
+            execute("INSERT INTO base VALUES (7.0, '2024-01-02T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("the expired row in a non-active partition must reclaim", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("SELECT v FROM mv ORDER BY v").noLeakCheck().returns("v\n7.0\n9.0\n");
+        });
+    }
+
+    @Test
     public void testDeferredSweepRetriesWithoutWaitingAFullCadence() throws Exception {
         // A sweep that gives up without doing any work - here because a refresh holds the view lock - is
         // rescheduled like a failed one, not like a completed one. The same happens for a mid-sweep policy

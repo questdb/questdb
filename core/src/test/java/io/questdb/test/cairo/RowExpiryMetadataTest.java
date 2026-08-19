@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -326,6 +327,70 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                     mem.putInt(nameOffset, originalLen);
                 }
                 assertEquals(goodOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+            }
+        });
+    }
+
+    @Test
+    public void testTruncatedMetaReadsAsNoPolicy() throws Exception {
+        // A short or torn _meta - a file that ends inside the column names, or right after the predicate's
+        // length prefix - must make both policy readers report "no policy" instead of reading past the
+        // mapping. The corrupt-LENGTH cases are covered elsewhere; this is the corrupt-SIZE case, and it is
+        // the only one the bounds checks against memSize answer. The file is mapped at the truncated length,
+        // which is exactly what those checks see.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            final int columnCount;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                columnCount = metadata.getColumnCount();
+            }
+            patchExpiryPolicy(token, columnCount, "v < 2.0", 30 * MICROS_PER_MINUTE);
+            reloadMetadata();
+            engine.releaseInactive();
+
+            final long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+            final long policyOffset;
+            final long fullSize;
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                fullSize = configuration.getFilesFacade().length(path.$());
+                assertTrue("_meta must be longer than its policy section", fullSize > nameOffset);
+
+                // Control: the whole file walks to a valid offset and a predicate that fits inside it.
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), fullSize, MemoryTag.MMAP_DEFAULT)) {
+                    policyOffset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+                    assertTrue("expected a valid policy offset past the column names", policyOffset > nameOffset);
+                    assertEquals(
+                            Vm.getStorageLength("v < 2.0".length()),
+                            TableUtils.getMetaExpiryPredicateStorageLength(mem, policyOffset, fullSize)
+                    );
+                }
+
+                // The file ends inside the column-name section: the offset walk must stop at -1 rather than
+                // read a name length that is not there.
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), nameOffset + 2, MemoryTag.MMAP_DEFAULT)) {
+                    assertEquals(-1L, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                }
+
+                // The file ends exactly at the policy offset. The walk reports the offset it reached - the
+                // "is there room for a length prefix" check belongs to the caller, and all three readers
+                // (MetadataCache, TableReaderMetadata, TableWriterMetadata) make it before they read.
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), policyOffset, MemoryTag.MMAP_DEFAULT)) {
+                    assertEquals(policyOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                    assertTrue(
+                            "the caller's bounds check is what rejects a file this short",
+                            policyOffset + Integer.BYTES > mem.size()
+                    );
+                }
+
+                // The file ends right after the length prefix: the offset is reachable, but the predicate
+                // it announces runs past the mapping, so its storage length must come back as -1.
+                final long tornSize = policyOffset + Integer.BYTES;
+                try (MemoryCMR mem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), tornSize, MemoryTag.MMAP_DEFAULT)) {
+                    assertEquals(policyOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
+                    assertEquals(-1L, TableUtils.getMetaExpiryPredicateStorageLength(mem, policyOffset, tornSize));
+                }
             }
         });
     }

@@ -140,6 +140,110 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpiryWindowNonKeyEqualityShapesStayOutsideWindow() throws Exception {
+        // Only an equality between a semantic partition key and a constant or bind variable is cloned below
+        // the window. Every other shape has to stay outside it, and an OR is the one that shows why: the
+        // window would see a subset that no longer holds key A's real maximum, and the query would report
+        // A's second-highest row as a survivor.
+        assertMemoryLeak(() -> {
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            // Kept rows: (A, X, 9.0) and (B, X, 7.0).
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'B' OR v < 5 ORDER BY k").noLeakCheck().returns("""
+                    k	region	v
+                    B	X	7.0
+                    """);
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'B' OR v < 5")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan on: k");
+
+            // An IN list is not an '=' node, so it stays outside even though it names the key.
+            assertQuery("SELECT k, region, v FROM mv WHERE k IN ('A')").noLeakCheck().returns("""
+                    k	region	v
+                    A	X	9.0
+                    """);
+            assertQuery("SELECT k, region, v FROM mv WHERE k IN ('A')")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan on: k");
+
+            // A range leaves the partition identity open.
+            assertQuery("SELECT k, region, v FROM mv WHERE k > 'A'").noLeakCheck().returns("""
+                    k	region	v
+                    B	X	7.0
+                    """);
+            assertQuery("SELECT k, region, v FROM mv WHERE k > 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan on: k");
+        });
+    }
+
+    @Test
+    public void testExpiryWindowColumnToColumnPredicateStaysOutsideWindow() throws Exception {
+        // A column-to-column equality names the key but constrains it to another row value, not to a fixed
+        // partition. Pushed below the window it would hand key A only its k = region row, whose v is not
+        // A's maximum, and that row would surface as a survivor.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE base (k SYMBOL INDEX, region SYMBOL, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 'A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 'X', 9.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base), INDEX (k)
+                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k""");
+            drainWalAndMatViewQueues();
+
+            // A's kept row is (A, X, 9.0), so nothing satisfies k = region.
+            assertQuery("SELECT k, region, v FROM mv").noLeakCheck().returns("""
+                    k	region	v
+                    A	X	9.0
+                    """);
+            assertQuery("SELECT k, region, v FROM mv WHERE k = region").noLeakCheck().returns("k\tregion\tv\n");
+            assertQuery("SELECT k, region, v FROM mv WHERE k = region")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan on: k");
+        });
+    }
+
+    @Test
+    public void testExpiryWindowNullKeyEqualityPushesDown() throws Exception {
+        // "k = null" is an equality to a constant, and the null-key rows are a partition of their own, so
+        // cloning it below the window cannot change any other key's winner. It pushes down like any other
+        // key equality, and the kept row stays the null key's maximum.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE base (k SYMBOL INDEX, region SYMBOL, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    INSERT INTO base VALUES
+                    (null, 'X', 5.0, '2024-01-01T00:00:00.000000Z'),
+                    (null, 'X', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('A', 'X', 9.0, '2024-01-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base), INDEX (k)
+                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k""");
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT k, region, v FROM mv ORDER BY v").noLeakCheck().returns("""
+                    k	region	v
+                    	X	5.0
+                    A	X	9.0
+                    """);
+            assertQuery("SELECT k, region, v FROM mv WHERE k = null").noLeakCheck().returns("""
+                    k	region	v
+                    	X	5.0
+                    """);
+            // The clone lands below CachedWindowLight, where it becomes an index seek on the null key.
+            assertQuery("SELECT k, region, v FROM mv WHERE k = null")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Index forward scan on: k");
+        });
+    }
+
+    @Test
     public void testExpiryWindowRepeatedReferencesPushDownIndependently() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
