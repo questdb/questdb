@@ -185,6 +185,9 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
+    // aggregates whose arguments past the first pick the winning row instead of configuring the
+    // aggregate, so a constant or bind variable there still has to be nulled by the FILTER lowering
+    private static final LowerCaseAsciiCharSequenceHashSet rowSelectingArgAggregates;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final AggregateFilterVisitor aggregateFilterVisitor = new AggregateFilterVisitor();
     private final CharacterStore characterStore;
@@ -624,6 +627,17 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    /**
+     * Reports whether the aggregate's arguments past the first select the winning row rather than
+     * configure the aggregate. arg_max and arg_min compare their second argument to pick a winner, so
+     * it has to be nulled along with the value even when written as a constant or a bind variable -
+     * otherwise a row the condition excludes still sets the key on the first row and wins. Contrast
+     * approx_percentile's percentile or string_agg's delimiter, which must pass through untouched.
+     */
+    private static boolean isRowSelectingArgument(CharSequence token) {
+        return rowSelectingArgAggregates.contains(token);
     }
 
     private static boolean isStaticTimestampPredicate(ExpressionNode node) {
@@ -5326,7 +5340,7 @@ public class SqlOptimiser implements Mutable {
                 break;
             case 2:
                 node.lhs = lowerAggregateFilterArg(node.lhs, condition);
-                if (node.rhs.type != CONSTANT && node.rhs.type != BIND_VARIABLE) {
+                if (isRowSelectingArgument(node.token) || (node.rhs.type != CONSTANT && node.rhs.type != BIND_VARIABLE)) {
                     node.rhs = lowerAggregateFilterArg(node.rhs, ExpressionNode.deepClone(expressionNodePool, condition));
                 }
                 break;
@@ -5336,7 +5350,8 @@ public class SqlOptimiser implements Mutable {
                 final int n = node.args.size();
                 for (int i = n - 1; i > -1; i--) {
                     final ExpressionNode arg = node.args.getQuick(i);
-                    if (i < n - 1 && (arg.type == CONSTANT || arg.type == BIND_VARIABLE)) {
+                    if (i < n - 1 && !isRowSelectingArgument(node.token)
+                            && (arg.type == CONSTANT || arg.type == BIND_VARIABLE)) {
                         continue;
                     }
                     // argument 0 is the last entry and keeps the original condition node; every
@@ -5358,6 +5373,9 @@ public class SqlOptimiser implements Mutable {
      */
     private ExpressionNode lowerAggregateFilterArg(ExpressionNode arg, ExpressionNode condition) {
         final ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, arg.position);
+        // FunctionParser rejects the lowering once this CASE's type resolves to one whose NULL is not
+        // distinguishable from its zero value
+        caseNode.isFilterLowered = true;
         caseNode.paramCount = 3;
         // args are consumed in reverse, so this builds CASE WHEN condition THEN arg ELSE null END
         caseNode.args.add(expressionNodePool.next().of(CONSTANT, "null", 0, arg.position));
@@ -5398,6 +5416,22 @@ public class SqlOptimiser implements Mutable {
         final ObjList<QueryColumn> pivotAggregates = model.getPivotGroupByColumns();
         for (int i = 0, n = pivotAggregates.size(); i < n; i++) {
             traversalAlgo.traverse(pivotAggregates.getQuick(i).getAst(), aggregateFilterVisitor);
+        }
+        // These clauses cannot hold an aggregate, so nothing here is ever lowered. They are visited so
+        // that a condition attached to a non-aggregate raises the same error it raises in the select
+        // list, rather than being accepted and silently discarded.
+        if (model.getWhereClause() != null) {
+            traversalAlgo.traverse(model.getWhereClause(), aggregateFilterVisitor);
+        }
+        if (model.getPostJoinWhereClause() != null) {
+            traversalAlgo.traverse(model.getPostJoinWhereClause(), aggregateFilterVisitor);
+        }
+        if (model.getJoinCriteria() != null) {
+            traversalAlgo.traverse(model.getJoinCriteria(), aggregateFilterVisitor);
+        }
+        final ObjList<ExpressionNode> latestBy = model.getLatestBy();
+        for (int i = 0, n = latestBy.size(); i < n; i++) {
+            traversalAlgo.traverse(latestBy.getQuick(i), aggregateFilterVisitor);
         }
 
         lowerAggregateFilters(model.getNestedModel());
@@ -11866,6 +11900,13 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(node.position, "window functions are not allowed in FILTER");
             }
         }
+        // A node inside the condition can carry its own clause, because the parser accepts FILTER after
+        // any function call. The lowering pass never reaches it - the traversal stops at the aggregate
+        // and does not descend into filterExpression - so without this the inner clause would be
+        // accepted and silently discarded.
+        if (node.filterExpression != null) {
+            throw SqlException.$(node.position, "FILTER is not allowed inside a FILTER condition");
+        }
         validateFilterCondition(node.lhs);
         validateFilterCondition(node.rhs);
         for (int i = 0, n = node.args.size(); i < n; i++) {
@@ -13165,5 +13206,11 @@ public class SqlOptimiser implements Mutable {
         filterUnsupportedAggregates.add("last");
         filterUnsupportedAggregates.add("mode");
         filterUnsupportedAggregates.add("twap");
+    }
+
+    static {
+        rowSelectingArgAggregates = new LowerCaseAsciiCharSequenceHashSet();
+        rowSelectingArgAggregates.add("arg_max");
+        rowSelectingArgAggregates.add("arg_min");
     }
 }

@@ -35,8 +35,11 @@ import org.junit.Test;
  * <p>
  * The clause has an exact oracle: for every aggregate that supports it, the filtered form must
  * equal the same aggregate evaluated over a pre-filtered subquery, for any data and any condition.
- * Each iteration draws an aggregate, a predicate and a row count, then asserts the two forms agree.
  * The seed is printed on failure so a mismatch reproduces.
+ * <p>
+ * d2 is deliberately not a linear function of d. Scale-invariant statistics such as corr and
+ * regr_slope are constant on collinear data, so those aggregates would agree between the two forms
+ * no matter what the lowering did.
  */
 public class FilterClauseFuzzTest extends AbstractCairoTest {
 
@@ -77,11 +80,11 @@ public class FilterClauseFuzzTest extends AbstractCairoTest {
                         "create table fz as (select" +
                                 " x id," +
                                 " case when x % " + nullEvery + " = 0 then null else x::double end d," +
-                                " case when x % " + nullEvery2 + " = 0 then null else (x * 1.5)::double end d2," +
+                                " case when x % " + nullEvery2 + " = 0 then null else ((x * 7) % 13)::double end d2," +
                                 " case when x % " + nullEvery + " = 1 then null else x end l," +
                                 " case when x % " + nullEvery2 + " = 1 then null else x::int end i," +
                                 " case when x % " + nullEvery + " = 2 then null else ('v' || (x % 13)) end s," +
-                                " timestamp_sequence(0, 1000000) ts" +
+                                " timestamp_sequence(0, 1_000_000) ts" +
                                 " from long_sequence(" + rows + ")) timestamp(ts) partition by day"
                 );
 
@@ -98,18 +101,15 @@ public class FilterClauseFuzzTest extends AbstractCairoTest {
                 reference.put("select ").put(aggregate).put(" r from (select * from fz where ")
                         .put(predicate).put(") timestamp(ts)");
 
-                sink.clear();
-                printSql(reference.toString());
-                final String expected = sink.toString();
-                sink.clear();
-                printSql(filtered.toString());
-                final String actual = sink.toString();
-
-                TestUtils.assertEquals(
-                        "iteration " + iteration + " rows=" + rows + " sql=" + filtered,
-                        expected,
-                        actual
-                );
+                // assertSqlCursors compares metadata as well as rows and logs both result sets on a
+                // mismatch; the wrapper adds back the iteration and SQL that reproduce it.
+                try {
+                    assertSqlCursors(reference.toString(), filtered.toString());
+                } catch (AssertionError e) {
+                    throw new AssertionError(
+                            "iteration " + iteration + " rows=" + rows + " sql=" + filtered, e
+                    );
+                }
             }
         });
     }

@@ -24,11 +24,42 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByRewriteTest extends AbstractCairoTest {
+
+    @Test
+    public void testFilterAliasFollowedBySymbol() throws Exception {
+        // The clause lookahead must rewind to the end of the FILTER keyword, not to the raw lexer
+        // position. When a symbol abuts the keyword the lexer has already pre-read it into its 'next'
+        // slot and moved past it, and backTo() clears that slot, so rewinding to the raw position
+        // drops the symbol entirely. Each case below is a token glued to the alias with no space.
+        assertAggQuery("""
+                        filter\tc
+                        55\t10
+                        """,
+                "select sum(x) filter, count(*) c from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+        assertAggQuery("""
+                        filter
+                        55
+                        """,
+                "select filter from (select sum(x) filter from y)",
+                null
+        );
+        assertAggQuery("""
+                        filter
+                        55
+                        """,
+                "select sum(x) filter/* trailing comment */ from y",
+                null
+        );
+    }
 
     @Test
     public void testFilterAliasIsNotAClause() throws Exception {
@@ -39,6 +70,21 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                         """,
                 "select sum(x) filter from y",
                 "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterArgMaxConstantKeyStillFilters() throws Exception {
+        // arg_max/arg_min compare their second argument to pick the winning row, so it is row
+        // selecting rather than configuration and must be wrapped even when written as a constant.
+        // Left unwrapped, a filtered-out first row sets the key and later matching rows cannot beat
+        // it, because replacement requires a strictly greater (or lesser) key - the result was null.
+        assertAggQuery("""
+                        mx\tmn
+                        2.0\t2.0
+                        """,
+                "select arg_max(v, 1) filter (where id > 1) mx, arg_min(v, 1) filter (where id > 1) mn from t",
+                "create table t as ( select x id, x::double v from long_sequence(5) )"
         );
     }
 
@@ -161,6 +207,42 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterConditionUsesExpressionRewrites() throws Exception {
+        // '::', '||' and CASE are raw parser forms that SqlParser rewrites before functions resolve.
+        // Those rewrites run over lhs/rhs/args only, and the condition hangs off filterExpression, so
+        // without a dedicated pass each of these fails with an unknown-function error even though the
+        // identical predicate works in a WHERE clause.
+        assertAggQuery("""
+                        c\ts\tn
+                        5\t40\t1
+                        """,
+                "select count(*) filter (where x::int > 5) c," +
+                        " sum(x) filter (where case when x > 5 then true else false end) s," +
+                        " count(*) filter (where 's' || x = 's3') n from y",
+                "create table y as ( select x from long_sequence(10) )"
+        );
+    }
+
+    @Test
+    public void testFilterConditionWithSubQuery() throws Exception {
+        // The condition is parsed with the enclosing listener so that a sub-query registers against the
+        // query model and gets optimised. Parsing it with the window-clause tree builder instead pushed
+        // the QUERY node twice and never registered it, which degraded the predicate to a self
+        // comparison and surfaced as an empty error message.
+        assertQuery("select count(*) filter (where x > (select max(v) from lim)) c from y")
+                .ddl(
+                        "create table y as ( select x from long_sequence(10) )",
+                        "create table lim as ( select x v from long_sequence(5) )"
+                )
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        c
+                        5
+                        """);
+    }
+
+    @Test
     public void testFilterConstantParameterPassesThrough() throws Exception {
         // string_agg's delimiter is a configuration parameter, not a per-row value, so it must not
         // be wrapped in the CASE - otherwise non-matching rows would null the delimiter itself
@@ -208,16 +290,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testFilterCorrMatchesFilteredSubQuery() throws Exception {
+        // b must not be a linear function of a: corr is scale-invariant, so on collinear data it is
+        // 1.0 for every subset and the assertion cannot tell a dropped FILTER from a working one.
+        // Here the unfiltered value is -0.19999999999999982, which the expected value excludes.
         assertAggQuery("""
                         r
-                        1.0
+                        -0.3448652473575027
                         """,
                 "select corr(a, b) filter (where id > 5) r from t",
-                "create table t as ( select x::double a, (x * 2)::double b, x id from long_sequence(10) )"
+                "create table t as ( select x::double a, ((x * 7) % 11)::double b, x id from long_sequence(10) )"
         );
         assertAggQuery("""
                         r
-                        1.0
+                        -0.3448652473575027
                         """,
                 "select corr(a, b) r from (select a, b from t where id > 5)",
                 null
@@ -226,16 +311,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testFilterCountDistinctMatchesFilteredSubQuery() throws Exception {
+        // x % 7 rather than x % 3: with 3 buckets over 10 rows every subset of 5+ rows covers all
+        // three, so the filtered and unfiltered counts coincide and the assertion cannot fail.
+        // Here the unfiltered value is 7, which the expected value excludes.
         assertAggQuery("""
                         r
-                        3
+                        5
                         """,
                 "select count_distinct(g) filter (where x > 5) r from t",
-                "create table t as ( select x % 3 g, x from long_sequence(10) )"
+                "create table t as ( select x % 7 g, x from long_sequence(10) )"
         );
         assertAggQuery("""
                         r
-                        3
+                        5
                         """,
                 "select count_distinct(g) r from (select g from t where x > 5)",
                 null
@@ -410,22 +498,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterNumericTypes() throws Exception {
-        assertAggQuery("""
-                        si\tsl\tss\tsf\tsd
-                        40\t40\t40\t40.0\t40.0
-                        """,
-                "select sum(i) filter (where l > 5) si, sum(l) filter (where l > 5) sl, sum(s) filter (where l > 5) ss," +
-                        " sum(f) filter (where l > 5) sf, sum(d) filter (where l > 5) sd from t",
-                "create table t as ( select x::int i, x::long l, x::short s, x::float f, x::double d from long_sequence(10) )"
-        );
-    }
-
-    @Test
     public void testFilterNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day bypass wal");
-            execute("insert into t select x, timestamp_sequence(0, 1000000) from long_sequence(10)");
+            execute("insert into t select x, timestamp_sequence(0, 1_000_000) from long_sequence(10)");
             assertQuery("select sum(x) filter (where x > 5) r from t")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -435,6 +511,67 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                             40
                             """);
         });
+    }
+
+    @Test
+    public void testFilterNotDedupedAgainstUserWrittenCase() throws Exception {
+        // A lowered CASE is structurally identical to the CASE a user writes by hand, down to the
+        // explicit ELSE null. It still owes a rejection that FunctionParser has not applied yet, so
+        // compareNodesExact and deepHashCode must keep the two apart. Treating them as equal let
+        // detectDuplicateAggregates drop the flagged node in favour of the unflagged one, and the
+        // rejection vanished with it: the query returned the wrong CASE result for both columns.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x id, x::short sh, x::double d from long_sequence(6) )");
+            for (String sql : new String[]{
+                    "select avg(case when id > 4 then sh else null end) a, avg(sh) filter (where id > 4) b from t",
+                    "select avg(sh) filter (where id > 4) b, avg(case when id > 4 then sh else null end) a from t"
+            }) {
+                try {
+                    assertExceptionNoLeakCheck(sql);
+                    Assert.fail("dedup must not swallow the rejection: " + sql);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "whose NULL is indistinguishable from its zero value"
+                    );
+                }
+            }
+            // over a type the lowering can express, both forms compile and agree
+            assertQuery("select avg(case when id > 4 then d else null end) a, avg(d) filter (where id > 4) b from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            5.5\t5.5
+                            """);
+            // two identical filtered aggregates still deduplicate into one
+            assertQuery("select avg(d) filter (where id > 4) a, avg(d) filter (where id > 4) b from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("values: [avg(case([4<id,d,null]))]")
+                    .returns("""
+                            a\tb
+                            5.5\t5.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterNumericTypes() throws Exception {
+        // SHORT is absent on purpose: its NULL is 0, so the lowering cannot express FILTER over it and
+        // testFilterRejectedForZeroNullArgumentTypes asserts the rejection. This test previously
+        // asserted 40 for sum(s), which was right only because 0 is the additive identity - the same
+        // data under min(s) or avg(s) returned a wrong answer.
+        assertAggQuery("""
+                        si\tsl\tss\tsf\tsd
+                        40\t40\t40\t40.0\t40.0
+                        """,
+                "select sum(i) filter (where l > 5) si, sum(l) filter (where l > 5) sl, sum(s::int) filter (where l > 5) ss," +
+                        " sum(f) filter (where l > 5) sf, sum(d) filter (where l > 5) sd from t",
+                "create table t as ( select x::int i, x::long l, x::short s, x::float f, x::double d from long_sequence(10) )"
+        );
     }
 
     @Test
@@ -449,35 +586,43 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterParserErrors() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table y as ( select x from long_sequence(10) )");
-            assertException("select sum(x) filter (x > 5) from y", 22, "'where' expected");
-            assertException("select sum(x) filter (where x > 5 from y", 34, "')' expected");
-            assertException("select sum(x) filter (", 21, "'where' expected");
-            assertException("select sum(x) filter (where", 22, "filter condition expected");
-            assertException("select sum(x) filter (where)", 27, "filter condition expected");
-        });
-    }
-
-    @Test
     public void testFilterParallelGroupByMatchesSerial() throws Exception {
         // the lowered aggregate still goes through the parallel path, and must agree with the
         // single-threaded result for the same data
         assertMemoryLeak(() -> {
             execute("create table t as ( select x, (x % 2)::symbol g from long_sequence(100_000) )");
             final String query = "select g, sum(x) filter (where x <= 50_000) s, count(*) filter (where x > 50_000) c from t order by g";
-            // even x in 2..50000 sum to 25000 * 25001; odd x in 1..49999 sum to 25000 squared;
-            // each parity contributes 25000 rows above 50000
+            // even x in 2..50_000 sum to 25_000 * 25_001; odd x in 1..49_999 sum to 25_000 squared;
+            // each parity contributes 25_000 rows above 50_000
             final String expected = """
                     g\ts\tc
                     0\t625025000\t25000
                     1\t625000000\t25000
                     """;
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-            assertQuery(query).noLeakCheck().expectSize().returns(expected);
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "false");
-            assertQuery(query).noLeakCheck().expectSize().returns(expected);
+            // setProperty() cannot switch this: the code generator reads the cached
+            // SqlExecutionContextImpl.parallelGroupByEnabled field, which AbstractCairoTest.setUp()
+            // assigns once per test, so a property written here would not reach the compile.
+            try {
+                sqlExecutionContext.setParallelGroupByEnabled(true);
+                assertQuery(query).noLeakCheck().expectSize().returns(expected);
+                sqlExecutionContext.setParallelGroupByEnabled(false);
+                assertQuery(query).noLeakCheck().expectSize().returns(expected);
+            } finally {
+                sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+            }
+        });
+    }
+
+    @Test
+    public void testFilterParserErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y as ( select x from long_sequence(10) )");
+            assertException("select sum(x) filter (x > 5) from y", 22, "'where' expected");
+            assertException("select sum(x) filter (where x > 5 from y", 34, "')' expected");
+            assertException("select sum(x) filter (where x > 5", 32, "')' expected");
+            assertException("select sum(x) filter (", 21, "'where' expected");
+            assertException("select sum(x) filter (where", 22, "filter condition expected");
+            assertException("select sum(x) filter (where)", 27, "filter condition expected");
         });
     }
 
@@ -529,6 +674,21 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterRejectedForNestedFilterInCondition() throws Exception {
+        // The parser accepts FILTER after any function call, so a condition can itself carry one. The
+        // lowering never reaches it - the traversal stops at the aggregate and does not descend into
+        // filterExpression - so it used to be accepted and silently discarded.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x::double v from long_sequence(5) )");
+            assertException(
+                    "select sum(v) filter (where abs(v) filter (where false) > 0) r from t",
+                    28,
+                    "FILTER is not allowed inside a FILTER condition"
+            );
+        });
+    }
+
+    @Test
     public void testFilterRejectedForNonAggregate() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y as ( select x from long_sequence(10) )");
@@ -568,9 +728,107 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterRejectedForZeroNullArgumentTypes() throws Exception {
+        // The lowering nulls a non-matching row's value instead of dropping the row, which only works
+        // when the CASE result type has a NULL the aggregate can tell apart from a real value. BYTE,
+        // SHORT and CHAR map to zero and BOOLEAN maps to false, so a non-matching row would arrive as
+        // a genuine 0 or false: count() counted it, avg() averaged it in, min() and bit_and() let it
+        // win. Rejection is by resolved argument type, not by function name - sum/bit_or/bit_xor
+        // happen to survive because 0 is their identity, but that is an accident of the operator, not
+        // a property of the lowering, so they are rejected too.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x id, x::short sh, x::byte by, 'a'::char ch," +
+                    " (x % 2 = 0) bo, x::double d from long_sequence(6) )");
+            final String[] rejected = {
+                    "count(sh)", "count_distinct(sh)", "approx_count_distinct(sh)", "min(sh)", "max(sh)",
+                    "sum(sh)", "avg(sh)", "bit_and(sh)", "bit_or(sh)", "bit_xor(sh)",
+                    "first_not_null(sh)", "last_not_null(sh)",
+                    "count(by)", "count_distinct(by)", "approx_count_distinct(by)", "min(by)", "max(by)",
+                    "sum(by)", "avg(by)", "bit_and(by)", "bit_or(by)", "bit_xor(by)",
+                    "first_not_null(by)", "last_not_null(by)",
+                    "count(ch)", "count_distinct(ch)", "min(ch)", "max(ch)",
+                    "first_not_null(ch)", "last_not_null(ch)",
+                    "count_distinct(bo)", "min(bo)", "max(bo)", "avg(bo)"
+            };
+            // the reported position is the argument's, which differs per call, so match on the message
+            for (String call : rejected) {
+                try {
+                    assertExceptionNoLeakCheck("select " + call + " filter (where id > 4) r from t");
+                    Assert.fail(call + " must be rejected: its CASE lowering cannot express FILTER");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "whose NULL is indistinguishable from its zero value"
+                    );
+                }
+            }
+            // casting to a type with a real NULL is the documented way through
+            assertQuery("select avg(sh::int) filter (where id > 4) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            5.5
+                            """);
+            // a DOUBLE argument over the same data is unaffected
+            assertQuery("select avg(d) filter (where id > 4) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            5.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterRejectedInWindowSpecification() throws Exception {
+        // A window specification's PARTITION BY, ORDER BY and frame-bound expressions are scalar and
+        // hold no aggregate to attach a condition to. They are also built by a tree builder that
+        // carries no query model, so the clause could never be lowered there. Letting it parse pushed
+        // the condition onto the operand stack and displaced a real argument, which surfaced as a
+        // confusing "no matching function abs with the argument types: (BOOLEAN)".
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x id from long_sequence(5) )");
+            assertException(
+                    "select sum(id) over (partition by abs(id) filter (where false)) from t",
+                    34,
+                    "FILTER is not supported in a window specification"
+            );
+            assertException(
+                    "select sum(id) over (order by abs(id) filter (where false)) from t",
+                    30,
+                    "FILTER is not supported in a window specification"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterRejectedOutsideSelectList() throws Exception {
+        // The lowering pass has to visit these clauses even though they can never hold an aggregate.
+        // They are the positions where the parser still attaches a condition, so skipping them meant
+        // accepting the clause and silently discarding it instead of raising the error below.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x from long_sequence(10) )");
+            assertException(
+                    "select * from t where abs(x) filter (where x > 5) > 1",
+                    22,
+                    "FILTER is supported only for aggregate functions"
+            );
+            assertException(
+                    "select a.x from t a join t b on abs(a.x) filter (where a.x > 5) = b.x",
+                    32,
+                    "FILTER is supported only for aggregate functions"
+            );
+        });
+    }
+
+    @Test
     public void testFilterSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t as ( select x, timestamp_sequence(0, 1000000) ts from long_sequence(10) ) timestamp(ts) partition by day");
+            execute("create table t as ( select x, timestamp_sequence(0, 1_000_000) ts from long_sequence(10) ) timestamp(ts) partition by day");
             assertQuery("select ts, count(*) filter (where x > 5) c from t sample by 5s")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -586,7 +844,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testFilterSampleByFillModes() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table g as ( select x, x::double d, timestamp_sequence(0, 2000000) ts"
+            execute("create table g as ( select x, x::double d, timestamp_sequence(0, 2_000_000) ts"
                     + " from long_sequence(10) ) timestamp(ts) partition by day");
             final String counts = """
                     ts\tc
@@ -658,6 +916,45 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                 "select weighted_avg(v, w) r from (select v, w from t where id > 5)",
                 null
         );
+    }
+
+    @Test
+    public void testFilterZeroNullRejectionIsScopedToLoweredCase() throws Exception {
+        // The rejection keys off ExpressionNode.isFilterLowered, which only the lowering sets. A CASE
+        // the user wrote themselves must be unaffected, including one compiled right after a filtered
+        // query, since expression nodes are pooled and a flag surviving clear() would leak into it.
+        //
+        // Note the hand-written form returns 1.8333, which is wrong for the same reason FILTER now
+        // refuses to compile: the three non-matching rows arrive as a genuine 0. That is pre-existing
+        // behaviour of CASE over a SHORT column, not something this clause introduced.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x id, x::short sh, x::double d from long_sequence(6) )");
+            assertQuery("select avg(case when id > 4 then sh end) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            1.8333333333333333
+                            """);
+            // a filtered query first, so the pool hands recycled nodes to the compile that follows
+            assertQuery("select avg(d) filter (where id > 4) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            5.5
+                            """);
+            assertQuery("select avg(case when id > 4 then sh end) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            1.8333333333333333
+                            """);
+        });
     }
 
     @Test

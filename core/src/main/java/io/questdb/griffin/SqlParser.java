@@ -133,6 +133,7 @@ public class SqlParser {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
+    private final ObjList<ExpressionNode> filterExpressionSink = new ObjList<>();
     private final ObjectPool<InsertModel> insertModelPool;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
@@ -455,6 +456,29 @@ public class SqlParser {
         final int delaySeconds = matViewPeriodDelaySeconds(delay, delayUnit, pos);
         if (delaySeconds >= lengthSeconds) {
             throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
+        }
+    }
+
+    /**
+     * Gathers the FILTER (WHERE ...) conditions hanging off every node in the tree, including the ones
+     * nested inside another condition. PostOrderTreeTraversalAlgo walks lhs, rhs and args only, so a
+     * caller that needs to reach conditions has to collect them separately.
+     *
+     * @param node expression tree to scan, may be null
+     * @param sink receives every condition found, in no particular order
+     */
+    private static void collectFilterExpressions(@Nullable ExpressionNode node, ObjList<ExpressionNode> sink) {
+        if (node == null) {
+            return;
+        }
+        if (node.filterExpression != null) {
+            sink.add(node.filterExpression);
+            collectFilterExpressions(node.filterExpression, sink);
+        }
+        collectFilterExpressions(node.lhs, sink);
+        collectFilterExpressions(node.rhs, sink);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectFilterExpressions(node.args.getQuick(i), sink);
         }
     }
 
@@ -6235,6 +6259,21 @@ public class SqlParser {
     }
 
     /**
+     * Turns raw parser forms into the shapes the function resolver understands: the '::' cast operator,
+     * the '||' concatenation operator, the CASE marker node, and the PG numeric and json_extract casts.
+     *
+     * @param node root of the tree to rewrite in place
+     */
+    private void rewriteExpressionForms(ExpressionNode node) throws SqlException {
+        traversalAlgo.traverse(node, rewriteCountRef);
+        traversalAlgo.traverse(node, rewriteCaseRef);
+        traversalAlgo.traverse(node, rewriteConcatRef);
+        traversalAlgo.traverse(node, rewritePgCastRef);
+        traversalAlgo.traverse(node, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(node, rewritePgNumericRef);
+    }
+
+    /**
      * Rewrites the following:
      * <p>
      * select json_extract(json,path)::varchar -> select json_extract(json,path)
@@ -6308,12 +6347,18 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteCountRef);
-        traversalAlgo.traverse(parent, rewriteCaseRef);
-        traversalAlgo.traverse(parent, rewriteConcatRef);
-        traversalAlgo.traverse(parent, rewritePgCastRef);
-        traversalAlgo.traverse(parent, rewriteJsonExtractCastRef);
-        traversalAlgo.traverse(parent, rewritePgNumericRef);
+        rewriteExpressionForms(parent);
+        // An aggregate's FILTER (WHERE ...) condition hangs off filterExpression, which
+        // PostOrderTreeTraversalAlgo does not descend into, so the rewrites above never reach it.
+        // Without this a condition keeps raw parser forms - '::', '||' and the CASE marker node -
+        // and fails at function resolution, while the same predicate works in a WHERE clause.
+        filterExpressionSink.clear();
+        collectFilterExpressions(parent, filterExpressionSink);
+        for (int i = 0, n = filterExpressionSink.size(); i < n; i++) {
+            rewriteExpressionForms(filterExpressionSink.getQuick(i));
+        }
+        // rewriteDeclaredVariables() reaches conditions on its own: recursiveReplace() descends
+        // into filterExpression.
         return rewriteDeclaredVariables(parent, decls, exprTargetVariableName);
     }
 

@@ -2576,6 +2576,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOverRejectsZeroNullArgumentType() throws Exception {
+        // The window form shares function construction with the grouped form, so the check that
+        // rejects a lowered FILTER over a type whose NULL is its zero value applies here too. Without
+        // it, rows failing the condition would contribute a genuine 0 to the frame instead of nothing.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, sh short, d double) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 'A', 1, 1.0)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, avg(sh) FILTER (WHERE sh > 1) OVER (PARTITION BY grp ORDER BY ts) s FROM tab",
+                    15,
+                    "whose NULL is indistinguishable from its zero value"
+            );
+            // the same shape over a DOUBLE argument stays supported
+            assertQuery("SELECT ts, avg(d) FILTER (WHERE d > 1) OVER (PARTITION BY grp ORDER BY ts) s FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ts
+                            2021-01-01T00:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testFirstValueDateOverPartitionByAndOrderBy() throws Exception {
         // first_value() over a DATE argument; default frame's first row of each partition
         assertMemoryLeak(() -> {

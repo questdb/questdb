@@ -63,6 +63,11 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public boolean isConstantExpression;
+    // Marks the CASE node that SqlOptimiser.lowerAggregateFilterArg() synthesizes to wrap a filtered
+    // aggregate's argument. FunctionParser checks it once the argument's type is resolved, because
+    // the lowering is only sound when the CASE result type has a NULL distinguishable from its zero
+    // value - BYTE, SHORT, CHAR and BOOLEAN do not (see Constants.nullConstants).
+    public boolean isFilterLowered;
     public int lateralDepth;
     public ExpressionNode lhs;
     // The expression parser (ExpressionParser.onNode) guarantees:
@@ -99,6 +104,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
         return (a.type == FUNCTION || a.type == LITERAL ? Chars.equalsIgnoreCase(a.token, b.token) : Chars.equals(a.token, b.token))
+                // A lowered CASE carries a rejection FunctionParser has yet to apply, so it is not
+                // interchangeable with an identical CASE the user wrote. Treating them as equal let
+                // detectDuplicateAggregates() drop the flagged node in favour of the unflagged one,
+                // which bypassed the rejection and returned the wrong result for both columns.
+                && a.isFilterLowered == b.isFilterLowered
                 && compareArgsExact(a, b)
                 && compareWindowExpressions(a.windowExpression, b.windowExpression)
                 && compareNodesExact(a.filterExpression, b.filterExpression);
@@ -224,6 +234,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.implemented = node.implemented;
         copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
         copy.filterExpression = ExpressionNode.deepClone(pool, node.filterExpression);
+        copy.isFilterLowered = node.isFilterLowered;
         copy.lateralDepth = node.lateralDepth;
         return copy;
     }
@@ -259,6 +270,9 @@ public class ExpressionNode implements Mutable, Sinkable {
         hash = 31 * hash + hashWindowExpression(node.windowExpression);
         // Hash FILTER condition - keeps the hash consistent with compareNodesExact()
         hash = 31 * hash + deepHashCode(node.filterExpression);
+        // Same, for the lowered-CASE marker: a flagged node must not land in the same dedup bucket as
+        // an identical CASE the user wrote, or the rejection it still owes gets dropped with it
+        hash = 31 * hash + (node.isFilterLowered ? 1 : 0);
         return hash;
     }
 
@@ -313,6 +327,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         implemented = false;
         windowExpression = null;
         filterExpression = null;
+        isFilterLowered = false;
         lateralDepth = 0;
         scalarBoundHolder = null;
         scalarBoundCompileCache = null;
@@ -338,6 +353,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
         this.filterExpression = other.filterExpression;
+        this.isFilterLowered = other.isFilterLowered;
         this.lateralDepth = other.lateralDepth;
         return this;
     }

@@ -901,25 +901,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // per-worker partials that get merged. Both forms below must agree with each other and
         // with the hand-computed counts: values congruent to each key modulo 5 number 200 in
         // (1000, 2000] from the first insert and 210 in (1000, 2050] from the second.
+        final String expected = """
+                key\tc
+                k0\t410
+                k1\t410
+                k2\t410
+                k3\t410
+                k4\t410
+                """;
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, count(*) FILTER (WHERE value > 1000) c FROM tab GROUP BY key ORDER BY key",
-                """
-                        key\tc
-                        k0\t410
-                        k1\t410
-                        k2\t410
-                        k3\t410
-                        k4\t410
-                        """,
+                expected,
                 "SELECT key, count(*) c FROM (SELECT key, value FROM tab WHERE value > 1000) GROUP BY key ORDER BY key",
-                """
-                        key\tc
-                        k0\t410
-                        k1\t410
-                        k2\t410
-                        k3\t410
-                        k4\t410
-                        """
+                expected
         );
     }
 

@@ -483,7 +483,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                 }
             }
-            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
+            final Function function = createFunction(node, mutableArgs, mutableArgPositions);
+            if (node.isFilterLowered) {
+                validateFilterLoweredType(node, function);
+            }
+            functionStack.push(function);
         }
         positionStack.push(node.position);
     }
@@ -1830,6 +1834,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
+        }
+    }
+
+    /**
+     * Rejects an aggregate FILTER (WHERE ...) clause whose lowering cannot express it.
+     * <p>
+     * SqlOptimiser rewrites a filtered aggregate's argument into CASE WHEN condition THEN arg END,
+     * which nulls the value of a non-matching row instead of dropping the row. That is only equivalent
+     * to filtering when the CASE result type has a NULL the aggregate can tell apart from a real
+     * value. BYTE, SHORT and CHAR map to zero and BOOLEAN maps to false
+     * (Constants.nullConstants), so a non-matching row would arrive as a genuine 0 or false: count()
+     * would count it, avg() would average it in, min() and bit_and() would let it win. The type is
+     * only known here, once the argument has been resolved to a Function.
+     *
+     * @param node     the synthesized CASE node
+     * @param function the resolved CASE function, freed before the exception propagates
+     */
+    private void validateFilterLoweredType(ExpressionNode node, Function function) throws SqlException {
+        final int type = function != null ? ColumnType.tagOf(function.getType()) : ColumnType.UNDEFINED;
+        if (type == ColumnType.BYTE || type == ColumnType.SHORT
+                || type == ColumnType.CHAR || type == ColumnType.BOOLEAN) {
+            final SqlException ex = SqlException.position(node.position)
+                    .put("FILTER is not supported for a ").put(ColumnType.nameOf(function.getType()))
+                    .put(" argument, whose NULL is indistinguishable from its zero value; cast the argument, for example sum(x::int) FILTER (WHERE ...)");
+            Misc.free(function);
+            throw ex;
         }
     }
 

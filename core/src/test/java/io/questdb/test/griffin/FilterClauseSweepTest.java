@@ -24,12 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -47,7 +45,8 @@ import java.util.TreeSet;
  * null-preserving aggregate from silently returning a different answer under FILTER.
  * <p>
  * The dataset deliberately carries NULLs in every value column: on dense data, nulling a value and
- * dropping a row are indistinguishable, so NULL-free tests cannot detect the difference at all.
+ * dropping a row are indistinguishable, so NULL-free tests cannot detect the difference at all. For
+ * the same reason d2 is not a linear function of d - see {@link #createData()}.
  */
 public class FilterClauseSweepTest extends AbstractCairoTest {
 
@@ -71,8 +70,8 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
         LOWERABLE.put("arg_max", "arg_max(d, d2)");
         LOWERABLE.put("arg_min", "arg_min(d, d2)");
         LOWERABLE.put("avg", "avg(d)");
-        LOWERABLE.put("bit_and", "bit_and(i)");
-        LOWERABLE.put("bit_or", "bit_or(i)");
+        LOWERABLE.put("bit_and", "bit_and(bitv)");
+        LOWERABLE.put("bit_or", "bit_or(bitv)");
         LOWERABLE.put("bit_xor", "bit_xor(i)");
         LOWERABLE.put("corr", "corr(d, d2)");
         LOWERABLE.put("count", "count(d)");
@@ -158,16 +157,12 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
             for (Map.Entry<String, String> e : LOWERABLE.entrySet()) {
                 final String call = e.getValue();
                 for (String condition : CONDITIONS) {
-                    final String expected = runToString(
-                            "select " + call + " r from (select * from t where " + condition + ") timestamp(ts)"
-                    );
-                    final String actual = runToString(
+                    // assertSqlCursors compares metadata as well as rows, and on a mismatch logs both
+                    // result sets side by side, which a plain string compare of two printed cursors
+                    // cannot do
+                    assertSqlCursors(
+                            "select " + call + " r from (select * from t where " + condition + ") timestamp(ts)",
                             "select " + call + " filter (where " + condition + ") r from t"
-                    );
-                    TestUtils.assertEquals(
-                            e.getKey() + ": FILTER must equal the pre-filtered subquery [condition=" + condition + ']',
-                            expected,
-                            actual
                     );
                 }
             }
@@ -191,7 +186,7 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
     private static boolean isTestOnly(ObjList<FunctionFactoryDescriptor> descriptors) {
         for (int i = 0, n = descriptors.size(); i < n; i++) {
             if (!descriptors.getQuick(i).getFactory().getClass().getName()
-                    .contains("io.questdb.griffin.engine.functions.test.")) {
+                    .startsWith("io.questdb.griffin.engine.functions.test.")) {
                 return false;
             }
         }
@@ -199,25 +194,29 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
     }
 
     private void createData() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "false");
-        execute(
-                "create table t as (select" +
-                        " x id," +
-                        " case when x % 5 = 0 then null else x::int end i," +
-                        " case when x % 9 = 0 then null else x end l," +
-                        " case when x % 7 = 0 then null else x::double end d," +
-                        " case when x % 6 = 0 then null else (x * 2)::double end d2," +
-                        " case when x % 4 = 0 then null else ('s' || x) end s," +
-                        " x % 2 = 0 b," +
-                        " case when x % 11 = 0 then null else ARRAY[x::double, (x + 1)::double] end arr," +
-                        " timestamp_sequence(0, 100000) ts" +
-                        " from long_sequence(60)) timestamp(ts) partition by day"
-        );
-    }
-
-    private String runToString(String sql) throws Exception {
-        sink.clear();
-        printSql(sql);
-        return sink.toString();
+        // Two columns exist purely so that certain aggregates can tell a working lowering from a
+        // broken one.
+        //
+        // d2 must not be a linear function of d. Every scale-invariant statistic - corr, regr_slope,
+        // regr_r2, regr_intercept - is constant on collinear data, so those four aggregates would
+        // return the same value for every condition and could never fail.
+        //
+        // bitv takes three values chosen so that an AND reduction is not swallowed. bit_and over a
+        // column of consecutive integers collapses to 0 for every subset; here the three values share
+        // high bits, and dropping the id > 55 group raises bit_and from 8 to 12 while dropping the
+        // id < 6 group lowers bit_or from 14 to 12.
+        execute("""
+                CREATE TABLE t AS (SELECT
+                  x id,
+                  CASE WHEN x % 5 = 0 THEN null ELSE x::int END i,
+                  CASE WHEN x % 13 = 0 THEN null WHEN x > 55 THEN 8 WHEN x < 6 THEN 14 ELSE 12 END::int bitv,
+                  CASE WHEN x % 9 = 0 THEN null ELSE x END l,
+                  CASE WHEN x % 7 = 0 THEN null ELSE x::double END d,
+                  CASE WHEN x % 6 = 0 THEN null ELSE ((x * 7) % 13)::double END d2,
+                  CASE WHEN x % 4 = 0 THEN null ELSE ('s' || x) END s,
+                  x % 2 = 0 b,
+                  CASE WHEN x % 11 = 0 THEN null ELSE ARRAY[x::double, (x + 1)::double] END arr,
+                  timestamp_sequence(0, 100_000) ts
+                FROM long_sequence(60)) TIMESTAMP(ts) PARTITION BY DAY""");
     }
 }
