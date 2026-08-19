@@ -915,29 +915,36 @@ public class CompiledFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Predicate (s * 78941) > f compares a SHORT*INT product against a
             // FLOAT column. The Java filter consumes the IntFunction via
-            // CastIntToDouble.getDouble = intToDouble(getInt), keeping the
-            // multiplication at int width with overflow. The JIT must do the
-            // same: emitting 78941 at I8 here would force long-width mul and
-            // diverge. serializeUntypedNumber's hasI8() check excludes F4
-            // exactly so this case stays at I4 IMM and matches the Java path.
+            // CastIntToDouble.getDouble = intToDouble(getInt), so the multiplication
+            // stays at int width with overflow and the COMPARISON runs at f64.
+            // The JIT reproduces both halves: it keeps the product at i32 (emitting
+            // 78941 at I8 would force a long-width mul and change the wrap), then
+            // emits SX_I64 after the multiply so convert() takes the (i64, f32) arm
+            // instead of rounding the i32 product to f32.
+            // 32767*78941 wraps to -1_708_307_549, whose nearest float is
+            // -1_708_307_584, so the last row below sits exactly on the rounded
+            // bound: the Java filter keeps it and an f32 comparison dropped it.
             execute("CREATE TABLE x (s SHORT, f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(32767, 0.0, '2024-01-01T00:00:00.000000Z')," +
                     " (-32768, 0.0, '2024-01-01T00:00:00.000001Z')," +
                     " (30000, 0.0, '2024-01-01T00:00:00.000002Z')," +
-                    " (10, 0.0, '2024-01-01T00:00:00.000003Z')");
+                    " (10, 0.0, '2024-01-01T00:00:00.000003Z')," +
+                    " (32767, -1.708307584E9, '2024-01-01T00:00:00.000004Z')");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            // At int width: 32767*78941 wraps to -1_707_954_509,
-            // 30000*78941 wraps to -1_926_737_296, both negative -- excluded.
-            // -32768*78941 wraps to +1_708_228_608 (positive int after wrap)
-            // and 10*78941 = 789_410 -- both included. So two rows match.
+            // At int width: 32767*78941 wraps to -1_708_307_549,
+            // 30000*78941 wraps to -1_926_737_296, both negative -- excluded by
+            // "> 0.0". -32768*78941 wraps to +1_708_228_608 (positive int after wrap)
+            // and 10*78941 = 789_410 -- both included. The fifth row compares the
+            // same -1_708_307_549 against -1_708_307_584 and is included too, which
+            // the f32 comparison dropped. So three rows match.
             assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > f")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
-                    .returns("count\n2\n");
+                    .returns("count\n3\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > f")) {
                 Assert.assertTrue("narrow * int literal vs float must still JIT",

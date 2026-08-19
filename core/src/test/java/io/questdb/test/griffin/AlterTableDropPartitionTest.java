@@ -141,6 +141,21 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("cnv3", false);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE cnv3 CONVERT PARTITION TO PARQUET WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM cnv3").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
     public void testDetachPartitionWhereIntArithmeticWrapIsRejected() throws Exception {
         assertMemoryLeak(() -> {
             createFourDailyPartitions("det", false);
@@ -166,6 +181,21 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     "SELECT count() FROM det2",
                     "count\n4\n"
             );
+        });
+    }
+
+    @Test
+    public void testDetachPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("det3", false);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE det3 DETACH PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM det3").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            } finally {
+                bindVariableService.clear();
+            }
         });
     }
 
@@ -805,6 +835,109 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     "SELECT count() FROM n4",
                     "count\n4\n"
             );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNegatedBindVariableIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // the retention idiom: the job binds a positive day count and the statement negates
+                // it. Negation cannot carry the result outside the range the bind variable already
+                // covers, so the guard has nothing to prove and the statement must run.
+                createFourDailyPartitions("neg1", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE neg1 DROP PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM neg1").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+                // a named bind variable is the same shape
+                createFourDailyPartitions("neg2", false);
+                bindVariableService.clear();
+                bindVariableService.setInt("days", 2);
+                execute("ALTER TABLE neg2 DROP PARTITION WHERE ts < dateadd('d', -:days, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM neg2").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+                // the statement a retention job actually sends, whose cut-off sits well past the data
+                createFourDailyPartitions("neg3", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 30);
+                execute("ALTER TABLE neg3 DROP PARTITION WHERE ts < dateadd('d', -$1, now())");
+                assertQuery("SELECT count() FROM neg3").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+                // a WAL table compiles the statement twice - once to sequence it, once to apply it -
+                // and takes it both times
+                createFourDailyPartitions("neg4", true);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE neg4 DROP PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM neg4").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+                // negating a bound rather than a stride is accepted for the same reason: the bare
+                // bind variable can already carry every value the negation can produce
+                createFourDailyPartitions("neg5", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, -1);
+                execute("ALTER TABLE neg5 DROP PARTITION WHERE ts > -$1");
+                assertQuery("SELECT count() FROM neg5").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+                // the guard still refuses the products the negation sits inside, because those can
+                // reach a value the operand alone never could
+                createFourDailyPartitions("neg6", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1_720_468_802);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts > -$1 * 1_000_000",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1_720_468_802);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts > -($1 * 1_000_000)",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+
+                // a binary node keeps failing closed even where the negation is the whole intent,
+                // because proving those needs the operand's value and the guard does not have it
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts < dateadd('d', 0 - $1, now())",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts < dateadd('d', -1 * $1, now())",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+
+                // the refusal names three remedies and the third one is the only one a dateadd
+                // stride can take, so it has to work: bind the day count already negated
+                createFourDailyPartitions("neg7", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                try {
+                    execute("ALTER TABLE neg7 DROP PARTITION WHERE ts < dateadd('d', $1 * 30, now())");
+                    Assert.fail("statement was accepted");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "widen an operand (1_000_000L, expr::long), use a timestamp literal, or bind the computed value itself"
+                    );
+                }
+                bindVariableService.clear();
+                bindVariableService.setInt(0, -60);
+                execute("ALTER TABLE neg7 DROP PARTITION WHERE ts < dateadd('d', $1, now())");
+                assertQuery("SELECT count() FROM neg7").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            } finally {
+                bindVariableService.clear();
+            }
         });
     }
 

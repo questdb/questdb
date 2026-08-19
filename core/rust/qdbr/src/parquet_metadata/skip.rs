@@ -131,7 +131,7 @@ pub fn can_skip_row_group(
             7 => PhysicalType::FixedLenByteArray(col_desc.fixed_byte_len as usize),
             _ => continue,
         };
-        // Paired with the identical composition in ParquetDecoder::filter_row_group: a type whose
+        // Paired with the identical composition in ParquetDecoder::can_skip_row_group: a type whose
         // NULLs the statistics cannot identify as NULL never reports has_nulls == false, or a value
         // loop would prune a group on the very null the writer failed to count. Narrower than the
         // writer_undercounts_nulls gate on IS NULL above - see nulls_hidden_from_stats.

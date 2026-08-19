@@ -321,8 +321,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                             "1000000\t1000000\t0\t1.0\t3\t3\t1970-01-01T00:00:02.000000Z\n" +
                             "1000000\t1000000\t0\t1.0\t4\t4\t1970-01-01T00:00:03.000000Z\n" +
                             "1000000\t1000000\t0\t1.0\t5\t5\t1970-01-01T00:00:04.000000Z\n");
-            // A pure FLOAT comparison of the product wraps (getDouble -> getInt), so no
-            // widening: cmpType is floating, cmpLong stays false.
+            // A pure FLOAT comparison of the product wraps (getDouble -> getInt), so the
+            // OPERANDS do not widen: cmpType is floating, cmpLong stays false. The wrapped
+            // RESULT does - markIntCmpFloatOperand emits SX_I64 after the multiply so the
+            // comparison runs at f64 like the Java filter's, instead of rounding the product
+            // to f32 through convert()'s cvt_itof / int32_to_float.
             assertJitMatchesJavaOnEmptyResult("p where (a*b) > f32", true);
             // Controls: AND/OR split into separate predicate contexts. The wrapped product is
             // never above nl, so the AND is empty and the OR reduces to the float conjunct.
@@ -958,7 +961,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Control: direct float-vs-overflow comparison still wraps via
             // getDouble(getInt()), so the wrapped I4 fold remains correct.
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (258_558 * -259_815)", true);
-            // Control: pure-INT arithmetic under a float wraps (no genuine LONG).
+            // Control: pure-INT arithmetic under a float wraps (no genuine LONG). The wrapped
+            // sum is an INT-width arithmetic RESULT against a FLOAT column, so SX_I64 widens it
+            // after the add and the comparison runs at f64. See markIntCmpFloatOperand.
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 + (258_558 * -259_815))", true);
         });
     }
@@ -1243,6 +1248,443 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowConstArithFoldVectorizesAndMatchesJava() throws Exception {
+        // A pure-constant INT literal chain against a 64-bit column reached the backend as its own
+        // i32 operations, which no vectorized loop can pair with i64 lanes, so the serializer forced
+        // the scalar backend for it: "l > 1000 * 1000" scanned one row per YMM iteration where
+        // "l > 1000000" scanned four. The chain now folds to the single immediate the Java filter's
+        // own constant fold produces. CompiledFilterIRSerializerTest pins the execution mode and the
+        // emitted IR; this pins that the rows the re-enabled vector loop returns are the Java
+        // filter's rows, wrapping folds and NULL sentinels included.
+        final String ddl = "create table m3 as " +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
+                " case when x = 1 then cast(null as long) else x - 100 end l," +
+                " case when x = 2 then cast(null as timestamp) else cast(59_999_990 + x as timestamp) end ts," +
+                " case when x = 3 then cast(null as int) else cast(16_777_215 + x as int) end i," +
+                " case when x = 4 then cast(null as double) else cast(x - 100 as double) end d," +
+                " case when x = 5 then cast(null as float) else cast(x - 100 as float) / 100 end f" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // LONG peer, the three shapes the review measured going scalar.
+            assertQueryNotNullNoLeakCheck("m3 where l > -(1000 * 1000)");
+            assertQueryNotNullNoLeakCheck("m3 where l > 60 * 60 * 24 - 100_000");
+            assertQueryNotNullNoLeakCheck("m3 where ts > 1_000_000 * 60");
+            // A chain that wraps at INT width, and one whose division makes the wrap non-modular.
+            assertQueryNotNullNoLeakCheck("m3 where l > 1_000_000 * 1_000_000");
+            assertQueryNotNullNoLeakCheck("m3 where l > (1_000_000 * 1_000_000) / 1_000_000");
+            // The fold as an operand of a genuinely 64-bit arithmetic node, and as an IN element.
+            assertQueryNotNullNoLeakCheck("m3 where l + 1000 * 1000 > 0");
+            assertQueryNotNullNoLeakCheck("m3 where l in (1000 * 1000, -98)");
+            // Beside a conjunct that emits a wide-lane conversion the filter runs the FOUR-LANE
+            // loop, so the folded immediate has to hold there too - in both conjunct orders, since
+            // the fold removes a filter-wide forceScalarMode write.
+            assertQueryNotNullNoLeakCheck("m3 where l > -(1000 * 1000) and i > 16777216.0");
+            assertQueryNotNullNoLeakCheck("m3 where i > 16777216.0 and l > -(1000 * 1000)");
+            assertQueryNotNullNoLeakCheck("m3 where ts > 1_000_000 * 60 and i > 16777216.0");
+            assertQueryNotNullNoLeakCheck("m3 where i > 16777216.0 and ts > 1_000_000 * 60");
+            assertQueryNotNullNoLeakCheck("m3 where f < 1.00000003 or l > -(1000 * 1000)");
+            assertQueryNotNullNoLeakCheck("m3 where l > -(1000 * 1000) or f < 1.00000003");
+            // A DOUBLE peer never took the fold - its comparison does not run at 64-bit INT width -
+            // so this one only has to stay where it was.
+            assertQueryNotNullNoLeakCheck("m3 where d > -(1000 * 1000)");
+        });
+    }
+
+    @Test
+    public void testNarrowConstArithFoldPinsBoundaryRows() throws Exception {
+        // Parity across three modes proves the modes agree; it cannot prove the shared answer is
+        // right. These pin the absolute rows against a Java oracle first. The wrapping chain is the
+        // decisive one: folded at 64-bit width its bound would be 1_000_000_000_000 and every row
+        // would drop, and folded without per-operation wrapping the division below would answer
+        // 1000000 instead of -727.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m3p (k TIMESTAMP, l LONG, ts TIMESTAMP) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m3p VALUES
+                        (0, NULL, NULL),
+                        (1_000_000, 999_999, 59_999_999),
+                        (2_000_000, 1_000_000, 60_000_000),
+                        (3_000_000, 1_000_001, 60_000_001),
+                        (4_000_000, -727_379_969, 0),
+                        (5_000_000, -727_379_967, 0)
+                    """);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l > 1000 * 1000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l = 1000 * 1000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n"
+            );
+            // The NULL row is admitted by <> exactly as it is against a plain literal bound.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l <> 1000 * 1000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:00.000000Z\tnull\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n" +
+                            "1970-01-01T00:00:04.000000Z\t-727379969\n" +
+                            "1970-01-01T00:00:05.000000Z\t-727379967\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l > 60 * 60 * 24",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n"
+            );
+            // 1000000 * 1000000 wraps to -727379968 at INT width, which is the bound the Java
+            // filter's IntConstant carries.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l > 1_000_000 * 1_000_000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n" +
+                            "1970-01-01T00:00:05.000000Z\t-727379967\n"
+            );
+            // -727379968 / 1000000 is -727. A single wrap applied after a 64-bit fold would answer
+            // 1000000 and drop the first two rows.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l > (1_000_000 * 1_000_000) / 1_000_000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l > -(1000 * 1000)",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l + 1000 * 1000 > 0",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3p where l in (1000 * 1000, 999_999)",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t999999\n" +
+                            "1970-01-01T00:00:02.000000Z\t1000000\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k from m3p where ts > 1_000_000 * 60",
+                    "k\n" +
+                            "1970-01-01T00:00:03.000000Z\n"
+            );
+
+            // A DATE column codes as I8 like a LONG one, but serializeConstant declines an
+            // unquoted numeric constant against it, so "d > 3600000" falls back to the Java filter
+            // while the folded chain does not - the fold emits its immediate directly, exactly as
+            // the pre-existing out-of-INT-range fold root already does for the same column type.
+            // That widens the JIT-eligible set, so pin the rows rather than assume them.
+            execute("CREATE TABLE m3d (k TIMESTAMP, d DATE) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m3d VALUES
+                        (0, NULL),
+                        (1_000_000, cast(3_599_999 AS DATE)),
+                        (2_000_000, cast(3_600_000 AS DATE)),
+                        (3_000_000, cast(3_600_001 AS DATE))
+                    """);
+            assertJitScalarAndVectorMatchJava(
+                    "select k from m3d where d > 1000 * 60 * 60",
+                    "k\n" +
+                            "1970-01-01T00:00:03.000000Z\n"
+            );
+
+            // The serializer reads column metadata and a page-frame cursor, both of which a WAL
+            // table presents exactly as a non-WAL one does once the apply job has run.
+            execute("CREATE TABLE m3w (k TIMESTAMP, l LONG) TIMESTAMP(k) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO m3w VALUES
+                        (0, NULL),
+                        (1_000_000, 999_999),
+                        (2_000_000, 1_000_000),
+                        (3_000_000, 1_000_001)
+                    """);
+            drainWalQueue();
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from m3w where l > 1000 * 1000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:03.000000Z\t1000001\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEightByteArithI64ConstantVectorizesAndMatchesJava() throws Exception {
+        // markWidthSemanticsOperand widens an out-of-INT-range integer constant under an arithmetic
+        // node to a full I8 IMM. It used to record that in the i64-widen LEAF set, whose only other
+        // reader forces the scalar backend, so every LONG / TIMESTAMP / DOUBLE predicate carrying
+        // such a constant dropped from four rows per YMM iteration to one - with byte-identical IR,
+        // since an 8-byte observation emits the immediate at I8 either way. The widening is now
+        // recorded as an immediate width only, and the scalar force is kept for the case it is
+        // load-bearing for: a predicate whose lanes are narrower than the immediate.
+        // CompiledFilterIRSerializerTest pins the execution mode; this pins that the rows the
+        // re-enabled vector loop returns are the Java filter's rows, NULL sentinels included.
+        final String ddl = "create table c2 as " +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
+                " case when x = 1 then cast(null as timestamp) else cast(4_999_999_996 + x as timestamp) end ts," +
+                " case when x = 2 then cast(null as long) else -5_000_000_003 + x end l," +
+                " case when x = 3 then cast(null as double) else cast(x - 100 as double) end d," +
+                " case when x = 4 then cast(null as long) else x - 100 end ls," +
+                " case when x = 5 then cast(null as float) else cast(x - 100 as float) / 100 end f," +
+                " cast(16_777_215 + x as int) i" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // TIMESTAMP peer: the observer reports 8 bytes, so the immediate needs no widening at
+            // all and the IR is unchanged.
+            assertQueryNotNullNoLeakCheck("c2 where ts - 5_000_000_000 > 0");
+            assertQueryNotNullNoLeakCheck("c2 where ts + 5_000_000_000 > 0");
+            // LONG peer, unary-minus spelling: the marked node sits under the minus and descend()
+            // folds it into the negation node, so it is never serialized on its own.
+            assertQueryNotNullNoLeakCheck("c2 where l > -5_000_000_000");
+            assertQueryNotNullNoLeakCheck("c2 where l <> -5_000_000_000");
+            assertQueryNotNullNoLeakCheck("c2 where l = -5_000_000_003 + 1");
+            // DOUBLE peer: here the widening does change the immediate - an exact f64 becomes an
+            // exact i64 of the same width - so the (f64, i64) pairing has to survive the 8-byte
+            // lanes as well as the scalar backend.
+            assertQueryNotNullNoLeakCheck("c2 where d * 2_147_483_648 > 0");
+            assertQueryNotNullNoLeakCheck("c2 where d - 2_147_483_648 < 0");
+            // The conjunct-order pair. Both spellings return the same rows and now pick the same
+            // execution mode; a test written in one order alone could not catch the other.
+            assertQueryNotNullNoLeakCheck("c2 where ls * 5_000_000_000 > 0 and i > 16777216.0");
+            assertQueryNotNullNoLeakCheck("c2 where i > 16777216.0 and ls * 5_000_000_000 > 0");
+            // The shapes the relaxed gate hands to the FOUR-LANE loop, which neither the PR nor its
+            // base ran them on: an 8-byte arithmetic predicate beside a conjunct that emits a
+            // wide-lane conversion. Every operand pairing here - (i64, i64), (i32 -> sx_i64, f64)
+            // and (f32 -> cvt_ftod, f64) - has to hold across a full scan.
+            assertQueryNotNullNoLeakCheck("c2 where i > 16777216.0 and d * 5_000_000_000 > 0");
+            assertQueryNotNullNoLeakCheck("c2 where i > 16777216.0 and ts * 5_000_000_000 > 0");
+            assertQueryNotNullNoLeakCheck("c2 where f < 1.00000003 or l + 5_000_000_000 > 0");
+            assertQueryNotNullNoLeakCheck("c2 where f < 1.00000003 or d + 5_000_000_000 > 0");
+            assertQueryNotNullNoLeakCheck("c2 where f < 1.00000003 or ts + 5_000_000_000 > 0");
+        });
+    }
+
+    @Test
+    public void testEightByteArithI64ConstantPinsBoundaryRows() throws Exception {
+        // Parity across three modes proves the modes agree; it cannot prove the shared answer is
+        // right. These pin the absolute rows on and around the widened bound, with the LONG NULL
+        // sentinel (Long.MIN_VALUE) sitting below every one of them - it must never be admitted by
+        // an ordering comparison against a negative out-of-INT-range bound.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE c2b AS (
+                        SELECT timestamp_sequence(0, 1_000_000) k,
+                            CASE WHEN x = 1 THEN cast(NULL AS LONG) ELSE -5_000_000_002 + x END l,
+                            CASE WHEN x = 1 THEN cast(NULL AS DOUBLE) ELSE cast(x - 3 AS DOUBLE) END d
+                        FROM long_sequence(5)
+                    ) TIMESTAMP(k)
+                    """);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from c2b where l = -5_000_000_000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:01.000000Z\t-5000000000\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from c2b where l > -5_000_000_000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:02.000000Z\t-4999999999\n" +
+                            "1970-01-01T00:00:03.000000Z\t-4999999998\n" +
+                            "1970-01-01T00:00:04.000000Z\t-4999999997\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from c2b where l <> -5_000_000_000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:00.000000Z\tnull\n" +
+                            "1970-01-01T00:00:02.000000Z\t-4999999999\n" +
+                            "1970-01-01T00:00:03.000000Z\t-4999999998\n" +
+                            "1970-01-01T00:00:04.000000Z\t-4999999997\n"
+            );
+            // DOUBLE peer, both signs of the product, with the NaN NULL row excluded by both.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, d from c2b where d * 2_147_483_648 > 0",
+                    "k\td\n" +
+                            "1970-01-01T00:00:03.000000Z\t1.0\n" +
+                            "1970-01-01T00:00:04.000000Z\t2.0\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, d from c2b where d * 2_147_483_648 < 0",
+                    "k\td\n" +
+                            "1970-01-01T00:00:01.000000Z\t-1.0\n"
+            );
+
+            // The four-lane shapes the relaxed gate newly admits. Neither the PR nor its base ran
+            // these on the AVX2 loop, so parity alone is not enough - pin the rows. Each mixes an
+            // 8-byte arithmetic predicate with a conjunct that emits a wide-lane conversion, so the
+            // loop has to harmonise (i64, i64) beside (f32 -> cvt_ftod, f64) and
+            // (i32 -> sx_i64, f64) in one pass.
+            execute("CREATE TABLE c2f (k TIMESTAMP, f FLOAT, l LONG, d DOUBLE) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO c2f VALUES
+                        (0, 0.5, -6_000_000_000, -6.0E9),
+                        (1_000_000, 2.0, -6_000_000_000, -6.0E9),
+                        (2_000_000, 2.0, -4_000_000_000, -4.0E9),
+                        (3_000_000, NULL, -6_000_000_000, -6.0E9),
+                        (4_000_000, 0.5, NULL, NULL)
+                    """);
+            final String orExpected = "k\tf\n" +
+                    "1970-01-01T00:00:00.000000Z\t0.5\n" +
+                    "1970-01-01T00:00:02.000000Z\t2.0\n" +
+                    "1970-01-01T00:00:04.000000Z\t0.5\n";
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f from c2f where f < 1.00000003 or l + 5_000_000_000 > 0", orExpected);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f from c2f where f < 1.00000003 or d + 5_000_000_000 > 0", orExpected);
+
+            execute("CREATE TABLE c2i (k TIMESTAMP, i INT, l LONG) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO c2i VALUES
+                        (0, 16_777_216, 1),
+                        (1_000_000, 16_777_217, 1),
+                        (2_000_000, 16_777_218, -1),
+                        (3_000_000, 16_777_219, 0),
+                        (4_000_000, NULL, 1),
+                        (5_000_000, 16_777_220, NULL)
+                    """);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from c2i where i > 16777216.0 and l * 5_000_000_000 > 0",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n"
+            );
+
+            // The serializer reads column metadata and a page-frame cursor, both of which a WAL
+            // table presents exactly as a non-WAL one does once the apply job has run. Pin that
+            // rather than assume it: the same bound over a WAL table must select the same rows in
+            // all three modes.
+            execute("CREATE TABLE c2w (k TIMESTAMP, l LONG) TIMESTAMP(k) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO c2w VALUES
+                        (0, NULL),
+                        (1_000_000, -5_000_000_000),
+                        (2_000_000, -4_999_999_999),
+                        (3_000_000, -4_999_999_998)
+                    """);
+            drainWalQueue();
+            assertJitScalarAndVectorMatchJava(
+                    "select k, l from c2w where l > -5_000_000_000",
+                    "k\tl\n" +
+                            "1970-01-01T00:00:02.000000Z\t-4999999999\n" +
+                            "1970-01-01T00:00:03.000000Z\t-4999999998\n"
+            );
+        });
+    }
+
+    @Test
+    public void testFloatArithI64ConstantVectorizesInBothConjunctOrders() throws Exception {
+        // A four-byte FLOAT predicate carrying an out-of-INT-range integer constant emits an
+        // eight-byte immediate, so it must stay off any loop whose lanes are narrower than that.
+        // The four-lane loop is not one of them - its lanes are eight bytes wide whatever the
+        // observed columns are - so beside a conjunct that emits a wide-lane conversion the
+        // predicate is welcome to it. Whether the filter reaches that loop is settled only when
+        // the traversal ends, so the serializer defers the suppression to getExecHint(); before
+        // that, the spelling with the FLOAT conjunct written LAST forced the whole filter scalar,
+        // and the two spellings ran different loops over the same rows.
+        // CompiledFilterIRSerializerTest pins the execution mode. This pins that both spellings
+        // return the Java filter's rows on the loop they now share, NULL sentinels included.
+        final String ddl = "create table c2fo as " +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
+                " case when x = 5 then cast(null as float) else cast(x - 100 as float) / 100 end f," +
+                " case when x = 4 then cast(null as int) else cast(16_777_215 + x as int) end i," +
+                " case when x = 2 then cast(null as long) else 16_777_216 + x end l" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // Every peer below emits a wide-lane conversion of its own, so the filter runs the
+            // four-lane loop and the FLOAT conjunct rides it in either spelling. The AND peers are
+            // the ones this data leaves rows for; the two that select nothing under AND are run
+            // under OR instead, which the same deferral covers.
+            final String[] andPeers = {
+                    "i > 16777216.0",
+                    "i < 5_000_000_000",
+                    "i < l",
+                    "l * i > 5_000_000_000",
+                    "i + 5_000_000_000 > 1",
+                    "f < 1.00000003",
+            };
+            final String[] orPeers = {
+                    "i < 1.00000003",
+                    "i in (1, 5_000_000_000)",
+            };
+            for (String peer : andPeers) {
+                assertQueryNotNullNoLeakCheck("c2fo where f + 5_000_000_000 > 1.5 and " + peer);
+                assertQueryNotNullNoLeakCheck("c2fo where " + peer + " and f + 5_000_000_000 > 1.5");
+            }
+            for (String peer : orPeers) {
+                assertQueryNotNullNoLeakCheck("c2fo where f + 5_000_000_000 > 1.5 or " + peer);
+                assertQueryNotNullNoLeakCheck("c2fo where " + peer + " or f + 5_000_000_000 > 1.5");
+            }
+            // The other arithmetic spellings of the same shape.
+            assertQueryNotNullNoLeakCheck("c2fo where f * 5_000_000_000 > 1.5 and i > 16777216.0");
+            assertQueryNotNullNoLeakCheck("c2fo where i > 16777216.0 and f * 5_000_000_000 > 1.5");
+            assertQueryNotNullNoLeakCheck("c2fo where f - 5_000_000_000 < 1.5 and i > 16777216.0");
+            assertQueryNotNullNoLeakCheck("c2fo where i > 16777216.0 and f - 5_000_000_000 < 1.5");
+            assertQueryNotNullNoLeakCheck("c2fo where f + 2_147_483_648 > 1.5 and i > 16777216.0");
+            assertQueryNotNullNoLeakCheck("c2fo where i > 16777216.0 and f + 2_147_483_648 > 1.5");
+
+            // Parity across three modes proves the modes agree; it cannot prove the shared answer
+            // is right. Pin the absolute rows, in both spellings, with a FLOAT NULL (NaN), an INT
+            // NULL and a LONG NULL row present.
+            execute("CREATE TABLE c2fp (k TIMESTAMP, f FLOAT, i INT, l LONG) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO c2fp VALUES
+                        (0, 0.5, 16_777_215, 16_777_216),
+                        (1_000_000, 2.0, 16_777_217, 16_777_218),
+                        (2_000_000, NULL, 16_777_218, 16_777_219),
+                        (3_000_000, -1.5, NULL, 16_777_220),
+                        (4_000_000, 0.5, 16_777_220, NULL)
+                    """);
+            // f + 5e9 exceeds 1.5 for every non-NULL f, so the INT bound decides: the NaN row and
+            // the NULL-INT row drop out, and 16_777_215 is below the bound.
+            final String intBoundExpected = "k\tf\ti\n" +
+                    "1970-01-01T00:00:01.000000Z\t2.0\t16777217\n" +
+                    "1970-01-01T00:00:04.000000Z\t0.5\t16777220\n";
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f, i from c2fp where f + 5_000_000_000 > 1.5 and i > 16777216.0", intBoundExpected);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f, i from c2fp where i > 16777216.0 and f + 5_000_000_000 > 1.5", intBoundExpected);
+            // The product spelling drops the negative FLOAT row as well, which the bound above
+            // keeps, so the two are not the same assertion twice.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f, i from c2fp where f * 5_000_000_000 > 1.5 and i < l", "k\tf\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t0.5\t16777215\n" +
+                            "1970-01-01T00:00:01.000000Z\t2.0\t16777217\n");
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f, i from c2fp where i < l and f * 5_000_000_000 > 1.5", "k\tf\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t0.5\t16777215\n" +
+                            "1970-01-01T00:00:01.000000Z\t2.0\t16777217\n");
+
+            // A WAL table presents the same column metadata and page-frame cursor once the apply
+            // job has run, so both spellings must land on the same loop and the same rows there too.
+            execute("CREATE TABLE c2fw (k TIMESTAMP, f FLOAT, i INT) TIMESTAMP(k) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO c2fw VALUES
+                        (0, 0.5, 16_777_215),
+                        (1_000_000, 2.0, 16_777_217),
+                        (2_000_000, NULL, 16_777_218),
+                        (3_000_000, 0.5, NULL)
+                    """);
+            drainWalQueue();
+            final String walExpected = "k\tf\ti\n" +
+                    "1970-01-01T00:00:01.000000Z\t2.0\t16777217\n";
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f, i from c2fw where f + 5_000_000_000 > 1.5 and i > 16777216.0", walExpected);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, f, i from c2fw where i > 16777216.0 and f + 5_000_000_000 > 1.5", walExpected);
+        });
+    }
+
+    @Test
     public void testFloatArithI64ConstUnderWideLaneRunsScalar() throws Exception {
         // C6: a wide-lane FLOAT conjunct (afloat * 1.0 > <inexact float>) sets isWideLaneMode
         // without emitting a width conversion, which used to SUPPRESS the scalar force for a
@@ -1342,8 +1784,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Control: a direct FLOAT-vs-out-of-range-constant comparison is not an
             // arithmetic operand; it stays vectorized and unchanged.
             assertJitMatchesJava("t where fcol > 3_000_000_000", true);
-            // Control: an in-range constant operand wraps at INT width under a float on
-            // both paths (getInt), so it must not widen.
+            // Control: an in-range constant OPERAND wraps at INT width under a float on both
+            // paths (getInt), so it must not widen. Only the wrapped product does, through the
+            // SX_I64 markIntCmpFloatOperand emits after the multiply.
             assertJitMatchesJava("t where i32 * 3 > fcol", true);
         });
     }
@@ -3337,11 +3780,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        // -i32 against f32 stays in the matrix: negation makes the operand an INT-width
+        // arithmetic RESULT, which markIntCmpFloatOperand sign-extends with an SX_I64 emitted
+        // after the NEG, so the comparison runs at f64 like the Java filter's.
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQueryNotNull(ddl, gen);
+        assertMemoryLeak(() -> {
+            assertJitMatchesJava("x where -i32 > f32", true);
+            assertJitMatchesJava("x where -i32 < f32", true);
+            assertJitMatchesJava("x where -i32 >= -f32", true);
+            assertJitMatchesJava("x where -i32 <= -f32", true);
+        });
     }
 
     @Test
@@ -3353,11 +3805,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        // See testIntFloatColumnsComparison for how -i32 against f32 keeps the JIT.
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQueryNullable(ddl, gen);
+        assertMemoryLeak(() -> {
+            assertJitMatchesJava("x where -i32 > f32", true);
+            assertJitMatchesJava("x where -i32 < f32", true);
+            assertJitMatchesJava("x where -i32 >= -f32", true);
+            assertJitMatchesJava("x where -i32 <= -f32", true);
+        });
     }
 
     @Test
@@ -3403,8 +3862,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776_782))", true);
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776_782))", true);
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2_000_000_000))", true);
-            // Control shapes that were always correct under JIT.
+            // An INT-width product against a FLOAT column keeps the JIT: the Java filter reads
+            // the wrapped product at f64, and SX_I64 after the multiply widens that same wrapped
+            // result so convert() takes the (i64, f32) arm instead of rounding to f32. See
+            // markIntCmpFloatOperand.
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 * -776_782)", true);
+            // Control shapes that were always correct under JIT. c0 * c8 is LONG-width, so its
+            // pairing with the FLOAT column already lands on the (i64, f32) arm.
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * c8)", true);
             assertJitMatchesJava("SELECT * FROM t WHERE (c8 * -776_782) > 0", true);
         });
@@ -4068,6 +4532,557 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withEqualityOperator()
                 .withAnyOf("null");
         assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testIntColumnVsFloatColumnPinsBoundaryRows() throws Exception {
+        // Parity across three modes proves the modes agree; it cannot prove the shared answer is
+        // right, and here both JIT backends shared the SAME wrong answer. These pin the absolute
+        // rows against the Java filter, which is the specification: it has no (FLOAT, FLOAT)
+        // comparison factory, so `i <op> f` compares at f64 - the INT through
+        // IntFunction#getDouble, the FLOAT through FloatFunction#getDouble.
+        //
+        // The first three rows are the ones the review measured. (float) -2147483647 and
+        // (float) -2147483647.5 are both -2147483648.0f, and (float) 16777217 is 16777216.0f, so
+        // an f32 comparison calls those pairs equal where f64 does not. Rows 3 to 5 and 10 carry
+        // the NULL sentinels: INT NULL is Integer.MIN_VALUE, FLOAT NULL is NaN, and both reach
+        // the comparison as NaN, so NULL = NULL matches and every ordering against a NULL does
+        // not. Row 10 pairs an INT NULL against the float -2147483648.0, which is what
+        // Integer.MIN_VALUE would look like had the sentinel been carried through as a value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a1p (k TIMESTAMP, i INT, f FLOAT) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a1p VALUES
+                        (0, -2_147_483_647, -2147483647.5),
+                        (1_000_000, 16_777_217, 16777216.0),
+                        (2_000_000, 20_000_000, 20000000.5),
+                        (3_000_000, NULL, 1.0),
+                        (4_000_000, 5, NULL),
+                        (5_000_000, NULL, NULL),
+                        (6_000_000, 1, 2.0),
+                        (7_000_000, 3, 2.0),
+                        (8_000_000, 2_147_483_647, 2.147483647E9),
+                        (9_000_000, -2_147_483_646, -2147483646.0),
+                        (10_000_000, NULL, -2147483648.0)
+                    """);
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i = f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:05.000000Z\tnull\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i <> f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t-2147483647\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:03.000000Z\tnull\n" +
+                            "1970-01-01T00:00:04.000000Z\t5\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:08.000000Z\t2147483647\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n" +
+                            "1970-01-01T00:00:10.000000Z\tnull\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i < f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\n" +
+                            "1970-01-01T00:00:08.000000Z\t2147483647\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i <= f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:05.000000Z\tnull\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\n" +
+                            "1970-01-01T00:00:08.000000Z\t2147483647\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t-2147483647\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i >= f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t-2147483647\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:05.000000Z\tnull\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n"
+            );
+            // The reversed spelling: the review measured `f >= i` wrong too.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where f >= i",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:05.000000Z\tnull\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\n" +
+                            "1970-01-01T00:00:08.000000Z\t2147483647\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where f > i",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\n" +
+                            "1970-01-01T00:00:08.000000Z\t2147483647\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where f < i",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t-2147483647\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where f <= i",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t-2147483647\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:05.000000Z\tnull\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n"
+            );
+            // The IN spelling of the same pairing.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where f in (i)",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:05.000000Z\tnull\n"
+            );
+            // A conjunct beside the pairing must not lose rows either, in either order.
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where i > f and k > 0",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1p where k > 0 and i > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:07.000000Z\t3\n" +
+                            "1970-01-01T00:00:09.000000Z\t-2147483646\n"
+            );
+        });
+    }
+
+    @Test
+    public void testIntColumnVsFloatColumnMatchesJava() throws Exception {
+        // Row-for-row parity across JIT-off / FORCE_SCALAR / JIT-on over a full SIMD body plus a
+        // scalar tail, so a wrong lane in either backend shows up. The INT column straddles the
+        // f32 exact-integer limit (16777215 / 16777216 / 16777217) and reaches INT_MAX, and every
+        // column carries a NULL row.
+        final String ddl = "create table a1 as " +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
+                " case when x = 1 then cast(null as int) else cast(16_777_213 + x * 7 as int) end i," +
+                " case when x = 2 then cast(null as float) else cast(16_777_213 + x * 7 + (x % 3 - 1) as float) end f," +
+                " case when x = 3 then cast(null as int) else cast(x % 100 as int) end j," +
+                " case when x = 4 then cast(null as float) else cast(x % 100 + (x % 3 - 1) as float) end g," +
+                " case when x = 5 then cast(null as byte) else cast(x % 100 as byte) end b," +
+                " case when x = 6 then cast(null as short) else cast(x % 100 as short) end s," +
+                " case when x = 7 then cast(null as long) else cast(16_777_213 + x * 7 as long) end l," +
+                " case when x = 8 then cast(null as double) else cast(16_777_213 + x * 7 + (x % 3 - 1) as double) end d" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            final String[] ops = {"=", "<>", "<", "<=", ">", ">="};
+            for (int i = 0; i < ops.length; i++) {
+                final String op = ops[i];
+                assertQueryNotNullNoLeakCheck("a1 where i " + op + " f");
+                assertQueryNotNullNoLeakCheck("a1 where f " + op + " i");
+                assertQueryNotNullNoLeakCheck("a1 where j " + op + " g");
+                assertQueryNotNullNoLeakCheck("a1 where i " + op + " f * 1");
+                assertQueryNotNullNoLeakCheck("a1 where not (i " + op + " f)");
+                assertQueryNotNullNoLeakCheck("a1 where i " + op + " f and l > 0");
+                assertQueryNotNullNoLeakCheck("a1 where l > 0 and i " + op + " f");
+                // Controls: the pairings that were already exact must keep their rows.
+                assertQueryNotNullNoLeakCheck("a1 where b " + op + " g");
+                assertQueryNotNullNoLeakCheck("a1 where s " + op + " g");
+                assertQueryNotNullNoLeakCheck("a1 where l " + op + " f");
+                assertQueryNotNullNoLeakCheck("a1 where i " + op + " d");
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnVsFloatColumnMatchesJavaOnWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a1w (k TIMESTAMP, i INT, f FLOAT) TIMESTAMP(k) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO a1w VALUES
+                        (0, -2_147_483_647, -2147483647.5),
+                        (1_000_000, 16_777_217, 16777216.0),
+                        (2_000_000, 20_000_000, 20000000.5),
+                        (3_000_000, NULL, NULL)
+                    """);
+            drainWalQueue();
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1w where i > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t-2147483647\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n"
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "select k, i from a1w where f >= i",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:02.000000Z\t20000000\n" +
+                            "1970-01-01T00:00:03.000000Z\tnull\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithVsFloatColumnWidensResultAndMatchesJava() throws Exception {
+        // An INT-width arithmetic operand against a FLOAT one wraps at 32 bits in the Java filter
+        // (MulInt/AddInt/NegInt#getInt) and is only then read at f64 through
+        // IntFunction#getDouble. The serializer reproduces exactly that: the subtree keeps
+        // computing at i32 and an SX_I64 emitted AFTER the operator widens the WRAPPED result, so
+        // convert() takes the (i64, f32) arm. Every assertion below pins the absolute rows the
+        // Java filter returns AND that the JIT claimed the filter, under FORCE_SCALAR and the
+        // vectorized mode alike.
+        //
+        // Rows 4 and 5 are the discriminators between widening the RESULT and widening the
+        // OPERANDS. 1073741824 * 2 wraps onto INT_MIN, which is the INT NULL sentinel, so the
+        // Java filter answers NaN and the row drops; 2000000000 * 2 wraps to -294967296, which is
+        // below the bound. A long-width multiply would return 2147483648 and 4000000000 and keep
+        // both rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a1a (k TIMESTAMP, i INT, f FLOAT, b BYTE) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a1a VALUES
+                        (0, 16_777_216, 16777216.0, 1),
+                        (1_000_000, 16_777_217, 16777216.0, 2),
+                        (2_000_000, 5, 6.0, 3),
+                        (3_000_000, NULL, NULL, 0),
+                        (4_000_000, 1_073_741_824, 1.0, 4),
+                        (5_000_000, 2_000_000_000, 1.0, 5),
+                        (6_000_000, 0, 2.0E9, 7)
+                    """);
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where i + 1 > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t16777216\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:04.000000Z\t1073741824\n" +
+                            "1970-01-01T00:00:05.000000Z\t2000000000\n");
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where i * 2 > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t16777216\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t5\n");
+            // The reversed operand order has to widen the same subtree.
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where f < i * 2",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t16777216\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t5\n");
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where -i < f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:00.000000Z\t16777216\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t5\n" +
+                            "1970-01-01T00:00:04.000000Z\t1073741824\n" +
+                            "1970-01-01T00:00:05.000000Z\t2000000000\n" +
+                            "1970-01-01T00:00:06.000000Z\t0\n");
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where i / 2 > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:04.000000Z\t1073741824\n" +
+                            "1970-01-01T00:00:05.000000Z\t2000000000\n");
+            // A BYTE leaf under an INT-width add: the sum is far above 2^24, so the row whose
+            // FLOAT column sits on the rounded bound is the one an f32 comparison dropped.
+            // 2000000007 rounds to 2.0E9f, which is exactly the column value in row 6.
+            assertJitScalarAndVectorMatchJava("select k, b from a1a where b + 2_000_000_000 > f",
+                    "k\tb\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\n" +
+                            "1970-01-01T00:00:04.000000Z\t4\n" +
+                            "1970-01-01T00:00:05.000000Z\t5\n" +
+                            "1970-01-01T00:00:06.000000Z\t7\n");
+            // The bare column, which round one already fixed, still holds.
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where i > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:04.000000Z\t1073741824\n" +
+                            "1970-01-01T00:00:05.000000Z\t2000000000\n");
+            // A conjunct beside the widened subtree must keep its rows, in either order.
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where i * 2 > f and k > 0",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t5\n");
+            assertJitScalarAndVectorMatchJava("select k, i from a1a where k > 0 and i * 2 > f",
+                    "k\ti\n" +
+                            "1970-01-01T00:00:01.000000Z\t16777217\n" +
+                            "1970-01-01T00:00:02.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithVsFloatColumnCoversEveryOperator() throws Exception {
+        // All six operators in both operand orders, for the two arithmetic shapes that carry the
+        // whole population's hazards: a multiply whose product wraps (row 4 onto the INT NULL
+        // sentinel, row 5 past it) and a unary minus. Absolute rows, asserted against the
+        // JIT-disabled cursor first, so parity between the two JIT backends cannot launder a
+        // shared wrong answer.
+        //
+        // NULL semantics, from Numbers.equals(double, double) and the negated ordering factories:
+        // NULL against NULL is equal - so it matches =, <= and >= - and NULL against a value
+        // matches only <>. Numbers.intToDouble(INT_NULL) is NaN, which is how an INT NULL and a
+        // wrap that LANDS on INT_MIN both reach the comparison.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a1o (k TIMESTAMP, i INT, f FLOAT) TIMESTAMP(k) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a1o VALUES
+                        (0, 16_777_216, 16777216.0),
+                        (1_000_000, 16_777_217, 16777216.0),
+                        (2_000_000, 5, 6.0),
+                        (3_000_000, NULL, NULL),
+                        (4_000_000, 1_073_741_824, 1.0),
+                        (5_000_000, 2_000_000_000, 1.0),
+                        (6_000_000, 0, 2.0E9),
+                        (7_000_000, 16_777_217, 33554432.0),
+                        (8_000_000, 16_777_217, -16777216.0)
+                    """);
+            // Rows 7 and 8 are the f32-rounding discriminators. 16777217 * 2 is 33554434, whose
+            // nearest float is 33554432 (ulp is 4 above 2^25, and the tie rounds to the even
+            // mantissa), and -16777217's nearest float is -16777216 (ulp is 2 above 2^24). Both
+            // land exactly on the FLOAT column value, so an f32 comparison calls the pair equal
+            // where the Java filter's f64 one does not.
+            //
+            // i * 2 per row, at INT width: 33554432, 33554434, 10, NULL, INT_MIN (the wrap lands
+            // on the sentinel), -294967296 (4000000000 wrapped), 0, 33554434, 33554434.
+            assertA1oRows("i * 2 = f", 3);
+            assertA1oRows("i * 2 <> f", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA1oRows("i * 2 < f", 5, 6);
+            assertA1oRows("i * 2 <= f", 3, 5, 6);
+            assertA1oRows("i * 2 > f", 0, 1, 2, 7, 8);
+            assertA1oRows("i * 2 >= f", 0, 1, 2, 3, 7, 8);
+            assertA1oRows("f = i * 2", 3);
+            assertA1oRows("f <> i * 2", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA1oRows("f < i * 2", 0, 1, 2, 7, 8);
+            assertA1oRows("f <= i * 2", 0, 1, 2, 3, 7, 8);
+            assertA1oRows("f > i * 2", 5, 6);
+            assertA1oRows("f >= i * 2", 3, 5, 6);
+            // -i per row: -16777216, -16777217, -5, NULL, -1073741824, -2000000000, 0, -16777217,
+            // -16777217. NegInt maps the sentinel to itself, so no value wraps.
+            assertA1oRows("-i = f", 3);
+            assertA1oRows("-i <> f", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA1oRows("-i < f", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA1oRows("-i <= f", 0, 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA1oRows("-i > f");
+            assertA1oRows("-i >= f", 3);
+            assertA1oRows("f = -i", 3);
+            assertA1oRows("f <> -i", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA1oRows("f < -i");
+            assertA1oRows("f <= -i", 3);
+            assertA1oRows("f > -i", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA1oRows("f >= -i", 0, 1, 2, 3, 4, 5, 6, 7, 8);
+        });
+    }
+
+    @Test
+    public void testDoubleConstantInFourByteArithmeticMatchesJava() throws Exception {
+        // A DOUBLE-spelled literal makes its arithmetic node a DOUBLE one in the Java filter -
+        // "+(FF)" cannot take a DOUBLE operand, so FLOAT + DOUBLE resolves to "+(DD)". The type
+        // observer sees columns and bind variables only, so a predicate whose widest source is a
+        // 4-byte column typed that literal down to F4 and both backends ran the whole subtree at
+        // f32. The bound was rounded too, but the subtree width is the deeper half: "f + 1.0 > f"
+        // carries no inexact constant at all and still diverged, because 16777216.0f + 1.0f is
+        // 16777216.0f while (double) 16777216.0f + 1.0 is 16777217.0.
+        //
+        // Float literals are spelled without CLAUDE.md's thousands separators on purpose:
+        // Numbers.parseDouble rejects an underscore, so a separated DOUBLE literal makes the
+        // serializer decline the filter and the test would stop exercising the JIT at all.
+        assertMemoryLeak(() -> {
+            createA2fTable();
+            // f + 1.0 per row, at f64: 16777217.0, 33554433.0, 7.0, NaN, 16777217.0, 2.0,
+            // -16777215.0, 2.0, NaN. At f32 rows 0 and 4 collapse back onto 16777216.0f, and the
+            // 16777216.5 bound rounds onto it as well, so the f32 filter answers the opposite way
+            // for both the ordering and the equality operators.
+            assertA2fRows("f + 1.0 = 16777216.5");
+            assertA2fRows("f + 1.0 <> 16777216.5", 0, 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA2fRows("f + 1.0 < 16777216.5", 2, 5, 6, 7);
+            assertA2fRows("f + 1.0 <= 16777216.5", 2, 5, 6, 7);
+            assertA2fRows("f + 1.0 > 16777216.5", 0, 1, 4);
+            assertA2fRows("f + 1.0 >= 16777216.5", 0, 1, 4);
+            assertA2fRows("16777216.5 = f + 1.0");
+            assertA2fRows("16777216.5 <> f + 1.0", 0, 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA2fRows("16777216.5 < f + 1.0", 0, 1, 4);
+            assertA2fRows("16777216.5 <= f + 1.0", 0, 1, 4);
+            assertA2fRows("16777216.5 > f + 1.0", 2, 5, 6, 7);
+            assertA2fRows("16777216.5 >= f + 1.0", 2, 5, 6, 7);
+            // No constant is compared here at all - the divergence is purely the width the ADD
+            // runs at. NULL (NaN) compares equal to NULL and unordered against everything else.
+            assertA2fRows("f + 1.0 = f", 3, 8);
+            assertA2fRows("f + 1.0 <> f", 0, 1, 2, 4, 5, 6, 7);
+            assertA2fRows("f + 1.0 < f");
+            assertA2fRows("f + 1.0 <= f", 3, 8);
+            assertA2fRows("f + 1.0 > f", 0, 1, 2, 4, 5, 6, 7);
+            assertA2fRows("f + 1.0 >= f", 0, 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA2fRows("f = f + 1.0", 3, 8);
+            assertA2fRows("f <> f + 1.0", 0, 1, 2, 4, 5, 6, 7);
+            assertA2fRows("f < f + 1.0", 0, 1, 2, 4, 5, 6, 7);
+            assertA2fRows("f <= f + 1.0", 0, 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA2fRows("f > f + 1.0");
+            assertA2fRows("f >= f + 1.0", 3, 8);
+            // The other three operators, a nested node, a negated literal and a unary minus over
+            // the whole subtree - each has to keep computing at f64.
+            assertA2fRows("f * 1.0 > 16777216.5", 1);
+            assertA2fRows("f - 1.0 < 16777215.5", 0, 2, 4, 5, 6, 7);
+            assertA2fRows("f / 1.0 = 16777216.5");
+            assertA2fRows("f + 1.0 + 1.0 > 16777217.5", 0, 1, 4);
+            assertA2fRows("f + -1.0 > 16777214.5", 0, 1, 4);
+            assertA2fRows("-(f + 1.0) < -16777216.5", 0, 1, 4);
+            // IN over a DOUBLE-width key is an OR of equalities and takes the same rule.
+            assertA2fRows("f + 1.0 in (16777216.5)");
+            assertA2fRows("f + 1.0 in (16777216.5, 2.5)");
+            // NOT, and both conjunct orders beside a second predicate: the execution mode a
+            // widened constant forces is filter-wide, so the answer must not depend on which
+            // conjunct the traversal reaches first.
+            assertA2fRows("not (f + 1.0 > 16777216.5)", 2, 5, 6, 7);
+            assertA2fRows("f + 1.0 > 16777216.5 and i > 0", 0, 1, 4);
+            assertA2fRows("i > 0 and f + 1.0 > 16777216.5", 0, 1, 4);
+            assertA2fRows("f + 1.0 > 16777216.5 or i > 16_777_216", 0, 1, 4);
+            assertA2fRows("i > 16_777_216 or f + 1.0 > 16777216.5", 0, 1, 4);
+            // NULL against the subtree: FLOAT NULL is NaN, and so is the sum that reads it.
+            assertA2fRows("f + 1.0 = null", 3, 8);
+            assertA2fRows("f + 1.0 <> null", 0, 1, 2, 4, 5, 6, 7);
+            // Controls, all three already correct before this fix and unchanged by it: an F4
+            // subtree ("+(FF)" resolves, so the Java filter computes at f32 as well) and a bare
+            // FLOAT column. Only the bound needs the double width, which it already had.
+            assertA2fRows("f + 1.0f > 16777216.5", 1);
+            assertA2fRows("f + 1 > 16777216.5", 1);
+            assertA2fRows("f > 16777216.5", 1);
+        });
+    }
+
+    @Test
+    public void testDoubleConstantInIntArithmeticMatchesJava() throws Exception {
+        // The same defect with no FLOAT column in the subtree: an INT column against a DOUBLE
+        // literal is "+(DD)" / "/(DD)" in the Java filter, which reads the column through
+        // IntFunction#getDouble. The JIT typed the literal at I4, serializeNumber's int parse
+        // rejected it and fell through to a 32-bit float, and cvt_itof / int32_to_float then
+        // rounded every INT above 2^24 into the f32 computation. Emitting the literal at F8 puts
+        // the pairing on convert()'s int32_to_double arm, which is exact over the whole INT range
+        // and maps INT_NULL to NaN exactly as Numbers.intToDouble does.
+        assertMemoryLeak(() -> {
+            createA2fTable();
+            // i + 1.0 per row, at f64: 16777217.0, 16777218.0, 6.0, NaN, 16777218.0, 1.0,
+            // -16777216.0, NaN, 2.0. At f32 rows 1 and 4 round to 16777216.0f + 1.0f =
+            // 16777216.0f, which is what makes the equality answer differently.
+            assertA2fRows("i + 1.0 = 16777217.0", 0);
+            assertA2fRows("i + 1.0 <> 16777217.0", 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA2fRows("i + 1.0 < 16777217.0", 2, 5, 6, 8);
+            assertA2fRows("i + 1.0 <= 16777217.0", 0, 2, 5, 6, 8);
+            assertA2fRows("i + 1.0 > 16777217.0", 1, 4);
+            assertA2fRows("i + 1.0 >= 16777217.0", 0, 1, 4);
+            assertA2fRows("16777217.0 = i + 1.0", 0);
+            assertA2fRows("16777217.0 <> i + 1.0", 1, 2, 3, 4, 5, 6, 7, 8);
+            assertA2fRows("16777217.0 < i + 1.0", 1, 4);
+            assertA2fRows("16777217.0 <= i + 1.0", 0, 1, 4);
+            assertA2fRows("16777217.0 > i + 1.0", 2, 5, 6, 8);
+            assertA2fRows("16777217.0 >= i + 1.0", 0, 2, 5, 6, 8);
+            // Division is the sharpest case: at f32 the JIT divided a rounded INT, so
+            // 16777217 / 2.0 came out 8388608.0 where the Java filter answers 8388608.5.
+            assertA2fRows("i / 2.0 = f", 3);
+            assertA2fRows("i / 2.0 <> f", 0, 1, 2, 4, 5, 6, 7, 8);
+            assertA2fRows("i / 2.0 < f", 0, 1, 2, 4, 5);
+            assertA2fRows("i / 2.0 <= f", 0, 1, 2, 3, 4, 5);
+            assertA2fRows("i / 2.0 > f", 6);
+            assertA2fRows("i / 2.0 >= f", 3, 6);
+            assertA2fRows("i * 1.0 > 16777216.5", 1, 4);
+            // An INT operand of the comparison, with the DOUBLE-width subtree on the other side:
+            // the pairing reaches the backend as (i32, f64) and needs no sign extension, because
+            // int32_to_double is exact over the whole INT range.
+            assertA2fRows("i = f + 1.0", 3, 4);
+            assertA2fRows("i <> f + 1.0", 0, 1, 2, 5, 6, 7, 8);
+            assertA2fRows("i < f + 1.0", 0, 1, 2, 5, 6);
+            assertA2fRows("i <= f + 1.0", 0, 1, 2, 3, 4, 5, 6);
+            assertA2fRows("i > f + 1.0");
+            assertA2fRows("i >= f + 1.0", 3, 4);
+            assertA2fRows("f + 1.0 = i", 3, 4);
+            assertA2fRows("f + 1.0 <> i", 0, 1, 2, 5, 6, 7, 8);
+            assertA2fRows("f + 1.0 < i");
+            assertA2fRows("f + 1.0 <= i", 3, 4);
+            assertA2fRows("f + 1.0 > i", 0, 1, 2, 5, 6);
+            assertA2fRows("f + 1.0 >= i", 0, 1, 2, 3, 4, 5, 6);
+            // A wrapping INT product against a DOUBLE-width float subtree. The product still
+            // wraps at i32 (int32_mul) and only its result promotes, so row 1's 16777217 * 2 =
+            // 33554434 stays 33554434 at f64 where f32 rounds it onto the column's 33554432.0.
+            assertA2fRows("i * 2 > f * 1.0", 0, 1, 2, 4);
+            // INT NULL reaches the comparison as NaN through int32_to_double, exactly as
+            // Numbers.intToDouble(INT_NULL) does on the Java side.
+            assertA2fRows("i + 1.0 = null", 3, 7);
+        });
+    }
+
+    private void createA2fTable() throws SqlException {
+        execute("CREATE TABLE a2f (k TIMESTAMP, i INT, f FLOAT) TIMESTAMP(k) PARTITION BY DAY");
+        execute("""
+                INSERT INTO a2f VALUES
+                    (0, 16_777_216, 16777216.0),
+                    (1_000_000, 16_777_217, 33554432.0),
+                    (2_000_000, 5, 6.0),
+                    (3_000_000, NULL, NULL),
+                    (4_000_000, 16_777_217, 16777216.0),
+                    (5_000_000, 0, 1.0),
+                    (6_000_000, -16_777_217, -16777216.0),
+                    (7_000_000, NULL, 1.0),
+                    (8_000_000, 1, NULL)
+                """);
+    }
+
+    // Rows of the a2f fixture built by createA2fTable(), in insertion order, as
+    // CursorPrinter.println() renders "select k, i, f".
+    private static final String[] A2F_ROWS = {
+            "1970-01-01T00:00:00.000000Z\t16777216\t1.6777216E7\n",
+            "1970-01-01T00:00:01.000000Z\t16777217\t3.3554432E7\n",
+            "1970-01-01T00:00:02.000000Z\t5\t6.0\n",
+            "1970-01-01T00:00:03.000000Z\tnull\tnull\n",
+            "1970-01-01T00:00:04.000000Z\t16777217\t1.6777216E7\n",
+            "1970-01-01T00:00:05.000000Z\t0\t1.0\n",
+            "1970-01-01T00:00:06.000000Z\t-16777217\t-1.6777216E7\n",
+            "1970-01-01T00:00:07.000000Z\tnull\t1.0\n",
+            "1970-01-01T00:00:08.000000Z\t1\tnull\n",
+    };
+
+    private void assertA2fRows(String predicate, int... expectedRows) throws SqlException {
+        final StringSink expected = new StringSink();
+        expected.put("k\ti\tf\n");
+        for (int i = 0; i < expectedRows.length; i++) {
+            expected.put(A2F_ROWS[expectedRows[i]]);
+        }
+        assertJitScalarAndVectorMatchJava("select k, i, f from a2f where " + predicate, expected);
+    }
+
+    // Rows of the a1o fixture built by testNarrowIntArithVsFloatColumnCoversEveryOperator, in
+    // insertion order, as CursorPrinter.println() renders "select k, i".
+    private static final String[] A1O_ROWS = {
+            "1970-01-01T00:00:00.000000Z\t16777216\n",
+            "1970-01-01T00:00:01.000000Z\t16777217\n",
+            "1970-01-01T00:00:02.000000Z\t5\n",
+            "1970-01-01T00:00:03.000000Z\tnull\n",
+            "1970-01-01T00:00:04.000000Z\t1073741824\n",
+            "1970-01-01T00:00:05.000000Z\t2000000000\n",
+            "1970-01-01T00:00:06.000000Z\t0\n",
+            "1970-01-01T00:00:07.000000Z\t16777217\n",
+            "1970-01-01T00:00:08.000000Z\t16777217\n",
+    };
+
+    private void assertA1oRows(String predicate, int... expectedRows) throws SqlException {
+        final StringSink expected = new StringSink();
+        expected.put("k\ti\n");
+        for (int i = 0; i < expectedRows.length; i++) {
+            expected.put(A1O_ROWS[expectedRows[i]]);
+        }
+        assertJitScalarAndVectorMatchJava("select k, i from a1o where " + predicate, expected);
     }
 
     private void assertGeneratedQuery(CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {

@@ -5883,11 +5883,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * bound matches no partition floor, so it cannot over-match - the existing "no partitions
      * matched WHERE clause" check reports it.
      * <p>
-     * Anything else is refused. A narrow-int arithmetic node whose operand is only known once the
-     * statement runs - a bind variable, or a value read off the timestamp column - cannot be
-     * proven either way, and this deliberately fails closed: the statement is irreversible, the
+     * A unary {@code +} or {@code -} whose operand is only known once the statement runs is
+     * accepted too, and that is a proof rather than a concession: {@code +} is the identity and
+     * {@code -} maps the width onto itself, so the node's value set equals the operand's own. The
+     * one input that wraps is MIN, where {@code -MIN} is MIN again - still a value the operand
+     * alone can carry, and the operand alone is a shape this guard accepts. That is what keeps the
+     * retention idiom {@code dateadd('d', -$1, now())} working: {@code dateadd}'s stride is
+     * INT-only, so the widening the refusal used to name is not expressible there at all.
+     * <p>
+     * Anything else is refused. A narrow-int BINARY arithmetic node whose operand is only known
+     * once the statement runs - a bind variable, or a value read off the timestamp column - cannot
+     * be proven either way, and this deliberately fails closed: the statement is irreversible, the
      * expressions it costs are exactly the ones the finding is about, and the refusal names the
-     * widening that fixes it.
+     * remedies that fix it.
      * <p>
      * The check runs after the WHERE clause has compiled as a whole, so every pre-existing
      * compile error keeps its precedence and an undefined bind variable has already been typed by
@@ -5941,9 +5949,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
         if (exact == PARTITION_FILTER_VALUE_NOT_PROVEN) {
+            if (node.paramCount == 1) {
+                // Unary + and - over an operand only known once the statement runs. Neither can
+                // reach a value the operand alone cannot: + is the identity, and - maps the width
+                // onto itself, wrapping for the single input MIN, where -MIN is MIN again. So every
+                // bound this node can produce is a bound the operand produces on its own, and the
+                // operand on its own is a shape the guard accepts - it either carries no arithmetic
+                // at all, or it is arithmetic this walk already judged before reaching the parent.
+                // Refusing here therefore buys no protection and costs the retention idiom
+                // dateadd('d', -$1, now()), whose INT-only stride has no widening to offer.
+                return;
+            }
             throw SqlException.$(node.position, "INT arithmetic overflow in partition filter cannot be ruled out: this computes at ")
                     .put(width)
-                    .put(" bits and an operand is only known once the statement runs, so it can wrap and match partitions the statement did not mean to name; widen an operand (1_000_000L, expr::long) or use a timestamp literal");
+                    .put(" bits and an operand is only known once the statement runs, so it can wrap and match partitions the statement did not mean to name; widen an operand (1_000_000L, expr::long), use a timestamp literal, or bind the computed value itself");
         }
         final long wrapped = truncateToNarrowInt(exact, width);
         if (wrapped != exact) {
@@ -5953,7 +5972,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(wrapped)
                     .put(" instead of ")
                     .put(exact)
-                    .put(", which matches partitions the statement did not mean to name; widen an operand (1_000_000L, expr::long) or use a timestamp literal");
+                    .put(", which matches partitions the statement did not mean to name; widen an operand (1_000_000L, expr::long), use a timestamp literal, or bind the computed value itself");
         }
     }
 

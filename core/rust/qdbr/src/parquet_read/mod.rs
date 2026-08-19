@@ -978,7 +978,7 @@ mod tests {
         // every row native storage returns. A REQUIRED column reproduces it exactly: no row can
         // reach definition level 0, so null_count is Some(0) whatever the values are.
         //
-        // This covers ParquetDecoder::filter_row_group, the arm read_parquet() takes. Its twin in
+        // This covers ParquetDecoder::can_skip_row_group, the arm read_parquet() takes. Its twin in
         // parquet_metadata::skip is what a CONVERT PARTITION TO PARQUET table reads, and the two
         // must agree - see writer_undercounts_nulls.
         let buf = gen_i32_parquet_with_stats(&[0, 97, 98])?;
