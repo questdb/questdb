@@ -2545,15 +2545,19 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    // Opens the table's metadata once and checks the three conditions the rewrite needs:
+    // Opens the table's metadata once and checks the four conditions the rewrite needs:
     //   1) LATEST ON is on the table's designated timestamp. This is checked against the metadata, not
     //      the model's timestamp token: a sub-query can set a different timestamp (e.g.
     //      `(SELECT * FROM t timestamp(ts2))`), which leaves the token as ts2 while the direct table
     //      read still uses the metadata's designated timestamp - rewriting there would break a valid
     //      query;
-    //   2) every PARTITION BY column is an indexed SYMBOL on the table - the only case that pays off
+    //   2) no layer down to the table specifies its own timestamp(...). Such a layer sets a different
+    //      timestamp column for all the levels above it. The rewrite reads the table directly, so the
+    //      query then uses the timestamp column of the table. This changes the column that a SAMPLE BY
+    //      clause or an ASOF JOIN clause uses;
+    //   3) every PARTITION BY column is an indexed SYMBOL on the table - the only case that pays off
     //      (index seek per key vs full scan);
-    //   3) every projection layer between the LATEST ON model and the table exposes exactly the table's
+    //   4) every projection layer between the LATEST ON model and the table exposes exactly the table's
     //      columns, each as a plain un-aliased reference, so dropping those layers cannot change which
     //      columns the query returns.
     // Returns false (no rewrite) if the table or its metadata cannot be resolved.
@@ -2572,7 +2576,17 @@ public class SqlOptimiser implements Mutable {
             if (tsIdx < 0 || !Chars.equalsIgnoreCase(onTs.token, metadata.getColumnName(tsIdx))) {
                 return false;
             }
-            // (2) partition-by columns are indexed symbols
+            // (2) no layer changes the timestamp column
+            for (IQueryModel m = nested; m != null; m = m.getNestedModel()) {
+                final ExpressionNode modelTs = m.getTimestamp();
+                if (modelTs != null && !Chars.equalsIgnoreCase(modelTs.token, metadata.getColumnName(tsIdx))) {
+                    return false;
+                }
+                if (m == table) {
+                    break;
+                }
+            }
+            // (3) partition-by columns are indexed symbols
             for (int i = 0, n = latestBy.size(); i < n; i++) {
                 final ExpressionNode col = latestBy.getQuick(i);
                 if (col.type != ExpressionNode.LITERAL) {
@@ -2585,7 +2599,7 @@ public class SqlOptimiser implements Mutable {
                     return false;
                 }
             }
-            // (3) each projection layer exposes exactly the table's columns, each a plain reference
+            // (4) each projection layer exposes exactly the table's columns, each a plain reference
             final int columnCount = metadata.getColumnCount();
             for (IQueryModel m = nested; m != null && m != table; m = m.getNestedModel()) {
                 final ObjList<QueryColumn> cols = m.getBottomUpColumns();

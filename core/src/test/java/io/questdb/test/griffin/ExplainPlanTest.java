@@ -4905,6 +4905,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    // Negative: the sub-query specifies timestamp(ts2).
+    // LATEST ON names the designated timestamp column of the table.
+    // The rewrite must not occur. The rewrite removes the timestamp(ts2) clause.
+    // Then a SAMPLE BY clause or an ASOF JOIN clause above this query uses ts and not ts2.
+    @Test
+    public void testLatestOnRedesignatedTimestampBaseColumnSubqueryStaysLight() throws Exception {
+        assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts partition by s")
+                .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy light order_by_timestamp: false
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a2
+                        """);
+    }
+
     // Negative: a sub-query that REDESIGNATES the timestamp (timestamp(ts2)) must not be hoisted onto
     // the base's designated timestamp - doing so turns a valid query into a compile error. Stays light.
     @Test
