@@ -1688,6 +1688,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isO3PartitionMergeAppendForceRewriteEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return false;
     }

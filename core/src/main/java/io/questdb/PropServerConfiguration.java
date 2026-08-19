@@ -385,6 +385,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final boolean o3PartitionMergeAppendEnabled;
+    private final boolean o3PartitionMergeAppendForceRewrite;
     private final int o3PartitionPreSplitMaxCuts;
     private final boolean o3PartitionOverwriteControlEnabled;
     private final int o3PartitionPurgeListCapacity;
@@ -1805,6 +1806,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
             this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 7));
             this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+            this.o3PartitionMergeAppendForceRewrite = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_O3_PARTITION_MERGE_APPEND_FORCE_REWRITE, false);
             this.partitionCompactionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, false);
             this.partitionCompactionDeadRowsRatio = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, 3));
             this.partitionCompactionDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);
@@ -5388,6 +5390,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isO3PartitionMergeAppendEnabled() {
             return o3PartitionMergeAppendEnabled;
+        }
+
+        @Override
+        public boolean isO3PartitionMergeAppendForceRewriteEnabled() {
+            return o3PartitionMergeAppendForceRewrite;
         }
 
         @Override

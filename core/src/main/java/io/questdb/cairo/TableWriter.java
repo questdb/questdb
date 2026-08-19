@@ -1731,11 +1731,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long parquetFileLength = produceParquetFromNative(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, getTxn(), bloomFilterColumns, bloomFilterFpp);
 
             // Before updating column top, check and re-build indexes.
-            // copyOrRebuildColumnIndexes() must be called before zeroColumnTopsAfterParquetRewrite()
+            // copyOrRebuildColumnIndexes() must be called before zeroColumnTopsAfterFullMaterialization()
             // and use the same logic that zeros the column top to re-write indexes.
             final long partitionRowCount = getPartitionSize(partitionIndex);
             copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), partitionRowCount);
-            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, false);
+            zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, false);
 
             columnVersionWriter.commit();
             // used to update txn and bump recordStructureVersion
@@ -5407,7 +5407,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
                 if (colTop > 0) {
-                    // Column top will be zeroed by zeroColumnTopsAfterParquetRewrite.
+                    // Column top will be zeroed by zeroColumnTopsAfterFullMaterialization.
                     // Readers no longer synthesize [0, colTop) as NULL, so those NULL
                     // entries must live in the rebuilt index directly.
                     // Applies to both BITMAP (BitmapIndexFwdReader) and POSTING
@@ -7752,7 +7752,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
         // one of three values. 0 (column has data from row 0):
-        // zeroColumnTopsAfterParquetRewrite collapses every intermediate
+        // zeroColumnTopsAfterFullMaterialization collapses every intermediate
         // 0 < columnTop < partitionSize down to 0 at convert time, so the merged
         // decode below can rely on columnTop == 0 whenever it executes.
         // partitionSize (an explicit column-version record marks the column
@@ -7761,7 +7761,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // later partition and has no record here). The guard below skips both -1
         // and partitionSize -- there is nothing to index -- so only 0 reaches the
         // decode. A future ATTACH PARQUET / restore path that bypasses
-        // zeroColumnTopsAfterParquetRewrite must restore this invariant before
+        // zeroColumnTopsAfterFullMaterialization must restore this invariant before
         // reaching here, or the rowLo formula at the decodeRowGroup call would
         // truncate the covered columns.
         assert columnTop == -1 || columnTop == 0 || columnTop == partitionSize
@@ -8817,7 +8817,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         // writeFreshParquetFromO3 emits every column from row 0, so no
                         // column has a top here.
-                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        zeroColumnTopsAfterFullMaterialization(partitionTimestamp, srcDataNewPartitionSize, true);
                         txWriter.bumpPartitionTableVersion();
                     } else if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
@@ -8830,7 +8830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // in the parquet metadata (update.rs), so the decoder will
                         // produce data for every column.  Zero ALL column tops
                         // here, including previously non-existent columns.
-                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        zeroColumnTopsAfterFullMaterialization(partitionTimestamp, srcDataNewPartitionSize, true);
                         // Parquet rewrite replaces the partition directory (old dir
                         // queued for removal). Bump the partition table version so
                         // readers do a full reconciliation and drop stale references
@@ -9609,7 +9609,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@code configureCoveringFromMmaps} reads colTop straight from
      * columnVersionWriter, so the indexer emits nulls for every row of every
      * key without ever dereferencing a data address. The
-     * {@code zeroColumnTopsAfterParquetRewrite} routine normalises parquet
+     * {@code zeroColumnTopsAfterFullMaterialization} routine normalises parquet
      * partitions to {@code colTop in {0, partitionSize}}, so {@code >=
      * partitionSize} is the right tripwire here.
      */
@@ -13327,6 +13327,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             createDirsOrFail(ff, other, configuration.getMkDirMode());
             targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter, 0);
 
+            // Per column: does its recorded top survive this rewrite unchanged, or does some piece past
+            // the first physically materialize NULLs below it? Mirrors
+            // O3PartitionJob.assembleFreshPartitionVersion's own tracking - see markMaterializedColumns
+            // there for why this can't just be "zero every column that had a top": FrameAlgebra's private
+            // append takes a free ride (addTop, no bytes written) on the very FIRST piece copied into a
+            // column's fresh file, and only physically writes NULLs (appendNulls) for a later one.
+            final int columnCount = metadata.getColumnCount();
+            long written = 0;
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
             // One source frame for the whole directory, reaching E: every piece's rows live somewhere in
@@ -13339,9 +13347,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+                    if (written > 0) {
+                        for (int column = 0; column < columnCount; column++) {
+                            if (columnVersionWriter.getColumnTop(partitionTs, column) > rowOffset) {
+                                columnVersionWriter.upsertColumnTop(partitionTs, column, 0);
+                            }
+                        }
+                    }
                     FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(rowCount);
                     compactionWrittenRows += rowCount;
+                    written += rowCount;
                 }
             }
         } finally {
@@ -14890,15 +14906,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * After a parquet (re)write, zero column tops so that column-version
-     * records match the parquet content.
+     * After a parquet (re)write, zero column tops so that column-version records match the parquet
+     * content: the Rust encoder/decoder has no equivalent of a native column's addTop shortcut, so a
+     * parquet row group always carries a full, dense value (real or NULL) for every row of every column
+     * it materialises, unconditionally.
+     * <p>
+     * Native rewrites that fold pieces through {@link FrameAlgebra#append} - {@code rewritePhysicalPartition}
+     * (partition compaction) and {@code O3PartitionJob.assembleFreshPartitionVersion} - do NOT call this:
+     * {@code FrameAlgebra}'s private per-column append takes a free ride (addTop, no bytes written) the
+     * FIRST time a column's below-top gap is bridged into a fresh file, and only actually writes NULLs
+     * (appendNulls, needing a top reset to 0) once that is no longer true. Which columns end up which way
+     * depends on piece order, not something this blanket zero-everything routine can tell apart - each of
+     * those two callers tracks it precisely itself instead: {@code rewritePhysicalPartition} inline, and
+     * {@code assembleFreshPartitionVersion} via the {@code partitionUpdateSink} block's per-column region
+     * ({@link #PARTITION_SINK_COL_TOP_OFFSET}), which {@link #updateO3ColumnTops} upserts into
+     * columnVersionWriter once the O3 batch's partition tasks are done - the SAME general mechanism a
+     * classic (non-composite) O3 rewrite already reports backfilled column tops through. A partition that
+     * only mutates in place ({@code executeCompositePlan}'s ordinary KEEP writes nothing) never touches
+     * that per-column region, so {@code updateO3ColumnTops} leaves its tops exactly as they were.
      *
      * @param zeroAllColumns when {@code true}, zero column tops for ALL
      *                       columns (including ones that had no data at all).
      *                       Use {@code true} for the O3 parquet-rewrite path
      *                       where the Rust updater zeros all column_tops in
      *                       the parquet metadata, so the decoder produces data
-     *                       for every column.  Use {@code false} for
+     *                       for every column. Use {@code false} for
      *                       native→parquet conversion, where the encoder
      *                       preserves the original column_top.  The Rust
      *                       decoder skips columns whose
@@ -14909,7 +14941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                       fills the top region with NULLs and the decoder
      *                       produces all rows.
      */
-    private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
+    private void zeroColumnTopsAfterFullMaterialization(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {

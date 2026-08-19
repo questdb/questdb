@@ -74,6 +74,12 @@ import java.io.Closeable;
 public class PartitionGeometryFile implements Closeable, Mutable {
     public static final int HEADER_SIZE = 48;
     public static final int MAGIC = 0x4D4F4547; // 'G','E','O','M'
+    // Below TxReader's PARTITION_GEOMETRY_OFFSET_MASK's own reach (24 bits of 8-byte units = 128MB), on
+    // purpose: PartitionGeometry.publish rotates to a fresh generation once a record would cross this,
+    // leaving headroom under the hard bit-width ceiling for a caller that wants to see the rotation
+    // coming - e.g. compacting a partition's pieces as it writes them, once nearing the limit costs more
+    // than compacting does.
+    public static final long MAX_FILE_SIZE = 100L * 1024 * 1024;
     public static final int PIECE_SIZE = 32;
     public static final int HEADER_OFFSET_CHECKSUM_64 = 32;
     public static final int HEADER_OFFSET_LAST_WRITE_MICROS_64 = 40;
