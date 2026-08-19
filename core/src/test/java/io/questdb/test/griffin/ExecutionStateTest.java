@@ -97,7 +97,8 @@ public class ExecutionStateTest extends AbstractCairoTest {
                 final int base = STARTS.get();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     //noinspection StatementWithEmptyBody
-                    while (cursor.hasNext()) { }
+                    while (cursor.hasNext()) {
+                    }
                     // inner CursorFunction factories are not QueryProgress-wrapped:
                     // exactly one refresh for the whole statement
                     Assert.assertEquals(base + 1, STARTS.get());
