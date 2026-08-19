@@ -1154,6 +1154,19 @@ public interface CairoConfiguration {
      */
     boolean isO3PartitionMergeAppendEnabled();
 
+    /**
+     * DEBUG. Forces every commit that lands on an already-COMPOSITE partition to run
+     * {@code O3PartitionJob.assembleFreshPartitionVersion} - the fallback normally reserved for a
+     * {@code _geometry} chain with nowhere left to rotate to - instead of the ordinary KEEP/MERGE/
+     * NEW_PIECE write. Does not stop a partition from BECOMING composite in the first place: a commit
+     * that lands on a partition that is not yet composite still merge-appends normally, and may found
+     * pieces of its own. Only the NEXT commit to reach an already-composite partition is forced back to
+     * a fresh, non-composite version - so with this on, a partition is composite for at most one commit
+     * at a time. Exists to fuzz the fresh-version path on every commit that could reach it, not just the
+     * generation-exhausted one it exists for; default off.
+     */
+    boolean isO3PartitionMergeAppendForceRewriteEnabled();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();

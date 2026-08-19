@@ -386,6 +386,39 @@ every `ColumnVersionWriter.upsert()` call (timestamp, columnIndex, columnTop, ca
 assertion on failure - static reading alone did not find this call site because every OTHER `upsert()` caller
 checked out clean.
 
+### 27. A day rollover in the same commit that promotes the old day silently truncated it - FOUND AND FIXED
+
+A WAL commit that both merge-appends the still-active last partition into a composite one AND lands rows
+past midnight in a brand-new later partition - the ordinary shape of a batch that happens to cross a day
+boundary - moved `txWriter`'s last-partition pointer to the new day before `columns[]` ever learned the old
+day went composite. `o3ConsumePartitionUpdateSink`'s per-partition loop already excluded a composite entry
+from every closing branch (`!isComposite` in its guard), on the assumption that `finishO3Commit` would
+retire `columns[]` safely once `isLastPartitionAppendBlocked()` caught it - but that check asks about
+`txWriter`'s CURRENT last partition, which by then was the new day, not composite. `finishO3Commit` took
+the ordinary `openPartition` branch instead, and `TableWriter.openColumnFiles`'s plain `MemoryMA.of()`
+reuse closed `columns[]`'s stale mapping of the OLD day first - `MemoryCMARWImpl.openFile` calls `close()`
+before opening the new file, and that close truncates to `columns[]`'s own tracked append offset (page
+rounded), which was the old day's row count from BEFORE the merge-append ran. Every row the composite frame
+executor wrote past that offset - the whole point of the merge - was silently discarded from the FILE;
+the geometry it had just published kept claiming the larger `E` regardless, since nothing tells it its own
+file fell short.
+
+The corruption throws nothing at the time. Only a LATER commit or read that maps the partition against that
+claim notices - `DebugUtils.assertCompositeTimestampColumnLength`, called from
+`O3PartitionJob.processCompositePartition`, is what turns it into a clean `CairoException` instead of a
+SIGBUS, one commit after the one at fault: `WalWriterFuzzTest#testWalWriteManyTablesInOrder` -> "composite
+timestamp column file too short". At small scale the corruption can go unnoticed entirely: truncating to a
+page-rounded stale offset that happens to still cover `E` loses no bytes, which is why a minimal repro needs
+the stale offset and `E` to straddle an OS page (512 rows for an 8-byte column) before either the length
+check or a row-content diff will catch it.
+
+Fixed in the sink loop instead of `finishO3Commit`: `o3ConsumePartitionUpdateSink` already computes
+`isComposite` PER PARTITION ENTRY, before `txWriter`'s last-partition pointer moves - so it is the earliest
+point that knows the truth, regardless of whether a later entry in the SAME commit also creates a new day.
+The loop's `isComposite` branch now closes `columns[]` without truncating (`closeActivePartition(false)`)
+as soon as an entry that WAS the pre-commit last partition turns out composite. Reduced to
+`O3CompositePartitionTest#testMergeAppendAcrossDayRolloverInSameCommit`.
+
 ## Known gaps
 
 - **Var-size columns can still read or write short on a composite partition.** See section 25. Caught as a

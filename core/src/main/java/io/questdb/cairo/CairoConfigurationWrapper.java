@@ -1714,6 +1714,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isO3PartitionMergeAppendForceRewriteEnabled() {
+        return getDelegate().isO3PartitionMergeAppendForceRewriteEnabled();
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return getDelegate().isO3QuickSortEnabled();
     }
