@@ -1,0 +1,640 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.o3;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+/**
+ * Tests for partition COMPACTION (PARTITION_COMPACTION.md), which reclaims the dead space
+ * merge-append leaves behind. Compaction is a different operation from squash: its unit is one
+ * partition (one directory in this branch's model - there is no hardlink split to distinguish a
+ * "physical" from a "logical" partition), and it is driven by waste rather than by piece count.
+ * <p>
+ * Ported from the enterprise `feat-partition-top-split` branch's acceptance suite. That repo's
+ * composite partitions can be split across several directories sharing one logical partition
+ * (hardlink splits); this branch has none of that; a composite partition here is exactly what the
+ * reference repo calls a "folder" - one directory, one {@code _txn} entry, one {@code _geometry}
+ * chain. See PARTITION_COMPACTION_state.md for the corrections this port required.
+ * <p>
+ * Only JOIN and REWRITE are implemented (PARTITION_COMPACTION.md Sec.9 steps 0, 1, 2, 3, 5). MOVE-TAIL,
+ * MAKE-PLAIN and TRIM-FILES (step 4) are not. The three tests that assert step-4-specific behaviour are
+ * expected to fail on that one assertion while their data-integrity assertions pass - see the state doc
+ * for the exact failure recorded for each.
+ */
+public class O3PartitionCompactionTest extends AbstractCairoTest {
+
+    @Before
+    public void resetPassDays() {
+        passDay = 0;
+    }
+
+    /** Days the housekeeping commits consume, never reused within a test. */
+    private static int passDay;
+
+    @Test
+    public void testAgeTriggerCompactsAPartitionNothingHasWrittenTo() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            // The age rule fires when a partition has not changed shape for this long AND it still has
+            // waste or more than one piece.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            createDayTable("x", "2024-01-01", 20_000);
+            // Two rewrites of the same stride, so the partition is left composite with dead rows.
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            Assert.assertTrue("fixture produced no waste", deadRows("x") > 0);
+
+            // Nothing writes to it for two hours of wall clock, then an unrelated commit gives
+            // housekeeping a chance to run.
+            setCurrentMicros(parseMicros("2024-01-10T02:00:00.000000Z"));
+            append("x", "2024-01-05", 10);
+            runCompactionPasses("x");
+
+            Assert.assertEquals(
+                    "the age rule did not compact a partition idle for two hours;" +
+                            " dead rows still on disk: " + deadRows("x"),
+                    0,
+                    deadRows("x")
+            );
+        });
+    }
+
+    /**
+     * A partition REWRITE has just emptied is not a compaction candidate: one piece at row 0, nothing
+     * left to copy out. It must not be picked up again by the waste-ratio rule, or compaction loops
+     * forever copying nothing. Detected here as repeated work rather than as a wrong result: the
+     * physically-written-rows counter must stop moving once the copying is done.
+     */
+    @Test
+    public void testCompactionDoesNotLoopOnAPartitionItAlreadyEmptied() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+
+            createDayTable("x", "2024-01-01", 20_000);
+            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
+            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            runCompactionPasses("x");
+
+            // The partition must have been dealt with by now - this is what fails while compaction
+            // is missing, and it is the precondition for the anti-loop check below to mean anything.
+            Assert.assertEquals(
+                    "compaction left dead rows behind, so the anti-loop check below is vacuous",
+                    0,
+                    deadRows("x")
+            );
+
+            final long afterFirstRound = physicallyWrittenRows();
+            final long insertedByPasses = runCompactionPasses("x");
+            final long written = physicallyWrittenRows() - afterFirstRound - insertedByPasses;
+
+            Assert.assertEquals(
+                    "compaction kept re-running on a partition with nothing left to move" +
+                            " [rowsWrittenBySecondRound=" + written + ']',
+                    0,
+                    written
+            );
+        });
+    }
+
+    /**
+     * JOIN merges pieces that already sit next to each other in the files. Nothing moves, so the
+     * piece count must fall with the write counter untouched.
+     */
+    @Test
+    public void testJoinMergesAdjacentPiecesWithoutWritingAnything() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            // Small enough that the pre-split will cut this day several times.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 30);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 30);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            // Two narrow, widely separated strides: the clusterer cuts at the cold gaps, leaving a
+            // run of untouched pieces on either side that are adjacent in the files.
+            backdate("x", "2024-01-01T04:00:00", 100);
+            backdate("x", "2024-01-01T20:00:00", 100);
+            final long piecesBefore = pieceCount("x");
+            Assert.assertTrue("fixture produced no split pieces", piecesBefore > 2);
+
+            final long writtenBefore = physicallyWrittenRows();
+            final long insertedByPasses = runCompactionPasses("x");
+            // Net of the rows the housekeeping commits wrote themselves, as the other tests do.
+            final long written = physicallyWrittenRows() - writtenBefore - insertedByPasses;
+
+            Assert.assertTrue(
+                    "JOIN did not reduce the piece count [before=" + piecesBefore +
+                            ", after=" + pieceCount("x") + ']',
+                    pieceCount("x") < piecesBefore
+            );
+            Assert.assertEquals(
+                    "JOIN copied rows; it must be pure bookkeeping [rowsWritten=" + written + ']',
+                    0,
+                    written
+            );
+        });
+    }
+
+    /**
+     * MAKE-PLAIN lowers {@code E} so the partition stops being composite, waiting for readers to move
+     * on first. Not implemented in this pass - REWRITE runs regardless of a pinned reader, since it
+     * never writes below {@code E} - so this is expected to fail on the "still composite while a
+     * reader is pinned" assertion. See PARTITION_COMPACTION_state.md.
+     */
+    @Test
+    public void testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+
+            createDayTable("x", "2024-01-01", 20_000);
+            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
+            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+
+            final TableToken tt = engine.verifyTableName("x");
+            final String before = fingerprintOfDay("x", "2024-01-01");
+
+            try (TableReader pinned = engine.getReader(tt)) {
+                Assert.assertNotNull(pinned);
+                runCompactionPasses("x");
+
+                // The pinned reader must still see exactly what it saw when it opened.
+                Assert.assertEquals(
+                        "the rows of the compacted day changed under compaction",
+                        before,
+                        fingerprintOfDay("x", "2024-01-01")
+                );
+                Assert.assertTrue(
+                        "the partition was made non-composite while a reader still held the" +
+                                " pre-compaction transaction - its geometry record still lists the" +
+                                " removed pieces",
+                        isComposite("x", "2024-01-01")
+                );
+            }
+
+            // Reader gone: the partition must now be a plain, non-composite one (REWRITE already did
+            // this on the first pass in this port; the assert only confirms it stayed that way).
+            runCompactionPasses("x");
+            Assert.assertFalse(
+                    "the partition is still composite after the last reader went away;" +
+                            " dead rows: " + deadRows("x"),
+                    isComposite("x", "2024-01-01")
+            );
+        });
+    }
+
+    /**
+     * MOVE-TAIL copies the messy tail into a new partition and leaves the clean front alone. Not
+     * implemented in this pass - REWRITE copies the WHOLE partition instead - so this is expected to
+     * fail on the "copied only the tail" assertion while still reclaiming all the waste.
+     */
+    @Test
+    public void testMoveTailCopiesTheTailNotTheWholePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+
+            // 20k rows, and the churn is aimed at a 200-row stride near the end, so the clean front
+            // is the overwhelming majority of the partition.
+            createDayTable("x", "2024-01-01", 20_000);
+            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
+            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            backdate("x", "2024-01-01T23:00:00", 200);
+            backdate("x", "2024-01-01T23:00:00", 200);
+            backdate("x", "2024-01-01T23:00:00", 200);
+
+            final long deadBefore = deadRowsOfDay("x", "2024-01-01");
+            Assert.assertTrue("fixture produced no waste", deadBefore > 0);
+
+            final long writtenBefore = physicallyWrittenRows();
+            final long insertedByPasses = runCompactionPasses("x");
+            // Net of the rows the housekeeping commits wrote themselves.
+            final long written = physicallyWrittenRows() - writtenBefore - insertedByPasses;
+
+            Assert.assertEquals(
+                    "compaction did not clear the day's waste [before=" + deadBefore +
+                            ", after=" + deadRowsOfDay("x", "2024-01-01") + ']',
+                    0,
+                    deadRowsOfDay("x", "2024-01-01")
+            );
+            Assert.assertTrue(
+                    "REWRITE copied more than the tail, as expected without MOVE-TAIL" +
+                            " [rowsWritten=" + written + ", partitionRows=20000]",
+                    written > 0 && written < 5_000
+            );
+        });
+    }
+
+    /**
+     * The piece-count rule is a backstop for a partition that has been cut many times. It must reduce
+     * the pieces of one partition even when very little space is wasted.
+     */
+    @Test
+    public void testPieceCountTriggerReducesTheNumberOfPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+            // Waste alone must not be what fires here.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "4");
+
+            createDayTable("x", "2024-01-01", 40_000);
+            // Six separated strides, so the pre-split cuts the day repeatedly.
+            backdate("x", "2024-01-01T02:00:00", 60);
+            backdate("x", "2024-01-01T06:00:00", 60);
+            backdate("x", "2024-01-01T10:00:00", 60);
+            backdate("x", "2024-01-01T14:00:00", 60);
+            backdate("x", "2024-01-01T18:00:00", 60);
+            backdate("x", "2024-01-01T22:00:00", 60);
+
+            final long piecesBefore = pieceCountOfDay("x", "2024-01-01");
+            Assert.assertTrue(
+                    "fixture did not produce enough pieces to trip the rule [pieces=" + piecesBefore + ']',
+                    piecesBefore > 4
+            );
+
+            runCompactionPasses("x");
+            Assert.assertTrue(
+                    "the piece-count rule left the partition above its limit" +
+                            " [limit=4, pieces=" + pieceCountOfDay("x", "2024-01-01") + ']',
+                    pieceCountOfDay("x", "2024-01-01") <= 4
+            );
+        });
+    }
+
+    /**
+     * The rules are stated in dead rows and wasted bytes, and an operator has to be able to see both.
+     * PARTITION_COMPACTION.md Sec.9 step 2 adds {@code deadRows} and {@code lastWriteTimestamp} to
+     * {@code table_partitions()}; without them there is no way to observe why compaction did or did
+     * not fire.
+     */
+    @Test
+    public void testTablePartitionsReportsDeadRowsAndLastWriteTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T06:00:00", 200);
+
+            // Fails with "Invalid column" until the two columns exist.
+            assertQuery("select count() from (select deadRows, lastWriteTimestamp" +
+                    " from table_partitions('x') limit 1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        });
+    }
+
+    /**
+     * The table-wide rule fires on the ratio of dead to live rows across the whole table and picks
+     * the coldest partition. Here two days are made wasteful and the older one was written to first,
+     * so it is the one that must be compacted first.
+     */
+    @Test
+    public void testTablePressureTriggerCompactsTheColdestPartitionFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            createDayTable("x", "2024-01-01", 4_000);
+            append("x", "2024-01-02", 4_000);
+
+            // The colder day: churned first, then left alone. The stride has to sit INSIDE the day's
+            // data range - 4000 rows one second apart span 00:00:00 to 01:06:39 - or the apply writes
+            // the batch as a piece of its own instead of merging, and leaves no dead rows at all.
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-01T00:30:00", 400);
+
+            setCurrentMicros(parseMicros("2024-01-10T00:30:00.000000Z"));
+            backdate("x", "2024-01-02T00:30:00", 400);
+
+            // Compaction comes on only now. With it on from the start, housekeeping runs on every
+            // commit of the fixture above and reclaims the waste as it is created, so there is nothing
+            // left to observe and no ordering to check.
+            enableCompaction();
+            // Per-partition rules must not be what fires - only the table-wide one.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "1000000");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "20");
+
+            final long deadBefore = deadRows("x");
+            Assert.assertTrue("fixture produced no waste", deadBefore > 0);
+
+            setCurrentMicros(parseMicros("2024-01-10T01:00:00.000000Z"));
+            runCompactionPasses("x");
+
+            Assert.assertTrue(
+                    "the table-wide rule did not reduce the table's dead rows" +
+                            " [before=" + deadBefore + ", after=" + deadRows("x") + ']',
+                    deadRows("x") < deadBefore
+            );
+            Assert.assertEquals(
+                    "the coldest day still holds dead rows, so the wrong partition was picked",
+                    0,
+                    deadRowsOfDay("x", "2024-01-01")
+            );
+        });
+    }
+
+    /**
+     * TRIM-FILES is not implemented in this pass, so once REWRITE has reclaimed a partition's waste on
+     * the first pass, there is nothing left for a later pass to shrink further - unlike the reference
+     * design's staged MOVE-TAIL/MAKE-PLAIN/TRIM-FILES, where the file shortening is a separate, later
+     * step. Expected to fail on the final "disk actually fell further" assertion.
+     */
+    @Test
+    public void testTrimFilesWaitsForAReaderThatMappedTheOldExtent() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+
+            createDayTable("x", "2024-01-01", 20_000);
+            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
+            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+
+            final TableToken tt = engine.verifyTableName("x");
+            // First pass: REWRITE reclaims the waste (no MOVE-TAIL instalment plan in this port).
+            runCompactionPasses("x");
+
+            final long diskAfterFirstPass = diskSizeOfDay("x", "2024-01-01");
+            try (TableReader mapped = engine.getReader(tt)) {
+                // Touch the partition so the reader really maps it.
+                Assert.assertTrue(mapped.size() >= 0);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "x order by ts", "x order by ts", LOG);
+
+                runCompactionPasses("x");
+                Assert.assertEquals(
+                        "disk moved while a reader still had the partition mapped",
+                        diskAfterFirstPass,
+                        diskSizeOfDay("x", "2024-01-01")
+                );
+            }
+
+            runCompactionPasses("x");
+            Assert.assertTrue(
+                    "a later pass shortened the files further, which this port cannot do without" +
+                            " TRIM-FILES [diskBefore=" + diskAfterFirstPass +
+                            ", diskAfter=" + diskSizeOfDay("x", "2024-01-01") + ']',
+                    diskSizeOfDay("x", "2024-01-01") < diskAfterFirstPass
+            );
+        });
+    }
+
+    /**
+     * The waste-ratio rule: dead rows must exceed a multiple of the live rows AND a minimum size.
+     * Repeated merge-appends of one narrow stride leave a copy of that stride dead each time.
+     */
+    @Test
+    public void testWasteRatioTriggerReclaimsDeadRows() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+
+            // A small partition churned hard: each rewrite of the 400-row stride abandons the
+            // previous copy, so dead rows climb past 3x the live rows.
+            createDayTable("x", "2024-01-01", 600);
+            for (int i = 0; i < 8; i++) {
+                backdate("x", "2024-01-01T06:00:00", 400);
+            }
+
+            final long deadBefore = deadRows("x");
+            final long live = liveRows("x");
+            Assert.assertTrue(
+                    "fixture did not reach the ratio [dead=" + deadBefore + ", live=" + live + ']',
+                    deadBefore > live
+            );
+
+            final String expected = fingerprintOfDay("x", "2024-01-01");
+            runCompactionPasses("x");
+
+            Assert.assertEquals(
+                    "the waste-ratio rule did not reclaim the dead rows" +
+                            " [before=" + deadBefore + ", after=" + deadRows("x") + ']',
+                    0,
+                    deadRows("x")
+            );
+            Assert.assertEquals(
+                    "compaction changed the data",
+                    expected,
+                    fingerprintOfDay("x", "2024-01-01")
+            );
+        });
+    }
+
+    private static void append(String table, String day, int rows) throws Exception {
+        execute("insert into " + table + " select cast(x as int) + 900000 i," +
+                " timestamp_sequence('" + day + "', 60*1000000L) ts from long_sequence(" + rows + ")");
+        drainWalQueue();
+    }
+
+    /**
+     * One narrow backdated stride. With merge-append on this rewrites the piece that owns the stride
+     * at the shared file tail, abandoning its previous copy - which is exactly the dead space
+     * compaction exists to reclaim.
+     */
+    private static void backdate(String table, String ts, int rows) throws Exception {
+        execute("insert into " + table + " select cast(x as int) + 500000 i," +
+                " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
+        drainWalQueue();
+    }
+
+    private static void createDayTable(String table, String day, int rows) throws Exception {
+        execute("create table " + table + " as (select cast(x as int) i," +
+                " timestamp_sequence('" + day + "', 1000000L) ts" +
+                " from long_sequence(" + rows + ")) timestamp(ts) partition by DAY WAL");
+        drainWalQueue();
+    }
+
+    private static long deadRows(String table) throws Exception {
+        return scalar("select coalesce(sum(deadRows), 0) deadRows from table_partitions('" + table + "')");
+    }
+
+    private static long deadRowsOfDay(String table, String day) throws Exception {
+        return scalar("select coalesce(sum(deadRows), 0) deadRows from table_partitions('" + table + "')" +
+                " where name like '" + day + "%'");
+    }
+
+    /** Disk of one day only - the housekeeping commits land in other partitions. */
+    private static long diskSizeOfDay(String table, String day) throws Exception {
+        return scalar("select coalesce(sum(diskSize), 0) d from table_partitions('" + table + "')" +
+                " where name like '" + day + "%'");
+    }
+
+    private static void enableCompaction() {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, "true");
+    }
+
+    private static void enableMergeAppend() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+    }
+
+    /**
+     * Content fingerprint of ONE day, so the housekeeping commits do not move it. Sums {@code i} by
+     * walking the row cursor in Java rather than with a SQL {@code sum()} - a vectorized aggregate over
+     * a composite partition that has accumulated dead space triggers a pre-existing bug in this
+     * branch's composite read path (see PARTITION_COMPACTION_state.md, "found, not fixed"): the SIMD
+     * kernel scans past the live piece into dead space, or crashes outright. Row-by-row iteration goes
+     * through the ordinary per-piece frame cursor instead, which is the read path
+     * {@code O3CompositePartitionTest} already exercises and is not what this class is testing.
+     */
+    private static String fingerprintOfDay(String table, String day) throws Exception {
+        final String sql = "select i from " + table + " where ts in '" + day + "'";
+        long count = 0;
+        long sum = 0;
+        try (RecordCursorFactory f = select(sql)) {
+            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                while (c.hasNext()) {
+                    count++;
+                    sum += c.getRecord().getInt(0);
+                }
+            }
+        }
+        return count + "/" + sum;
+    }
+
+    /**
+     * Whether the day's own partition is composite: more than one piece, or dead space above the live
+     * rows, or rows starting above file row 0.
+     */
+    private static boolean isComposite(String table, String day) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            return partitionIndex > -1 && txReader.isPartitionComposite(partitionIndex);
+        }
+    }
+
+    private static long liveRows(String table) throws Exception {
+        return scalar("select coalesce(sum(numRows), 0) live from table_partitions('" + table + "')");
+    }
+
+    /** A fresh day, well clear of every fixture's own partitions. */
+    private static String nextPassDay() {
+        return "2024-03-" + String.format("%02d", 1 + (passDay++ % 28));
+    }
+
+    private static long parseMicros(String ts) throws Exception {
+        return MicrosTimestampDriver.floor(ts);
+    }
+
+    private static long physicallyWrittenRows() {
+        return node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+    }
+
+    /**
+     * EXTRA pieces summed over the whole table - an ordinary partition contributes 0, a partition with
+     * {@code n} pieces contributes {@code n - 1}. Counting extras rather than the raw total keeps this
+     * immune to {@code runCompactionPasses}' own housekeeping commits, each of which adds one more
+     * ordinary (non-composite) partition of its own.
+     */
+    private static long pieceCount(String table) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            long total = 0;
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                total += reader.getGeometry().getPieceCount(i) - 1;
+            }
+            return total;
+        }
+    }
+
+    /** Pieces of one day's own partition, or 0 if the day has no partition at all. */
+    private static long pieceCountOfDay(String table, String day) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            return partitionIndex > -1 ? reader.getGeometry().getPieceCount(partitionIndex) : 0;
+        }
+    }
+
+    /**
+     * Compaction runs inside {@code TableWriter.housekeep}, which fires once per commit. A few small
+     * unrelated commits give it several chances to act - one per step, since each step of a
+     * compaction is its own transaction.
+     */
+    private static long runCompactionPasses(String table) throws Exception {
+        for (int i = 0; i < 6; i++) {
+            // A day of its own per commit, and a day never reused by a later call: re-inserting the
+            // same timestamps would be an O3 write into an existing partition, which rewrites it and
+            // charges those rows to physicallyWrittenRows - so the row accounting below would be wrong
+            // by however much that merge amplified rather than by the 12 rows actually inserted.
+            execute("insert into " + table + " select cast(x as int) + 800000 + " + (passDay * 10) + " i," +
+                    " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
+            drainWalQueue();
+        }
+        engine.releaseInactive();
+        return 12; // 6 commits x 2 rows, all into partitions of their own
+    }
+
+    private static long scalar(String sql) throws Exception {
+        try (RecordCursorFactory f = select(sql)) {
+            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue("query returned no row: " + sql, c.hasNext());
+                return c.getRecord().getLong(0);
+            }
+        }
+    }
+}
