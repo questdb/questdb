@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -329,6 +330,34 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                 assertEquals(goodOffset, TableUtils.getMetaExpiryPolicyOffset(mem, columnCount));
             }
         });
+    }
+
+    @Test
+    public void testEncodedPolicyFieldsRoundTripThroughTheEscape() {
+        // The codec on its own. Only a BOUNDED field can be split by an embedded separator - the last field
+        // of a policy runs to the end of the stored string - so both bounded fields are covered: the KEEP
+        // LATEST "ON <ts>" column and the KEEP BY value column.
+        final String sep = String.valueOf((char) 0x1F);
+        final String esc = String.valueOf((char) 0x1E);
+        final String ts = "t" + sep + "s";
+        final String col = "v" + sep + "w";
+        final String keys = "\"k" + esc + "S\"";  // the escape char followed by the separator's code
+
+        final String keepLatest = RowExpiryUtil.encodeKeepLatest(ts, keys);
+        assertEquals(ts, RowExpiryUtil.keepLatestTs(keepLatest).toString());
+        assertEquals(keys, RowExpiryUtil.keepLatestKeys(keepLatest).toString());
+        assertEquals("KEEP LATEST ON \"" + ts + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepLatest));
+
+        final String keepBy = RowExpiryUtil.encodeKeepBy(0, true, col, keys);
+        assertEquals("KEEP HIGHEST \"" + col + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepBy));
+
+        // A name with no reserved character is stored verbatim, so an ordinary policy is unchanged.
+        assertEquals("KEEP LATEST PARTITION BY k", RowExpiryUtil.displayPredicate(RowExpiryUtil.encodeKeepLatest(null, "k")));
+
+        // A lone escape character is not something the encoder emits. Decoding passes it through instead of
+        // guessing, so a hand-built (or corrupt) policy still reads back verbatim rather than losing a char.
+        final String handBuilt = sep + "N0" + sep + "H" + sep + "a" + esc + "b" + sep + "k";
+        assertEquals("KEEP HIGHEST \"a" + esc + "b\" PARTITION BY k", RowExpiryUtil.displayPredicate(handBuilt));
     }
 
     @Test

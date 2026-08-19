@@ -45,7 +45,13 @@ import io.questdb.std.str.StringSink;
  *     <li><b>window WHEN</b> ({@code 0x1F 'W'} + predicate) — an arbitrary boolean predicate that references
  *         window functions (e.g. {@code v < max(v) OVER (PARTITION BY k)}).</li>
  * </ul>
- * The sentinel cannot occur in a real predicate, so a legacy raw predicate always decodes as a scalar WHEN
+ * The multi-field encodings (KEEP LATEST, KEEP [N] HIGHEST/LOWEST) escape their fields: a column name or a
+ * raw PARTITION BY list may hold the separator (0x1F) or the escape character (0x1E), since a quoted
+ * identifier accepts any character a file name accepts, so {@code appendEscapedField} rewrites those two as
+ * {@code 0x1E 'S'} and {@code 0x1E 'E'} and the accessors decode them back. The single-field encodings
+ * (scalar WHEN, window WHEN) store the predicate text verbatim: nothing splits them, and the mode check
+ * reads only the first two characters, which a predicate cannot start with - SQL has no expression that
+ * begins with a bare control character. A legacy raw predicate therefore still decodes as a scalar WHEN
  * (backward compatible). EXPIRE ROWS is a materialized-view-only feature: a plain table uses TTL, and
  * EXPIRE ROWS on a plain CREATE TABLE / CTAS / LIKE is rejected for every mode (scalar WHEN included). The
  * read filter is likewise applied only to materialized views ({@code isMatView()}).
@@ -80,9 +86,12 @@ public final class RowExpiryUtil {
 
     private static final char DIR_HIGHEST = 'H';
     private static final char DIR_LOWEST = 'O';
+    private static final char ESCAPED_ESCAPE = 'E';   // <escape>E decodes to the escape char itself
+    private static final char ESCAPED_SENTINEL = 'S'; // <escape>S decodes to the field separator
     private static final char MODE_KEEP_BY = 'N';     // keep-max/min (n=0) or top-N (n>0), structural
     private static final char MODE_KEEP_LATEST = 'L'; // keep only the latest row per key
     private static final char MODE_WINDOW = 'W';      // an arbitrary window-function WHEN predicate
+    private static final char POLICY_ESCAPE = (char) 0x1E;
     private static final char POLICY_SENTINEL = (char) 0x1F;
     private static final String KEEP_BY_PREFIX = "" + POLICY_SENTINEL + MODE_KEEP_BY;
     private static final String KEEP_LATEST_PREFIX = "" + POLICY_SENTINEL + MODE_KEEP_LATEST;
@@ -163,13 +172,25 @@ public final class RowExpiryUtil {
     }
 
     public static String encodeKeepBy(int n, boolean isHighest, CharSequence col, CharSequence keysCsv) {
-        return KEEP_BY_PREFIX + n + POLICY_SENTINEL + (isHighest ? DIR_HIGHEST : DIR_LOWEST)
-                + POLICY_SENTINEL + col + POLICY_SENTINEL + keysCsv;
+        final StringSink sink = new StringSink();
+        sink.put(KEEP_BY_PREFIX).put(n).put(POLICY_SENTINEL)
+                .put(isHighest ? DIR_HIGHEST : DIR_LOWEST).put(POLICY_SENTINEL);
+        appendEscapedField(sink, col);
+        sink.put(POLICY_SENTINEL);
+        appendEscapedField(sink, keysCsv);
+        return sink.toString();
     }
 
     public static String encodeKeepLatest(CharSequence ts, CharSequence keysCsv) {
         // body = <ts-or-empty> SEP <keys>; an empty ts means "use the designated timestamp".
-        return KEEP_LATEST_PREFIX + (ts == null ? "" : ts) + POLICY_SENTINEL + keysCsv;
+        final StringSink sink = new StringSink();
+        sink.put(KEEP_LATEST_PREFIX);
+        if (ts != null) {
+            appendEscapedField(sink, ts);
+        }
+        sink.put(POLICY_SENTINEL);
+        appendEscapedField(sink, keysCsv);
+        return sink.toString();
     }
 
     public static String encodeWindow(CharSequence predicate) {
@@ -239,14 +260,14 @@ public final class RowExpiryUtil {
      * The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest}).
      */
     public static CharSequence keepLatestKeys(CharSequence stored) {
-        return stored.subSequence(sentinelIndex(stored, 2) + 1, stored.length());
+        return unescapeField(stored, sentinelIndex(stored, 2) + 1, stored.length());
     }
 
     /**
      * The explicit {@code ON <ts>} column of a KEEP LATEST policy, or empty when none was specified.
      */
     public static CharSequence keepLatestTs(CharSequence stored) {
-        return stored.subSequence(2, sentinelIndex(stored, 2));
+        return unescapeField(stored, 2, sentinelIndex(stored, 2));
     }
 
     /**
@@ -279,6 +300,25 @@ public final class RowExpiryUtil {
             return buildKeepByPredicate(stored, designatedTs);
         }
         return null;
+    }
+
+    /**
+     * Appends one field of a multi-field policy encoding, escaping the two characters the encoding reserves:
+     * the field separator (0x1F) and the escape character (0x1E) itself. A quoted identifier accepts either
+     * character, so the encoding escapes them here rather than the identifier grammar rejecting them - a name
+     * an earlier release accepted must keep working.
+     */
+    private static void appendEscapedField(CharSink<?> sink, CharSequence field) {
+        for (int i = 0, n = field.length(); i < n; i++) {
+            final char c = field.charAt(i);
+            if (c == POLICY_SENTINEL) {
+                sink.put(POLICY_ESCAPE).put(ESCAPED_SENTINEL);
+            } else if (c == POLICY_ESCAPE) {
+                sink.put(POLICY_ESCAPE).put(ESCAPED_ESCAPE);
+            } else {
+                sink.put(c);
+            }
+        }
     }
 
     private static void appendKeepByClause(CharSink<?> sink, CharSequence stored) {
@@ -388,6 +428,44 @@ public final class RowExpiryUtil {
         return s.length();
     }
 
+    /**
+     * Reverses {@link #appendEscapedField} over {@code [lo, hi)}. A field carrying no escape - every field
+     * of every ordinary policy - is returned as a sub-sequence, so the read-filter path allocates nothing.
+     */
+    private static CharSequence unescapeField(CharSequence stored, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            if (stored.charAt(i) == POLICY_ESCAPE) {
+                return unescapeField0(stored, i, lo, hi);
+            }
+        }
+        return stored.subSequence(lo, hi);
+    }
+
+    private static String unescapeField0(CharSequence stored, int firstEscape, int lo, int hi) {
+        final StringSink sink = new StringSink();
+        sink.put(stored, lo, firstEscape);
+        for (int i = firstEscape; i < hi; i++) {
+            final char c = stored.charAt(i);
+            if (c == POLICY_ESCAPE && i + 1 < hi) {
+                final char code = stored.charAt(i + 1);
+                if (code == ESCAPED_SENTINEL) {
+                    sink.put(POLICY_SENTINEL);
+                    i++;
+                    continue;
+                }
+                if (code == ESCAPED_ESCAPE) {
+                    sink.put(POLICY_ESCAPE);
+                    i++;
+                    continue;
+                }
+            }
+            // A lone escape char, or one followed by an unknown code, is not something the encoder emits;
+            // pass it through verbatim rather than guessing what a corrupt policy string meant.
+            sink.put(c);
+        }
+        return sink.toString();
+    }
+
     private static CharSequence windowBody(CharSequence stored) {
         return stored.subSequence(2, stored.length());
     }
@@ -408,8 +486,8 @@ public final class RowExpiryUtil {
             final int s3 = body.indexOf(POLICY_SENTINEL, s2 + 1);
             this.n = Integer.parseInt(body.substring(0, s1));
             this.isHighest = body.charAt(s1 + 1) == DIR_HIGHEST;
-            this.col = body.substring(s2 + 1, s3);
-            this.keys = body.substring(s3 + 1);
+            this.col = unescapeField(body, s2 + 1, s3).toString();
+            this.keys = unescapeField(body, s3 + 1, body.length()).toString();
         }
     }
 }

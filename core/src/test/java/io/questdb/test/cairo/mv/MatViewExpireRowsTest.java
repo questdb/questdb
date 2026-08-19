@@ -1980,6 +1980,54 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPolicyEncodingEscapesSeparatorInColumnNames() throws Exception {
+        // A quoted identifier accepts every character a file name accepts, including the 0x1F that the
+        // policy encoding uses to separate its fields and the 0x1E it escapes with. The encoding escapes
+        // those two inside each field, so a column named with either survives the round-trip through
+        // _meta. Without the escape the stored policy splits at the embedded character and the view fails
+        // to compile with "Invalid column".
+        final String keepCol = "v" + (char) 0x1F + "w";  // separator inside a bounded field
+        final String escCol = "u" + (char) 0x1E + "Sx";  // the escape char followed by the separator's code
+        final String tsCol = "t" + (char) 0x1F + "s";    // separator in the KEEP LATEST "ON <ts>" field
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, \"" + keepCol + "\" DOUBLE, \"" + escCol + "\" DOUBLE, \""
+                    + tsCol + "\" TIMESTAMP) TIMESTAMP(\"" + tsCol + "\") PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, 5.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.0, 2.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            // KEEP HIGHEST over a value column whose name carries the separator.
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST \""
+                    + keepCol + "\" PARTITION BY k");
+            drainWalAndMatViewQueues();
+            assertExpireClause("KEEP HIGHEST \"" + keepCol + "\" PARTITION BY k");
+            assertQuery("SELECT k, \"" + keepCol + "\" FROM mv")
+                    .noLeakCheck().returns("k\t" + keepCol + "\nA\t9.0\n");
+
+            // KEEP LOWEST over a column whose name is the escape char followed by the separator's code:
+            // decoding it must not turn that pair back into a separator.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LOWEST \"" + escCol + "\" PARTITION BY k");
+            drainWalAndMatViewQueues();
+            assertExpireClause("KEEP LOWEST \"" + escCol + "\" PARTITION BY k");
+            assertQuery("SELECT k, \"" + escCol + "\" FROM mv")
+                    .noLeakCheck().returns("k\t" + escCol + "\nA\t2.0\n");
+
+            // KEEP LATEST ON <ts>, where the designated timestamp carries the separator.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LATEST ON \"" + tsCol + "\" PARTITION BY k");
+            drainWalAndMatViewQueues();
+            assertExpireClause("KEEP LATEST ON \"" + tsCol + "\" PARTITION BY k");
+            assertQuery("SELECT k, \"" + keepCol + "\" FROM mv")
+                    .noLeakCheck().expectSize().returns("k\t" + keepCol + "\nA\t9.0\n");
+
+            // SHOW CREATE re-renders the clause, so the policy round-trips through the grammar as well.
+            printSql("SHOW CREATE MATERIALIZED VIEW mv");
+            TestUtils.assertContains(sink, "EXPIRE ROWS KEEP LATEST ON \"" + tsCol + "\" PARTITION BY k");
+        });
+    }
+
+    @Test
     public void testViewCompileFinishesOnceThePolicyEpochSettles() throws Exception {
         // Every compile loop re-runs its model when the row-expiry policy epoch moves under it. That the
         // loop then FINISHES is the half no test pinned: the concurrency fuzz accepts "too many row-expiry
@@ -2031,6 +2079,13 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertEquals("the loop must stop after the budget, not spin", maxAttempts + 1, attempts.get());
             assertNull(engine.getTableTokenIfExists("v1"));
         });
+    }
+
+    private void assertExpireClause(String expected) throws Exception {
+        assertQuery("SELECT expire_clause FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("expire_clause\n" + expected + "\n");
     }
 
     // Base table plus a policied passthrough mat view "mv" whose keep-set is the single row B/9.0.
