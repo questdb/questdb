@@ -232,12 +232,12 @@ public final class WindowAccumulatorPlanBuilder {
         ObjList<WindowAccumulatorPlan> plans = null;
         for (int b = 0, bn = builders.size(); b < bn; b++) {
             final WindowAccumulatorPlanBuilder builder = builders.getQuick(b);
+            final IntList members = builderMembers.getQuick(b);
             // Read before a single projection is added, because whether a count over the
             // partition key may join a row count depends on the group holding an unguarded
             // reading of that same row count - and the count may precede it in the SELECT
             // list. Everything else about a projection follows from the function alone.
-            final WindowFunction rowCountHost = rowCountHost(functions, specs, builder.spec);
-            final IntList members = builderMembers.getQuick(b);
+            final WindowFunction rowCountHost = rowCountHost(functions, members);
             for (int m = 0, mn = members.size(); m < mn; m++) {
                 final int i = members.getQuick(m);
                 addAccumulatorProjection(
@@ -447,17 +447,20 @@ public final class WindowAccumulatorPlanBuilder {
      * name a host that walk would decline, and the family half of the test is
      * {@link WindowAccumulatorCandidate#isRowCountHost}'s - the same one the live-view
      * compiler's own pre-pass reads.
+     * <p>
+     * {@code members} is the group's own membership, which the bucketing pass already
+     * established, so this walks the group rather than the SELECT list and asks no function
+     * about its spec: bucketing means membership. Scanning all of {@code functions} here and
+     * re-testing {@code isSameSpec} made the phase quadratic in the window-function count -
+     * every group against every function - for an answer already in hand. Members arrive in
+     * ascending SELECT-list order, so the first host found is the same one either walk names.
      */
     private static @Nullable WindowFunction rowCountHost(
             ObjList<? extends Function> functions,
-            ObjList<WindowMapSpec> specs,
-            WindowMapSpec groupSpec
+            IntList members
     ) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowMapSpec spec = i < specs.size() ? specs.getQuick(i) : null;
-            if (spec != null
-                    && groupSpec.isSameSpec(spec)
-                    && functions.getQuick(i) instanceof WindowFunction windowFunction
+        for (int m = 0, mn = members.size(); m < mn; m++) {
+            if (functions.getQuick(members.getQuick(m)) instanceof WindowFunction windowFunction
                     && isFusibleAccumulator(windowFunction)
                     && WindowAccumulatorCandidate.isRowCountHost(windowFunction)) {
                 return windowFunction;
