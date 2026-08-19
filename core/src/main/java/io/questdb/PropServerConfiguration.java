@@ -3583,6 +3583,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     configuration.getFiberRetainedCount()
             );
         }
+
         @Override
         public int getFiberMaxLiveCount() {
             return fiberMaxLiveCount > 0
