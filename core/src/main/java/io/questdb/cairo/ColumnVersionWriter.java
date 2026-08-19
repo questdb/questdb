@@ -184,6 +184,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 if (defaultPartitionTimestamp == sourcePartitionTimestamp) {
                     // replace with target block
                     cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, targetPartitionTimestamp);
+                    // removePartition() above only flags a change when the source had explicit records.
+                    // A source that carried nothing but this marker would otherwise leave hasChanges
+                    // false, commit() would return without writing, and on the next open the marker
+                    // would still name a partition that no longer exists - reading as "column absent".
+                    hasChanges = true;
                 }
             } else {
                 break;

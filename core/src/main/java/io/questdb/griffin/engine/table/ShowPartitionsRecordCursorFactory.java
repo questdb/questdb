@@ -125,7 +125,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
         HAS_PARQUET_GENERATED(13, "hasParquetGenerated", ColumnType.BOOLEAN),
         IS_PARQUET(14, "isParquet", ColumnType.BOOLEAN),
-        PARQUET_FILE_SIZE(15, "parquetFileSize", ColumnType.LONG);
+        PARQUET_FILE_SIZE(15, "parquetFileSize", ColumnType.LONG),
+        DEAD_ROWS(16, "deadRows", ColumnType.LONG),
+        // Wall clock, always microseconds whatever the table's designated timestamp resolution is: it
+        // comes from the writer's clock, not from the data.
+        LAST_WRITE_TIMESTAMP(17, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -153,12 +157,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
+        private long deadRows = Numbers.LONG_NULL;
         private boolean hasParquetGenerated;
         private boolean isActive;
         private boolean isAttachable;
         private boolean isDetached;
         private boolean isParquet;
         private boolean isReadOnly;
+        private long lastWriteTimestamp = Numbers.LONG_NULL;
         private int limit; // partitionCount + detached + attachable
         private long maxTimestamp = Long.MIN_VALUE;
         private long minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
@@ -272,6 +278,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             maxTimestamp = Long.MIN_VALUE;
             numRows = -1L;
             partitionSize = -1L;
+            deadRows = Numbers.LONG_NULL;
+            lastWriteTimestamp = Numbers.LONG_NULL;
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
             CharSequence dynamicTsColName = tsColName;
@@ -292,6 +300,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
                 }
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
+                long physicalRows = tableReader.getPartitionPhysicalRowCount(partitionIndex);
+                deadRows = physicalRows - numRows;
+                long lastWriteMicros = tableReader.getGeometry().getLastWriteMicros(partitionIndex);
+                lastWriteTimestamp = lastWriteMicros > 0 ? lastWriteMicros : Numbers.LONG_NULL;
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
                 isDetached = true;
@@ -494,6 +506,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     case 5 -> numRows;
                     case 6 -> partitionSize;
                     case 15 -> parquetFileSize;
+                    case 16 -> deadRows;
+                    case 17 -> lastWriteTimestamp;
                     default -> throw new UnsupportedOperationException();
                 };
             }
@@ -523,6 +537,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 return switch (col) {
                     case 3 -> minTimestamp;
                     case 4 -> maxTimestamp;
+                    case 17 -> lastWriteTimestamp;
                     default -> throw new UnsupportedOperationException();
                 };
             }
@@ -547,6 +562,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.HAS_PARQUET_GENERATED.metadata());
         metadata.add(Column.IS_PARQUET.metadata());
         metadata.add(Column.PARQUET_FILE_SIZE.metadata());
+        metadata.add(Column.DEAD_ROWS.metadata());
+        metadata.add(Column.LAST_WRITE_TIMESTAMP.metadata());
         METADATA_TIMESTAMP = metadata;
         final GenericRecordMetadata metadataNs = new GenericRecordMetadata();
         metadataNs.add(Column.PARTITION_INDEX.metadata());
@@ -565,6 +582,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadataNs.add(Column.HAS_PARQUET_GENERATED.metadata());
         metadataNs.add(Column.IS_PARQUET.metadata());
         metadataNs.add(Column.PARQUET_FILE_SIZE.metadata());
+        metadataNs.add(Column.DEAD_ROWS.metadata());
+        metadataNs.add(Column.LAST_WRITE_TIMESTAMP.metadata());
         METADATA_TIMESTAMP_NS = metadataNs;
     }
 }

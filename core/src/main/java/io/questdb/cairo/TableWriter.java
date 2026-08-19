@@ -1464,7 +1464,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void closeActivePartition(boolean truncate) {
         LOG.debug().$("closing last partition [table=").$(tableToken).I$();
         closeAppendMemoryTruncate(truncate);
-        freeIndexers();
+        freeIndexers(truncate);
     }
 
     public ColumnVersionReader columnVersionReader() {
@@ -2280,7 +2280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
                 freeColumns(false);
-                releaseIndexerWriters();
+                releaseIndexerWriters(true);
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
             }
 
@@ -6944,13 +6944,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.freeObjListAndKeepObjects(o3MemColumns2);
     }
 
-    private void freeIndexers() {
+    private void freeIndexers(boolean truncate) {
         if (indexers != null) {
             // Don't change items of indexers, they are re-used
             for (int i = 0, n = indexers.size(); i < n; i++) {
                 ColumnIndexer indexer = indexers.getQuick(i);
                 if (indexer != null) {
-                    indexer.releaseIndexWriter();
+                    // A follower left open across a last-partition composite/parquet promotion (see
+                    // closeActivePartition's own truncate contract) has cached key/value sizes from before
+                    // that promotion. The composite executor already rewrote the same files through its own
+                    // writer, which this follower never observed, so a size-truncating close would cut the
+                    // rewrite back down to this follower's stale sizes.
+                    if (truncate) {
+                        indexer.releaseIndexWriter();
+                    } else {
+                        indexer.releaseIndexWriterNoTruncate();
+                    }
                 }
             }
             denseIndexers.clear();
@@ -7414,6 +7423,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
         indexer.seal();
+
+        if (isLastPartitionComposite()) {
+            // rowHwm was read off the partition's PHYSICAL extent (getPartitionFileRowCount), so the index
+            // just built above already covers every piece - a directory-wide rebuild, same unit a composite
+            // commit's own reindex uses, not a per-piece one this follower could keep incrementally
+            // extending. And it never will get the chance to: composite writes route through the O3
+            // composite executor's own writer, never through this follower (see the append gate in
+            // o3ConsumePartitionUpdateSink, which requires !isComposite). Release it now, without
+            // truncating - the next openPartition() wires a fresh indexer up as a follower once (if ever)
+            // the partition stops being composite.
+            indexer.releaseIndexWriterNoTruncate();
+        }
     }
 
     private void indexNativePartition(
@@ -8664,7 +8685,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.info().$("replace commit truncated the table [table=").$(tableToken).$();
                 // All partitions are removed. The table is in the same state as softly truncated
                 freeColumns(false);
-                releaseIndexerWriters();
+                releaseIndexerWriters(true);
                 partitionTimestampHi = Long.MIN_VALUE;
                 lastPartitionTimestamp = Long.MIN_VALUE;
 
@@ -12296,11 +12317,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return writePos;
     }
 
-    private void releaseIndexerWriters() {
+    private void releaseIndexerWriters(boolean truncate) {
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             ColumnIndexer indexer = denseIndexers.getQuick(i);
             if (indexer != null) {
-                indexer.releaseIndexWriter();
+                if (truncate) {
+                    indexer.releaseIndexWriter();
+                } else {
+                    indexer.releaseIndexWriterNoTruncate();
+                }
             }
         }
         denseIndexers.clear();
@@ -14188,7 +14213,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
-            releaseIndexerWriters();
+            releaseIndexerWriters(true);
             // Schedule removal of all partitions
             scheduleRemoveAllPartitions();
             rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -14708,7 +14733,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Misc.free(getSecondaryColumn(i));
             }
         }
-        releaseIndexerWriters();
+        // composite: same rationale as the columns[] branch above - the composite executor already
+        // rewrote these columns' index files through its own writer, so a follower left open across the
+        // promotion must not size-truncate them back down to its stale, pre-promotion sizes.
+        releaseIndexerWriters(!composite);
     }
 
     long getColumnTop(int columnIndex) {

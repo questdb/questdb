@@ -250,6 +250,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void releaseIndexWriterNoTruncate() {
+        writer.abandon();
+    }
+
+    @Override
     public void resetColumnTop() {
         columnTop = 0;
     }

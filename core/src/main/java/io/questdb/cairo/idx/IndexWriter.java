@@ -47,6 +47,21 @@ import java.io.Closeable;
 public interface IndexWriter extends Closeable, Mutable {
 
     /**
+     * Releases this writer's resources because the files it has open were rewritten, out from under it, by
+     * a different writer instance - this writer's own view of them (cached sizes, pending generations,
+     * anything still unsealed) is entirely superseded and must not be persisted in any form: no truncate,
+     * and - unlike {@link #closeNoTruncate()} - no best-effort seal either, since a seal publishes a chain
+     * entry and this writer has nothing left that is safe to publish.
+     * <p>
+     * Default implementation just calls {@link #closeNoTruncate()}, which is safe for an index type with
+     * no seal/publish concept (e.g. BITMAP). POSTING overrides this to skip the emergency seal that
+     * {@code closeNoTruncate()} performs.
+     */
+    default void abandon() {
+        closeNoTruncate();
+    }
+
+    /**
      * Adds a key-value pair to the index.
      *
      * @param key   the symbol key (must be >= 0)

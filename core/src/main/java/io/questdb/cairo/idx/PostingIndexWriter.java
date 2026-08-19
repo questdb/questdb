@@ -305,6 +305,41 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
+    public void abandon() {
+        // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different
+        // writer instance, so this writer's own pending/sealed state - however consistent it looks locally
+        // - describes bytes that are no longer there. A seal would still succeed (it reads back through
+        // this writer's own stale keyMem/valueMem, not the file another writer wrote), and could publish a
+        // chain entry that shadows the correct one the other writer already published.
+        try {
+            if (keyMem.isOpen()) {
+                keyMem.close(false);
+            }
+        } finally {
+            try {
+                Misc.free(sealValueMem);
+                Misc.free(stagingValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                maxValue = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                pendingTxnAtSeal = -1;
+                releasePendingPurges();
+                chain.resetState();
+            }
+        }
+    }
+
+    @Override
     public void add(int key, long value) {
         checkNotPoisoned();
         if (key < 0) {

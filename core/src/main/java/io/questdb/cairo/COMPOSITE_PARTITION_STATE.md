@@ -265,7 +265,7 @@ for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //');
 done
 ```
 
-### 26. The composite executor never maintains a BITMAP/POSTING index - FOUND, not fixed
+### 26. The composite executor never maintains a BITMAP/POSTING index - FOUND AND FIXED
 
 `processCompositePartition`'s whole plan-execution block (`KEEP`/`MERGE`/`NEW_PIECE`, now `DROP`) has no
 reference to `IndexWriter`/`isColumnIndexed` anywhere, unlike the ordinary O3 append/merge path in the same
@@ -274,18 +274,45 @@ composite write lands - `MERGE` or `NEW_PIECE` alike - is therefore invisible to
 still only knows about rows written before the partition ever went composite. An indexed point-lookup
 (`WHERE indexed_col = 'x'`) against a composite partition silently misses every row the composite path
 wrote (`testAddDropColumnDropPartition`, `checkIndexRandomValueScan`: the WAL and non-WAL reference tables
-disagree on an indexed lookup, not a full scan).
+disagree on an indexed lookup, not a full scan; reduced to
+`WalWriterReplaceRangeTest#testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatView`, whose `ADD INDEX` +
+`REPLACE_RANGE` sequence is exactly this shape).
 
 Not a small fix: a `MERGE` relocates a piece's rows to new row ids at the tail, so an incremental
 `IndexWriter.add(key, newRowid)` alone would leave the OLD rowids for that piece still posted under the
-same keys - BITMAP has no removal, so the index would read back with every relocated row duplicated. The
-correct fix most likely rebuilds the touched column's index over the whole directory after the plan
-executes, reusing `RebuildColumnBase.reindexAfterUpdate` (already piece/`E`-aware, per section 19) rather
-than a new incremental scheme - at the cost of an O(directory) rebuild per commit that touches an indexed
-column, on a feature that is opt-in and off by default. Not attempted this session: the call happens from an
-O3 WORKER thread inside `executeCompositePlan`, and whether `IndexBuilder`/`RebuildColumnBase` is safe to
-invoke from there (as opposed to the writer's own single thread, its only caller today) needs checking
-before wiring it in.
+same keys - BITMAP has no removal, so the index would read back with every relocated row duplicated. Fixed
+by rebuilding the touched column's index over the whole directory after the plan executes
+(`O3PartitionJob.processCompositePartition`, right after `executeCompositePlan` returns, gated on
+`mergeCount + newPieceCount > 0` - `KEEP`/`DROP` write nothing, so a plan built entirely from them needs no
+reindex), reusing `RebuildColumnBase.reindexAfterUpdate`'s machinery rather than a new incremental scheme -
+at the cost of an O(directory) rebuild per commit that touches an indexed column, on a feature that is
+opt-in and off by default.
+
+The call happens from an O3 WORKER thread inside `processCompositePartition`, unlike `reindexAfterUpdate`'s
+only prior caller (`UpdateOperatorImpl`, on the writer thread after its own write is already durable) - two
+things about that context needed a new entry point, `RebuildColumnBase.reindexAfterCompositeWrite`, rather
+than reusing `reindexAfterUpdate` as-is:
+
+- **The partition size.** `reindexAfterUpdate` computes it via `tableWriter.getPartitionFileRowCount(...)`,
+  which reads `_txn`/`_geometry` - correct for its own caller, whose write already landed there, but this
+  call runs BEFORE the composite plan's result is published. The first time a partition goes composite that
+  call does not even see it as composite yet, so it silently rebuilds over the partition's PRE-commit
+  extent - excluding every row the plan just wrote, which read back as if the index maintenance had never
+  run at all. Fixed by having the caller pass its own just-computed `e` (`executeCompositePlan`'s return
+  value) straight through, instead of letting the rebuild recompute a stale one.
+- **The seal tag.** `reindexAfterUpdate` tags a POSTING index's seal with `_txn`'s CURRENT txn (correct
+  post-commit: the data is already durable there). Mid-commit, that same txn is still one behind - the
+  executing commit is about to publish `getTxn() + 1` - so tagging with the current value would make a
+  recovery walk that runs before this commit lands read the rebuild as already-valid instead of the
+  intermediate entry it actually is. Fixed by threading `upcomingTableTxn` through explicitly, mirroring
+  `TableWriter.openNewColumnFiles`'s `setNextTxnAtSeal(getTxn() + 1)` for a live composite write's own
+  column-open.
+
+One `IndexBuilder` per `O3CompositeContext` (the existing per-worker scratch `PartitionGeometry` already
+lives in), lazily created on first use since the context's constructor takes no `CairoConfiguration`, closed
+alongside `geometry`. `doReindex` opens its own fd for the column's data file and touches nothing in
+`tableWriter.columns[]`/`indexers[]`, so it carries no more cross-thread risk than any other call this file
+already makes against `tableWriter` from a worker thread.
 
 ### 27. A day rollover in the same commit that promotes the old day silently truncated it - FOUND AND FIXED
 
@@ -363,8 +390,6 @@ checked out clean.
 
 - **Var-size columns can still read or write short on a composite partition.** See section 25. Caught as a
   `CairoException` instead of a SIGBUS now; the write-side source is still open.
-- **The composite executor performs no index maintenance.** See section 26. A `MERGE` or `NEW_PIECE` action
-  never updates a BITMAP/POSTING index, so indexed point-lookups against composite-written rows miss them.
 - **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
   duplicate commit rewrites the piece instead of writing nothing.
 - **Two dedup scenarios fail unattributed** around the batch boundary. Leads, not diagnoses.

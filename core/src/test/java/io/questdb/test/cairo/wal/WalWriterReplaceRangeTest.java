@@ -699,6 +699,74 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatViewPosting() throws Exception {
+        // Same scenario as testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatView, with a POSTING index
+        // instead of the default BITMAP. The composite executor's index rebuild (O3PartitionJob.
+        // processCompositePartition, after executeCompositePlan) tags the rebuilt index's seal with the
+        // txn the executing commit is ABOUT to publish (RebuildColumnBase.reindexAfterCompositeWrite) - a
+        // BITMAP index has no seal/chain at all, so that path is only exercised through POSTING. A wrong
+        // tag there does not fail this single-instance test (nothing here crashes a recovery walk mid this
+        // commit), but it is the one behavioural difference from the BITMAP case worth a dedicated run.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+            }
+
+            execute("alter materialized view mv alter column s add index type posting");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "new" + i);
+                    row.putDouble(1, 1000 + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            drainWalQueue();
+
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            new0\t1000.0
+                            new1\t1001.0
+                            new2\t1002.0
+                            new3\t1003.0
+                            new4\t1004.0
+                            new5\t1005.0
+                            new6\t1006.0
+                            new7\t1007.0
+                            new8\t1008.0
+                            new9\t1009.0
+                            """);
+
+            assertQuery("select s, v from mv where s = 'new5'")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tv
+                            new5\t1005.0
+                            """);
+        });
+    }
+
+    @Test
     public void testReplaceRangeDoesNotSkipInsertBeforeSymbolConversion() throws Exception {
         // The WAL apply job's replace-range skip optimization (ApplyWal2TableJob.calculateSkipTransactionCount)
         // must not skip an INSERT that precedes a STRING->SYMBOL conversion, even when a later REPLACE_RANGE
