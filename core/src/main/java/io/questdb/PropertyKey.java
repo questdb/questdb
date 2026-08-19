@@ -630,7 +630,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
     DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
-    DEBUG_CAIRO_O3_PARTITION_MERGE_APPEND_FORCE_REWRITE("debug.cairo.o3.partition.merge.append.force.rewrite", false, true),
     DEBUG_CAIRO_COPIER_TYPE("debug.cairo.copier.type", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),

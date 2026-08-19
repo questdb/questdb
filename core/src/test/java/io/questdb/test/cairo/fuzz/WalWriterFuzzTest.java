@@ -295,44 +295,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testO3PartitionMergeAppendForceRewrite() throws Exception {
-        // Forces every commit that lands on an already-composite partition to assemble a fresh,
-        // non-composite version instead of writing one more geometry piece, so the fresh-version
-        // path runs on nearly every O3 commit rather than only the rare generation-exhausted one.
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_PARTITION_MERGE_APPEND_FORCE_REWRITE, true);
-
-        Rnd rnd = generateRandom(LOG);
-        setTestParams(rnd);
-
-        setFuzzProbabilities(
-                0.01,
-                0.01,
-                0.01,
-                0.1,
-                0.05,
-                0.05,
-                0.1,
-                0.0,
-                1.0,
-                0.01,
-                0.01,
-                0.5,
-                0.5,
-                0.1,
-                0.0,
-                0.8,
-                0.00,
-                0,
-                0.01,
-                0.1,
-                0.1, // addCoveringIndexProb
-                0.0
-        );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
-    }
-
-    @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);

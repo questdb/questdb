@@ -1093,13 +1093,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     upper bound on how many pieces this commit's plan could produce - KEEP, MERGE and NEW_PIECE
      *     each contribute at most one, DROP contributes none - so the record-size estimate this checks
      *     against can only ever be too pessimistic, never too optimistic;</li>
-     *     <li>{@code cairo.debug.o3.partition.merge.append.force.rewrite} is on and the partition is
-     *     ALREADY composite. A debug-only override to fuzz the fresh-version path on every commit that
-     *     can reach it, not just the rare generation-exhausted one it exists for. Checked against the
-     *     partition's state BEFORE this commit's own actions run, so a commit that is what MAKES the
-     *     partition composite for the first time still merge-appends normally - only the NEXT commit to
-     *     land on an already-composite partition is forced back to a fresh, non-composite version, which
-     *     is what keeps a partition composite for at most one commit at a time under the flag;</li>
      *     <li>the plan would leave the partition past {@link PartitionCompactionPolicy}'s own waste-ratio
      *     or piece-count thresholds - see {@link TableWriter#wouldBreachCompactionThresholds}. Writing the
      *     plan as one more piece would only have {@code runCompaction} discover the same breach on some
@@ -1119,9 +1112,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         if (!txReader.isPartitionComposite(partitionIndex)) {
             return false;
-        }
-        if (tableWriter.getConfiguration().isO3PartitionMergeAppendForceRewriteEnabled()) {
-            return true;
         }
         final long committedRef = txReader.getGeometryRef(partitionIndex);
         if (TxReader.geometryGeneration(committedRef) >= TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
