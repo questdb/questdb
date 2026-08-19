@@ -11971,9 +11971,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
             // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
             // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
-            // Enforce the invariant unconditionally rather than with an assert. QuestDB's own artifacts
-            // all run with -ea, so an assert would fire for them, but an embedding is free to disable
-            // assertions - and a future page-frame-capable union must fail loudly for it too, instead of
+            // Enforce the invariant unconditionally rather than with an assert. QuestDB's Docker,
+            // shell-script and AMI launchers pass -ea, so an assert would fire for them, but the
+            // Windows service wrapper passes none and an embedding is free to disable assertions -
+            // and a future page-frame-capable union must fail loudly for those too, instead of
             // shipping a stale, empty dictionary snapshot to a worker.
             if (unionFactory.supportsPageFrameCursor()
                     || unionFactory.supportsFilterStealing()

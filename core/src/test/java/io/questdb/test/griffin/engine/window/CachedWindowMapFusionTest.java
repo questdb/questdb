@@ -34,12 +34,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorPlan;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -236,14 +240,25 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     public void testAFailedOpenLeavesNoGroupHoldingBacking() throws Exception {
         // The cached open allocates a record chain, a sort buffer, the group maps and - for a
         // group whose pass 1 skips - the buffer its pass 2 projects a missing partition off. A
-        // per-query breach can land on any of them. Whichever it lands on, the close the failed
-        // open runs has to leave every group empty-handed, of both kinds of backing at once,
-        // which assertMemoryLeak measures and the successful drain afterwards says was not
-        // achieved by staying shut.
+        // per-query breach can land on the record chain, the sort buffer or the group maps: the
+        // cursor binds the per-query tracker on all three, and only an allocation carrying that
+        // tracker checks the cap. The skipping group's identity buffer takes Unsafe's untracked
+        // malloc overload, which checks the global RSS ceiling alone, so it is the one the cap
+        // cannot reach. Whichever it lands on, the close the failed open runs has to leave every
+        // group empty-handed, of both kinds of backing at once, which assertMemoryLeak measures
+        // and the successful drain afterwards says was not achieved by staying shut.
         //
-        // Both shapes, because they hold different things: the cumulative one owns a map alone,
-        // and the whole-partition one owns a map and an identity buffer that is freed on a
-        // different line.
+        // Both shapes, because a failed open has to leave both kinds of group holding nothing:
+        // the cumulative one owns a map alone, and the whole-partition one owns a map and an
+        // identity buffer that a different line frees.
+        //
+        // What the identity-buffer assertion below cannot say is that the buffer's own malloc
+        // failed. The cap in force here is the per-query one, and every allocation that carries
+        // the per-query tracker checks it - malloc and realloc alike - while the identity buffer
+        // takes the untracked overload, which answers to the global RSS ceiling alone. So this
+        // cap is not what can make that malloc fail, and what the assertion reads back is not
+        // the unwind of its failure. Reaching that failure needs a global RSS ceiling instead,
+        // which is what testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack arms.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -283,6 +298,124 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack() throws Exception {
+        // reopen() allocates the map's backing and then, for a skipping group, the identity
+        // buffer - and only the second of those has an owner problem. The group is half-open
+        // when it fails, and a caller that never saw the group open has no reason to reset it,
+        // so reopen() closes the map itself on the way out.
+        //
+        // Driving the group directly is what makes that observable. A cursor's own close
+        // resets every group whatever reopen() managed, so an end-to-end breach reads the same
+        // whether or not reopen() unwinds; here nothing but reopen()'s own catch can close the
+        // map. The ceiling is the global RSS one rather than the per-query cap, because the cap
+        // reaches only allocations that carry the per-query tracker and the identity buffer
+        // takes the untracked overload - see testAFailedOpenLeavesNoGroupHoldingBacking.
+        assertMemoryLeak(() -> {
+            createTable();
+            insertRows();
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "false");
+            final String sql = "select ts, sum(x) over (partition by k), avg(x) over (partition by k)"
+                    + PARTITION_WINDOW;
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                final CachedWindowMapGroups groups = groups(factory);
+                assertBoundGroupCount(groups, 1);
+                final WindowMapState state = groups.getStates().getQuick(0);
+                // Only a skipping group carries an identity buffer at all, so only one of them
+                // can reach the malloc under test.
+                Assert.assertTrue(
+                        "the group does not skip, so reopen() allocates no buffer",
+                        state.isPass1SkipEnabled()
+                );
+                Assert.assertFalse("the group allocated before a cursor opened it", state.isMapOpen());
+
+                // No memory tracker is bound, so the map's tracked malloc degrades to the
+                // untracked overload the buffer already takes, and the global ceiling armed
+                // below is the only limit either of them answers to.
+                //
+                // What one whole open costs, measured rather than assumed - the map's backing
+                // plus the buffer, both charged to the global RSS counter.
+                final long usedBeforeOpen = Unsafe.getRssMemUsed();
+                state.reopen();
+                final long openCost = Unsafe.getRssMemUsed() - usedBeforeOpen;
+                state.reset();
+                Assert.assertTrue("a successful open charged the RSS counter nothing", openCost > 0);
+
+                // A ceiling that admits the map and refuses the buffer sits somewhere in
+                // [0, openCost], and where exactly is how the two allocations split that cost -
+                // the map implementation's business rather than this test's. So walk the
+                // ceiling up a byte at a time and read which malloc broke it off the
+                // exception's own memoryTag: below the split the map's malloc is what breaks
+                // it, and the lowest ceiling the map clears is where the buffer's malloc breaks
+                // instead. Sweeping rather than computing the split is what
+                // keeps this off a byte-exact prediction of a counter the whole process shares:
+                // an allocation elsewhere only moves which byte the transition happens at, and
+                // the first breach that is not the map's is the one under test wherever it
+                // lands.
+                boolean hasMapMallocFailed = false;
+                boolean hasIdentityMallocFailed = false;
+                final long savedRssLimit = Unsafe.getRssMemLimit();
+                try {
+                    for (long slack = 0; slack <= openCost && !hasIdentityMallocFailed; slack++) {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                        try {
+                            state.reopen();
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected an out-of-memory error", e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                            if (Chars.contains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_DEFAULT + "]")) {
+                                hasIdentityMallocFailed = true;
+                                // The whole of what the branch exists for: reopen() allocated
+                                // the map's backing at the top of the same call, and gave it
+                                // back rather than leaving it on a group nobody has a reason
+                                // to reset.
+                                Assert.assertFalse(
+                                        "reopen() left the map open after the identity buffer's malloc failed",
+                                        state.isMapOpen()
+                                );
+                                Assert.assertFalse(state.isIdentityValueAllocated());
+                            } else {
+                                hasMapMallocFailed = true;
+                            }
+                        } finally {
+                            Unsafe.setRssMemLimit(savedRssLimit);
+                            // Whichever way the open went, the group holds nothing before the
+                            // next ceiling: a success allocated both and this hands both back,
+                            // and a breach left the group closed already.
+                            state.reset();
+                        }
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(savedRssLimit);
+                }
+                // The map's own breach is what says the tag still tells the two mallocs apart.
+                // Were the map to take NATIVE_DEFAULT too, every reading above would be the
+                // map's and the assertion this test rests on would never run.
+                Assert.assertTrue(
+                        "no ceiling in [0, " + openCost + "] broke on the map's malloc, so its memory tag "
+                                + "no longer distinguishes it from the identity buffer's",
+                        hasMapMallocFailed
+                );
+                Assert.assertTrue(
+                        "no ceiling in [0, " + openCost + "] made the identity buffer's malloc the failing one, "
+                                + "so the branch under test never ran",
+                        hasIdentityMallocFailed
+                );
+                // And the group is reusable: with the ceiling down the same reopen() allocates
+                // both again, which is what says the unwound open left it closed rather than
+                // inconsistent.
+                state.reopen();
+                Assert.assertTrue(state.isMapOpen());
+                Assert.assertTrue(state.isIdentityValueAllocated());
+                state.reset();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(ROW_COUNT, WindowMapStateTest.drain(cursor));
                 }
             }
         });
@@ -949,7 +1082,7 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             states.getQuick(0).getPlan().getSpec().isSameSpec(states.getQuick(1).getPlan().getSpec())
                     );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final long rows = WindowMapStateTest.drain(cursor);
+                        WindowMapStateTest.drain(cursor);
                     }
                 }
                 assertFusedMatchesUnfused(
@@ -1042,15 +1175,23 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEverySkipEligibleFamilyProjectsIdentityForARefusedPartition() throws Exception {
-        // Every projection family that can occur in a skip-enabled group, in one group, over a
-        // partition the group refused whole. The skip admits a family only when its component is
-        // inert on a refused row - sum, the compensated sum, the two DOUBLE extrema, the
-        // ignore-nulls first capture, Welford and the non-null count - so these are the outputs
-        // whose identity pass 2 now projects off a buffer rather than off an entry it creates.
-        // Each is worth naming: what identity means differs by family, and only the sum family's
-        // is a zeroed slice. The reference arm is the same output unfused, which computes the
-        // empty partition's answer through the family's own map instead.
+    public void testRefusedPartitionProjectsSumCountIdentityBesideResidualOutputs() throws Exception {
+        // The one identity a skipping group reaches today, projected for a partition pass 1
+        // refused whole, beside eight outputs the group declined. Under a whole-partition frame
+        // ksum, the two DOUBLE extrema, the ignore-nulls first capture and the four Welford
+        // outputs compile to their *OverPartitionFunction classes, and none of those declares an
+        // accumulator projection - so WindowAccumulatorCandidate.of turns each away and each
+        // answers the refused partition through its own map. What stays in the group is sum, avg
+        // and a count derived off the same counter slot: one FAMILY_DOUBLE_SUM_COUNT component,
+        // whose identity is the zeroed slice, which the plan assertions below pin down.
+        // isRefusedRowInert() admits seven families; this one and the non-null count are the
+        // only two any two-pass function declares, so this suite cannot build a skipping group
+        // that carries one of the other five. It does build ordinary groups that carry such a
+        // family - the extremum pair and the four Welford outputs over the cumulative window
+        // above are two - but every class declaring one of the five reports ZERO_PASS, so a
+        // group carrying one is never two-pass and never skips - see that method's javadoc.
+        // The reference arm is the same eleven outputs unfused, which compute the refused
+        // partition's answers through each function's own map instead.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -1080,6 +1221,28 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     final CachedWindowMapGroups groups = groups(factory);
                     assertBoundGroupCount(groups, 1);
                     final WindowMapState state = groups.getStates().getQuick(0);
+                    // The shape the group really has, which is the whole of what the identity
+                    // path here covers: one component, the sum family's, and its two slots.
+                    // Three of the eleven outputs project off it - sum, avg and the derived
+                    // count - and the assertion on how many functions the factory left bound is
+                    // what says the other eight sit outside.
+                    final WindowAccumulatorPlan plan = state.getPlan();
+                    Assert.assertEquals(1, plan.getComponentCount());
+                    Assert.assertEquals(
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT,
+                            plan.getComponent(0).getFamily()
+                    );
+                    Assert.assertEquals(2, plan.getSlotCount());
+                    Assert.assertEquals(3, plan.getProjectionCount());
+                    final ObjList<WindowFunction> functions = windowFunctions(factory);
+                    Assert.assertEquals(outputs.length, functions.size());
+                    int boundCount = 0;
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        if (functions.getQuick(i).isWindowStateOwned()) {
+                            boundCount++;
+                        }
+                    }
+                    Assert.assertEquals("the group's membership moved", 3, boundCount);
                     // The two properties that put these outputs on the identity path at all: the
                     // group is driven twice, and pass 1 is allowed to leave a refused row's key
                     // out of the map. Were a family here not inert on a refused row, the skip
@@ -1088,9 +1251,11 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     Assert.assertTrue(state.isPass1SkipEnabled());
                 }
                 assertFusedMatchesUnfused(PARTITION_WINDOW, "", outputs);
-                // And what identity is, family by family, written out: SQL NULL everywhere but
-                // the counter, which is exact and zero. These are the two rows the map no longer
-                // holds an entry to answer for, read twice over by the assertion itself.
+                // And what the refused partition answers, output by output: SQL NULL everywhere
+                // but the counter, which is exact and zero. The group projects the first three
+                // off its identity buffer and every other output computes its own; these are the
+                // two rows the map no longer holds an entry for, read twice over by the
+                // assertion itself.
                 assertQuery("""
                         SELECT * FROM (
                           SELECT k, sum(x) OVER w AS s, avg(x) OVER w AS a, ksum(x) OVER w AS ks,

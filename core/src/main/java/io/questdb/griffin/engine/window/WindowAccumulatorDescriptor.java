@@ -1198,6 +1198,24 @@ public final class WindowAccumulatorDescriptor {
      * argument type and a second spelling of it here would be a second chance to disagree with
      * the contributor. Families carrying the other kinds are inert in the same sense and may be
      * admitted once a caller can evaluate them.
+     * <p>
+     * Five of the seven families this admits run ahead of any caller that reaches them, and so
+     * this admission of them carries no coverage: {@link #FAMILY_DOUBLE_MAX},
+     * {@link #FAMILY_DOUBLE_MIN}, {@link #FAMILY_DOUBLE_WELFORD},
+     * {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT} and
+     * {@link #FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE}. The skip needs a two-pass group - see
+     * {@link WindowMapState#isPass1SkipEnabled()} - and the whole-partition {@code avg},
+     * {@code sum} and {@code count} functions are the only two-pass ones that declare a family,
+     * which leaves {@link #FAMILY_DOUBLE_SUM_COUNT} and {@link #FAMILY_NON_NULL_COUNT} as the
+     * whole of what a skipping group holds today. Every class declaring one of the five sits on
+     * a cumulative {@code *OverUnboundedPartitionRowsFrame*} frame and reports
+     * {@link WindowFunction#ZERO_PASS}, while {@link WindowMapSpec#isSameSpec} keys a group by
+     * its pass count - so no group carrying one of them is ever two-pass. Their identity
+     * encodings themselves do run, wherever {@link WindowMapState#computeNext} resets a new
+     * entry of a group carrying one; what no caller reaches is those same encodings read back
+     * off the identity buffer a skipping group answers a whole-skipped partition from - see
+     * {@link WindowMapState#projectPass2} - and reaching that takes a production change rather
+     * than a test.
      */
     public boolean isRefusedRowInert() {
         if (contributionKind != CONTRIBUTION_FINITE_DOUBLE) {

@@ -625,7 +625,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                         plan.getProjection(1).getComponentSlotBase()
                 );
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final long rows = drain(cursor);
+                    drain(cursor);
                 }
             }
             assertFusedMatchesUnfused("ksum(x) over w", "count(x) over w");
@@ -1552,14 +1552,14 @@ public class WindowMapStateTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = select(compiler, twoWindows(), sqlExecutionContext)) {
                 final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                // Co-location is per window and never across windows.
                 assertBoundGroupCount(windowFactory, 2);
                 final ObjList<WindowMapState> states = windowFactory.getWindowMapStates();
                 Assert.assertFalse(
                         states.getQuick(0).getPlan().getSpec().isSameSpec(states.getQuick(1).getPlan().getSpec())
                 );
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final long rows = drain(cursor);
-                    // Co-location is per window and never across windows.
+                    drain(cursor);
                 }
             }
         });

@@ -2258,20 +2258,26 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         }
 
         @Override
-        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
-            if (!isFirstCadenceTouch) {
-                return;
-            }
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            throw new UnsupportedOperationException();
+        }
+
+        /**
+         * Counts what the base class's gate lets through, and refuses when the switch is on.
+         * The stub inherits {@link BasePartitionedWindowFunction#markPartitionAlive(Record, boolean)}
+         * rather than reimplementing its {@code isFirstCadenceTouch} test, so every count this
+         * case asserts on observes the production gate itself. The refusal sits at the entry to
+         * {@code markCheckpointPartitionDirty}, the method that lazily allocates the dirty set
+         * under the per-view tracker, so it throws out of the same call and leaves that set
+         * untouched - what a tracker breach on the allocation leaves behind.
+         */
+        @Override
+        protected void markCheckpointPartitionDirty(Record record) {
             if (isFailing) {
                 throw CairoException.critical(0).put("mark refused");
             }
-            markCheckpointPartitionDirty(record);
+            super.markCheckpointPartitionDirty(record);
             markedCount++;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

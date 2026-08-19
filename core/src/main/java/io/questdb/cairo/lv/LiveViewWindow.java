@@ -964,15 +964,28 @@ public class LiveViewWindow implements QuietCloseable {
         //
         // What one stamp can stand for F + 1 sets is that no row is processed between a
         // function's dirty set being emptied and this counter moving on. Every path that
-        // empties one empties the anchor's in the same breath, functions first and the
-        // anchor last: the seal (LiveViewCheckpointTimelineStoreWriter publishes, then
-        // hands onCheckpointPersisted to the anchor and to each function), the checkpoint
-        // restore and the repair overlay (both rehydrate the functions, then the anchor),
-        // and the head-miss replay (LiveViewRefreshJob.clearWindowState). A function
-        // rebound on its own - reset() frees its dirty set without reaching this window at
-        // all - pins itself to a complete freeze until the next onCheckpointPersisted,
-        // which is a seal, which resyncs the pair; the set it builds in between is one the
-        // seal never reads.
+        // empties a function's set either moves this counter on in the same synchronous
+        // block or latches that function onto a complete freeze. The seal
+        // (LiveViewCheckpointTimelineStoreWriter) hands onCheckpointPersisted to the anchor
+        // and to each checkpoint-capable function, and this window's own
+        // clearCheckpointDirtyAnchorMap moves the counter on there. The checkpoint restore
+        // (LiveViewCheckpointTimelineStoreReader) and the repair overlay
+        // (LiveViewCheckpointScratchOverlay, through LiveViewFunctionSnapshot) each hand
+        // every checkpoint-capable function onCheckpointRestoreBegin, which latches the full
+        // scan, and rewind this window through beginCheckpointRestore / restore, which move
+        // the counter on; the reader alone then lifts that latch again with
+        // onCheckpointPersisted, on the anchor and on each function other than the
+        // ring-shaped and scalar ones, and only when it read this generation's timeline
+        // head. The head-miss replay (LiveViewRefreshJob.clearWindowState) rewinds each
+        // function through toTop() and this window through toTop(), which does the same. The
+        // cursor-stack toTop() empties every function's set and leaves this map, its stamps
+        // and this counter standing - AnchorDispatchingCursor routes it to onCursorReopen -
+        // but BasePartitionedWindowFunction.toTop() latches isCheckpointFullScanRequired and
+        // drops the baseline generation there, and freezeFunction reads both before it takes
+        // a dirty map, so the seal full-scans that function instead. A function rebound on
+        // its own - reset() frees its dirty set without reaching this window at all -
+        // latches the same flag, so the set it builds before the next onCheckpointPersisted
+        // is one the seal never reads.
         final boolean isFirstCadenceTouch = isNewPartition
                 || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch;
         if (isFirstCadenceTouch) {

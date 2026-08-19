@@ -434,11 +434,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         final long diskSize = base.size();
         final long rawLeadStart = slotRowCount - slot.leadRowCount();
         // The overlap band is a suffix of the disk scan, so it cannot run negative. Assert to
-        // fail loudly, and clamp as well. The assert is what a server takes: every shipped
-        // artifact runs with -ea (docker-entrypoint.sh, questdb.sh, the AMI systemd unit), so it
-        // throws before the clamp is reached. The clamp covers an embedding that disables
-        // assertions, where a negative leadStart would inflate the seam's disk band past the
-        // scan.
+        // fail loudly, and clamp as well. The assert is what the Docker, shell-script and AMI
+        // launchers take: docker-entrypoint.sh, questdb.sh (which serves Linux, macOS and
+        // FreeBSD alike) and the AMI systemd unit all pass -ea, so it throws before the clamp
+        // is reached. The clamp is the production guard everywhere else - the Windows service
+        // wrapper (win64svc/src/questdb.c) hard-codes its JVM options and passes no -ea, and an
+        // embedding may disable assertions too - where a negative leadStart would inflate the
+        // seam's disk band past the scan.
         assert rawLeadStart >= 0 : "leadStart " + rawLeadStart + " is negative";
         final long leadStart = Math.max(0, rawLeadStart);
         // The intervals the base scan confines its rows to, if any. They select the mode as
@@ -455,9 +457,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         // an unsized base degrade instead of mis-cutting.
         final boolean isSeamShape = !isDescending && intervals == null && diskSize >= 0;
         // Under the seam shape the overlap band is a suffix of the disk scan, so it cannot
-        // exceed it. Assert to fail loudly - which is what a server does, since every shipped
-        // artifact runs with -ea - and degrade to lead-only for an embedding that disables
-        // assertions. Without either, a negative cut makes every reader read diskRoutedRows as
+        // exceed it. Assert to fail loudly - which is what the Docker, shell-script and AMI
+        // launchers do, since they pass -ea - and degrade to lead-only wherever they do not:
+        // the Windows service wrapper passes no -ea (see the clamp above), and an embedding may
+        // disable assertions, so the degrade is a production guard there rather than a
+        // courtesy. Without either, a negative cut makes every reader read diskRoutedRows as
         // "cannot size", so the disk frames pass through in full AND the slot band is served on
         // top - rows emitted twice, with size() returning -1 so nothing cross-checks it.
         assert !isSeamShape || leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
