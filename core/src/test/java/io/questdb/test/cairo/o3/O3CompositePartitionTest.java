@@ -35,6 +35,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -894,6 +895,134 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                     "SELECT * FROM x ORDER BY ts, i",
                     LOG
             );
+        });
+    }
+
+    /**
+     * Dropping the partition below a composite one has to recompute the table's new min timestamp from
+     * what remains on disk - and file row 0 of a composite directory is not that value once a
+     * merge-append has relocated the piece that used to own it to the tail. The relocated piece keeps its
+     * timestamp range, so file row 0 goes on holding the superseded, now-dead value.
+     */
+    @Test
+    public void testDroppingFirstPartitionReadsTrueMinAcrossPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Narrower than the WIDE_COLUMNS tables the rest of this class uses, so the split threshold -
+            // in rows derived from an average record size - needs a proportionally smaller setting.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // Dropped once 2020-02-03 is composite, promoting 2020-02-03 to the table's first partition.
+            final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-01', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // Starts at noon, so its own min timestamp - the one sitting at file row 0 - leaves the
+            // morning free for a later backdated batch to relocate into.
+            final String day2 = "SELECT x::INT + 60000 i, timestamp_sequence('2020-02-03T12:00:00', 15*1000000L) ts" +
+                    " FROM long_sequence(2880)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so the write goes through the O3 path rather than an append to the open partition.
+            final String day3 = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + day1 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + day2);
+            execute("INSERT INTO x " + day3);
+            drainWalQueue();
+
+            // Lands entirely before 2020-02-03's current min of noon: the merge writes the merged piece
+            // at the tail, so file row 0 keeps the stale noon value while the directory's true min drops
+            // to midnight.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T00:00:00', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(1) > 1);
+            }
+
+            execute("ALTER TABLE x DROP PARTITION LIST '2020-02-01'");
+            drainWalQueue();
+            Assert.assertFalse("the drop suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The QUERY reads the composite geometry directly and gets this right either way - the field
+            // the bug corrupts is the table's CACHED min timestamp, which nothing re-derives from the
+            // geometry unless asked to, so it has to be checked on its own rather than through a query.
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertEquals(
+                        "cached table min timestamp must match the composite directory's true min",
+                        "2020-02-03T00:00:00.000000Z",
+                        Micros.toUSecString(reader.getMinTimestamp())
+                );
+            }
+
+            assertQuery("select ts from x order by ts limit 1")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\n2020-02-03T00:00:00.000000Z\n");
+        });
+    }
+
+    /**
+     * The mirror image of {@link #testDroppingFirstPartitionReadsTrueMinAcrossPieces}: dropping the
+     * ACTIVE (last) partition promotes its predecessor to last and has to recompute the table's new max
+     * timestamp from what remains on disk. The old code read that off byte offset
+     * {@code (liveRows - 1) * 8} in the ts column - the live row count's own offset, not the physical
+     * one - which lands inside a composite directory's dead space or a relocated piece instead of the
+     * physically-last live row once a merge-append has moved rows around.
+     */
+    @Test
+    public void testDroppingLastPartitionReadsTrueMaxAcrossPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // Promoted to last once 2020-02-06 is dropped below it, so its own max - 23:59:45, the last
+            // row of a day filled end to end - has to survive the promotion.
+            final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // The partition that gets dropped: keeps 2020-02-03 from being the writer's active last
+            // partition when the backdated batch lands, so that write goes through the O3 path.
+            final String day3 = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + day1 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + day3);
+            drainWalQueue();
+
+            // Lands inside 2020-02-03, well short of its 23:59:45 close: the merge relocates the pieces it
+            // touches to the tail, so the file row that used to sit at physical offset (liveRows - 1) is
+            // no longer the row holding the day's unmoved, still-true max.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            execute("ALTER TABLE x DROP PARTITION LIST '2020-02-06'");
+            drainWalQueue();
+            Assert.assertFalse("the drop suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The QUERY reads the composite geometry directly and gets this right either way - the field
+            // the bug corrupts is the table's CACHED max timestamp, which nothing re-derives from the
+            // geometry unless asked to, so it has to be checked on its own rather than through a query.
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertEquals(
+                        "cached table max timestamp must match the composite directory's true max",
+                        "2020-02-03T23:59:45.000000Z",
+                        Micros.toUSecString(reader.getMaxTimestamp())
+                );
+            }
+
+            assertQuery("select ts from x order by ts limit -1")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\n2020-02-03T23:59:45.000000Z\n");
         });
     }
 
