@@ -106,6 +106,38 @@ ALTER TABLE <table> CONVERT PARTITION TO NATIVE LIST '<partition>';
 
 Source: `types.rs` `FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT`.
 
+### Also drain the purge log before downgrading
+
+**Known gap, not yet fixed in code.** Two of the three persisted stores refuse
+themselves to an older build: the `_pm` sets a required feature bit, and the
+spill file bumps its format word so an older build discards it. The purge log
+`sys.posting_seal_purge_log` has no such guard.
+
+`artifact_form` was *appended* as a column, and `CREATE TABLE IF NOT EXISTS`
+does not validate a schema, so an older build reads the same table, finds every
+positional column it expects, and silently ignores the one that says the row
+refers to a Parquet-form artifact. It then runs that row down the **native**
+unlink path, deleting `<col>.pv.<cnt>.<sealTxn>` and `.pc*` files chosen by the
+same numbers. The failure direction here is deletion, not a leak — which is why
+it is called out separately from the rule above.
+
+Before downgrading, make sure the log has no open rows:
+
+```sql
+SELECT count() FROM sys.posting_seal_purge_log WHERE completed IS NULL;
+```
+
+Convert the affected partitions back to native first, let
+`PostingSealPurgeJob` drain what it queued, and confirm that count is zero.
+
+The narrow condition is a Parquet `index_txn` that happens to equal a live
+native chain generation for the same column, column-name txn and partition.
+That collision has not been constructed, so the risk is bounded but not
+theoretical.
+
+Source: `PostingSealPurgeJob.java` `createLogTable` / `ensureArtifactFormColumn`,
+`PostingSealPurgeOperator.java` (native unlink naming).
+
 ## Recovering a damaged index
 
 Errors naming an unreadable `_im`, a payload kind this build does not decode, an
