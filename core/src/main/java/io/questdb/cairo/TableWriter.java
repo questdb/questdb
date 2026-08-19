@@ -1287,7 +1287,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 lastOpenPartitionTxnName = setStateForTimestamp(path, partitionTimestamp);
                 lastOpenPartitionTs = partitionTimestamp;
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                setColumnAppendPosition(columnIndex, getLastPartitionFileRowCount(txWriter.getTransientRowCount()), false);
+                setColumnAppendPosition(columnIndex, getLastPartitionFileRowCount(), false);
                 path.trimTo(pathSize);
             }
 
@@ -6842,7 +6842,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
                 if (!isLastPartitionAppendBlocked()) {
-                    openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount(txWriter.getTransientRowCount()));
+                    openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount());
                 } else if (!isLastPartitionClosed()) {
                     // The last partition just became append-blocked (composite or parquet) and columns[]
                     // is STILL open from before that - a commit earlier in this same WAL batch legitimately
@@ -6874,7 +6874,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // frame executor appended since. Composite reads and writes never go through columns[] at
                 // all, so there is nothing here for it to position.
                 if (txWriter.getTransientRowCount() > 0 && !isLastPartitionAppendBlocked()) {
-                    setAppendPosition(getLastPartitionFileRowCount(txWriter.getTransientRowCount()), !metadata.isWalEnabled());
+                    setAppendPosition(getLastPartitionFileRowCount(), !metadata.isWalEnabled());
                 }
             } catch (Throwable e) {
                 LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
@@ -7007,17 +7007,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Lifts a caller's own row count to the file row the last partition's column files END at, which is
-     * where the append memories have to be positioned: a close truncates each column from there, so
-     * anything the position leaves behind is lost.
+     * The file row the last partition's column files END at, which is where the append memories have to
+     * be positioned: a close truncates each column from there, so anything the position leaves behind is
+     * lost.
      * <p>
-     * For an ordinary partition the caller's count already IS that row, and this returns it unchanged - each
-     * site knows whether the WAL lag belongs in it, and this must not decide that for them. A COMPOSITE
+     * For an ordinary partition that is the live (transient) row count, returned unchanged. A COMPOSITE
      * partition's files run to {@code E} instead, and a merge that relocated a piece to the tail put live
-     * rows between the two, so positioning at the caller's count would truncate them away.
+     * rows between the two, so positioning at the live count would truncate them away. A caller that also
+     * needs to fold in the WAL lag adds it on top of this call's result instead of passing it in: lag rows
+     * sit above the transient count, and a merge-append (composite) table never carries any, so the two
+     * never need combining inside the {@code Math.max} here.
      */
-    private long getLastPartitionFileRowCount(long rowCount) {
+    private long getLastPartitionFileRowCount() {
         final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+        final long rowCount = txWriter.getTransientRowCount();
         if (lastPartitionIndex < 0 || !txWriter.isPartitionComposite(lastPartitionIndex)) {
             return rowCount;
         }
@@ -7374,8 +7377,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
         final long lastPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastPartitionTs);
         final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
-        // The whole DIRECTORY's shared frame - see getPartitionFileRowCount.
-        final long rowHwm = getPartitionFileRowCount(lastPartitionIndex);
+        // The whole DIRECTORY's shared frame - see getPartitionFileRowCount. getPartitionFileRowCount(int)
+        // alone would read attachedPartitions' size for the last partition, which is stale while it is
+        // still active (see TxWriter.beginPartitionSizeUpdate) - getLastPartitionFileRowCount lifts the
+        // live transient count to E for a composite partition and passes it through otherwise.
+        final long rowHwm = getLastPartitionFileRowCount();
 
         if (isLastPartitionClosed()) {
             // A COMPOSITE last partition is deliberately left closed, so there is no column mapping to
@@ -9102,7 +9108,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionAppendBlocked()) {
             return;
         }
-        final long rowCount = getLastPartitionFileRowCount(txWriter.getTransientRowCount() + txWriter.getLagRowCount());
+        // Not composite past this point (isLastPartitionAppendBlocked() above already ruled it out), so
+        // getLastPartitionFileRowCount() resolves to the transient count alone here - safe to add the lag
+        // on top rather than fold it into the Math.max this call never reaches.
+        final long rowCount = getLastPartitionFileRowCount() + txWriter.getLagRowCount();
         openPartition(ts, rowCount);
         setAppendPosition(rowCount, false);
     }
@@ -11797,6 +11806,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long readMinTimestamp() {
+        if (txWriter.isPartitionComposite(1)) {
+            // Physical row 0 can be dead space: a merge-append parks a relocated piece at the tail of the
+            // files, so the piece with the lowest timestamp is not necessarily the one at file row 0. Piece
+            // 0 of the resolved geometry is, by construction, the directory's earliest piece.
+            return getGeometry().getPieceTimestampLo(1, 0);
+        }
         other.of(path).trimTo(pathSize); // reset the path to table root
         final long timestamp = txWriter.getPartitionTimestampByIndex(1);
         final boolean isParquet = txWriter.isPartitionParquet(1);
