@@ -260,15 +260,19 @@ public class SelectedRecord implements Record {
         return base.getVarcharSize(getColumnIndex(col));
     }
 
+    // Public rather than package-private because the live view refresh path rebuilds the
+    // planner's mapping over WAL segment rows from its own package - see
+    // io.questdb.cairo.lv.MappingRecordCursor - and needs the base record back to
+    // delegate recordAt().
+    public Record getBaseRecord() {
+        return base;
+    }
+
     public void of(Record record) {
         this.base = record;
     }
 
     private int getColumnIndex(int columnIndex) {
         return columnCrossIndex.getQuick(columnIndex);
-    }
-
-    Record getBaseRecord() {
-        return base;
     }
 }

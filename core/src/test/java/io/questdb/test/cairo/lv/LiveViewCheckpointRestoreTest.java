@@ -1221,18 +1221,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         Files.touch(triggerFilePath.$());
     }
 
-    // Drives the named view's seed sweep to completion across however many turns the configured
-    // budget needs, re-fetching the instance each pass so it survives the registry rebuild a restore
-    // performs, and applying the LV WAL at the end. Mirrors the helper in LiveViewSmokeTest.
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass
-    // so deferred flushes land, and applying the LV's own WAL after each burst. Mirrors the helper
-    // in LiveViewFuzzTest.
-
-    // Simulates a restore-from-checkpoint restart in-process: releases all readers/writers, drops
-    // the _restore trigger file, runs checkpoint recovery (which copies the snapshot metadata back
-    // over the db root), then re-hydrates the name registry, metadata cache and view graphs. Mirrors
-    // the in-process restore sequence in CheckpointTest#testCheckpointRestoresLiveView.
     // Unlinks the view's _lv.s, leaving its _lv (the CREATE commit marker) in place. That is the
     // on-disk shape the loader reports as state_unreadable: a committed definition with no state to
     // resume from.
@@ -1247,6 +1235,10 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         }
     }
 
+    // Simulates a restore-from-checkpoint restart in-process: releases all readers/writers, drops
+    // the _restore trigger file, runs checkpoint recovery (which copies the snapshot metadata back
+    // over the db root), then re-hydrates the name registry, metadata cache and view graphs. Mirrors
+    // the in-process restore sequence in CheckpointTest#testCheckpointRestoresLiveView.
     private void restoreFromCheckpoint() {
         engine.clear();
         engine.closeNameRegistry();
