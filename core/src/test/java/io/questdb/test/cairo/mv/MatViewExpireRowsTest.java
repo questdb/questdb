@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableReader;
@@ -76,6 +77,10 @@ import static org.junit.Assert.assertTrue;
  * with plain tables; the filter is materialized-view-only ({@code isMatView()}), excluding plain tables
  * and plain views alike.
  * These tests confirm the grammar/threading and that querying a policied mat view hides expired rows.
+ * A view can carry a TTL alongside the policy, and the order is fixed: TTL removes rows from the view first
+ * (whole partitions, on the view's own commit), and the keep-filter computes its result from the rows that
+ * stay, so a KEEP HIGHEST view with a TTL reports the highest value of the retained window and that value
+ * can go down as the window moves (the {@code testTtl*} tests).
  * EXPIRE ROWS is allowed on an aggregating (SAMPLE BY) view too, advisory only: reads stay correct via the
  * read filter, but physical reclamation is best-effort since a later refresh can regenerate reclaimed rows
  * ({@link #testCreateAggregatingMatViewWithExpireAllowed()}).
@@ -1580,6 +1585,212 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTtlAndExpireRowsShowCreateRoundTrips() throws Exception {
+        // SHOW CREATE renders TTL before EXPIRE ROWS, the order the grammar accepts, so its output re-creates
+        // a view that carries both.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows keep 1 highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            sink.clear();
+            printSql("show create materialized view mv", sink);
+            final String ddl = sink.toString();
+            final int ttlPos = ddl.indexOf("TTL 3 DAYS");
+            final int expirePos = ddl.indexOf("EXPIRE ROWS KEEP 1 HIGHEST v PARTITION BY k");
+            assertTrue("expected TTL clause in: " + ddl, ttlPos > -1);
+            assertTrue("expected EXPIRE clause in: " + ddl, expirePos > -1);
+            assertTrue("TTL must precede EXPIRE ROWS in: " + ddl, ttlPos < expirePos);
+
+            execute(replayShowCreate(ddl, "mv2"));
+            drainWalAndMatViewQueues();
+            assertTtlKept("mv2", 3);
+            assertExpiryPolicy("mv2", "KEEP 1 HIGHEST v PARTITION BY k", "1h");
+        });
+    }
+
+    @Test
+    public void testTtlAndScalarPredicateComposeUnderCleanup() throws Exception {
+        // Both deletions run against the same view: TTL drops the 01-01 partition, the monotonic WHEN
+        // predicate hides everything before 01-04 and cleanup reclaims the 01-03 partition holding it.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows when ts < '2024-01-04T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-05T12:00:00.000000Z");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-03T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-04T00:00:00.000000Z'),
+                    ('D', 4.0, '2024-01-05T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            // TTL evicted 01-01; 01-03 is still on disk, hidden by the read filter.
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+            assertQuery("select k, v from mv order by k").noLeakCheck().returns("""
+                    k\tv
+                    C\t3.0
+                    D\t4.0
+                    """);
+
+            runCleanup("mv");
+
+            // Cleanup reclaims 01-03 and does not resurrect the TTL-evicted 01-01: same rows, less disk.
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select k, v from mv order by k").noLeakCheck().returns("""
+                    k\tv
+                    C\t3.0
+                    D\t4.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testTtlNarrowsKeepHighestWindow() throws Exception {
+        // The reported maximum is the maximum of the TTL window, so it can go down as the window moves.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows keep 1 highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-03T12:00:00.000000Z");
+            execute("""
+                    insert into base values
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 5.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            // Both days are inside the TTL window: the highest value of the view is the 01-01 row.
+            assertQuery("select k, v, ts from mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t9.0\t2024-01-01T00:00:00.000000Z
+                    """);
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-05T12:00:00.000000Z");
+            execute("insert into base values ('A', 3.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            // 01-01 falls out of the TTL window and the view's answer drops to the highest of what stays.
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select k, v, ts from mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t5.0\t2024-01-03T00:00:00.000000Z
+                    """);
+
+            // The base table keeps every row: the narrowing is the view's, and only the view's.
+            assertQuery("select k, v, ts from base order by ts").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t9.0\t2024-01-01T00:00:00.000000Z
+                    A\t5.0\t2024-01-03T00:00:00.000000Z
+                    A\t3.0\t2024-01-05T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testTtlNarrowsKeepLatestWindow() throws Exception {
+        // TTL can remove every row of a key, and the key then leaves the "current state per key" view.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day ttl 2 days expire rows keep latest partition by k");
+            drainWalAndMatViewQueues();
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-02T12:00:00.000000Z");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 3.0, '2024-01-02T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t1.0\t2024-01-01T00:00:00.000000Z
+                    B\t3.0\t2024-01-02T00:00:00.000000Z
+                    """);
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-04T12:00:00.000000Z");
+            execute("insert into base values ('B', 4.0, '2024-01-04T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            // 01-01 falls out of the TTL window: A had no newer row, so A is gone; B's latest moves on.
+            assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("""
+                    k\tv\tts
+                    B\t4.0\t2024-01-04T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testTtlPreservedByAlterSetExpire() throws Exception {
+        // SET EXPIRE rewrites _meta; the TTL stored alongside the policy must survive it, and still evict.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day ttl 3 days");
+            drainWalAndMatViewQueues();
+
+            execute("alter materialized view mv set expire rows keep 1 highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-03T12:00:00.000000Z");
+            execute("""
+                    insert into base values
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 5.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            assertQuery("select k, v, ts from mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t9.0\t2024-01-01T00:00:00.000000Z
+                    """);
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-05T12:00:00.000000Z");
+            execute("insert into base values ('A', 3.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            assertTtlKept("mv", 3);
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select k, v, ts from mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t5.0\t2024-01-03T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testTtlSetByAlterPreservesExpirePolicy() throws Exception {
+        // SET TTL rewrites _meta too; the EXPIRE ROWS policy encoded there must survive it.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) partition by day expire rows keep 1 highest v partition by k cleanup every 30m");
+            drainWalAndMatViewQueues();
+
+            currentMicros = MicrosTimestampDriver.floor("2024-01-03T12:00:00.000000Z");
+            execute("""
+                    insert into base values
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 5.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            execute("alter materialized view mv set ttl 3 days");
+            drainWalAndMatViewQueues();
+            assertExpiryPolicy("mv", "KEEP 1 HIGHEST v PARTITION BY k", "30m");
+
+            // The new TTL takes effect on the view's next commit, which the next refresh brings.
+            currentMicros = MicrosTimestampDriver.floor("2024-01-05T12:00:00.000000Z");
+            execute("insert into base values ('A', 3.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            assertTtlKept("mv", 3);
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select k, v, ts from mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t5.0\t2024-01-03T00:00:00.000000Z
+                    """);
+        });
+    }
+
     private void assertCachedPlanCompiledDuringPolicyChange(
             String initialExpiryClause,
             String initialExpected,
@@ -1656,6 +1867,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 applyThread.join(30_000);
             }
         });
+    }
+
+    private void assertExpiryPolicy(String viewName, String expectedClause, String expectedCleanupEvery) throws Exception {
+        assertQuery("select expire_clause, expire_cleanup_every from tables() where table_name = '" + viewName + "'")
+                .noRandomAccess().noLeakCheck().returns("expire_clause\texpire_cleanup_every\n" + expectedClause + "\t" + expectedCleanupEvery + "\n");
     }
 
     private void assertInsertSelectCompiledDuringPolicyChange(
@@ -1759,6 +1975,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 applyThread.join(30_000);
             }
         });
+    }
+
+    private void assertTtlKept(String viewName, int expectedDays) {
+        try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName(viewName))) {
+            assertEquals(expectedDays * 24, m.getTtlHoursOrMonths());
+        }
     }
 
     private void assertViewCompiledDuringPolicyChange(
@@ -1871,6 +2093,18 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         });
     }
 
+    private void runCleanup(String viewName) throws Exception {
+        final TableToken token = engine.verifyTableName(viewName);
+        final String predicate;
+        try (TableMetadata m = engine.getTableMetadata(token)) {
+            predicate = m.getExpiryPredicate();
+        }
+        try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+            job.cleanupTable(token, predicate);
+        }
+        drainWalAndMatViewQueues();
+    }
+
     private static void awaitOrThrow(CountDownLatch latch, String what) {
         try {
             if (!latch.await(30, TimeUnit.SECONDS)) {
@@ -1880,5 +2114,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(e);
         }
+    }
+
+    // Turns SHOW CREATE MATERIALIZED VIEW output into an executable statement for another view name.
+    private static String replayShowCreate(String showCreateOutput, String newName) {
+        final int start = showCreateOutput.indexOf("CREATE MATERIALIZED VIEW");
+        assertTrue("no CREATE statement in: " + showCreateOutput, start > -1);
+        return showCreateOutput.substring(start).replace("'mv'", "'" + newName + "'");
     }
 }

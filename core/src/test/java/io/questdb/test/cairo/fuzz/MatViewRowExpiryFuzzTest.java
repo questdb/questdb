@@ -282,6 +282,10 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                 0.0,   // partitionDrop
                 0.0,   // truncate
                 0.0,   // tableDrop
+                // setTtl: the fuzzer's TTL lands on the BASE table, whose partitions it then evicts, while the
+                // passthrough view keeps its own copy -- the end-of-run comparison against the base would then
+                // measure the base's TTL, not the policy. TTL on the VIEW composes with the policy and
+                // MatViewExpireRowsTest.testTtl* covers it deterministically.
                 0.0,   // setTtl
                 0.10,  // replaceInsert
                 0.10   // symbolAccessValidation
