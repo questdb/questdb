@@ -1081,8 +1081,7 @@ public class WindowAccumulatorDescriptorTest {
     private static int[] expectedFieldOffsets(int family) {
         return switch (family) {
             case WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT -> new int[]{0, Long.BYTES, -1, -1};
-            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD ->
-                    new int[]{-1, 2 * Long.BYTES, 0, Long.BYTES};
+            case WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD -> new int[]{-1, 2 * Long.BYTES, 0, Long.BYTES};
             case WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT,
                  WindowAccumulatorDescriptor.FAMILY_ROW_COUNT -> new int[]{-1, 0, -1, -1};
             default -> throw new AssertionError("no expected field layout for family " + family);
