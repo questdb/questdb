@@ -37,6 +37,7 @@ import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
@@ -73,11 +74,8 @@ public class WorkerPoolUtils {
 
     /**
      * @param isFiberDispatcherAllowed pass true only when {@code sharedPoolQuery} is dedicated to
-     *                                 query work. A pool that also hosts protocol fibers must not
-     *                                 own the dispatcher: those fibers are the ones publishing into
-     *                                 it, and {@link PageFrameReduceDispatcher#tryAcquirePublication()}
-     *                                 refuses same-runtime fan-out, which would demote every parallel
-     *                                 query to serial local reduction on the owner's carrier.
+     *                                 query work. A pool that also hosts protocol fibers must not own
+     *                                 a query dispatcher because same-runtime fan-out is refused.
      */
     public static void setupQueryJobs(
             WorkerPool sharedPoolQuery,
@@ -86,6 +84,21 @@ public class WorkerPoolUtils {
     ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
+
+        if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
+            final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                    cairoEngine,
+                    messageBus,
+                    sharedPoolQuery.getFiberRuntime()
+            );
+            try {
+                messageBus.setQueryParallelFiberDispatcher(dispatcher);
+                sharedPoolQuery.freeResourceOnExit(dispatcher);
+            } catch (Throwable th) {
+                Misc.free(dispatcher, th);
+                throw th;
+            }
+        }
 
         sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 

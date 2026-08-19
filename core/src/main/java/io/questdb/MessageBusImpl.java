@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
@@ -113,6 +114,7 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
     private final ConcurrentQueue<QueryTrace> queryTraceQueue;
+    private volatile QueryParallelFiberDispatcher queryParallelFiberDispatcher;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -575,6 +577,11 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public @Nullable QueryParallelFiberDispatcher getQueryParallelFiberDispatcher() {
+        return queryParallelFiberDispatcher;
+    }
+
+    @Override
     public FanOut getTableWriterEventFanOut() {
         return tableWriterEventSubSeq;
     }
@@ -640,5 +647,15 @@ public class MessageBusImpl implements MessageBus {
             throw new IllegalStateException("page frame reduce dispatcher is already configured");
         }
         pageFrameReduceDispatcher = dispatcher;
+    }
+
+    @Override
+    public synchronized void setQueryParallelFiberDispatcher(@Nullable QueryParallelFiberDispatcher dispatcher) {
+        if (dispatcher != null
+                && queryParallelFiberDispatcher != null
+                && queryParallelFiberDispatcher != dispatcher) {
+            throw new IllegalStateException("query parallel fiber dispatcher is already configured");
+        }
+        queryParallelFiberDispatcher = dispatcher;
     }
 }

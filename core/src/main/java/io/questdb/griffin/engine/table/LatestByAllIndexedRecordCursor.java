@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -215,7 +216,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
-
+        final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
 
         int queuedCount = 0;
         long foundRowCount = 0;
@@ -246,75 +247,99 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
 
                 queuedCount = 0;
-                for (long i = 0; i < taskCount; i++) {
-                    final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                    final long found = LatestByArguments.getRowsSize(argsAddress);
-                    final long keyHi = LatestByArguments.getKeyHi(argsAddress);
-                    final long keyLo = LatestByArguments.getKeyLo(argsAddress);
+                final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
+                try {
+                    for (long i = 0; i < taskCount; i++) {
+                        final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                        final long found = LatestByArguments.getRowsSize(argsAddress);
+                        final long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                        final long keyLo = LatestByArguments.getKeyLo(argsAddress);
 
-                    // Skip range if all keys found
-                    if (found >= keyHi - keyLo) {
-                        continue;
+                        if (found >= keyHi - keyLo) {
+                            continue;
+                        }
+
+                        while (true) {
+                            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                            final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
+                            if (seq < 0) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                if (dispatcher != null && publicationPermit) {
+                                    if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                        Os.pause();
+                                    }
+                                    continue;
+                                }
+                                GeoHashNative.latestByAndFilterPrefix(
+                                        frameMemoryPool,
+                                        keyBaseAddress,
+                                        keysMemorySize,
+                                        valueBaseAddress,
+                                        valuesMemorySize,
+                                        argsAddress,
+                                        unIndexedNullCount,
+                                        partitionHi,
+                                        partitionLo,
+                                        frameIndex,
+                                        valueBlockCapacity,
+                                        geoHashColumnIndex,
+                                        geoHashColumnType,
+                                        prefixesAddress,
+                                        prefixesCount
+                                );
+                            } else {
+                                queue.get(seq).of(
+                                        frameAddressCache,
+                                        keyBaseAddress,
+                                        keysMemorySize,
+                                        valueBaseAddress,
+                                        valuesMemorySize,
+                                        argsAddress,
+                                        unIndexedNullCount,
+                                        partitionHi,
+                                        partitionLo,
+                                        frameIndex,
+                                        valueBlockCapacity,
+                                        geoHashColumnIndex,
+                                        geoHashColumnType,
+                                        prefixesAddress,
+                                        prefixesCount,
+                                        doneLatch,
+                                        sharedCircuitBreaker
+                                );
+                                pubSeq.done(seq);
+                                queuedCount++;
+                            }
+                            break;
+                        }
                     }
-
-                    final long seq = pubSeq.next();
-                    if (seq < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                        GeoHashNative.latestByAndFilterPrefix(
-                                frameMemoryPool,
-                                keyBaseAddress,
-                                keysMemorySize,
-                                valueBaseAddress,
-                                valuesMemorySize,
-                                argsAddress,
-                                unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
-                                frameIndex,
-                                valueBlockCapacity,
-                                geoHashColumnIndex,
-                                geoHashColumnType,
-                                prefixesAddress,
-                                prefixesCount
-                        );
-                    } else {
-                        queue.get(seq).of(
-                                frameAddressCache,
-                                keyBaseAddress,
-                                keysMemorySize,
-                                valueBaseAddress,
-                                valuesMemorySize,
-                                argsAddress,
-                                unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
-                                frameIndex,
-                                valueBlockCapacity,
-                                geoHashColumnIndex,
-                                geoHashColumnType,
-                                prefixesAddress,
-                                prefixesCount,
-                                doneLatch,
-                                sharedCircuitBreaker
-                        );
-                        pubSeq.done(seq);
-                        queuedCount++;
+                } finally {
+                    if (dispatcher != null && publicationPermit) {
+                        dispatcher.releasePublication();
                     }
                 }
 
-                // process our own queue
-                // this should fix deadlock with 1 worker configuration
-                while (!doneLatch.done(queuedCount)) {
+                while (true) {
+                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    if (doneLatch.done(queuedCount)) {
+                        break;
+                    }
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                    long seq = subSeq.next();
-                    if (seq > -1) {
-                        try {
-                            queue.get(seq).run();
-                        } finally {
-                            subSeq.done(seq);
+                    if (dispatcher != null) {
+                        if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                            Os.pause();
                         }
                     } else {
-                        Os.pause();
+                        long seq = subSeq.next();
+                        if (seq > -1) {
+                            try {
+                                queue.get(seq).run();
+                            } finally {
+                                subSeq.done(seq);
+                            }
+                        } else {
+                            Os.pause();
+                        }
                     }
                 }
 
@@ -355,19 +380,30 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private void processTasks(int queuedCount) {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        while (!doneLatch.done(queuedCount)) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCircuitBreaker.cancel();
-                }
-                try {
-                    queue.get(seq).run();
-                } finally {
-                    subSeq.done(seq);
+        final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
+        while (true) {
+            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
+            if (circuitBreaker.checkIfTripped()) {
+                sharedCircuitBreaker.cancel();
+            }
+            if (dispatcher != null) {
+                if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                    Os.pause();
                 }
             } else {
-                Os.pause();
+                long seq = subSeq.next();
+                if (seq > -1) {
+                    try {
+                        queue.get(seq).run();
+                    } finally {
+                        subSeq.done(seq);
+                    }
+                } else {
+                    Os.pause();
+                }
             }
         }
     }

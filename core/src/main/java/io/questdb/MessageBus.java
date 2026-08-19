@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
@@ -148,6 +149,11 @@ public interface MessageBus extends Closeable {
         return null;
     }
 
+    @Nullable
+    default QueryParallelFiberDispatcher getQueryParallelFiberDispatcher() {
+        return null;
+    }
+
     MPSequence getPageFrameReducePubSeq(int shard);
 
     RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
@@ -195,6 +201,12 @@ public interface MessageBus extends Closeable {
     default void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher) {
         if (dispatcher != null) {
             throw new UnsupportedOperationException("page frame reduce dispatcher is not supported");
+        }
+    }
+
+    default void setQueryParallelFiberDispatcher(@Nullable QueryParallelFiberDispatcher dispatcher) {
+        if (dispatcher != null) {
+            throw new UnsupportedOperationException("query parallel fiber dispatcher is not supported");
         }
     }
 }

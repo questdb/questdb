@@ -123,7 +123,27 @@ public class VectorAggregateEntry implements Mutable {
         this.valueColIndex = -1;
     }
 
+    public void abort(boolean started) {
+        if (!started) {
+            startedCounter.incrementAndGet();
+        }
+        try {
+            circuitBreaker.cancel();
+        } finally {
+            doneLatch.countDown();
+        }
+    }
+
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
     public void run(int workerId, Sequence seq, long cursor) {
+        seq.done(cursor);
+        runDetached(workerId);
+    }
+
+    public void runDetached(int workerId) {
         AsyncQueryErrorState aggregateError = this.aggregateError;
         AtomicInteger oomCounter = this.oomCounter;
         int frameIndex = this.frameIndex;
@@ -139,7 +159,6 @@ public class VectorAggregateEntry implements Mutable {
         CountDownLatchSPI doneLatch = this.doneLatch;
         PerWorkerLocks perWorkerLocks = this.perWorkerLocks;
 
-        seq.done(cursor);
         aggregate(
                 workerId,
                 oomCounter,

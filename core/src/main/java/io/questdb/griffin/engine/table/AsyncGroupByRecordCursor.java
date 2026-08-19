@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
@@ -249,6 +250,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final MPSequence pubSeq = messageBus.getGroupByLongTopKPubSeq();
         final MCSequence subSeq = messageBus.getGroupByLongTopKSubSeq();
         final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
 
         int queuedCount = 0;
         int ownCount = 0;
@@ -258,12 +261,26 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+                if (dispatcher != null && !publicationPermit) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    final Map shard = atom.getDestShards().getQuick(shardIndex);
+                    final DirectLongLongSortedList ownerList = atom.getLongTopKList(
+                            -1,
+                            destList.getOrder(),
+                            destList.getCapacity()
+                    );
+                    shard.getCursor().longTopK(ownerList, longFunc);
+                    ownCount++;
+                    total++;
+                    continue;
+                }
                 while (true) {
+                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                        if (dispatcher == null && workStealingStrategy.shouldSteal(processedCount)) {
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
@@ -271,6 +288,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             total++;
                             processedCount = postAggregationDoneLatch.getCount();
                             break;
+                        }
+                        if (dispatcher != null
+                                && !dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                            Os.pause();
                         }
                         processedCount = postAggregationDoneLatch.getCount();
                     } else {
@@ -295,28 +316,38 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             postAggregationCircuitBreaker.cancel();
             throw th;
         } finally {
-            // All done? Great, start consuming the queue we just published.
-            // How do we get to the end? If we consume our own queue there is chance we will be consuming
-            // aggregation tasks not related to this execution (we work in concurrent environment).
-            // To deal with that we need to check our latch.
-            while (!postAggregationDoneLatch.done(queuedCount)) {
-                if (circuitBreaker.checkIfTripped()) {
-                    postAggregationCircuitBreaker.cancel();
+            try {
+                if (dispatcher != null && publicationPermit) {
+                    dispatcher.releasePublication();
                 }
+            } finally {
+                while (true) {
+                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    if (postAggregationDoneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    if (circuitBreaker.checkIfTripped()) {
+                        postAggregationCircuitBreaker.cancel();
+                    }
 
-                if (workStealingStrategy.shouldSteal(processedCount)) {
-                    long cursor = subSeq.next();
-                    if (cursor > -1) {
-                        GroupByLongTopKTask task = queue.get(cursor);
-                        GroupByLongTopKJob.run(-1, task, subSeq, cursor, atom);
-                        reclaimed++;
+                    if (dispatcher == null && workStealingStrategy.shouldSteal(processedCount)) {
+                        long cursor = subSeq.next();
+                        if (cursor > -1) {
+                            GroupByLongTopKTask task = queue.get(cursor);
+                            GroupByLongTopKJob.run(-1, task, subSeq, cursor, atom);
+                            reclaimed++;
+                        } else {
+                            Os.pause();
+                        }
+                    } else if (dispatcher != null) {
+                        if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                            Os.pause();
+                        }
                     } else {
                         Os.pause();
                     }
-                } else {
-                    Os.pause();
+                    processedCount = postAggregationDoneLatch.getCount();
                 }
-                processedCount = postAggregationDoneLatch.getCount();
             }
         }
 

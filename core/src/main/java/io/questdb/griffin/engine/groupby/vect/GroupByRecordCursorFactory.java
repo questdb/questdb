@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
@@ -312,6 +313,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static int runWhatsLeft(
             MCSequence subSeq,
             RingQueue<VectorAggregateTask> queue,
+            @Nullable QueryParallelFiberDispatcher dispatcher,
             AsyncQueryErrorState aggregateError,
             int queuedCount,
             int reclaimed,
@@ -322,12 +324,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             AtomicBooleanCircuitBreaker sharedCB,
             WorkStealingStrategy workStealingStrategy
     ) {
-        while (!doneLatch.done(queuedCount)) {
+        while (true) {
+            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
             }
 
-            if (workStealingStrategy.shouldSteal(mergedCount)) {
+            if (dispatcher == null && workStealingStrategy.shouldSteal(mergedCount)) {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
@@ -345,6 +351,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     Os.pause();
                 }
+            } else if (dispatcher != null) {
+                if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                    Os.pause();
+                }
+            } else {
+                Os.pause();
             }
             mergedCount = doneLatch.getCount();
         }
@@ -559,6 +571,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
+            final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
+            final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
 
             sharedCircuitBreaker.reset();
             startedCounter.set(0);
@@ -598,15 +612,36 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // argument, and it can only derive count via memory size
                         final int valueColumnIndex = vaf.getColumnIndex();
 
+                        if (dispatcher != null && !publicationPermit) {
+                            VectorAggregateEntry.aggregateUnsafe(
+                                    workerId,
+                                    oomCounter,
+                                    frameIndex,
+                                    frameRowCount,
+                                    keyColumnIndex,
+                                    valueColumnIndex,
+                                    pRosti,
+                                    frameMemoryPools,
+                                    raf,
+                                    vaf,
+                                    perWorkerLocks,
+                                    circuitBreaker
+                            );
+                            ownCount++;
+                            total++;
+                            continue;
+                        }
+
                         while (true) {
                             if (aggregateError.hasError()) {
                                 break dispatch;
                             }
+                            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                                if (workStealingStrategy.shouldSteal(mergedCount)) {
+                                if (dispatcher == null && workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
@@ -625,6 +660,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     total++;
                                     mergedCount = doneLatch.getCount();
                                     break;
+                                }
+                                if (dispatcher != null
+                                        && !dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                    Os.pause();
                                 }
                                 mergedCount = doneLatch.getCount();
                             } else {
@@ -658,38 +697,31 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 sharedCircuitBreaker.cancel();
                 throw th;
             } finally {
-                // all done? great start consuming the queue we just published
-                // how do we get to the end? If we consume our own queue there is chance we will be consuming
-                // aggregation tasks not related to this execution (we work in concurrent environment)
-                // To deal with that we need to have our own checklist.
-
-                // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
-                // tasks in flight.
-
-                reclaimed = runWhatsLeft(
-                        bus.getVectorAggregateSubSeq(),
-                        queue,
-                        aggregateError,
-                        queuedCount,
-                        reclaimed,
-                        mergedCount,
-                        workerId,
-                        doneLatch,
-                        circuitBreaker,
-                        sharedCircuitBreaker,
-                        workStealingStrategy
-                );
-                // We can't reallocate rosti until tasks are complete because some other thread could be using it.
-                if (sharedCircuitBreaker.checkIfTripped()) {
-                    resetRostiMemorySize();
+                try {
+                    if (dispatcher != null && publicationPermit) {
+                        dispatcher.releasePublication();
+                    }
+                } finally {
+                    reclaimed = runWhatsLeft(
+                            bus.getVectorAggregateSubSeq(),
+                            queue,
+                            dispatcher,
+                            aggregateError,
+                            queuedCount,
+                            reclaimed,
+                            mergedCount,
+                            workerId,
+                            doneLatch,
+                            circuitBreaker,
+                            sharedCircuitBreaker,
+                            workStealingStrategy
+                    );
+                    if (sharedCircuitBreaker.checkIfTripped()) {
+                        resetRostiMemorySize();
+                    }
+                    frameAddressCache.unfreezeCoveredReaders();
+                    Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 }
-                // runWhatsLeft has drained the done-latch, so every vector-aggregate
-                // worker has finished iterating its detached covered cursors. Unfreeze
-                // the covered posting readers (no-op when none) so later queries can
-                // reload them, and release page frame memory -- both safe now that no
-                // worker is using it.
-                frameAddressCache.unfreezeCoveredReaders();
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
 
             if (oomCounter.get() > 0) {
