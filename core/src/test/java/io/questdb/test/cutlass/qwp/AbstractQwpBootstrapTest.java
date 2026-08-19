@@ -43,6 +43,10 @@ import org.junit.Before;
  * {@code DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE} and
  * {@code DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE} alongside any extra
  * env vars the test wants to set.
+ * <p>
+ * {@link #startFragmented(String...)} also raises {@code query.timeout} to
+ * {@link #fragmentedQueryTimeoutMs()}, because the forced send fragmentation
+ * slows a streaming result far below what the production default budgets for.
  */
 public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
 
@@ -65,13 +69,35 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         return baseMs * 64L / effectiveChunk;
     }
 
+    /**
+     * Server-side {@code query.timeout} budget for a fragmented run.
+     * <p>
+     * {@code HttpResponseSink#sendBuffer} ships at most {@code sendChunk} bytes
+     * per event-loop pass and parks the stream in between, so egress costs one
+     * full round trip per chunk. Streaming a 50k-row LONG projection (~400 KB)
+     * at the worst random {@code sendChunk=1} measured 2.2 s on a fast Linux box
+     * and 62.4 s on a hosted 4-core macOS agent -- past the 60 s production
+     * default, which aborts the query mid-stream and fails the test. The cost
+     * tracks 1/sendChunk, so scale the budget the same way
+     * {@link #firstBatchTimeoutMs(long)} does and cap it, keeping the timeout a
+     * backstop for genuinely stuck queries rather than a limit on throttled
+     * sends.
+     */
+    protected long fragmentedQueryTimeoutMs() {
+        int effectiveChunk = Math.max(1, Math.min(sendChunk, 64));
+        return Math.min(600_000L, 60_000L * 64L / effectiveChunk);
+    }
+
     protected TestServerMain startFragmented(String... extra) {
-        String[] all = new String[extra.length + 4];
+        String[] all = new String[extra.length + 6];
         all[0] = PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
         all[1] = Integer.toString(recvChunk);
         all[2] = PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
         all[3] = Integer.toString(sendChunk);
-        System.arraycopy(extra, 0, all, 4, extra.length);
+        // Ahead of extra, so a test that pins query.timeout itself still wins.
+        all[4] = PropertyKey.QUERY_TIMEOUT.getEnvVarName();
+        all[5] = fragmentedQueryTimeoutMs() + "ms";
+        System.arraycopy(extra, 0, all, 6, extra.length);
         return startWithEnvVariables(all);
     }
 }
