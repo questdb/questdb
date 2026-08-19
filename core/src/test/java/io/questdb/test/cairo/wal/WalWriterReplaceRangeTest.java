@@ -168,6 +168,57 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemovesLastPartitionNoRowsAddedThenAppends() throws Exception {
+        // A REPLACE_RANGE that empties the last partition and writes no rows leaves the writer's
+        // partitionTimestampHi pointing at the partition it just deleted: the only place that
+        // lowers the field for a replace commit needs at least one written row, and
+        // o3ConsumePartitionUpdateSink recomputes txWriter.maxTimestamp without it. When the
+        // partition that inherits last place is COMPOSITE, finishO3Commit takes the
+        // append-blocked branch and skips the openPartition that would otherwise have papered
+        // over the stale field, so the next commit on the same writer works against a partition
+        // that no longer exists.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 400; i++) {
+                    appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T00:00:00.000000Z") + i * 180_000_000L, i, i * 10L);
+                }
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-25T01:00:00.000000Z"), 1000, 10_000);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            // Backdated write into the middle of 2022-02-24 makes that partition composite.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T04:00:00.000001Z"), 2000, 20_000);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            // Both commits are drained together so they run through one TableWriter instance:
+            // a pooled writer reload would refresh partitionTimestampHi and hide the defect.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2022-02-25T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2022-02-26T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T23:59:00.000000Z"), 3000, 30_000);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT count() c, min(ts) lo, max(ts) hi FROM rg").expectSize().noRandomAccess().returns("""
+                    c\tlo\thi
+                    402\t2022-02-24T00:00:00.000000Z\t2022-02-24T23:59:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testReplaceBetweenExisting() throws Exception {
         testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-24T16:26");
     }

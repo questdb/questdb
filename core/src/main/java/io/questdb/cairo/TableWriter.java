@@ -8942,6 +8942,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, tsColumnName, -1, partitionSize);
                         }
                         txWriter.maxTimestamp = attachMaxTimestamp;
+                        // The writer's own partitionTimestampHi still names the partition this commit
+                        // deleted, and nothing else brings it back down: processO3Block's replace-mode
+                        // update only ever raises it, and needs a written row to run at all, so a
+                        // delete-only replace skips it entirely. finishO3Commit's openPartition used to
+                        // cover for that, but it is skipped whenever the partition inheriting last place
+                        // refuses in-place appends - a composite or parquet one. Left stale, the next
+                        // commit resolves its active partition to a directory that is gone.
+                        this.partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(lastPartitionTimestamp);
+                        this.lastPartitionTimestamp = lastPartitionTimestamp;
                     }
                 } finally {
                     path.trimTo(pathSize);

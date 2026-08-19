@@ -591,12 +591,15 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
 
             // Eleven backdated batches, two hours apart, each landing between rows the batch before it left
             // alone. The day accumulates pieces instead of being rewritten whole.
+            StringBuilder backfillUnion = new StringBuilder();
             for (int hour = 1; hour < 23; hour += 2) {
-                execute("INSERT INTO x SELECT x::INT + " + (100_000 * hour) + " i," +
+                String backfill = "SELECT x::INT + " + (100_000 * hour) + " i," +
                         " -x - " + (100_000L * hour) + " j, " + WIDE_COLUMNS + "," +
                         " timestamp_sequence('2020-02-03T" + String.format("%02d", hour) + ":07:03', 5*1000000L) ts" +
-                        " FROM long_sequence(40)");
+                        " FROM long_sequence(40)";
+                execute("INSERT INTO x " + backfill);
                 drainWalQueue();
+                backfillUnion.append(" UNION ALL ").append(backfill);
             }
 
             final TableToken xt = engine.verifyTableName("x");
@@ -636,6 +639,20 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 assertSameWindow(boundary, boundary + 1);
                 assertSameWindow(boundary - 1, boundary);
             }
+
+            // A full, unfiltered scan is a different cursor path from the interval windows above - it is
+            // FwdTableReaderPageFrameCursor cutting frames at piece boundaries rather than
+            // CompositeTimestampFinder searching within one - so it needs its own check. The oracle here is
+            // built from the raw generating SQL rather than "SELECT * FROM x": an oracle read back through
+            // x's own (possibly broken) full scan would inherit the same corruption and the comparison
+            // would pass either way.
+            execute("CREATE TABLE o2 AS (SELECT " + ORACLE_PROJECTION + " FROM (" +
+                    base + " UNION ALL " + nextDay + backfillUnion + ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // No ORDER BY: a bare table scan, exactly what the fuzz suite's own _nonwal-vs-_wal comparison
+            // runs (FuzzRunner.runFuzz: "String limit = \"\"; assertSqlCursors(tableNameNoWal + limit,
+            // tableNameWal + limit, ...)"). It trusts the reader to already hand back ts order on its own,
+            // which is the exact claim FwdTableReaderPageFrameCursor's piece-boundary stitching makes.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o2", "x", LOG);
         });
     }
 
@@ -1023,6 +1040,61 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .expectSize()
                     .returns("ts\n2020-02-03T23:59:45.000000Z\n");
+        });
+    }
+
+    /**
+     * Regression test for a fixed bug: {@code CONVERT PARTITION TO PARQUET} used to call
+     * {@code TableWriter.getPartitionSize} (live rows) and map each column file as one flat range from
+     * byte 0 for that many rows - correct for an ordinary partition, but wrong for a composite one, whose
+     * live rows sit out of order behind dead space and relocated pieces. The fix compacts a composite
+     * partition ahead of conversion so the parquet encoder always reads an ordinary, contiguous directory.
+     * Minimised from a natural {@code WalWriterFuzzTest#testConvertPartitionToParquet} failure - the fuzz
+     * suite's own {@code _nonwal}-vs-{@code _wal} comparison reported "wrong row" at an arbitrary offset,
+     * which is what a dropped row does to every comparison after it, not a hint that the row itself was
+     * corrupted.
+     */
+    @Test
+    public void testConvertingCompositePartitionToParquetKeepsAllRows() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Narrower than the WIDE_COLUMNS tables the rest of this class uses, so the split threshold -
+            // in rows derived from an average record size - needs a proportionally smaller setting.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so that write goes through the O3 path and can be cut into pieces.
+            final String nextDay = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            // Lands inside 2020-02-03: the merge relocates the pieces it touches to the tail, cutting the
+            // day into several pieces instead of rewriting it whole.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-02-03'");
+            drainWalQueue();
+            Assert.assertFalse("the conversion suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The oracle: the same rows, assembled without ever touching the composite machinery, so any
+            // row the conversion dropped shows up as a row-count/content mismatch here.
+            execute("CREATE TABLE o AS (SELECT i, ts FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o", "x", LOG);
         });
     }
 
