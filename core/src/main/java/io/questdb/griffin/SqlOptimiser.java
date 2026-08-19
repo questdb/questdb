@@ -6509,7 +6509,32 @@ public class SqlOptimiser implements Mutable {
 
         switch (ac.getRowsHiKind()) {
             case WindowExpression.PRECEDING:
-                rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
+                if (ac.getFramingMode() == WindowExpression.FRAMING_RANGE) {
+                    // Discriminate on whether the user wrote a bound at all, not on the value:
+                    // evalNonNegativeLongConstantOrDie() returns Long.MAX_VALUE both for an
+                    // absent expression - UNBOUNDED, which the frame start encodes as
+                    // Long.MIN_VALUE - and for a literal 9223372036854775807 the user did write.
+                    // Reading the value alone folds the literal onto the UNBOUNDED sentinel, and
+                    // Long.MIN_VALUE is not a RANGE frame END the runtime can represent:
+                    // ExpressionParser refuses UNBOUNDED PRECEDING at this end of the frame, and
+                    // every RANGE family measures its high bound with Math.abs(), which returns
+                    // Long.MIN_VALUE unchanged. The frame then admitted every preceding row
+                    // instead of none. Negating is exact here - -Long.MAX_VALUE is
+                    // Long.MIN_VALUE + 1, and Math.abs() of that is the width the user wrote.
+                    rowsHi = ac.getRowsHiExpr() != null ? -rowsHi : Long.MIN_VALUE;
+                } else {
+                    // A ROWS frame counts rows instead of measuring time, and every bounded ROWS
+                    // family sizes its ring buffer with (int) Math.abs(rowsHi), which carries no
+                    // width above Integer.MAX_VALUE - 3000000000 PRECEDING reads past that buffer
+                    // today and always has. Keep folding the widest width onto the sentinel here:
+                    // the fold is what turns that one width into a deterministic error instead of
+                    // an out-of-bounds read, and discriminating on the expression would take the
+                    // error away without making any ROWS width answer correctly. Correcting the
+                    // ROWS path calls for the over-int rejection that
+                    // NthValueWindowFunctionFactoryHelper already applies, which rejects finite
+                    // widths that compile today and so belongs to a change of its own.
+                    rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
+                }
                 break;
             case WindowExpression.FOLLOWING:
                 break;

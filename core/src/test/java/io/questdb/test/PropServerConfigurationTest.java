@@ -1062,12 +1062,37 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPageSizeAboveCompressedOffsetCeilingRejected() throws Exception {
+        // These three heaps are addressed by 32-bit compressed offsets, and the initial page is
+        // allocated before any growth guard runs, so a page above the encoding ceiling truncates the
+        // offset of everything in its top region. The key heap and the map heap scale offsets by 8
+        // and cap at (2^32 - 2) * 8; the value chain scales by 4 and caps at half that. Only these
+        // three read their page size with getLongSize() - every other page size here goes through
+        // getIntSize() and so cannot reach 2GB, let alone either ceiling.
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "34359738360");
+        assertPageSizeRejected("cairo.sql.sort.key.page.size", "34359738360");
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "17179869180");
+
+        // The two ceilings differ, so a page between them is legal for the 8-byte-scaled heaps and
+        // not for the value chain. Without that split one bound would silently cover both.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.small.map.page.size", "34359738352");
+        properties.setProperty("cairo.sql.sort.key.page.size", "34359738352");
+        properties.setProperty("cairo.sql.sort.light.value.page.size", "17179869176");
+        newPropServerConfiguration(properties); // exactly at each ceiling must build
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "34359738352");
+    }
+
+    @Test
     public void testPageSizeAtMinimumAccepted() throws Exception {
         // Exactly at each minimum must build (off-by-one guard). window.rowid (>=12, ceilPow2 -> 16)
         // and window.tree (>=24, ceilPow2 -> 32) are rounded up by the config's ceilPow2.
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.sort.key.page.size", "64");
         properties.setProperty("cairo.sql.sort.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.hash.join.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.small.map.page.size", "4");
+        properties.setProperty("cairo.sql.join.metadata.page.size", "4");
         properties.setProperty("cairo.sql.window.store.page.size", "64");
         properties.setProperty("cairo.sql.window.rowid.page.size", "16");
         properties.setProperty("cairo.sql.window.tree.page.size", "32");
@@ -1092,6 +1117,21 @@ public class PropServerConfigurationTest {
         assertPageSizeRejected("cairo.sql.window.rowid.page.size", "8");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "0");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
+        assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "0");
+        assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "8");
+        // small.map sizes OrderedMap's heap. The floor is only the map's structural bound, which
+        // asserts heapSize > 3; anything above it that a query cannot fit is rejected per query by
+        // the map's own check, which names the property. Values between the two - 24 bytes against a
+        // LONG key plus a LONG value, say - run their queries, so the floor must not reject them:
+        // OrderedMapTest.testHeapSizeBetweenStructuralMinimumAndEntrySize pins the accepted side.
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "0");
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "3");
+        // join.metadata sizes the other configured OrderedMap - two STRING keys and one INT value.
+        // Below four bytes the map's own assertion fired while SQL compilation built join metadata,
+        // so a configuration mistake surfaced as an AssertionError out of the compiler with nothing
+        // naming the property. It takes small.map's floor for the same reason small.map has one.
+        assertPageSizeRejected("cairo.sql.join.metadata.page.size", "0");
+        assertPageSizeRejected("cairo.sql.join.metadata.page.size", "3");
     }
 
     @Test

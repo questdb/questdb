@@ -577,7 +577,7 @@ of the two categories it lands in, per the magnitude rule in Step 4.
 - No third-party Java dependencies on data paths
 
 ### QuestDB coding standards
-- Class members grouped by kind (static vs instance) and visibility, sorted alphabetically
+- Class members grouped by kind (static vs instance) and visibility
 - Boolean names use `is...` / `has...` prefix
 - Modern Java features: enhanced switch, multiline strings, pattern variables in instanceof
 
