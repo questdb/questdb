@@ -2175,6 +2175,29 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithApproxCountDistinctEmptyCellsCaseMode() throws Exception {
+        assertQuery("""
+                cities
+                PIVOT (
+                    approx_count_distinct(population) AS acd
+                    FOR
+                        year IN (2020, 2030)
+                        country IN ('NL', 'US')
+                    GROUP BY name
+                ) ORDER BY name;
+                """)
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .returns("name\t2020_NL_acd\t2020_US_acd\t2030_NL_acd\t2030_US_acd\n", """
+                        name	2020_NL_acd	2020_US_acd	2030_NL_acd	2030_US_acd
+                        Amsterdam	1	0	0	0
+                        New York City	0	1	0	0
+                        Seattle	0	1	0	0
+                        """);
+    }
+
+    @Test
     public void testPivotWithCTEAndKeyedAsOfJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlSensors);
@@ -2459,6 +2482,32 @@ public class PivotTest extends AbstractSqlParserTest {
                             country	2000_COUNT()	2000_last(population)	2010_COUNT()	2010_last(population)	2020_COUNT()	2020_last(population)	null_COUNT()	null_last(population)	2030_COUNT()	2030_last(population)
                             NL	1	1005	1	1065	1	1158	0	null	0	null
                             US	2	8015	2	8175	2	8772	0	null	0	null
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotWithCountDistinctEmptyCells() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQuery("""
+                    SELECT * FROM cities
+                    PIVOT (
+                        count_distinct(population) AS cd,
+                        approx_count_distinct(population) AS acd,
+                        sum(population) AS total
+                        FOR year IN (2020, 2030)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country	2020_cd	2020_acd	2020_total	2030_cd	2030_acd	2030_total
+                            NL	1	1	1158	0	0	null
+                            US	2	2	9510	0	0	null
                             """);
         });
     }

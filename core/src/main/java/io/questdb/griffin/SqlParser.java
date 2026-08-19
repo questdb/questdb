@@ -145,7 +145,7 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteCountAndWindowExpressionsRef = this::rewriteCountAndWindowExpressions;
     private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
@@ -4465,6 +4465,7 @@ public class SqlParser {
                 WindowExpression windowSpec = windowExpressionPool.next();
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
+                rewriteWindowExpression(windowSpec);
 
                 // Validate base window reference (window inheritance):
                 // the base must be defined earlier in the same WINDOW clause (no forward references)
@@ -6244,6 +6245,13 @@ public class SqlParser {
         }
     }
 
+    private void rewriteCountAndWindowExpressions(ExpressionNode node) throws SqlException {
+        if (node.windowExpression != null) {
+            rewriteWindowExpression(node.windowExpression);
+        }
+        rewriteCount(node);
+    }
+
     private ExpressionNode rewriteDeclaredVariables(
             ExpressionNode expr,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
@@ -6265,7 +6273,7 @@ public class SqlParser {
      * @param node root of the tree to rewrite in place
      */
     private void rewriteExpressionForms(ExpressionNode node) throws SqlException {
-        traversalAlgo.traverse(node, rewriteCountRef);
+        traversalAlgo.traverse(node, rewriteCountAndWindowExpressionsRef);
         traversalAlgo.traverse(node, rewriteCaseRef);
         traversalAlgo.traverse(node, rewriteConcatRef);
         traversalAlgo.traverse(node, rewritePgCastRef);
@@ -6452,6 +6460,31 @@ public class SqlParser {
         node.lhs = innerCastNode.lhs;
     }
 
+    private void rewriteWindowExpression(WindowExpression windowExpression) throws SqlException {
+        final ObjList<ExpressionNode> partitionBy = windowExpression.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            rewriteWindowSubExpression(partitionBy.getQuick(i));
+        }
+        final ObjList<ExpressionNode> orderBy = windowExpression.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            rewriteWindowSubExpression(orderBy.getQuick(i));
+        }
+        rewriteWindowSubExpression(windowExpression.getRowsLoExpr());
+        rewriteWindowSubExpression(windowExpression.getRowsHiExpr());
+    }
+
+    private void rewriteWindowSubExpression(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        traversalAlgo.traverse(node, rewriteCountAndWindowExpressionsRef);
+        traversalAlgo.traverse(node, rewriteCaseRef);
+        traversalAlgo.traverse(node, rewriteConcatRef);
+        traversalAlgo.traverse(node, rewritePgCastRef);
+        traversalAlgo.traverse(node, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(node, rewritePgNumericRef);
+    }
+
     @NotNull
     private CharSequence sansPublicSchema(@NotNull CharSequence tok, GenericLexer lexer) throws SqlException {
         int lo = 0;
@@ -6577,7 +6610,8 @@ public class SqlParser {
     }
 
     private int parseShowCreateDatabaseInclude(GenericLexer lexer) throws SqlException {
-        CharSequence tok = optTok(lexer);
+        // fetchNext() returns a subquery-closing ')' so unparseLast() can restore it for the outer parser.
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
         }
@@ -6602,7 +6636,8 @@ public class SqlParser {
         do {
             tok = tok(lexer, "category");
             mask |= showCreateDatabaseCategory(lexer, tok);
-            tok = tok(lexer, "',' or ')'");
+            // Read the list's local ')' without treating it as the enclosing subquery terminator.
+            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
         } while (Chars.equals(tok, ','));
         if (!Chars.equals(tok, ')')) {
             throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected");
