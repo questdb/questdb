@@ -313,7 +313,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
             CharSequence sql
     ) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(executionContext)) {
+             RecordCursor cursor = factory.getCursor(executionContext)) {
             long count = 0;
             while (cursor.hasNext()) {
                 count++;

@@ -70,10 +70,10 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
                     ? null
                     : new IllegalStateException(
                     "query parallel fiber task pool closed with leased tasks [created="
-                            + createdCount
-                            + ", free="
-                            + freeCount
-                            + ']'
+                    + createdCount
+                    + ", free="
+                    + freeCount
+                    + ']'
             );
             task = freeTasks;
             freeTasks = null;
