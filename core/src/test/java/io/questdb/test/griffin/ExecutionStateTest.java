@@ -26,6 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.ExecutionState;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.AbstractCairoTest;
@@ -52,6 +56,23 @@ public class ExecutionStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorOpenRefreshesOncePerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
+            try (RecordCursorFactory factory = select("tab")) {
+                final int base = STARTS.get();
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(base + 1, STARTS.get());
+                }
+                // a second execution of the same prepared factory re-stamps
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(base + 2, STARTS.get());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInitNowFiresExecutionStartAndReplayStampDoesNot() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
@@ -64,6 +85,36 @@ public class ExecutionStateTest extends AbstractCairoTest {
                 // WAL-replay deterministic-time channel must never refresh execution state
                 ctx.setNowAndFixClock(0, ColumnType.TIMESTAMP_MICRO);
                 Assert.assertEquals(base + 2, STARTS.get());
+            }
+        });
+    }
+
+    @Test
+    public void testInnerScalarSubqueryDoesNotRefreshMidExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
+            try (RecordCursorFactory factory = select("SELECT (SELECT max(x) FROM tab) = null r FROM long_sequence(2)")) {
+                final int base = STARTS.get();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) { }
+                    // inner CursorFunction factories are not QueryProgress-wrapped:
+                    // exactly one refresh for the whole statement
+                    Assert.assertEquals(base + 1, STARTS.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameCursorOpenRefreshes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
+            try (RecordCursorFactory factory = select("tab")) {
+                final int base = STARTS.get();
+                try (PageFrameCursor ignore = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    Assert.assertEquals(base + 1, STARTS.get());
+                }
             }
         });
     }
