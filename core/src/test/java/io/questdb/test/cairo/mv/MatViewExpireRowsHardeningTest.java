@@ -65,6 +65,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     private static final long DEC_25 = 1_703_462_400_000_000L; // 2023-12-25T00:00:00Z
     private static final long FEB_10 = 1_707_523_200_000_000L; // 2024-02-10T00:00:00Z
     private static final long JAN_10 = 1_704_844_800_000_000L; // 2024-01-10T00:00:00Z
+    private static final long JAN_15_01 = 1_705_280_400_000_000L; // 2024-01-15T01:00:00Z
+    private static final long JAN_15_07 = 1_705_302_000_000_000L; // 2024-01-15T07:00:00Z
     private static final long JAN_25 = 1_706_140_800_000_000L; // 2024-01-25T00:00:00Z
     private static final long MAR_01 = 1_709_251_200_000_000L; // 2024-03-01T00:00:00Z
 
@@ -234,8 +236,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExpiryTimestampThresholdMicrosAcceptsOnlyDropOldShapes() throws Exception {
-        // expiryTimestampThresholdMicros feeds the partition-bounds fast path, which drops whole partitions
+    public void testExpiryTimestampThresholdAcceptsOnlyDropOldShapes() throws Exception {
+        // expiryTimestampThreshold feeds the partition-bounds fast path, which drops whole partitions
         // below T. It must return a threshold ONLY for "expire everything below T" shapes (ts < T, T > ts)
         // and LONG_NULL for the opposite "keep old, expire recent" shapes (ts > T, T < ts) -- otherwise the
         // fast path would drop the KEPT partitions (data loss). It also requires a typed TIMESTAMP threshold:
@@ -249,31 +251,70 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
                 // Drop-old shapes: threshold accepted (micros of T).
-                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(day2, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "ts < '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
-                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(day2, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "ts <= '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
-                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(day2, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "'1970-01-02T00:00:00.000000Z'::timestamp > ts", "ts"));
-                Assert.assertEquals(day2, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(day2, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "'1970-01-02T00:00:00.000000Z'::timestamp >= ts", "ts"));
 
                 // Keep-old shapes: MUST be rejected (LONG_NULL). Accepting these would make the bounds fast
                 // path drop the partitions below T, which are exactly the rows the policy keeps.
-                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "ts > '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
-                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "ts >= '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
-                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "'1970-01-02T00:00:00.000000Z'::timestamp < ts", "ts"));
 
                 // A bare (untyped) string literal is not a TIMESTAMP constant: no fast path, survivor scan.
-                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "ts < '1970-01-02T00:00:00.000000Z'", "ts"));
 
                 // A threshold that references a column is not a constant bound.
-                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThresholdMicros(
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThreshold(
                         sqlExecutionContext, metadata, "ts < ts", "ts"));
+            }
+        });
+    }
+
+    @Test
+    public void testExpiryTimestampThresholdRescalesToDesignatedTimestampUnit() throws Exception {
+        // The bounds fast path compares T against a partition floor, and a floor uses the unit of the
+        // designated timestamp column, so expiryTimestampThreshold returns T in that unit. Every
+        // now()-based threshold is in micros. Without the conversion, a TIMESTAMP_NS view gets no fast path,
+        // and each sweep scans each non-active partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (v DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            final long day2Micros = 86_400_000_000L;     // 1970-01-02T00:00:00Z
+            final long day2Nanos = 86_400_000_000_000L;
+            // Large enough that a conversion to nanos overflows a long.
+            final String hugeT = "ts < 9223372036854776::timestamp";
+            try (
+                    TableMetadata microsMeta = engine.getTableMetadata(engine.verifyTableName("x"));
+                    TableMetadata nanosMeta = engine.getTableMetadata(engine.verifyTableName("y"));
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                Assert.assertEquals(day2Micros, compiler.expiryTimestampThreshold(
+                        sqlExecutionContext, microsMeta, "ts < '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
+
+                // The method converts a micros T for a nanos column, so T matches the nanos floors.
+                Assert.assertEquals(day2Nanos, compiler.expiryTimestampThreshold(
+                        sqlExecutionContext, nanosMeta, "ts < '1970-01-02T00:00:00.000000Z'::timestamp", "ts"));
+
+                // A T that is already in the unit of the column does not change.
+                Assert.assertEquals(day2Nanos, compiler.expiryTimestampThreshold(
+                        sqlExecutionContext, nanosMeta, "ts < '1970-01-02T00:00:00.000000Z'::timestamp_ns", "ts"));
+
+                // The same T is a valid threshold for a micros column ...
+                Assert.assertEquals(9_223_372_036_854_776L, compiler.expiryTimestampThreshold(
+                        sqlExecutionContext, microsMeta, hugeT, "ts"));
+                // ... but the conversion to nanos overflows, so the nanos view uses the scan.
+                Assert.assertEquals(Numbers.LONG_NULL, compiler.expiryTimestampThreshold(
+                        sqlExecutionContext, nanosMeta, hugeT, "ts"));
             }
         });
     }
@@ -1178,11 +1219,11 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testNanosClockThresholdReclaimsAsClockAdvances() throws Exception {
-        // A TIMESTAMP_NS designated column. expiryTimestampThresholdMicros returns LONG_NULL for any non-micros
-        // timestamp, so a clock policy on an NS view always runs through the survivor scan with the SKIP
-        // generation cache eligible. The cache is keyed only by partition content, so a still-live partition
-        // cached as SKIP at one sweep must not suppress its reclamation once now() advances past the threshold.
-        // One job instance sweeps twice (the cache lives on the job) with the clock advanced between.
+        // A TIMESTAMP_NS designated column uses the same partition-bounds fast path as a micros column.
+        // expiryTimestampThreshold converts the micros T that now() gives into the nanos of the column, so
+        // both sweeps classify the partition from its bounds and do no scan. The job must still follow the
+        // clock. A partition that has no expired row at one sweep must reclaim when now() moves past the
+        // threshold. One job instance does two sweeps, and the clock moves between them.
         assertMemoryLeak(() -> {
             setCurrentMicros(FEB_10);
             execute("create table base (sym symbol, v double, ts timestamp_ns) timestamp(ts) partition by day wal");
@@ -1211,10 +1252,164 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 setCurrentMicros(MAR_01);
                 Assert.assertTrue("OLD must reclaim once now() advances past the threshold",
                         job.cleanupTable(token, predicate));
+                Assert.assertEquals("a nanos designated timestamp must use the no-scan bounds fast path",
+                        0, job.getScalarPartitionScanCount());
             }
             drainWalAndMatViewQueues();
             assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n1\n");
             assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
+        });
+    }
+
+    @Test
+    public void testClockPolicyDefersCompactionUntilPartitionMostlyExpired() throws Exception {
+        // A clock threshold moves through a partition, so the partition that holds the threshold is partly
+        // expired at EVERY sweep. Compaction rewrites all of the rows that stay. Without a minimum fraction,
+        // the job copies those rows at each sweep: about 11 times across one day of hourly sweeps on a daily
+        // partition. The minimum fraction makes the job wait until a large enough fraction of the partition
+        // is expired. The delay costs disk space only. The read filter hides the expired rows in both cases,
+        // so the visible rows are the same before and after.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-15T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-15T06:00:00.000000Z'),
+                    ('c', 3.0, '2024-01-15T12:00:00.000000Z'),
+                    ('d', 4.0, '2024-01-15T18:00:00.000000Z'),
+                    ('e', 5.0, '2024-06-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts < now()");
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(5);
+
+            // 2 of the 4 rows in the 2024-01-15 partition are now expired. The 2024-06-01 partition is the
+            // active one, and the job never sweeps it.
+            setCurrentMicros(JAN_15_07);
+            final String visible = "sym\nc\nd\ne\n";
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns(visible);
+
+            // One half of the partition is expired, but the configuration asks for three quarters. The job
+            // must not compact it.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.75");
+            Assert.assertFalse("the job must not rewrite a partition below the minimum expired fraction", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(5);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns(visible);
+
+            // The same partition and the same clock, with a fraction that the partition now meets.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.5");
+            Assert.assertTrue("the job must compact a partition at the minimum expired fraction", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(3);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns(visible);
+        });
+    }
+
+    @Test
+    public void testClockFreePolicyCompactsAgainAfterBackFill() throws Exception {
+        // A clock-free predicate leaves a compacted partition alone only while nothing writes to it. A
+        // refresh that back-fills a non-active partition changes the row count and the name txn of that
+        // partition, so the SKIP that the generation cache holds no longer applies. The next sweep scans the
+        // partition again and compacts it a second time. The job therefore copies such a partition one time
+        // for each back-fill, and not one time for each sweep.
+        // The refresh rebuilds the whole affected range from the base table, which still holds every expired
+        // row, so it also restores the row that the first sweep removed. Reclamation from a view is
+        // best-effort against a refresh: the read filter hides the restored row at once, and the next sweep
+        // removes it from disk again.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "1");
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-15T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-15T06:00:00.000000Z'),
+                    ('c', 3.0, '2024-01-15T12:00:00.000000Z'),
+                    ('e', 5.0, '2024-06-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue("the first sweep must compact away 'a'", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(3);
+            Assert.assertFalse("an untouched partition must not be compacted again", runCleanup("mv"));
+
+            // A late base row lands in the already-compacted 2024-01-15 range. The refresh rebuilds that
+            // range from base, so the partition holds 4 rows again: the new expired row 'f', the restored
+            // expired row 'a', and the two survivors.
+            execute("INSERT INTO base VALUES ('f', 1.5, '2024-01-15T09:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(5);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\ne\n");
+
+            // The back-fill re-arms the cleanup: the job scans the partition again and removes both 'f'
+            // and the restored 'a'.
+            Assert.assertTrue("a back-filled partition must be compacted again", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(3);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\ne\n");
+        });
+    }
+
+    @Test
+    public void testClockPolicyCompactsWhenMinExpiredFractionIsZero() throws Exception {
+        // A fraction of 0 makes the job compact a partition as soon as one row expires.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0");
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-15T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-15T06:00:00.000000Z'),
+                    ('c', 3.0, '2024-01-15T12:00:00.000000Z'),
+                    ('d', 4.0, '2024-01-15T18:00:00.000000Z'),
+                    ('e', 5.0, '2024-06-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts < now()");
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(5);
+
+            setCurrentMicros(JAN_15_01); // only the 00:00 row is expired: 1 of 4
+            Assert.assertTrue("fraction 0 must compact on the first expired row", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(4);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\nd\ne\n");
+        });
+    }
+
+    @Test
+    public void testClockFreePolicyCompactsAtMaxMinExpiredFraction() throws Exception {
+        // The minimum fraction applies to clock policies only. A clock-free predicate does not expire more
+        // rows of a partition as time passes, so only a back-fill into that partition can raise its expired
+        // fraction. The job compacts the partition one time, and each later sweep classifies it as SKIP
+        // until a back-fill arrives. A minimum fraction here would keep the expired rows on disk for an
+        // unlimited time. A fraction of 1 stops every clock-policy compaction, but the job must still
+        // compact this partition.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "1");
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-15T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-15T06:00:00.000000Z'),
+                    ('c', 3.0, '2024-01-15T12:00:00.000000Z'),
+                    ('d', 4.0, '2024-01-15T18:00:00.000000Z'),
+                    ('e', 5.0, '2024-06-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(5);
+
+            Assert.assertTrue("a clock-free policy has no minimum fraction", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(4);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\nd\ne\n");
+
+            // No row is expired now, so the next sweep finds no work and rewrites no row.
+            Assert.assertFalse("the job must not rewrite a compacted partition again", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(4);
         });
     }
 
@@ -1272,12 +1467,12 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     public void testOperationalKillSwitchControlsPoolOwnership() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 1)) {
-                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_CLEANUP_ENABLED, "false");
+                setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, "false");
                 Assert.assertFalse(RowExpiryCleanupJob.assignToPool(pool, engine));
                 Assert.assertEquals(0, pool.getAssignedJobCount());
                 Assert.assertEquals(0, pool.getFreeOnExitJobCount());
 
-                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_CLEANUP_ENABLED, "true");
+                setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, "true");
                 Assert.assertTrue(RowExpiryCleanupJob.assignToPool(pool, engine));
                 Assert.assertEquals(1, pool.getAssignedJobCount());
                 Assert.assertEquals(1, pool.getFreeOnExitJobCount());
@@ -1720,6 +1915,11 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns("p\tr\n3\t3\n");
+    }
+
+    private void assertPhysicalRows(int expected) throws Exception {
+        assertQuery("SELECT sum(numRows) r FROM table_partitions('mv')")
+                .noRandomAccess().expectSize().noLeakCheck().returns("r\n" + expected + "\n");
     }
 
     private String expiryPredicate(String name) {

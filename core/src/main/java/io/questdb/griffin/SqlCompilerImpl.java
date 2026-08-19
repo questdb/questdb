@@ -138,6 +138,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -550,22 +551,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T} /
-     * {@code <ts> <= T} or the symmetric {@code T > <ts>} / {@code T >= <ts>} on the (micros) designated
-     * timestamp, where {@code T} references no column, returns {@code T} as epoch micros — so the cleanup
-     * can classify a whole partition from its {@code [floor, nextFloor)} bounds (entirely below T -> all
-     * expired -> DROP; entirely above -> SKIP) without a per-row survivor scan. Returns
+     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T},
+     * {@code <ts> <= T}, or one of the symmetric shapes {@code T > <ts>} and {@code T >= <ts>} on the
+     * designated timestamp, and {@code T} references no column, this method returns {@code T} in the unit of
+     * that column. The cleanup then classifies a whole partition from its {@code [floor, nextFloor)} bounds,
+     * with no survivor scan: a partition fully below T has only expired rows (DROP), and a partition fully
+     * above T has none (SKIP). Returns
      * {@link Numbers#LONG_NULL} for any other shape (custom or compound predicate, a {@code T < ts} /
      * {@code ts > T} "keep-old" shape, non-constant T) or on any parse/bind/eval issue, which makes the
      * caller fall back to the scan — so this is purely an optimisation and never affects correctness.
      * <p>
-     * Only a micros ({@link ColumnType#TIMESTAMP}) designated timestamp is fast-pathed: the returned value
-     * is compared directly against partition floors, and a nanosecond timestamp's floors would be in nanos
-     * while a {@code now()}-based threshold is micros — mixing the two would misclassify partitions. A
-     * nanosecond timestamp therefore falls back to the (always-correct) survivor scan.
+     * Both designated timestamp types use the fast path. A partition floor uses the unit of the column, but
+     * a {@code now()}-based T is in micros, so {@link #toTimestampUnit} converts T into the unit of the
+     * column. That conversion rounds T DOWN. A smaller T can only make the set of fully expired partitions
+     * smaller, so the job never drops a partition that holds a live row. A conversion that overflows gives
+     * LONG_NULL, and the caller then scans.
      */
     @Override
-    public long expiryTimestampThresholdMicros(
+    public long expiryTimestampThreshold(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate,
@@ -575,8 +578,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return Numbers.LONG_NULL;
         }
         final int tsIndex = metadata.getColumnIndexQuiet(timestampColumn);
-        if (tsIndex < 0 || metadata.getColumnType(tsIndex) != ColumnType.TIMESTAMP) {
-            return Numbers.LONG_NULL; // only the micros designated timestamp, so the partition bounds match T's units
+        if (tsIndex < 0) {
+            return Numbers.LONG_NULL;
+        }
+        final int tsType = metadata.getColumnType(tsIndex);
+        if (!ColumnType.isTimestamp(tsType)) {
+            return Numbers.LONG_NULL;
         }
         Function f = null;
         try {
@@ -613,11 +620,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return Numbers.LONG_NULL;
             }
             f = functionParser.parseFunction(thresholdNode, metadata, executionContext);
-            if (f == null || f.getType() != ColumnType.TIMESTAMP || !(f.isConstant() || f.isRuntimeConstant())) {
+            if (f == null || !ColumnType.isTimestamp(f.getType()) || !(f.isConstant() || f.isRuntimeConstant())) {
                 return Numbers.LONG_NULL;
             }
             f.init(null, executionContext);
-            return f.getTimestamp(null);
+            final long threshold = f.getTimestamp(null);
+            if (threshold == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL; // a NULL T expires no row, and the survivor scan gives the same result
+            }
+            // Math.multiplyExact throws on overflow, and the catch below turns that into "no fast path".
+            return toTimestampUnit(threshold, f.getType(), tsType);
         } catch (Exception e) {
             return Numbers.LONG_NULL; // any issue -> no fast path; the caller scans (still correct)
         } finally {
@@ -6994,6 +7006,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return metadata.getColumnIndexQuiet(unquote(token.subSequence(dot + 1, token.length())));
         }
         return -1;
+    }
+
+    // Converts an expiry threshold from the unit of the expression that produced it into the unit of the
+    // designated timestamp column, so the caller can compare it against a partition floor. Rounds DOWN, so
+    // the result is never above the exact threshold. A smaller threshold can only make the set of fully
+    // expired partitions smaller, so the job never drops a partition that holds a live row. The remainder
+    // that the rounding discards is smaller than one unit of the column, so at most one partition takes the
+    // survivor scan, or waits for a later sweep. Math.multiplyExact throws on overflow, and the caller reads
+    // that as "no fast path".
+    private static long toTimestampUnit(long timestamp, int fromType, int toType) {
+        if (fromType == toType) {
+            return timestamp;
+        }
+        return ColumnType.isTimestampNano(toType)
+                ? Math.multiplyExact(timestamp, Micros.MICRO_NANOS)
+                : Math.floorDiv(timestamp, Micros.MICRO_NANOS);
     }
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {

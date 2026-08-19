@@ -131,6 +131,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     // on every global tick. A successful or deferred sweep removes the entry.
     private final CharSequenceLongHashMap failureBackoffMicros = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
+    private final double minExpiredFraction;
     // Per-cleanup snapshot of one object's non-active LOGICAL partitions.
     private final LongList partitionContentGenerations = new LongList();
     private final LongList partitionFloors = new LongList();
@@ -146,7 +147,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private SqlExecutionContextImpl sqlExecutionContext;
 
     public static boolean assignToPool(WorkerPool workerPool, CairoEngine engine) {
-        if (!engine.getConfiguration().isRowExpiryCleanupEnabled()) {
+        if (!engine.getConfiguration().isMatViewRowExpiryCleanupEnabled()) {
             return false;
         }
         final RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine);
@@ -159,6 +160,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         this.engine = engine;
         final CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
+        this.minExpiredFraction = configuration.getMatViewRowExpiryCleanupMinExpiredFraction();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(
                 configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -237,8 +239,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // The designated timestamp column's type; partition floors are in this column's native unit, and the
         // survivor queries' $1/$2 range binds carry the same type so no unit conversion is applied to them.
         final int timestampType;
-        // Fast-path threshold for a "<ts> < T"/"<ts> <= T" predicate: lets each partition be classified by
-        // its [floor, nextFloor) bounds with no survivor scan (LONG_NULL = not applicable -> scan instead).
+        // Fast-path threshold for a "<ts> < T"/"<ts> <= T" predicate, in the unit of the designated timestamp
+        // column. The job classifies each partition from its [floor, nextFloor) bounds and does no survivor
+        // scan. LONG_NULL means there is no such threshold, and the job scans.
         long timestampThreshold = Numbers.LONG_NULL;
         // Whether this policy is monotonic, i.e. physically safe to reclaim (a row expired now stays expired).
         // A non-monotonic policy (e.g. "ts > now()") would have cleanup delete a row a later read must show;
@@ -337,7 +340,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             compiler.validateExpiryPredicateOnMetadata(sqlExecutionContext, metadata, predicate, 0);
                     isCleanupMonotonic = classification.isMonotonic();
                     isPredicateDeterministic = classification.isDeterministic();
-                    timestampThreshold = compiler.expiryTimestampThresholdMicros(
+                    timestampThreshold = compiler.expiryTimestampThreshold(
                             sqlExecutionContext, metadata, predicate, timestampColumnName);
                 } catch (SqlException e) {
                     // A predicate that fails to classify is treated as non-monotonic: skip reclamation and let
@@ -362,6 +365,23 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // yields a different expiry verdict as now() advances; caching a SKIP there would suppress the later
         // re-scan that must reclaim the partition once it ages past the threshold.
         final boolean isScalarGenerationCacheEnabled = timestampThreshold == Numbers.LONG_NULL && isPredicateDeterministic;
+        // A REPLACE rewrites every surviving row of a partition, so the job does one only when a large
+        // enough fraction of that partition is expired. A clock threshold moves through a partition across
+        // many sweeps. With daily partitions and the default cleanup interval of 1 hour, the partition that
+        // holds the threshold is partly expired at EVERY sweep. Without the minimum fraction, the job copies
+        // the survivors of that partition about 11 times before it drops the partition. With the minimum
+        // fraction at the default 0.5, each copy is about one half of the previous copy, and the total is
+        // about one copy for each row. The expired rows that stay on disk are not more than one partition,
+        // and the read filter hides them.
+        // A deterministic (clock-free) predicate has no minimum fraction. Its result for a row cannot change
+        // as time passes, so only a refresh that back-fills rows into a partition can raise the expired
+        // fraction of that partition. One REPLACE clears the partition, and each later sweep classifies it
+        // as SKIP until the next back-fill (the generation cache stores that result when there is no bounds
+        // threshold). The job copies such a partition one time for each back-fill, and not one time for each
+        // sweep. A minimum fraction here would keep expired rows on disk for an unlimited time, because
+        // nothing can raise the expired fraction of a partition that no writer touches. As a result, the two
+        // flags are mutually exclusive.
+        final boolean isCompactionGated = !isPredicateDeterministic && minExpiredFraction > 0;
         if (scalarPartitionGenerations.size() > 16_384) {
             scalarPartitionGenerations.clear();
         }
@@ -471,7 +491,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             bindPartitionRange(timestampType, floorTs, nextFloorTs); // declare $1/$2 types before compiling
                             countFactory = cleanupCompiler.compile(countSql, sqlExecutionContext).getRecordCursorFactory();
                         }
-                        action = classifyPartition(countFactory, timestampType, floorTs, nextFloorTs, rowCount);
+                        action = classifyPartition(countFactory, timestampType, floorTs, nextFloorTs, rowCount, isCompactionGated);
                         if (action == ACTION_DROP) {
                             // Fully expired -> no-scan empty REPLACE_RANGE wipe, gated on the sequencer txn so a
                             // row a concurrent writer back-filled since the survivor scan is never deleted.
@@ -744,7 +764,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return ACTION_UNKNOWN;
     }
 
-    private int classifyPartition(RecordCursorFactory countFactory, int timestampType, long floorTs, long nextFloorTs, long rowCount) throws SqlException {
+    private int classifyPartition(
+            RecordCursorFactory countFactory,
+            int timestampType,
+            long floorTs,
+            long nextFloorTs,
+            long rowCount,
+            boolean isCompactionGated
+    ) throws SqlException {
         scalarPartitionScanCount++;
         // Classify with a read-only count() scan, then copy only REPLACE partitions. This is deliberately
         // NOT folded into the copy: for an arbitrary predicate the class of a partition is unknown until it
@@ -760,7 +787,16 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         if (survivors == 0) {
             return ACTION_DROP;
         }
-        return survivors < rowCount ? ACTION_REPLACE : ACTION_SKIP;
+        if (survivors >= rowCount) {
+            return ACTION_SKIP;
+        }
+        // The partition is partly expired. When isCompactionGated is true, the job compacts the partition
+        // only when the expired rows are a large enough fraction of it. Below that fraction the expired rows
+        // stay on disk, the read filter hides them, and a later sweep removes them in one pass, when more of
+        // the partition is expired.
+        return !isCompactionGated || rowCount - survivors >= minExpiredFraction * rowCount
+                ? ACTION_REPLACE
+                : ACTION_SKIP;
     }
 
     // Binds $1 = partition floor (inclusive), $2 = next floor (exclusive). The interval optimiser prunes to

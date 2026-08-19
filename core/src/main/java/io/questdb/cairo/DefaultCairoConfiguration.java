@@ -670,6 +670,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return 0.5;
+    }
+
+    @Override
     public long getMatViewRowsPerQueryEstimate() {
         return 10_000_000L;
     }
@@ -1706,6 +1711,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return false;
     }
@@ -1758,11 +1768,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return false;
-    }
-
-    @Override
-    public boolean isRowExpiryCleanupEnabled() {
-        return true;
     }
 
     @Override

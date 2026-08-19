@@ -59,12 +59,12 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
     /**
-     * Returns the epoch-micros upper bound T when {@code predicate} is {@code <ts> < T} / {@code <ts> <= T}
-     * on the (micros) designated timestamp with a column-free T, else {@link io.questdb.std.Numbers#LONG_NULL}.
-     * Lets the row-expiry cleanup classify whole partitions by their bounds without a survivor scan; any
-     * non-matching shape or evaluation issue returns LONG_NULL so the caller falls back to the scan.
+     * Returns the upper bound T, in the unit of the designated timestamp column, when {@code predicate} is
+     * {@code <ts> < T} or {@code <ts> <= T} on that column and T references no column. T lets the row-expiry
+     * cleanup classify a whole partition from its bounds, with no survivor scan. A shape that does not match,
+     * or an evaluation problem, gives {@link io.questdb.std.Numbers#LONG_NULL}, and the caller then scans.
      */
-    long expiryTimestampThresholdMicros(
+    long expiryTimestampThreshold(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate,
