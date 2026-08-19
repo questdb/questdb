@@ -3221,6 +3221,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // All the rows are duplicates, the commit does not add any new lines.
                             // Check non-key columns if they are exactly the same as the rows they replace
                             if (tableWriter.checkDedupCommitIdenticalToPartition(
+                                    cellKey,
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,

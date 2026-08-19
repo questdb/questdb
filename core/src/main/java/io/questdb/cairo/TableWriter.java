@@ -19980,6 +19980,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the commit is identical to the partition, false otherwise
      */
     boolean checkDedupCommitIdenticalToPartition(
+            int cellKey,
             long partitionTimestamp,
             long partitionNameTxn,
             long partitionRowCount,
@@ -19992,7 +19993,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         TableRecordMetadata metadata = getMetadata();
         FrameFactory frameFactory = engine.getFrameFactory();
-        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+        // Cell-aware via the overload that still builds the path INTERNALLY. Doing the construction at
+        // this call site instead returned uninitialised memory -- the path has to be built exactly the
+        // way FrameImpl builds it, so the cell segment goes in there, not here.
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount, cellSegmentOrNull(cellKey))) {
             try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     // Do not compare dedup keys, already a match

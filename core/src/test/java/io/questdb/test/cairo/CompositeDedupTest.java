@@ -47,16 +47,14 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
-            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
-            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
-            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
-            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
-            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
-            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
-            + " which the frame uses to resolve per-column name txns, and dropping it returned"
-            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
-            + " that takes a cellSegment, not a call-site substitution.")
+    @Ignore("THE ONE REMAINING DEDUP FAILURE, 2026-08-19. Keys = TIMESTAMP ONLY, which takes a"
+            + " different route (no additional key columns): TableWriter#checkDedupCommitIdenticalToPartition."
+            + " Its PARTITION frame is now cell-aware (FrameFactory#openRO's new cellSegment overload) and"
+            + " that is NOT the problem -- the failure reproduces identically with it. Suspect is the"
+            + " COMMIT frame: openROFromMemoryColumns(o3Columns, metadata, commitRowCount) is built over"
+            + " the whole commit's O3 buffers while commitLo/commitHi are per-cell, so the comparison"
+            + " reads outside this cell. Symptom is uninitialised memory, not a crash: empty symbol and"
+            + " px=6.15e-31. The other three dedup cases (keys ts+exch) PASS.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
@@ -76,16 +74,8 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * distinct rows and must both survive -- a dedup that collapsed them would be losing data that the
      * plain twin keeps, because on the plain table the dimension column is just another column.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
-            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
-            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
-            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
-            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
-            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
-            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
-            + " which the frame uses to resolve per-column name txns, and dropping it returned"
-            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
-            + " that takes a cellSegment, not a call-site substitution.")
+    @Ignore("DEDUP gated overall (see the timestamp-only case), but THIS case PASSES as of 2026-08-19 --"
+            + " verified with both gates lifted. Un-ignore together with the rest when the gate comes off.")
     @Test(timeout = 60_000)
     public void testSameTimestampInDifferentCellsBothSurvive() throws Exception {
         assertMemoryLeak(() -> {
@@ -104,16 +94,8 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * timestamp. This is the shape {@code getDedupRowsWithAdditionalKeys} has to get right: the key set
      * spans a column that also decides which cell a row lives in.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
-            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
-            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
-            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
-            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
-            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
-            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
-            + " which the frame uses to resolve per-column name txns, and dropping it returned"
-            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
-            + " that takes a cellSegment, not a call-site substitution.")
+    @Ignore("DEDUP gated overall (see the timestamp-only case), but THIS case PASSES as of 2026-08-19 --"
+            + " verified with both gates lifted. Un-ignore together with the rest when the gate comes off.")
     @Test(timeout = 60_000)
     public void testUpsertWithinACellWhileSiblingHoldsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -134,16 +116,8 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * Dedup across an O3 write, which is where dedup and the composite cell router interact: the
      * incoming batch is out of order AND spans two cells.
      */
-    @Ignore("DEDUP still gated. PROGRESS 2026-08-18, in order: (1) the dedup KEY-column PATH was"
-            + " day-scoped -- fixed, removed the mergeDedupTimestampWithLongIndexIntKeys SIGBUS;"
-            + " (2) columnTop and columnNameTxn were day-scoped -- fixed, removed the"
-            + " is_fixed_column_merge_identical<int> SIGBUS. REMAINING: the identical-commit fast path"
-            + " TableWriter#checkDedupCommitIdenticalToPartition opens the DAY container via the 7-arg"
-            + " FrameFactory#openRO, which builds the partition path itself. Swapping it for the 5-arg"
-            + " openRO plus a cell-aware path does NOT work: the 7-arg form also passes partitionNameTxn,"
-            + " which the frame uses to resolve per-column name txns, and dropping it returned"
-            + " uninitialised memory (empty symbol, px=6.77e-31). The fix needs a 7-arg openRO overload"
-            + " that takes a cellSegment, not a call-site substitution.")
+    @Ignore("DEDUP gated overall (see the timestamp-only case), but THIS case PASSES as of 2026-08-19 --"
+            + " verified with both gates lifted. Un-ignore together with the rest when the gate comes off.")
     @Test(timeout = 60_000)
     public void testDedupAcrossAnO3Write() throws Exception {
         assertMemoryLeak(() -> {
