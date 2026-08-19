@@ -29,6 +29,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
+import io.questdb.cairo.security.AbstractPrincipalAwareSecurityContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -104,6 +105,41 @@ public class LiveViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
                 Misc.free(cq.getRecordCursorFactory());
             } finally {
                 ctx.setLiveViewCompile(false);
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshContextForPrincipalKeepsViewScopedInsert() throws Exception {
+        // forPrincipal must NOT downgrade the refresh context to a plain read-only context: its
+        // newPrincipalContext override returns this, so the view-scoped authorizeInsert (which lets writes
+        // through to the refreshing view's own table) survives the per-principal derivation. A plain
+        // ReadOnlySecurityContext would deny the view insert too. Mirrors the mat view guard in MatViewTest.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("live view must be registered at CREATE", instance);
+            final TableToken viewToken = instance.getLiveViewToken();
+            final TableToken baseToken = engine.verifyTableName("base");
+
+            final LiveViewRefreshSqlExecutionContext ctx = new LiveViewRefreshSqlExecutionContext(engine, 0);
+            final SecurityContext securityContext = ctx.getSecurityContext();
+
+            ctx.ofRefreshingInstance(instance);
+            try {
+                // forPrincipal returns the very same instance rather than deriving a plain read-only context
+                final SecurityContext derived = ((AbstractPrincipalAwareSecurityContext) securityContext).forPrincipal("alice");
+                Assert.assertSame(securityContext, derived);
+
+                // the view-scoped allowance survives the derivation: the refreshing view's own table stays
+                // writable, while every other table stays denied (a plain read-only downgrade would deny the
+                // view insert too, so the permitted case is what proves the override was not dropped)
+                derived.authorizeInsert(viewToken);
+                assertInsertDenied(derived, baseToken);
+            } finally {
+                ctx.ofRefreshingInstance(null);
             }
         });
     }
