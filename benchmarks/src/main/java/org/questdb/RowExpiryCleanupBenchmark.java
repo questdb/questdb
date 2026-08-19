@@ -58,23 +58,30 @@ import java.nio.file.attribute.BasicFileAttributes;
  * <p>
  * Part 1 - one sweep over identical seeded data (30720 rows, 10 daily partitions, 64 symbols), threshold at
  * the mid-point of the time range. {@code rowsRewritten} (survivors copied by REPLACE) is the cost driver.
- * Sample run (laptop, ms):
+ * The two structural KEEP modes are in the run as a control: they free nothing, because
+ * {@code RowExpiryCleanupJob.cleanupTable0} returns at {@code RowExpiryUtil.isStructuralPolicy} before it
+ * opens a reader. Sample run (laptop, ms):
  * <pre>
  *   mode                  wiped  replaced  rowsRewritten     ms   notes
- *   ts < T  (designated)      5         0              0   10.6   day-aligned threshold -> whole partitions wiped, no rewrite
- *   ts2 < T (2nd ts)          0         9          13712   21.1   no bounds alignment -> every partition partial -> rewrite ~half the table
- *   KEEP LATEST               9         0              0    4.0   recurring keys -> old partitions fully superseded -> wiped
- *   KEEP HIGHEST v            0         9             61   44.3   one max row per key survives per partition -> all partial, but rewrite ~#keys only
+ *   ts < T  (designated)      5         0              0    7.2   day-aligned threshold -> whole partitions wiped, no rewrite
+ *   ts2 < T (2nd ts)          0         9          13918   29.5   no bounds alignment -> every partition partial -> rewrite ~half the table
+ *   KEEP LATEST               0         0              0    0.2   structural policy -> no physical cleanup at all
+ *   KEEP HIGHEST v            0         0              0    0.2   structural policy -> no physical cleanup at all
  * </pre>
  * Part 2 - re-churn over 8 sweeps as the threshold advances one day per epoch; cumulative:
  * <pre>
  *   mode               wiped  replaced  rowsRewritten   totalMs
- *   ts  (designated)       8         0              0      15.8   each partition wiped exactly once -> stays flat
- *   ts2 (2nd ts)          0        72         121111      86.0   each partition re-REPLACED every sweep -> rewrite grows linearly
+ *   ts  (designated)       8         0              0      28.6   each partition wiped exactly once -> stays flat
+ *   ts2 (2nd ts)           0        72         122069     197.4   each partition re-REPLACED every sweep -> rewrite grows linearly
  * </pre>
- * Takeaway: align expiry with the designated timestamp (or use KEEP LATEST on recurring keys) so cleanup
- * WIPES whole partitions in O(1) with zero rewrite; expiring on a second, uncorrelated timestamp forces a
- * REPLACE of every partition on every sweep, rewriting survivors repeatedly (~120k row-rewrites vs 0 here).
+ * Takeaway: only a scalar WHEN predicate frees disk, and it frees it most cheaply when it is aligned with
+ * the designated timestamp: whole partitions are wiped with no rewrite. Expiring on a second, uncorrelated
+ * timestamp forces a REPLACE of every partition on every sweep, rewriting survivors repeatedly (~122k
+ * row-rewrites vs 0 here). A structural KEEP policy reclaims nothing on any cadence - its expired rows stay
+ * on disk, hidden by the read filter, until a full refresh rebuilds the view.
+ * <p>
+ * A standalone harness with a {@code main()}, not a JMH benchmark; run it with
+ * {@code java -cp benchmarks/target/benchmarks.jar org.questdb.RowExpiryCleanupBenchmark}.
  */
 public class RowExpiryCleanupBenchmark {
 
@@ -115,6 +122,7 @@ public class RowExpiryCleanupBenchmark {
                 System.out.printf("%-26s %8s %9s %14s %10s %10s%n", "mode", "wiped", "replaced", "rowsRewritten", "rowsGone", "ms");
                 onceSweep(engine, compiler, ctx, "v_ts", "expire rows when ts < cast(" + midThreshold + " as timestamp)");
                 onceSweep(engine, compiler, ctx, "v_ts2", "expire rows when ts2 < cast(" + midThreshold + " as timestamp)");
+                // Structural policies: the sweep returns before it opens a reader, so every counter stays 0.
                 onceSweep(engine, compiler, ctx, "v_latest", "expire rows keep latest partition by sym");
                 onceSweep(engine, compiler, ctx, "v_max", "expire rows keep highest v partition by sym");
 
@@ -199,7 +207,9 @@ public class RowExpiryCleanupBenchmark {
         final long[] r = sweepAndMeasure(engine, compiler, ctx, view, token);
         final long visibleAfter = rowCount(compiler, ctx, "select count() from " + view);
         final String check = visibleBefore == visibleAfter ? "ok" : "MISMATCH " + visibleBefore + "->" + visibleAfter;
-        System.out.printf("%-26s %8d %9d %14d %10d %10.3f   visible=%d %s%n", view, r[0], r[1], r[2], r[4], r[3] / 1_000_000.0, visibleAfter, check);
+        final String reclaimed = r[5] == 0 ? " freed-nothing" : "";
+        System.out.printf("%-26s %8d %9d %14d %10d %10.3f   visible=%d %s%s%n",
+                view, r[0], r[1], r[2], r[4], r[3] / 1_000_000.0, visibleAfter, check, reclaimed);
     }
 
     private static int indexOf(LongList list, long value) {
@@ -235,7 +245,7 @@ public class RowExpiryCleanupBenchmark {
         }
     }
 
-    // Returns [wipedPartitions, replacedPartitions, rowsRewritten, sweepNanos, rowsRemoved].
+    // Returns [wipedPartitions, replacedPartitions, rowsRewritten, sweepNanos, rowsRemoved, reclaimed(0|1)].
     private static long[] sweepAndMeasure(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext ctx, String view, TableToken token) throws Exception {
         final String predicate;
         try (TableMetadata m = engine.getTableMetadata(token)) {
@@ -247,8 +257,9 @@ public class RowExpiryCleanupBenchmark {
         final LongList afterRows = new LongList();
         snapshot(compiler, ctx, view, beforeTs, beforeRows);
         final long t0 = System.nanoTime();
+        final boolean reclaimed;
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-            job.cleanupTable(token, predicate);
+            reclaimed = job.cleanupTable(token, predicate);
         }
         drainWal(engine);
         final long nanos = System.nanoTime() - t0;
@@ -271,7 +282,7 @@ public class RowExpiryCleanupBenchmark {
                 }
             }
         }
-        return new long[]{wiped, replaced, rewritten, nanos, removed};
+        return new long[]{wiped, replaced, rewritten, nanos, removed, reclaimed ? 1 : 0};
     }
 
     private static final class BenchConfig extends DefaultCairoConfiguration {

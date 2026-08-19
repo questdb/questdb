@@ -50,34 +50,44 @@ import java.util.Arrays;
 
 /**
  * Measures the read-time cost of the EXPIRE ROWS read filter on passthrough materialized views, and the
- * cost of one physical-cleanup sweep, relative to an unpolicied passthrough view.
+ * cost of one physical-cleanup sweep, relative to an unpolicied passthrough view. A standalone harness with
+ * a {@code main()}, not a JMH benchmark; run it with
+ * {@code java -cp benchmarks/target/benchmarks.jar org.questdb.RowExpiryReadBenchmark}.
  * <p>
  * Setup: a base table of {@code NUM_SYMBOLS} symbols x {@code DAYS} x {@code TICKS_PER_DAY} ticks (so each
- * symbol appears in every daily partition), mirrored into three passthrough views:
+ * symbol appears in every daily partition), mirrored into four passthrough views:
  * <ul>
  *   <li>{@code mv_none}   - no policy (baseline; reads scan all rows);</li>
+ *   <li>{@code mv_ts}     - WHEN ts &lt; T on the designated timestamp (the only mode that frees disk);</li>
  *   <li>{@code mv_latest} - KEEP LATEST PARTITION BY sym (rewrites to LATEST ON; sym is an indexed symbol,
  *       so the keep-set is the latest row per symbol);</li>
  *   <li>{@code mv_max}    - KEEP HIGHEST v PARTITION BY sym (a window keep-filter; full scan + per-key max).</li>
  * </ul>
  * It times two representative reads ({@code count(*)} over the whole keep-set, and a single-symbol lookup)
- * against each view, then one {@link RowExpiryCleanupJob} sweep over {@code mv_latest} (whose older
- * partitions are fully superseded and reclaimed in one pass).
+ * against each view, then runs one {@link RowExpiryCleanupJob} sweep over {@code mv_ts} and one over
+ * {@code mv_latest} and reports the partition count each sweep leaves behind.
  * <p>
  * Sample run (256 symbols x 8 days x 288 ticks/day = ~590k rows; laptop, numbers in ms, avg):
  * <pre>
  *   view       query              avg_ms
- *   mv_none    count()             0.07     baseline (full scan, no policy)
- *   mv_none    lookup sym='S5'     0.63
- *   mv_latest  count()             0.30     LATEST ON over an indexed symbol ~ O(#keys)
- *   mv_latest  lookup sym='S5'     0.26     index fast path
- *   mv_max     count()            22.7      window keep-filter: full scan + per-key max
- *   mv_max     lookup sym='S5'    21.0      window must scan all rows even for one symbol
- *   cleanup mv_latest: 8.3 ms, partitions 8 -> 1   (one-pass survivor scan + 7 wipes)
+ *   mv_none    count()             0.05     no policy, so the count comes straight from the transaction file
+ *   mv_none    lookup sym='S5'     0.23     symbol index over all 8 partitions
+ *   mv_ts      count()             1.64     the keep-filter is a plain comparison, but count() now scans the kept rows
+ *   mv_ts      lookup sym='S5'     0.11     the flipped comparison prunes the partitions below the threshold
+ *   mv_latest  count()             0.13     LATEST ON over an indexed symbol ~ O(#keys)
+ *   mv_latest  lookup sym='S5'     0.10     index fast path
+ *   mv_max     count()            43.8      window keep-filter: full scan + per-key max
+ *   mv_max     lookup sym='S5'     0.43     the filter on the window's PARTITION BY key is pushed below it
+ *   cleanup mv_ts:      5.4 ms, partitions 8 -> 4
+ *   cleanup mv_latest:  0.2 ms, partitions 8 -> 8   (structural policy: the sweep frees nothing)
  * </pre>
- * Takeaways: KEEP LATEST on an indexed key is near-baseline; window modes (keep-max/min, top-N, window WHEN)
- * pay a full-view scan per read, so index the key, prefer KEEP LATEST where it fits, and keep CLEANUP EVERY
- * aggressive to keep the physical residue (and thus the read cost) small.
+ * Takeaways: a WHEN predicate on the designated timestamp is the only mode here that frees disk, and the one
+ * whose keep-filter still prunes partitions - but any policy costs a {@code count()} its transaction-file
+ * fast path. KEEP LATEST on an indexed key reads near baseline and reclaims nothing: its sweep returns at
+ * {@code RowExpiryUtil.isStructuralPolicy} before it opens a reader, so a shorter CLEANUP EVERY changes
+ * nothing for it and the expired rows stay on disk (hidden by the read filter) until a full refresh. A
+ * {@code count()} over a window mode pays a full-view scan on every read; a filter on the policy's
+ * PARTITION BY key is pushed below the window and stays cheap.
  */
 public class RowExpiryReadBenchmark {
 
@@ -111,7 +121,9 @@ public class RowExpiryReadBenchmark {
                 engine.execute(seed, ctx);
                 drainWal(engine);
 
+                final long midThresholdMicros = SEED_EPOCH_MICROS + (DAYS / 2L) * 86_400_000_000L;
                 engine.execute("create materialized view mv_none as (select * from base)", ctx);
+                engine.execute("create materialized view mv_ts as (select * from base) expire rows when ts < cast(" + midThresholdMicros + " as timestamp)", ctx);
                 engine.execute("create materialized view mv_latest as (select * from base) expire rows keep latest partition by sym", ctx);
                 engine.execute("create materialized view mv_max as (select * from base) expire rows keep highest v partition by sym", ctx);
                 drainWal(engine);
@@ -119,27 +131,16 @@ public class RowExpiryReadBenchmark {
                 drainWal(engine);
 
                 System.out.printf("%-10s %-26s %12s %12s %12s %12s%n", "view", "query", "avg_ms", "median_ms", "p99_ms", "min_ms");
-                for (String view : new String[]{"mv_none", "mv_latest", "mv_max"}) {
+                for (String view : new String[]{"mv_none", "mv_ts", "mv_latest", "mv_max"}) {
                     timeQuery(compiler, ctx, view, "count()", "select count() from " + view);
                     timeQuery(compiler, ctx, view, "lookup sym='S5'", "select sym, v, ts from " + view + " where sym = 'S5'");
                 }
 
-                // One cleanup sweep over mv_latest: DAYS-1 fully-superseded partitions reclaimed in one pass.
+                // One cleanup sweep per mode: mv_ts reclaims the partitions below its threshold, while the
+                // structural mv_latest sweep returns at RowExpiryUtil.isStructuralPolicy and frees nothing.
                 System.out.println();
-                final TableToken token = engine.verifyTableName("mv_latest");
-                final String predicate;
-                try (TableMetadata m = engine.getTableMetadata(token)) {
-                    predicate = m.getExpiryPredicate();
-                }
-                final long before = rowCount(compiler, ctx, "select count() from table_partitions('mv_latest')");
-                final long t0 = System.nanoTime();
-                try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                    job.cleanupTable(token, predicate);
-                }
-                drainWal(engine);
-                final double sweepMs = (System.nanoTime() - t0) / 1_000_000.0;
-                final long after = rowCount(compiler, ctx, "select count() from table_partitions('mv_latest')");
-                System.out.printf("cleanup mv_latest: %.3f ms, partitions %d -> %d%n", sweepMs, before, after);
+                sweep(engine, compiler, ctx, "mv_ts");
+                sweep(engine, compiler, ctx, "mv_latest");
             }
         } finally {
             deleteRecursively(dbRoot);
@@ -198,6 +199,25 @@ public class RowExpiryReadBenchmark {
              RecordCursor cursor = factory.getCursor(ctx)) {
             return cursor.hasNext() ? cursor.getRecord().getLong(0) : -1;
         }
+    }
+
+    private static void sweep(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext ctx, String view) throws Exception {
+        final TableToken token = engine.verifyTableName(view);
+        final String predicate;
+        try (TableMetadata m = engine.getTableMetadata(token)) {
+            predicate = m.getExpiryPredicate();
+        }
+        final long before = rowCount(compiler, ctx, "select count() from table_partitions('" + view + "')");
+        final long t0 = System.nanoTime();
+        final boolean reclaimed;
+        try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+            reclaimed = job.cleanupTable(token, predicate);
+        }
+        drainWal(engine);
+        final double sweepMs = (System.nanoTime() - t0) / 1_000_000.0;
+        final long after = rowCount(compiler, ctx, "select count() from table_partitions('" + view + "')");
+        System.out.printf("cleanup %-10s %8.3f ms, partitions %d -> %d%s%n",
+                view + ':', sweepMs, before, after, reclaimed ? "" : "   (freed nothing)");
     }
 
     private static void timeQuery(SqlCompiler compiler, SqlExecutionContext ctx, String view, String label, String sql) throws Exception {
