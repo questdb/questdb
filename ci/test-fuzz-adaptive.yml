@@ -180,7 +180,10 @@ stages:
               # flips every run. A badly delayed start can repeat a phase; that is acceptable because
               # both phases now run many times a day, and it degrades to "some extra ordinary-fuzz",
               # never to "no crash sweeps".
-              phase=$(( ( $(date -u +%H) / 2 ) % 2 ))
+              # 10# forces base 10. date +%H emits a LEADING ZERO, and bash reads 08/09 as octal, where
+              # 8 and 9 are not valid digits: "value too great for base (error token is 08)". With set -u
+              # that left phase unbound and failed the whole run (build 262642, the 08:00 soak).
+              phase=$(( ( 10#$(date -u +%H) / 2 ) % 2 ))
               echo "run phase=$phase ($([ $phase -eq 0 ] && echo ordinary-fuzz || echo adaptive-crash-sweeps) first)"
               iter=1
               rc=0
