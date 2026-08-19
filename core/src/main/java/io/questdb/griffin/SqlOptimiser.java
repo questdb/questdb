@@ -5505,22 +5505,38 @@ public class SqlOptimiser implements Mutable {
         switch (node.paramCount) {
             case 0:
                 // count() and count(*) have no value argument, so count a constant instead
-                node.rhs = lowerAggregateFilterArg(expressionNodePool.next().of(CONSTANT, "1", 0, node.position), condition);
+                node.rhs = lowerAggregateFilterArg(expressionNodePool.next().of(CONSTANT, "1", 0, node.position), condition, false);
                 node.paramCount = 1;
                 break;
             case 1:
-                node.rhs = lowerAggregateFilterArg(node.rhs, condition);
+                node.rhs = lowerAggregateFilterArg(node.rhs, condition, false);
                 break;
             case 2:
-                node.lhs = lowerAggregateFilterArg(node.lhs, condition);
-                if (isRowSelectingArgument(node.token) || (node.rhs.type != CONSTANT && node.rhs.type != BIND_VARIABLE)) {
-                    node.rhs = lowerAggregateFilterArg(node.rhs, ExpressionNode.deepClone(expressionNodePool, condition));
+                // when the second argument is wrapped too, both wrappers evaluate their own copy of
+                // the condition, which only agree row by row if the condition is deterministic
+                final boolean wrapRhs = isRowSelectingArgument(node.token)
+                        || (node.rhs.type != CONSTANT && node.rhs.type != BIND_VARIABLE);
+                node.lhs = lowerAggregateFilterArg(node.lhs, condition, wrapRhs);
+                if (wrapRhs) {
+                    node.rhs = lowerAggregateFilterArg(node.rhs, ExpressionNode.deepClone(expressionNodePool, condition), true);
                 }
                 break;
             default:
                 // args holds the arguments in reverse source order, so the last entry is argument 0,
                 // which is always wrapped; the rest are wrapped only when they carry per-row values
                 final int n = node.args.size();
+                int wrapCount = 0;
+                for (int i = n - 1; i > -1; i--) {
+                    if (i == n - 1 || isRowSelectingArgument(node.token)) {
+                        wrapCount++;
+                        continue;
+                    }
+                    final ExpressionNode probe = node.args.getQuick(i);
+                    if (probe.type != CONSTANT && probe.type != BIND_VARIABLE) {
+                        wrapCount++;
+                    }
+                }
+                final boolean shared = wrapCount > 1;
                 for (int i = n - 1; i > -1; i--) {
                     final ExpressionNode arg = node.args.getQuick(i);
                     if (i < n - 1 && !isRowSelectingArgument(node.token)
@@ -5533,7 +5549,7 @@ public class SqlOptimiser implements Mutable {
                     if (i < n - 1) {
                         argCondition = ExpressionNode.deepClone(expressionNodePool, condition);
                     }
-                    node.args.setQuick(i, lowerAggregateFilterArg(arg, argCondition));
+                    node.args.setQuick(i, lowerAggregateFilterArg(arg, argCondition, shared));
                 }
                 break;
         }
@@ -5544,11 +5560,12 @@ public class SqlOptimiser implements Mutable {
      * be a distinct node per wrapper - callers deep-clone it - because one node cannot occupy two
      * positions in the tree.
      */
-    private ExpressionNode lowerAggregateFilterArg(ExpressionNode arg, ExpressionNode condition) {
+    private ExpressionNode lowerAggregateFilterArg(ExpressionNode arg, ExpressionNode condition, boolean isConditionShared) {
         final ExpressionNode caseNode = expressionNodePool.next().of(FUNCTION, "case", 0, arg.position);
         // FunctionParser rejects the lowering once this CASE's type resolves to one whose NULL is not
-        // distinguishable from its zero value
+        // distinguishable from its zero value, and again when a shared condition is non-deterministic
         caseNode.isFilterLowered = true;
+        caseNode.isFilterConditionShared = isConditionShared;
         caseNode.paramCount = 3;
         // args are consumed in reverse, so this builds CASE WHEN condition THEN arg ELSE null END
         caseNode.args.add(expressionNodePool.next().of(CONSTANT, "null", 0, arg.position));
@@ -5605,6 +5622,28 @@ public class SqlOptimiser implements Mutable {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
         for (int i = 0, n = latestBy.size(); i < n; i++) {
             traversalAlgo.traverse(latestBy.getQuick(i), aggregateFilterVisitor);
+        }
+        // SAMPLE BY's side expressions are scalar too, and the parser attaches a condition to any
+        // function call it finds there. Visiting them turns a clause that FILL or FROM silently
+        // discarded into the same error the select list raises.
+        traverseFilterCandidate(model.getSampleBy());
+        traverseFilterCandidate(model.getSampleByUnit());
+        traverseFilterCandidate(model.getSampleByFrom());
+        traverseFilterCandidate(model.getSampleByTo());
+        traverseFilterCandidate(model.getSampleByOffset());
+        traverseFilterCandidate(model.getSampleByTimezoneName());
+        // both lists are null when the model carries no FILL
+        final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+        if (sampleByFill != null) {
+            for (int i = 0, n = sampleByFill.size(); i < n; i++) {
+                traverseFilterCandidate(sampleByFill.getQuick(i));
+            }
+        }
+        final ObjList<ExpressionNode> fillValues = model.getFillValues();
+        if (fillValues != null) {
+            for (int i = 0, n = fillValues.size(); i < n; i++) {
+                traverseFilterCandidate(fillValues.getQuick(i));
+            }
         }
 
         lowerAggregateFilters(model.getNestedModel());
@@ -12026,6 +12065,19 @@ public class SqlOptimiser implements Mutable {
             if (target.getJoinType() == IQueryModel.JOIN_CROSS) {
                 target.setJoinType(IQueryModel.JOIN_INNER);
             }
+        }
+    }
+
+    /**
+     * Runs the FILTER lowering visitor over one optional clause expression. These clauses hold scalar
+     * expressions that can never carry an aggregate, so nothing here is ever lowered; the visit exists
+     * so a condition attached to a non-aggregate raises an error instead of being discarded.
+     *
+     * @param node clause expression, may be null
+     */
+    private void traverseFilterCandidate(@Nullable ExpressionNode node) throws SqlException {
+        if (node != null) {
+            traversalAlgo.traverse(node, aggregateFilterVisitor);
         }
     }
 

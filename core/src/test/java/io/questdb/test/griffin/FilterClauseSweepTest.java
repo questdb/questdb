@@ -62,6 +62,13 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
     // aggregate name -> invocation over the columns created by DDL
     private static final Map<String, String> LOWERABLE = new LinkedHashMap<>();
     private static final Map<String, String> REJECTED = new LinkedHashMap<>();
+    // Every LOWERABLE aggregate that takes exactly two arguments, rewritten with a constant in the
+    // second position. arg_max and arg_min compare that argument to choose the winning row, so it has
+    // to be filtered like a value even when it is constant; the others treat it as configuration or as
+    // a second per-row value and are unaffected. SqlOptimiser tells the two apart with a hand-written
+    // list, and testTwoArgAggregatesAreClassified is what stops a newly added aggregate of the first
+    // kind from quietly keeping a filtered-out row's key.
+    private static final Map<String, String> TWO_ARG_CONSTANT = new LinkedHashMap<>();
 
     static {
         LOWERABLE.put("approx_count_distinct", "approx_count_distinct(i)");
@@ -126,6 +133,23 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
         // not null-preservation: twap requires the designated timestamp column as its second
         // argument, which the CASE wrapper replaces with an expression
         REJECTED.put("twap", "twap(d, ts)");
+
+        TWO_ARG_CONSTANT.put("approx_percentile", "approx_percentile(d, 0.5)");
+        TWO_ARG_CONSTANT.put("arg_max", "arg_max(d, 1)");
+        TWO_ARG_CONSTANT.put("arg_min", "arg_min(d, 1)");
+        TWO_ARG_CONSTANT.put("corr", "corr(d, 1)");
+        TWO_ARG_CONSTANT.put("covar_pop", "covar_pop(d, 1)");
+        TWO_ARG_CONSTANT.put("covar_samp", "covar_samp(d, 1)");
+        TWO_ARG_CONSTANT.put("regr_intercept", "regr_intercept(d, 1)");
+        TWO_ARG_CONSTANT.put("regr_r2", "regr_r2(d, 1)");
+        TWO_ARG_CONSTANT.put("regr_slope", "regr_slope(d, 1)");
+        TWO_ARG_CONSTANT.put("string_agg", "string_agg(s, ',')");
+        TWO_ARG_CONSTANT.put("string_distinct_agg", "string_distinct_agg(s, ',')");
+        TWO_ARG_CONSTANT.put("vwap", "vwap(d, 1)");
+        TWO_ARG_CONSTANT.put("weighted_avg", "weighted_avg(d, 1)");
+        TWO_ARG_CONSTANT.put("weighted_stddev", "weighted_stddev(d, 1)");
+        TWO_ARG_CONSTANT.put("weighted_stddev_freq", "weighted_stddev_freq(d, 1)");
+        TWO_ARG_CONSTANT.put("weighted_stddev_rel", "weighted_stddev_rel(d, 1)");
     }
 
     @Test
@@ -181,6 +205,78 @@ public class FilterClauseSweepTest extends AbstractCairoTest {
                 );
             }
         });
+    }
+
+    @Test
+    public void testTwoArgAggregatesAreClassified() throws Exception {
+        // Ratchet: a two-argument aggregate added to LOWERABLE must also declare its constant-second
+        // -argument form here, so that testTwoArgAggregatesFilterAConstantSecondArgument proves the
+        // constant does not smuggle a filtered-out row past the lowering.
+        final TreeSet<String> missing = new TreeSet<>();
+        for (Map.Entry<String, String> e : LOWERABLE.entrySet()) {
+            if (countArguments(e.getValue()) == 2 && !TWO_ARG_CONSTANT.containsKey(e.getKey())) {
+                missing.add(e.getKey());
+            }
+        }
+        Assert.assertTrue(
+                "two-argument aggregate(s) missing a constant-argument form: " + missing
+                        + " - add one to TWO_ARG_CONSTANT. If the second argument selects the winning"
+                        + " row rather than configuring the aggregate, it must also be added to"
+                        + " SqlOptimiser.rowSelectingArgAggregates or FILTER will ignore it.",
+                missing.isEmpty()
+        );
+    }
+
+    @Test
+    public void testTwoArgAggregatesFilterAConstantSecondArgument() throws Exception {
+        // The lowering leaves a constant or bind variable in a later argument untouched, because for
+        // most aggregates it configures the call. For arg_max and arg_min it picks the winning row, so
+        // leaving it alone let a row the condition excluded set the key and win.
+        assertMemoryLeak(() -> {
+            createData();
+            for (Map.Entry<String, String> e : TWO_ARG_CONSTANT.entrySet()) {
+                final String call = e.getValue();
+                for (String condition : CONDITIONS) {
+                    assertSqlCursors(
+                            "select " + call + " r from (select * from t where " + condition + ") timestamp(ts)",
+                            "select " + call + " filter (where " + condition + ") r from t"
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Counts the top-level arguments of an aggregate invocation, ignoring commas nested inside
+     * parentheses or string literals.
+     *
+     * @param call invocation text, such as {@code corr(d, d2)}
+     * @return number of top-level arguments, 0 for a call with an empty argument list
+     */
+    private static int countArguments(String call) {
+        final int open = call.indexOf('(');
+        final int close = call.lastIndexOf(')');
+        if (open < 0 || close < open + 1) {
+            return 0;
+        }
+        int depth = 0;
+        int count = 1;
+        boolean inLiteral = false;
+        for (int i = open + 1; i < close; i++) {
+            final char c = call.charAt(i);
+            if (c == '\'') {
+                inLiteral = !inLiteral;
+            } else if (!inLiteral) {
+                if (c == '(') {
+                    depth++;
+                } else if (c == ')') {
+                    depth--;
+                } else if (c == ',' && depth == 0) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     private static boolean isTestOnly(ObjList<FunctionFactoryDescriptor> descriptors) {

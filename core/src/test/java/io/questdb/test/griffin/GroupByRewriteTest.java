@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -701,6 +703,63 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterRejectedForNonDeterministicConditionOnMultiArgAggregate() throws Exception {
+        // A multi-argument aggregate gets one CASE per argument, each holding its own copy of the
+        // condition. A deterministic condition gives every copy the same verdict, but a volatile one
+        // draws again per argument, so a row could pass for the value and fail for the weight - the
+        // effective predicate becomes two independent draws rather than one decision per row.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x id, x::double v, (10 - x)::double w from long_sequence(10) )");
+            for (String call : new String[]{
+                    "weighted_avg(v, w) filter (where rnd_boolean())",
+                    "corr(v, w) filter (where rnd_double() < 0.5)",
+                    "arg_max(v, w) filter (where rnd_boolean())"
+            }) {
+                try {
+                    assertExceptionNoLeakCheck("select " + call + " r from t");
+                    Assert.fail("a volatile condition must be rejected here: " + call);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "each argument would evaluate the condition separately"
+                    );
+                }
+            }
+            // one value argument means one evaluation per row, so a volatile condition is fine there
+            assertQuery("select sum(v) filter (where rnd_boolean() or true) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            55.0
+                            """);
+            // a deterministic condition still works for a multi-argument aggregate
+            assertQuery("select weighted_avg(v, w) filter (where id > 5) r from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            r
+                            7.0
+                            """);
+            // The guard reads the condition alone. Asking the resolved CASE instead folded in the
+            // aggregate's value argument and rejected this, whose condition is perfectly stable - a
+            // volatile value argument is the caller's business, with or without the clause. Compiling
+            // is the assertion; the result is random by construction.
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "select weighted_avg(rnd_double(), w) filter (where id > 5) r from t",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                Assert.assertNotNull(factory);
+            }
+        });
+    }
+
+    @Test
     public void testFilterRejectedForNullPreservingAggregates() throws Exception {
         // these aggregates treat a NULL input as a value rather than skipping the row, so the
         // CASE lowering would change their result instead of dropping non-matching rows
@@ -779,6 +838,41 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .returns("""
                             r
                             5.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterRejectedInSampleByClause() throws Exception {
+        // SAMPLE BY's FROM, TO, FILL, timezone and offset expressions are scalar, and the parser
+        // attaches a condition to any function call it meets. The lowering pass did not visit them, so
+        // the clause was accepted and discarded: the query below ran and ignored the FILTER entirely.
+        assertMemoryLeak(() -> {
+            execute("create table t as ( select x, timestamp_sequence(0, 1_000_000) ts" +
+                    " from long_sequence(10) ) timestamp(ts) partition by day");
+            assertException(
+                    "select ts, sum(x) from t sample by 1s fill(abs(1) filter (where false))",
+                    43,
+                    "FILTER is supported only for aggregate functions"
+            );
+            // an ordinary FILL is unaffected
+            assertQuery("select ts, sum(x) s from t sample by 1s fill(0)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\t3
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            1970-01-01T00:00:05.000000Z\t6
+                            1970-01-01T00:00:06.000000Z\t7
+                            1970-01-01T00:00:07.000000Z\t8
+                            1970-01-01T00:00:08.000000Z\t9
+                            1970-01-01T00:00:09.000000Z\t10
                             """);
         });
     }
