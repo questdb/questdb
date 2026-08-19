@@ -38,7 +38,9 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -55,39 +57,65 @@ import java.util.Arrays;
  * {@code java -cp benchmarks/target/benchmarks.jar org.questdb.RowExpiryReadBenchmark}.
  * <p>
  * Setup: a base table of {@code NUM_SYMBOLS} symbols x {@code DAYS} x {@code TICKS_PER_DAY} ticks (so each
- * symbol appears in every daily partition), mirrored into four passthrough views:
+ * symbol appears in every daily partition), mirrored into five passthrough views:
  * <ul>
- *   <li>{@code mv_none}   - no policy (baseline; reads scan all rows);</li>
+ *   <li>{@code mv_none}   - no policy (baseline);</li>
  *   <li>{@code mv_ts}     - WHEN ts &lt; T on the designated timestamp (the only mode that frees disk);</li>
+ *   <li>{@code mv_val}    - WHEN v &lt; 500.0 on a value column;</li>
  *   <li>{@code mv_latest} - KEEP LATEST PARTITION BY sym (rewrites to LATEST ON; sym is an indexed symbol,
  *       so the keep-set is the latest row per symbol);</li>
  *   <li>{@code mv_max}    - KEEP HIGHEST v PARTITION BY sym (a window keep-filter; full scan + per-key max).</li>
  * </ul>
- * It times two representative reads ({@code count(*)} over the whole keep-set, and a single-symbol lookup)
- * against each view, then runs one {@link RowExpiryCleanupJob} sweep over {@code mv_ts} and one over
- * {@code mv_latest} and reports the partition count each sweep leaves behind.
+ * Four reads run against each view - a whole-view {@code count()}, a single-symbol lookup, a JIT-compilable
+ * value filter, and a one-day range - and each row reports the plan features the policy left standing. Then
+ * one {@link RowExpiryCleanupJob} sweep runs over {@code mv_ts} and one over {@code mv_latest}.
  * <p>
- * Sample run (256 symbols x 8 days x 288 ticks/day = ~590k rows; laptop, numbers in ms, avg):
+ * Sample run (256 symbols x 8 days x 288 ticks/day = ~590k rows; one laptop, avg ms):
  * <pre>
- *   view       query              avg_ms
- *   mv_none    count()             0.05     no policy, so the count comes straight from the transaction file
- *   mv_none    lookup sym='S5'     0.23     symbol index over all 8 partitions
- *   mv_ts      count()             1.64     the keep-filter is a plain comparison, but count() now scans the kept rows
- *   mv_ts      lookup sym='S5'     0.11     the flipped comparison prunes the partitions below the threshold
- *   mv_latest  count()             0.13     LATEST ON over an indexed symbol ~ O(#keys)
- *   mv_latest  lookup sym='S5'     0.10     index fast path
- *   mv_max     count()            43.8      window keep-filter: full scan + per-key max
- *   mv_max     lookup sym='S5'     0.43     the filter on the window's PARTITION BY key is pushed below it
- *   cleanup mv_ts:      5.4 ms, partitions 8 -> 4
+ *   view       query             avg_ms   plan
+ *   mv_none    count()             0.05   Count                                        row count from the txn file
+ *   mv_none    lookup sym='S5'     0.25   -                                            symbol index
+ *   mv_none    filter v&gt;900        1.44   Async JIT Filter + Count
+ *   mv_none    one day             0.06   Interval forward scan + Count
+ *   mv_ts      count()             0.05   Interval forward scan + Count                keep-filter flips to ts &gt;= T
+ *   mv_ts      lookup sym='S5'     0.08   Interval forward scan
+ *   mv_ts      filter v&gt;900        0.73   Async JIT Filter + Interval forward scan     JIT survives
+ *   mv_ts      one day             0.02   Interval forward scan + Count
+ *   mv_val     count()             7.06   Count + case(                                ~130x: no txn-file count
+ *   mv_val     lookup sym='S5'     0.13   case(
+ *   mv_val     filter v&gt;900        8.84   Count + case(                                ~6x: the CASE takes the JIT away
+ *   mv_val     one day             1.26   Interval forward scan + Count + case(
+ *   mv_latest  count()             0.12   Count                                        LATEST ON ~ O(#keys)
+ *   mv_latest  lookup sym='S5'     0.08   -
+ *   mv_latest  filter v&gt;900        0.09   Count
+ *   mv_latest  one day             0.09   Count
+ *   mv_max     count()            48.05   Count + CachedWindowLight + case(            ~900x: window over the whole view
+ *   mv_max     lookup sym='S5'     0.44   CachedWindowLight + case(                    filter on the PARTITION BY key
+ *   mv_max     filter v&gt;900       47.43   Count + CachedWindowLight + case(
+ *   mv_max     one day            48.14   Count + CachedWindowLight + case(            the day restriction saves nothing
+ *   cleanup mv_ts:     15.4 ms, partitions 8 -> 4
  *   cleanup mv_latest:  0.2 ms, partitions 8 -> 8   (structural policy: the sweep frees nothing)
  * </pre>
- * Takeaways: a WHEN predicate on the designated timestamp is the only mode here that frees disk, and the one
- * whose keep-filter still prunes partitions - but any policy costs a {@code count()} its transaction-file
- * fast path. KEEP LATEST on an indexed key reads near baseline and reclaims nothing: its sweep returns at
+ * Takeaways. A WHEN predicate on the designated timestamp is the mode to reach for: its keep-filter flips to
+ * a bare {@code ts >= T}, which prunes partitions and leaves the caller's own filter JIT-compilable, and it
+ * is the only mode here that frees disk. The threshold has to be provably non-null for that flip - a
+ * timestamp literal or a clock call, not a {@code cast(...)}, which the parser treats as possibly-null and
+ * serves through the CASE form instead.
+ * <p>
+ * A value predicate always reads through that CASE form. The optimiser merges it with the caller's WHERE,
+ * so the caller's filter loses JIT compilation too, and {@code count()} can no longer take the row count
+ * from the transaction file.
+ * <p>
+ * A window keep-filter (KEEP HIGHEST/LOWEST, top-N, a WHEN with a window function) computes the window over
+ * the whole view on every read, which is why the one-day query costs as much as the whole-view count. Each
+ * such cursor also holds a row chain sized by the view; it is charged to the per-query memory budget
+ * ({@code CachedWindowLightRecordCursorFactory} binds the execution context's memory tracker), so an
+ * oversized read fails with a memory-limit error rather than taking the server down. KEEP LATEST is the
+ * exception: it rewrites to LATEST ON and reads near baseline over an indexed symbol.
+ * <p>
+ * KEEP LATEST reads cheaply but reclaims nothing: its sweep returns at
  * {@code RowExpiryUtil.isStructuralPolicy} before it opens a reader, so a shorter CLEANUP EVERY changes
- * nothing for it and the expired rows stay on disk (hidden by the read filter) until a full refresh. A
- * {@code count()} over a window mode pays a full-view scan on every read; a filter on the policy's
- * PARTITION BY key is pushed below the window and stays cheap.
+ * nothing for it and the expired rows stay on disk, hidden by the read filter, until a full refresh.
  */
 public class RowExpiryReadBenchmark {
 
@@ -121,19 +149,34 @@ public class RowExpiryReadBenchmark {
                 engine.execute(seed, ctx);
                 drainWal(engine);
 
-                final long midThresholdMicros = SEED_EPOCH_MICROS + (DAYS / 2L) * 86_400_000_000L;
+                // A timestamp LITERAL, not cast(<micros> as timestamp): only a provably non-null threshold
+                // lets the parser flip NOT(ts < T) to the bare ts >= T that prunes partitions, and a CAST
+                // counts as possibly-null.
+                final String midThreshold = "'2024-01-05T00:00:00.000000Z'";
                 engine.execute("create materialized view mv_none as (select * from base)", ctx);
-                engine.execute("create materialized view mv_ts as (select * from base) expire rows when ts < cast(" + midThresholdMicros + " as timestamp)", ctx);
+                engine.execute("create materialized view mv_ts as (select * from base) expire rows when ts < " + midThreshold, ctx);
+                engine.execute("create materialized view mv_val as (select * from base) expire rows when v < 500.0", ctx);
                 engine.execute("create materialized view mv_latest as (select * from base) expire rows keep latest partition by sym", ctx);
                 engine.execute("create materialized view mv_max as (select * from base) expire rows keep highest v partition by sym", ctx);
                 drainWal(engine);
                 drainMatView(engine);
                 drainWal(engine);
 
-                System.out.printf("%-10s %-26s %12s %12s %12s %12s%n", "view", "query", "avg_ms", "median_ms", "p99_ms", "min_ms");
-                for (String view : new String[]{"mv_none", "mv_ts", "mv_latest", "mv_max"}) {
+                // One day out of DAYS, above mv_ts's threshold so the rows of that day survive every policy.
+                final String oneDay = "'2024-01-06T00:00:00.000000Z'";
+                final String nextDay = "'2024-01-07T00:00:00.000000Z'";
+                System.out.printf("%-10s %-26s %12s %12s %12s %12s  %s%n",
+                        "view", "query", "avg_ms", "median_ms", "p99_ms", "min_ms", "plan");
+                for (String view : new String[]{"mv_none", "mv_ts", "mv_val", "mv_latest", "mv_max"}) {
                     timeQuery(compiler, ctx, view, "count()", "select count() from " + view);
                     timeQuery(compiler, ctx, view, "lookup sym='S5'", "select sym, v, ts from " + view + " where sym = 'S5'");
+                    // A caller filter that is JIT-compilable on its own: a value policy's CASE keep-filter
+                    // merges into it and takes the JIT compilation away.
+                    timeQuery(compiler, ctx, view, "filter v>900", "select count() from " + view + " where v > 900.0");
+                    // One day out of DAYS: a timestamp keep-filter still prunes, a window one reads the
+                    // whole view regardless.
+                    timeQuery(compiler, ctx, view, "one day", "select count() from " + view
+                            + " where ts >= " + oneDay + " and ts < " + nextDay);
                 }
 
                 // One cleanup sweep per mode: mv_ts reclaims the partitions below its threshold, while the
@@ -194,6 +237,22 @@ public class RowExpiryReadBenchmark {
         return sorted[idx];
     }
 
+    // The parts of the execution plan a policy can take away: JIT compilation of the caller's filter, the
+    // interval scan that prunes partitions, and the transaction-file row count. The window keep-filter shows
+    // up as CachedWindowLight, which reads the whole view on every cursor.
+    private static String planTag(RecordCursorFactory factory, SqlExecutionContext ctx) {
+        final TextPlanSink planSink = new TextPlanSink();
+        planSink.of(factory, ctx);
+        final CharSequence sink = planSink.getSink();
+        final StringBuilder tags = new StringBuilder();
+        for (String marker : new String[]{"Async JIT Filter", "Interval forward scan", "Count", "CachedWindowLight", "case("}) {
+            if (Chars.contains(sink, marker)) {
+                tags.append(tags.length() == 0 ? "" : " + ").append(marker);
+            }
+        }
+        return tags.length() == 0 ? "-" : tags.toString();
+    }
+
     private static long rowCount(SqlCompiler compiler, SqlExecutionContext ctx, String sql) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(ctx)) {
@@ -222,7 +281,9 @@ public class RowExpiryReadBenchmark {
 
     private static void timeQuery(SqlCompiler compiler, SqlExecutionContext ctx, String view, String label, String sql) throws Exception {
         final long[] timings = new long[ITERATIONS];
+        final String plan;
         try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+            plan = planTag(factory, ctx);
             for (int i = 0; i < WARMUP_ITERATIONS + ITERATIONS; i++) {
                 final long t0 = System.nanoTime();
                 try (RecordCursor cursor = factory.getCursor(ctx)) {
@@ -241,9 +302,9 @@ public class RowExpiryReadBenchmark {
             avg += t;
         }
         avg /= timings.length;
-        System.out.printf("%-10s %-26s %12.3f %12.3f %12.3f %12.3f%n",
+        System.out.printf("%-10s %-26s %12.3f %12.3f %12.3f %12.3f  %s%n",
                 view, label, avg / 1_000_000.0, percentile(timings, 50) / 1_000_000.0,
-                percentile(timings, 99) / 1_000_000.0, timings[0] / 1_000_000.0);
+                percentile(timings, 99) / 1_000_000.0, timings[0] / 1_000_000.0, plan);
     }
 
     private static final class BenchConfig extends DefaultCairoConfiguration {
