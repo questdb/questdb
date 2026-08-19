@@ -834,6 +834,48 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    /**
+     * Partition compaction defaults to off - {@code Overrides} only turns merge-append itself on - so
+     * without this, no fuzz run here ever exercises it. One run in three leaves it off, exactly like
+     * every fuzz run before this method existed. The rest turn it on and draw its three budgets
+     * independently, each LOG-UNIFORM (its exponent, not the value itself, is what is drawn uniformly) so
+     * a run is as likely to land tight as generous at every scale in between, rather than clustering near
+     * the middle the way a plain {@code nextInt} over the same range would:
+     * <ul>
+     *     <li>{@code maxPieces}: 1 to 10,000. At the low end - single digits - this is what makes
+     *     {@code O3PartitionJob#shouldAssembleFreshPartitionVersion}'s proactive check fire routinely
+     *     instead of only on the rare generation-exhausted case, so its interaction with dedup,
+     *     replace-range, column-top backfill and every other fuzzed transaction kind gets covered. At the
+     *     high end it never fires for a fuzz-sized table, leaving {@code runCompaction}'s other rules -
+     *     and the plain merge-append path with compaction merely enabled but never triggered - covered
+     *     too;</li>
+     *     <li>{@code deadRowsRatio}: 0 to 999. The waste-ratio rule fires on dead rows exceeding a whole
+     *     MULTIPLE of live rows, not a percentage, so 0 - dead exceeding zero times live, the tightest
+     *     this can express - is one decade of the draw rather than a special case;</li>
+     *     <li>{@code deadMinSize}: 100,000 to ~1,000,000,000,000 (1T) bytes, the floor below which the
+     *     waste-ratio rule does not fire regardless of the ratio. Starts at 100K rather than single bytes
+     *     so a tight draw still means "a meaningful stride of dead rows", not "one row".</li>
+     * </ul>
+     */
+    private static void setRndPartitionCompactionProperties(Rnd rnd) {
+        if (rnd.nextInt(3) == 0) {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, false);
+            LOG.info().$("partition compaction fuzz mode [enabled=false]").$();
+            return;
+        }
+        final int maxPieces = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
+        final int deadRowsRatio = (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1;
+        final long deadMinSize = Math.round(Math.pow(10, 5 + rnd.nextDouble() * 7));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, maxPieces);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, deadRowsRatio);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, deadMinSize);
+        LOG.info().$("partition compaction fuzz mode [enabled=true, maxPieces=").$(maxPieces)
+                .$(", deadRowsRatio=").$(deadRowsRatio)
+                .$(", deadMinSize=").$(deadMinSize)
+                .I$();
+    }
+
     private void setTestParams(Rnd rnd) throws Exception {
         int newScoreboardVersion = rnd.nextBoolean() ? 1 : 2;
         boolean newAsyncMunmapEnabled = Os.isPosix() && rnd.nextBoolean(); // windows does not support async munmap
@@ -862,5 +904,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         super.setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1 + rnd.nextLong(engine.getConfiguration().getWalSegmentRolloverRowCount()));
+        setRndPartitionCompactionProperties(rnd);
     }
 }
