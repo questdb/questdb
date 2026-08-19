@@ -15353,6 +15353,55 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * True if the plan {@code O3PartitionJob.processCompositePartition} is about to execute would leave
+     * this partition past {@link PartitionCompactionPolicy}'s own waste-ratio or piece-count thresholds -
+     * anticipated from the plan's own actions, before any bytes move, so the commit can assemble the
+     * fresh, folded version directly instead of writing one more piece {@code runCompaction} would only
+     * discover and rewrite again on a later commit.
+     * <p>
+     * KEEP and NEW_PIECE add nothing dead - the first writes nothing, the second lands only live rows.
+     * MERGE and, in replace mode, DROP retire their piece's current rows to dead space: MERGE because the
+     * merged image is written afresh at the tail, DROP because the piece is excluded from the new geometry
+     * with its bytes left behind. Sized against the SAME numbers {@link PartitionCompactionPolicy#selectPartition}
+     * would compute for this partition after the fact.
+     */
+    boolean wouldBreachCompactionThresholds(
+            int partitionIndex,
+            PartitionGeometry geometry,
+            LongList bounds,
+            ObjList<O3CompositeMergeStrategy.Action> actions,
+            int actionCount
+    ) {
+        if (!configuration.isPartitionCompactionEnabled()) {
+            return false;
+        }
+        long liveRows = 0;
+        long deadRows = geometry.getE(partitionIndex) - txWriter.getPartitionSize(partitionIndex);
+        int pieceCount = 0;
+        for (int i = 0; i < actionCount; i++) {
+            final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
+            switch (action.type) {
+                case KEEP -> {
+                    pieceCount++;
+                    liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                }
+                case NEW_PIECE -> {
+                    pieceCount++;
+                    liveRows += action.getO3RowCount();
+                }
+                case MERGE -> {
+                    pieceCount++;
+                    final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                    deadRows += pieceRows;
+                    liveRows += pieceRows + action.getO3RowCount();
+                }
+                case DROP -> deadRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+            }
+        }
+        return PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
+    }
+
     @FunctionalInterface
     public interface ColumnTaskHandler {
         void run(

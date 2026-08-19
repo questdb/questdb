@@ -400,7 +400,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // version on every commit that reaches an already-composite partition: assemble a fresh, ordinary
         // directory instead of one more piece, merging this commit's rows in as it goes, rather than let
         // the normal execute-then-publish path write real bytes for a plan that will not be published.
-        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, actionCount)) {
+        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, ctx.actions, actionCount)) {
             assembleFreshPartitionVersion(
                     pathToTable,
                     partitionTimestamp,
@@ -1099,7 +1099,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     partition's state BEFORE this commit's own actions run, so a commit that is what MAKES the
      *     partition composite for the first time still merge-appends normally - only the NEXT commit to
      *     land on an already-composite partition is forced back to a fresh, non-composite version, which
-     *     is what keeps a partition composite for at most one commit at a time under the flag.</li>
+     *     is what keeps a partition composite for at most one commit at a time under the flag;</li>
+     *     <li>the plan would leave the partition past {@link PartitionCompactionPolicy}'s own waste-ratio
+     *     or piece-count thresholds - see {@link TableWriter#wouldBreachCompactionThresholds}. Writing the
+     *     plan as one more piece would only have {@code runCompaction} discover the same breach on some
+     *     later commit and rewrite the partition anyway; assembling the fresh version now folds the write
+     *     this commit already has to do and the rewrite compaction would otherwise do separately into one
+     *     pass.</li>
      * </ol>
      */
     private static boolean shouldAssembleFreshPartitionVersion(
@@ -1107,6 +1113,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TxReader txReader,
             TableWriter tableWriter,
             int partitionIndex,
+            LongList bounds,
+            ObjList<O3CompositeMergeStrategy.Action> actions,
             int actionCount
     ) {
         if (!txReader.isPartitionComposite(partitionIndex)) {
@@ -1116,11 +1124,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             return true;
         }
         final long committedRef = txReader.getGeometryRef(partitionIndex);
-        if (TxReader.geometryGeneration(committedRef) < TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
-            return false;
+        if (TxReader.geometryGeneration(committedRef) >= TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
+            final long nextOffset = TxReader.geometryOffset(committedRef) + geometry.getCommittedRecordSize(partitionIndex);
+            if (nextOffset + PartitionGeometryFile.recordSize(actionCount) > PartitionGeometryFile.MAX_FILE_SIZE) {
+                return true;
+            }
         }
-        final long nextOffset = TxReader.geometryOffset(committedRef) + geometry.getCommittedRecordSize(partitionIndex);
-        return nextOffset + PartitionGeometryFile.recordSize(actionCount) > PartitionGeometryFile.MAX_FILE_SIZE;
+        return tableWriter.wouldBreachCompactionThresholds(partitionIndex, geometry, bounds, actions, actionCount);
     }
 
     /**

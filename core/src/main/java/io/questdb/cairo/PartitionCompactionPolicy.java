@@ -82,6 +82,29 @@ public class PartitionCompactionPolicy implements Mutable {
         selectedPartitionIndex = -1;
     }
 
+    /**
+     * True if a piece count of {@code pieceCount}, or a dead-versus-live row split of {@code deadRows}
+     * against {@code liveRows}, already crosses the same waste-ratio or piece-count thresholds
+     * {@link #selectPartition} enforces after the fact. Static and stateless, with none of
+     * {@link #selectPartition}'s cooldown or backoff bookkeeping - those exist to stop {@code housekeep}
+     * from retrying a partition it just declined or just compacted, which does not apply to a decision
+     * made before the write that would create the waste has even landed.
+     */
+    public static boolean exceedsThresholds(
+            CairoConfiguration configuration, long liveRows, long deadRows, int pieceCount, long avgRecordSize
+    ) {
+        if (!configuration.isPartitionCompactionEnabled()) {
+            return false;
+        }
+        if (pieceCount > configuration.getPartitionCompactionMaxPieces()) {
+            return true;
+        }
+        final long deadMinRows = avgRecordSize > 0
+                ? configuration.getPartitionCompactionDeadMinSize() / avgRecordSize
+                : configuration.getPartitionCompactionDeadMinSize();
+        return deadRows > (long) configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows;
+    }
+
     public int getSelectedPartitionIndex() {
         return selectedPartitionIndex;
     }

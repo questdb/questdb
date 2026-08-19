@@ -283,7 +283,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     public void testPieceCountTriggerReducesTheNumberOfPieces() throws Exception {
         assertMemoryLeak(() -> {
             enableMergeAppend();
-            enableCompaction();
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
@@ -292,7 +291,11 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "4");
 
             createDayTable("x", "2024-01-01", 40_000);
-            // Six separated strides, so the pre-split cuts the day repeatedly.
+            // Six separated strides, so the pre-split cuts the day repeatedly. Compaction stays off
+            // through the buildup: on, a commit that would itself cross the piece-count limit assembles
+            // the fresh version directly (see O3PartitionJob#shouldAssembleFreshPartitionVersion) instead
+            // of leaving the breach for housekeep to find, which is exactly the shape this fixture needs
+            // to build.
             backdate("x", "2024-01-01T02:00:00", 60);
             backdate("x", "2024-01-01T06:00:00", 60);
             backdate("x", "2024-01-01T10:00:00", 60);
@@ -306,6 +309,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     piecesBefore > 4
             );
 
+            enableCompaction();
             runCompactionPasses("x");
             Assert.assertTrue(
                     "the piece-count rule left the partition above its limit" +
@@ -446,12 +450,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     public void testWasteRatioTriggerReclaimsDeadRows() throws Exception {
         assertMemoryLeak(() -> {
             enableMergeAppend();
-            enableCompaction();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
 
             // A small partition churned hard: each rewrite of the 400-row stride abandons the
-            // previous copy, so dead rows climb past 3x the live rows.
+            // previous copy, so dead rows climb past 3x the live rows. Compaction stays off through the
+            // buildup: on, a commit that would itself cross the ratio assembles the fresh version
+            // directly (see O3PartitionJob#shouldAssembleFreshPartitionVersion) instead of leaving the
+            // breach for housekeep to find, which is exactly the shape this fixture needs to build.
             createDayTable("x", "2024-01-01", 600);
             for (int i = 0; i < 8; i++) {
                 backdate("x", "2024-01-01T06:00:00", 400);
@@ -465,6 +471,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             );
 
             final String expected = fingerprintOfDay("x", "2024-01-01");
+            enableCompaction();
             runCompactionPasses("x");
 
             Assert.assertEquals(
