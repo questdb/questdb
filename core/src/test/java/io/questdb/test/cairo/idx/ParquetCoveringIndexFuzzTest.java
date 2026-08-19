@@ -64,6 +64,18 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
      * direction, covers), not the shape of the underlying table.
      */
     private static final int SYM_CARDINALITY = 7;
+    /**
+     * A key's run longer than {@code ParquetIndexSeal.TARGET_ROW_GROUP_ROWS}
+     * (100k) is split across index row groups. At the default cardinality no
+     * run gets near that, so a fixture sized only for key diversity leaves the
+     * whole multi-group machinery -- zone-map pruning, the group-skip
+     * arithmetic in {@code selectKthMatch}, and the backward cross-group walk
+     * -- outside the only independent-implementation comparison on the branch.
+     * This cardinality with {@link #WIDE_RUN_ROWS} puts roughly 125k rows on
+     * each key, so every key's run spans more than one group.
+     */
+    private static final int WIDE_RUN_CARDINALITY = 2;
+    private static final long WIDE_RUN_ROWS = 250_000;
 
     @Test
     public void testRandomisedReadsAgreeWithTheNativeReader() throws Exception {
@@ -71,18 +83,44 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(() -> {
                 final Rnd rnd = new Rnd(seed, seed);
-                final long rowCount = rnd.nextInt(40_000) + 20_000;
-                node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
-                createArm("native_arm", rowCount);
-                node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
-                createArm("parquet_arm", rowCount);
+                // Two regimes, not one. The narrow fixture keeps key diversity;
+                // the wide one puts a single key's run across several index row
+                // groups, which is the only way the group-skip and cross-group
+                // paths get compared against the native reader at all.
+                final long narrowImSize = fuzzOneFixture(
+                        rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow");
+                final long wideImSize = fuzzOneFixture(
+                        rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide");
+                // Proof the wide fixture really does span more index row groups
+                // rather than merely holding more rows: the _im carries one
+                // section entry per row group, so a fixture with FEWER keys but
+                // MORE groups still produces the bigger sidecar. Without this
+                // the multi-group coverage is assumed, not demonstrated.
+                Assert.assertTrue(
+                        "the wide fixture must produce more index row groups than the narrow one"
+                                + " [narrowIm=" + narrowImSize + ", wideIm=" + wideImSize + ']',
+                        wideImSize > narrowImSize
+                );
+            });
+        } catch (Throwable t) {
+            throw new AssertionError("fuzz seed=" + seed, t);
+        }
+    }
 
-                assertArmsAreSealedDifferently();
+    private long fuzzOneFixture(Rnd rnd, long rowCount, int cardinality, String label) throws Exception {
+        final String nativeArm = "native_arm_" + label;
+        final String parquetArm = "parquet_arm_" + label;
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+        createArm(nativeArm, rowCount, cardinality);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        createArm(parquetArm, rowCount, cardinality);
 
-                try (
-                        TableReader nativeReader = engine.getReader(engine.verifyTableName("native_arm"));
-                        TableReader parquetReader = engine.getReader(engine.verifyTableName("parquet_arm"))
-                ) {
+        assertArmsAreSealedDifferently(nativeArm, parquetArm);
+
+        try (
+                TableReader nativeReader = engine.getReader(engine.verifyTableName(nativeArm));
+                TableReader parquetReader = engine.getReader(engine.verifyTableName(parquetArm))
+        ) {
                     Assert.assertEquals(
                             "both arms must hold the same row count or the comparison is between different data",
                             nativeReader.size(), parquetReader.size()
@@ -119,17 +157,17 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                         // Same comparison ParquetCoveringIndexOracleTest makes:
                         // drain both readers and assert an identical row-id
                         // sequence and identical covered values.
-                        assertSameSequence(nativeReader, parquetReader, nativeCol, parquetCol,
-                                key, lo, hi, covers, direction);
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            throw new AssertionError("fuzz seed=" + seed, t);
+                assertSameSequence(nativeReader, parquetReader, nativeCol, parquetCol,
+                        key, lo, hi, covers, direction);
+            }
+            // The form cache is filled at partition OPEN and readers open
+            // lazily, so this must follow the reads above.
+            parquetReader.openPartition(0);
+            return parquetReader.getPartitionIndexImFileSize(0, parquetCol);
         }
     }
 
-    private void createArm(String table, long rowCount) throws Exception {
+    private void createArm(String table, long rowCount, int cardinality) throws Exception {
         execute("CREATE TABLE " + table + " (" +
                 "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
                 ") TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -138,7 +176,7 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         // every row rather than coincidentally matching.
         execute("INSERT INTO " + table + " SELECT" +
                 " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
-                " 's' || (x % " + SYM_CARDINALITY + ")," +
+                " 's' || (x % " + cardinality + ")," +
                 " x::DOUBLE," +
                 " x * 3" +
                 " FROM long_sequence(" + rowCount + ")");
@@ -158,10 +196,10 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
      * two-arm bake-off run the NATIVE arm in both arms and agree with itself
      * perfectly, so this is asserted before anything else is compared.
      */
-    private void assertArmsAreSealedDifferently() {
+    private void assertArmsAreSealedDifferently(String nativeArm, String parquetArm) {
         try (Path path = new Path()) {
-            assertArmArtifacts(path, "native_arm", true);
-            assertArmArtifacts(path, "parquet_arm", false);
+            assertArmArtifacts(path, nativeArm, true);
+            assertArmArtifacts(path, parquetArm, false);
         }
     }
 
