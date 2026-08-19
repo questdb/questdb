@@ -4838,7 +4838,8 @@ public class PostingIndexWriter implements IndexWriter {
             //     anywhere in the precondition. Both methods now arm
             //     upcomingTableTxn (which FrameAlgebra.append hands them before
             //     the call) ahead of rollbackConditionally. Pinned by
-            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal.
+            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal
+            //     and #testSquashAppendNullsRollbackPublishesUpcomingTxnAtSeal.
             //   - TableWriter.openPartition reached here the same way --
             //     configureFollowerAndWriter, whose of() resets this field, then
             //     rollbackConditionally(rowCount) -- so a partition whose index
