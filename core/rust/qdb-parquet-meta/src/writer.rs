@@ -26,14 +26,15 @@
 
 use crate::error::ParquetMetaErrorKind;
 use crate::error::ParquetMetaResult;
-use crate::footer::{Footer, FooterBuilder};
+use crate::footer::FooterBuilder;
 use crate::header::FileHeaderBuilder;
 use crate::parquet_meta_err;
 use crate::reader::ParquetMetaReader;
 use crate::row_group::RowGroupBlockBuilder;
 use crate::types::{
-    ColumnFlags, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
-    FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, HEADER_PARQUET_META_FILE_SIZE_OFF,
+    ColumnFlags, SeqTxn, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE,
+    FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF,
+    HEADER_PARQUET_META_FILE_SIZE_OFF,
 };
 
 // ── ParquetMetaWriter (create mode) ───────────────────────────────────────────
@@ -56,6 +57,8 @@ pub struct ParquetMetaWriter {
     parquet_footer_length: u32,
     unused_bytes: u64,
     squash_tracker: i64,
+    seq_txn: SeqTxn,
+    scratchpad: Vec<(u32, Vec<u8>)>,
 }
 
 impl Default for ParquetMetaWriter {
@@ -73,6 +76,8 @@ impl ParquetMetaWriter {
             parquet_footer_length: 0,
             unused_bytes: 0,
             squash_tracker: -1,
+            seq_txn: SeqTxn::UNSET,
+            scratchpad: Vec::new(),
         }
     }
 
@@ -132,6 +137,19 @@ impl ParquetMetaWriter {
     /// recreates the header builder). Passing `-1` omits the section.
     pub fn squash_tracker(&mut self, value: i64) -> &mut Self {
         self.squash_tracker = value;
+        self
+    }
+
+    /// Sets the per-footer `seqTxn`. `SeqTxn::UNSET` omits the section.
+    pub fn seq_txn(&mut self, value: SeqTxn) -> &mut Self {
+        self.seq_txn = value;
+        self
+    }
+
+    /// Replaces the opaque scratchpad entries written into the footer.
+    /// An empty `Vec` omits the section.
+    pub fn set_scratchpad_entries(&mut self, entries: Vec<(u32, Vec<u8>)>) -> &mut Self {
+        self.scratchpad = entries;
         self
     }
 
@@ -231,6 +249,9 @@ impl ParquetMetaWriter {
             fb.add_row_group_offset(offset)?;
         }
         fb.set_bloom_filter_section(bloom_section);
+        fb.set_seq_txn(self.seq_txn);
+        fb.set_scratchpad_entries(self.scratchpad.clone());
+        fb.validate_scratchpad()?;
         fb.write_to(&mut buf);
 
         // Compute and write CRC32 over [HEADER_CRC_AREA_OFF, checksum_field_offset).
@@ -323,6 +344,16 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// For external: each entry is a Vec<(u64, u64)> of (offset, length) pairs.
     existing_bloom_inlined: Vec<Vec<u32>>,
     existing_bloom_external: Vec<Vec<(u64, u64)>>,
+    /// Caller-set `seqTxn` for the new footer; `None` means "inherit from
+    /// `prior_seq_txn`" (fires `debug_assert!` — see `finish()`).
+    seq_txn: Option<SeqTxn>,
+    prior_seq_txn: Option<SeqTxn>,
+    /// Caller-set scratchpad for the new footer; `None` silently inherits
+    /// `prior_scratchpad`. Unlike seq_txn, missing the setter is not a
+    /// silent-state-divergence bug: a stale etag surfaces loudly as 412
+    /// on the next chunk GET.
+    scratchpad: Option<Vec<(u32, Vec<u8>)>>,
+    prior_scratchpad: Vec<(u32, Vec<u8>)>,
 }
 
 enum RowGroupEntry {
@@ -350,22 +381,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let existing_footer_offset = reader.footer_offset();
         let existing_footer_length =
             Self::read_trailer_footer_length(existing, existing_parquet_meta_file_size)?;
-
-        let footer_usize = usize::try_from(existing_footer_offset).map_err(|_| {
-            parquet_meta_err!(
-                ParquetMetaErrorKind::Truncated,
-                "footer offset {} exceeds addressable range",
-                existing_footer_offset
-            )
-        })?;
-        let footer_data = existing.get(footer_usize..).ok_or_else(|| {
-            parquet_meta_err!(
-                ParquetMetaErrorKind::Truncated,
-                "footer offset out of bounds"
-            )
-        })?;
-        let footer = Footer::new(footer_data, existing_footer_length)?;
-
+        let footer = reader.footer();
         let rg_count = footer.row_group_count() as usize;
 
         // Initialize entries with existing row group offsets.
@@ -403,6 +419,12 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             }
         }
 
+        let prior_seq_txn = footer.seq_txn();
+        let prior_scratchpad: Vec<(u32, Vec<u8>)> = footer
+            .scratchpad_entries()
+            .map(|(code, content)| (code, content.to_vec()))
+            .collect();
+
         Ok(Self {
             existing,
             existing_parquet_meta_file_size,
@@ -416,11 +438,38 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             is_bloom_external,
             existing_bloom_inlined,
             existing_bloom_external,
+            seq_txn: None,
+            prior_seq_txn,
+            scratchpad: None,
+            prior_scratchpad,
         })
     }
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
         self.unused_bytes = unused_bytes;
+        self
+    }
+
+    /// Sets the per-footer `seqTxn` for the new footer. Production paths
+    /// must call this on every append: a forgotten setter silently
+    /// desynchronizes downstream HEAD-and-skip checks. Missing it triggers
+    /// `debug_assert!` in `finish()` and falls back to the prior footer's
+    /// value.
+    pub fn seq_txn(&mut self, value: SeqTxn) -> &mut Self {
+        self.seq_txn = Some(value);
+        self
+    }
+
+    /// Explicit opt-in to keep `prior_seq_txn` unchanged on `finish()`.
+    pub fn inherit_seq_txn(&mut self) -> &mut Self {
+        self.seq_txn = self.prior_seq_txn;
+        self
+    }
+
+    /// Replaces the scratchpad on the new footer. Empty `Vec` clears it.
+    /// Skipping the setter silently inherits the prior footer's scratchpad.
+    pub fn set_scratchpad_entries(&mut self, entries: Vec<(u32, Vec<u8>)>) -> &mut Self {
+        self.scratchpad = Some(entries);
         self
     }
 
@@ -643,6 +692,24 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             fb.add_row_group_offset(offset)?;
         }
         fb.set_bloom_filter_section(bloom_section);
+        let effective_seq_txn = match self.seq_txn {
+            Some(value) => value,
+            None => {
+                debug_assert!(
+                    self.prior_seq_txn.is_none(),
+                    "ParquetMetaUpdateWriter.finish: seq_txn not set but prior footer had SEQ_TXN_BIT={:?}; production paths must call .seq_txn(new) to refresh it or .inherit_seq_txn() to keep the prior value",
+                    self.prior_seq_txn
+                );
+                self.prior_seq_txn.unwrap_or(SeqTxn::UNSET)
+            }
+        };
+        fb.set_seq_txn(effective_seq_txn);
+        let effective_scratchpad = match &self.scratchpad {
+            Some(entries) => entries.clone(),
+            None => self.prior_scratchpad.clone(),
+        };
+        fb.set_scratchpad_entries(effective_scratchpad);
+        fb.validate_scratchpad()?;
         fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the committed footer's checksum. The old CRC covers
@@ -1030,5 +1097,389 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.designated_timestamp(), None);
+    }
+
+    fn make_file_with_seq_txn(seq_txn: SeqTxn) -> (Vec<u8>, u64) {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column(
+            "ts",
+            0,
+            8,
+            ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
+            0,
+        );
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(1);
+        w.add_row_group(rg);
+        w.parquet_footer(4096, 256);
+        w.seq_txn(seq_txn);
+        w.finish().unwrap()
+    }
+
+    #[test]
+    fn writer_round_trips_seq_txn() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.seq_txn(SeqTxn::new(123));
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader.footer_feature_flags().has_seq_txn());
+        assert_eq!(reader.seq_txn(), Some(SeqTxn::new(123)));
+    }
+
+    #[test]
+    fn writer_seq_txn_default_omitted() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_seq_txn());
+        assert_eq!(reader.seq_txn(), None);
+    }
+
+    #[test]
+    fn update_writer_carries_seq_txn() {
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(1));
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.seq_txn(), Some(SeqTxn::new(2)));
+    }
+
+    #[test]
+    fn update_writer_inherits_seq_txn_when_unset() {
+        // Release-only: the inherit-from-prior fallback. Debug builds hit
+        // the debug_assert! covered by the test below.
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(5));
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.seq_txn(), Some(SeqTxn::new(5)));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "seq_txn not set")]
+    fn update_writer_debug_asserts_when_unset_and_prior_present() {
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(5));
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let _ = updater.finish();
+    }
+
+    #[test]
+    fn update_writer_inherits_seq_txn_when_opt_in_set() {
+        // Callers that legitimately keep the prior seq_txn (e.g. a
+        // scratchpad-only patch) call .inherit_seq_txn() to silence
+        // the debug_assert while still landing the prior value on the
+        // new footer.
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(11));
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.inherit_seq_txn();
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.seq_txn(), Some(SeqTxn::new(11)));
+    }
+
+    #[test]
+    fn update_writer_inherit_seq_txn_on_empty_prior_lands_unset() {
+        // No prior seq_txn -> inherit opt-in is a no-op; the new
+        // footer omits the seq_txn section just as it would without
+        // the opt-in.
+        let (original, existing_size) = make_simple_file();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.inherit_seq_txn();
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.seq_txn(), None);
+    }
+
+    fn make_file_with_scratchpad(entries: Vec<(u32, Vec<u8>)>) -> (Vec<u8>, u64) {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column(
+            "ts",
+            0,
+            8,
+            ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
+            0,
+        );
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(1);
+        w.add_row_group(rg);
+        w.parquet_footer(4096, 256);
+        w.seq_txn(SeqTxn::new(1));
+        w.set_scratchpad_entries(entries);
+        w.finish().unwrap()
+    }
+
+    #[test]
+    fn writer_round_trips_scratchpad() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_scratchpad_entries(vec![(0xDEAD_BEEF, b"hello".to_vec())]);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert_eq!(reader.scratchpad_entry(0xDEAD_BEEF), Some(&b"hello"[..]));
+    }
+
+    #[test]
+    fn finish_rejects_oversized_scratchpad_instead_of_writing_unreadable_footer() {
+        // A scratchpad past MAX_SCRATCHPAD_SIZE would serialize a footer this crate's
+        // reader then refuses to open. finish() must reject it up front (release builds
+        // have no debug_assert), returning the same error the reader would raise --
+        // never emitting the unreadable footer. Payload = 4 + 8 + MAX = MAX + 12 > MAX.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_scratchpad_entries(vec![(0, vec![0u8; crate::types::MAX_SCRATCHPAD_SIZE])]);
+        let err = w
+            .finish()
+            .expect_err("finish must reject an oversized scratchpad");
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn update_writer_carries_explicit_scratchpad() {
+        let (original, existing_size) = make_file_with_scratchpad(vec![(1, b"first".to_vec())]);
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.set_scratchpad_entries(vec![(1, b"second".to_vec())]);
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.scratchpad_entry(1), Some(&b"second"[..]));
+    }
+
+    #[test]
+    fn update_writer_inherits_scratchpad_silently_when_unset() {
+        let (original, existing_size) =
+            make_file_with_scratchpad(vec![(9, b"inherit-me".to_vec())]);
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        // Set only seq_txn to avoid its own debug_assert; leave scratchpad
+        // untouched — silent inherit is the intended behavior.
+        updater.seq_txn(SeqTxn::new(2));
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.scratchpad_entry(9), Some(&b"inherit-me"[..]));
+    }
+
+    #[test]
+    fn update_writer_clears_scratchpad_when_set_to_empty() {
+        let (original, existing_size) =
+            make_file_with_scratchpad(vec![(5, b"will-vanish".to_vec())]);
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.set_scratchpad_entries(vec![]);
+        updater.parquet_footer(8192, 256);
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let latest = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(latest.scratchpad_entry(5), None);
+        assert!(!latest.footer_feature_flags().has_scratchpad());
+
+        // Old footer still has the entry via MVCC chain walk.
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.scratchpad_entry(5), Some(&b"will-vanish"[..]));
+    }
+
+    #[test]
+    fn update_writer_scratchpad_independent_per_footer() {
+        let (original, existing_size) = make_file_with_scratchpad(vec![(1, b"A".to_vec())]);
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.set_scratchpad_entries(vec![(1, b"B".to_vec())]);
+        updater.parquet_footer(8192, 256);
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(3);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let latest = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(latest.scratchpad_entry(1), Some(&b"B"[..]));
+
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.scratchpad_entry(1), Some(&b"A"[..]));
+    }
+
+    #[test]
+    fn scratchpad_crc_covers_payload() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_scratchpad_entries(vec![(0xCAFE, vec![0x11, 0x22, 0x33, 0x44])]);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        reader.verify_checksum().unwrap();
+
+        // The scratchpad's first byte sits at: footer + FOOTER_FIXED_SIZE +
+        // 0 row group entries + 0 bloom bytes + 0 seq_txn bytes (unset). The
+        // very next 4 bytes are entry_count; flip a content byte.
+        let end = parquet_meta_file_size as usize;
+        let trailer = &bytes[end - FOOTER_TRAILER_SIZE..end];
+        let footer_length = u32::from_le_bytes(trailer.try_into().unwrap()) as u64;
+        let footer_off =
+            (parquet_meta_file_size - FOOTER_TRAILER_SIZE as u64 - footer_length) as usize;
+        let scratchpad_off = footer_off + crate::types::FOOTER_FIXED_SIZE;
+        // Skip count(4) + code(4) + length(4) = 12 bytes; corrupt the first content byte.
+        bytes[scratchpad_off + 12] ^= 0xFF;
+
+        let reader2 = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader2.verify_checksum().is_err());
+    }
+
+    #[test]
+    fn seq_txn_crc_covers_payload() {
+        let (mut bytes, parquet_meta_file_size) = make_file_with_seq_txn(SeqTxn::new(0x1122_3344));
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        reader.verify_checksum().unwrap();
+
+        // seq_txn is the first footer-flag section (bit 0), so it sits right
+        // after FOOTER_FIXED_SIZE + the row group entries + 0 bloom bytes.
+        // make_file_with_seq_txn adds one row group, so account for it.
+        let end = parquet_meta_file_size as usize;
+        let trailer = &bytes[end - FOOTER_TRAILER_SIZE..end];
+        let footer_length = u32::from_le_bytes(trailer.try_into().unwrap()) as u64;
+        let footer_off =
+            (parquet_meta_file_size - FOOTER_TRAILER_SIZE as u64 - footer_length) as usize;
+        let seq_txn_off =
+            footer_off + crate::types::FOOTER_FIXED_SIZE + crate::types::ROW_GROUP_ENTRY_SIZE;
+        // The seq_txn payload is an i64 (8 bytes); corrupt one of them.
+        bytes[seq_txn_off] ^= 0xFF;
+
+        let reader2 = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader2.verify_checksum().is_err());
+    }
+
+    #[test]
+    fn update_writer_seq_txn_independent_per_footer() {
+        // Old footers must keep their own seq_txn after a new append.
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(10));
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(20));
+        updater.parquet_footer(8192, 256);
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(3);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let latest = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(latest.seq_txn(), Some(SeqTxn::new(20)));
+
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.seq_txn(), Some(SeqTxn::new(10)));
     }
 }

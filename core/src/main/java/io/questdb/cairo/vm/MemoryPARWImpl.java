@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -617,7 +618,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
         if (roOffsetLo < offset && offset < roOffsetHi - Decimal256.BYTES) {
-            Decimal256.put(hh, hl, lh, ll, appendPointer + offset);
+            Decimal256.put(hh, hl, lh, ll, absolutePointer + offset);
         } else {
             putLong(offset, hh);
             putLong(offset + Long.BYTES, hl);
@@ -1256,16 +1257,22 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     private long putStrUtf8AsUtf160(DirectUtf8Sequence value) {
+        // Rejection is atomic: neither branch has moved appendPointer or written a length prefix
+        // yet, and the floating sink's partial decode sits in space the next write reclaims.
         int estimatedLen = value.size() * 2;
         if (pageHi - appendPointer < estimatedLen + 4) {
             utf16Sink.clear();
-            CharSequence utf16 = Utf8s.directUtf8ToUtf16(value, utf16Sink);
-            putInt(utf16.length());
-            putStrSplit(utf16Sink, 0, utf16.length());
+            if (!Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf16Sink)) {
+                throw CairoException.malformedUtf8(value);
+            }
+            putInt(utf16Sink.length());
+            putStrSplit(utf16Sink, 0, utf16Sink.length());
         } else {
             utf8FloatingSink.of(appendPointer + 4, appendPointer + estimatedLen + 4); // shifted by 4 bytes of length
-            CharSequence utf16 = Utf8s.directUtf8ToUtf16(value, utf8FloatingSink);
-            putInt(utf16.length());
+            if (!Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8FloatingSink)) {
+                throw CairoException.malformedUtf8(value);
+            }
+            putInt(utf8FloatingSink.length());
             appendPointer = utf8FloatingSink.appendPtr();
         }
         return getAppendOffset();

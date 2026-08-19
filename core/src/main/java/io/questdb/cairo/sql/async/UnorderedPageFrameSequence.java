@@ -120,7 +120,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.frameAddressCache = new PageFrameAddressCache();
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
-            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategy = configuration.getFactoryProvider()
+                    .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
@@ -339,6 +340,17 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return frameCursor;
     }
 
+    /**
+     * Returns the single work-stealing strategy this sequence uses for every phase. There is one
+     * strategy instance per query: the reduce phase already bound its counter to this same object,
+     * and a post-aggregation caller rebinds its own counter through {@code of()} before calling
+     * {@code shouldSteal}. This getter returns that instance as-is; it does not unwrap anything.
+     * <p>
+     * A latch-gated test strategy (see {@code SlotGatedWorkStealingStrategy}) is a subclass, so it is
+     * returned here too. Such a test must ensure the acquire latch reaches zero during reduce, before
+     * post-aggregation calls {@code shouldSteal} on this same instance; otherwise that phase parks on
+     * a gate nothing will open.
+     */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;
     }
