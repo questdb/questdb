@@ -30,6 +30,7 @@ import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -1468,10 +1469,63 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredSweepRetriesWithoutWaitingAFullCadence() throws Exception {
+        // A sweep that gives up without doing any work - here because a refresh holds the view lock - is
+        // rescheduled like a failed one, not like a completed one. The same happens for a mid-sweep policy
+        // change, an unapplied WAL transaction and a rejected commit fence, all ordinary states of a view
+        // that is being written to. With CLEANUP EVERY 1h, counting the deferral as a completion would
+        // park the view for a full hour; the retry gap after one deferral is a single global tick.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN ts < '2024-01-02T00:00:00.000000Z' CLEANUP EVERY 1h""");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+            assertQuery("SELECT count() p FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv"));
+            Assert.assertNotNull("mat view must have a refresh state", state);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertTrue(state.tryLock());
+                try {
+                    Assert.assertFalse("the sweep must defer while the view lock is held", job.runNow());
+                } finally {
+                    state.unlock();
+                }
+                assertQuery("SELECT count() p FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+
+                // Inside the one-tick retry gap: the lock is free, but it is not time yet.
+                setCurrentMicros(JAN_10 + 999_999L);
+                Assert.assertFalse(job.runNow());
+                assertQuery("SELECT count() p FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+
+                // One global tick after the deferral, and 59 minutes before the next CLEANUP EVERY would
+                // come round: the retry runs and reclaims the wholly-expired partition.
+                setCurrentMicros(JAN_10 + 1_000_000L);
+                Assert.assertTrue("a deferred sweep must retry on the backoff, not a full cadence", job.runNow());
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+        });
+    }
+
+    @Test
     public void testRepeatedCleanupFailuresBackOffExponentially() throws Exception {
         // A persistently failing cleanup must not re-run its full sweep on every 1-second global
         // tick: each failure doubles the per-table retry gap (1s, 2s, 4s, ... capped at 10 minutes),
-        // and a successful or deferred sweep resets it.
+        // and a sweep that runs to completion resets it.
         assertMemoryLeak(() -> {
             setCurrentMicros(JAN_10);
             execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -96,8 +96,8 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * policied view are this job and the materialized-view refresh job, and BOTH guard every view write with the
  * per-view {@link MatViewState#tryLock()}. {@link #cleanupTable} takes that same lock for the whole sweep, so
  * cleanup and refresh are mutually exclusive — no back-fill can land between the survivor scan and the
- * REPLACE_RANGE commit. If a refresh holds the lock, cleanup DEFERS to a later sweep (it is idempotent and on
- * its own CLEANUP EVERY cadence). As defense-in-depth (and for the degenerate case where no view state exists,
+ * REPLACE_RANGE commit. If a refresh holds the lock, cleanup DEFERS to a later sweep (it is idempotent, and a
+ * deferred sweep retries on the backoff instead of waiting a full CLEANUP EVERY). As defense-in-depth (and for the degenerate case where no view state exists,
  * e.g. materialized views disabled), each destructive commit ALSO gates on the SEQUENCER TRANSACTION: it
  * commits only when the table was fully applied at sweep start and the sequencer txn has not advanced beyond
  * the cleanup's own commits. The read filter stays authoritative for VISIBILITY regardless, so an expired row
@@ -126,9 +126,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final ObjList<String> discoveredPredicates = new ObjList<>();
     private final ObjList<TableToken> discoveredTokens = new ObjList<>();
     private final CairoEngine engine;
-    // Current failure backoff per table: a failing cleanup doubles it (from one global tick up to
-    // FAILURE_BACKOFF_CAP_MICROS) so a persistently failing sweep cannot re-run its full heavy work
-    // on every global tick. A successful or deferred sweep removes the entry.
+    // Current retry gap per table: a failing or deferred cleanup doubles it (from one global tick up to
+    // FAILURE_BACKOFF_CAP_MICROS, and up to the table's own CLEANUP EVERY for a deferral) so neither a
+    // persistently failing sweep nor a view that keeps colliding with its writers re-runs its full heavy
+    // work on every global tick. A sweep that runs to completion removes the entry.
     private final CharSequenceLongHashMap failureBackoffMicros = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     private final double minExpiredFraction;
@@ -143,6 +144,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private long nextDiscoveryDeadlineMicros = NO_LAST_RUN;
     private long policyDiscoveryCount;
     private long scalarPartitionScanCount;
+    private boolean isLastCleanupDeferred;
     private boolean isLastCleanupFailed;
     private SqlExecutionContextImpl sqlExecutionContext;
 
@@ -186,6 +188,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * physical residue until a full refresh. See {@link SqlCompiler#isExpiryCleanupReclaiming}.
      */
     public boolean cleanupTable(TableToken tableToken, String predicate) {
+        isLastCleanupDeferred = false;
         isLastCleanupFailed = false;
         // Serialize with the materialized-view refresh job. Both this job and refresh write the view through
         // its WAL writer, and a refresh O3 back-fill into a non-active partition landing between our survivor
@@ -193,13 +196,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // MatViewState#tryLock(); we take the SAME per-view lock for the whole sweep, so cleanup and refresh
         // are mutually exclusive — no two writers sequence the view concurrently, which closes the otherwise
         // best-effort commit-window race entirely. If a refresh holds the lock we DEFER to a later sweep
-        // (cleanup is idempotent and on its own CLEANUP EVERY cadence).
+        // (cleanup is idempotent, and runSerially retries a deferred sweep on the backoff).
         final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
         if (viewState != null) {
             if (viewState.isDropped() || viewState.isPendingInvalidation() || viewState.isInvalid()) {
                 return false; // view being torn down / not in a refreshable state; skip
             }
             if (!viewState.tryLock()) {
+                isLastCleanupDeferred = true;
                 LOG.debug().$("deferred row-expiry cleanup; view busy [table=").$safe(tableToken.getTableName()).I$();
                 return false;
             }
@@ -282,6 +286,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             // catches that window too.
             final String authoritativePredicate = metadata.getExpiryPredicate();
             if (authoritativePredicate == null || !authoritativePredicate.equals(predicate)) {
+                isLastCleanupDeferred = true;
                 return false;
             }
             readerSeqTxn = reader.getSeqTxn();
@@ -412,6 +417,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // apply since it opened that the survivor scan would miss). Non-WAL is always allowed (synchronous,
         // recount-checked).
         final boolean racyOpsAllowed = !isWal || txnTracker.getWriterTxn() == expectedSeqTxn;
+        if (!racyOpsAllowed) {
+            // The table applied WAL transactions after this sweep's reader opened, so the survivor scan no
+            // longer covers the table's contents and no partition can be reclaimed this time round.
+            isLastCleanupDeferred = true;
+        }
 
         // Decide and act (reader closed). All reclamation is via REPLACE_RANGE on the WAL writer: a fully
         // expired partition is wiped (empty REPLACE_RANGE = pure delete), a partially expired one is compacted
@@ -468,6 +478,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                     .$(", partitionTs=").$ts(floorTs).I$();
                         } else {
+                            isLastCleanupDeferred = true;
                             LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
                                     .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
                             // Fence rejected: an external txn advanced the sequencer past our reader-snapshot
@@ -504,6 +515,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                 LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                         .$(", partitionTs=").$ts(floorTs).I$();
                             } else {
+                                isLastCleanupDeferred = true;
                                 LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
                                         .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
                                 // Fence rejected; every remaining partition would reject the same way. Stop the
@@ -540,6 +552,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                 expectedSeqTxn++; // our REPLACE commit advanced the sequencer by exactly one txn
                                 isWorkDone = true;
                             } else {
+                                isLastCleanupDeferred = true;
                                 // Fence rejected; every remaining partition would reject too. Stop the sweep
                                 // (replacePartition already logged the deferral); the next sweep re-baselines.
                                 break;
@@ -682,9 +695,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             }
             final CharSequence tableKey = tableToken.getTableName();
 
-            // A table in a failure streak is throttled by its current backoff instead of the
+            // A table in a failure or deferral streak is throttled by its current backoff instead of the
             // CLEANUP EVERY cadence, so retries neither hammer every global tick nor wait a
-            // full (possibly hours-long) cadence for a transient failure to clear.
+            // full (possibly hours-long) cadence for a transient condition to clear.
             final long lastRun = lastRunByTable.get(tableKey);
             final long backoffMicros = failureBackoffMicros.get(tableKey);
             final long requiredGapMicros = backoffMicros != NO_LAST_RUN ? backoffMicros : cleanupIntervalMicros;
@@ -717,13 +730,23 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         .$(", msg=").$safe(th.getMessage())
                         .I$();
             }
-            if (isLastCleanupFailed) {
-                // Exponential backoff: the first failure retries after one global tick, each further
-                // failure doubles the wait up to FAILURE_BACKOFF_CAP_MICROS.
+            if (isLastCleanupFailed || isLastCleanupDeferred) {
+                // Exponential backoff: the first attempt retries after one global tick, each further
+                // failure or deferral doubles the wait up to FAILURE_BACKOFF_CAP_MICROS. A sweep that
+                // gave up without doing any work is scheduled the same way as one that threw: a refresh
+                // holding the view lock, a mid-sweep policy change, an unapplied WAL transaction and a
+                // rejected commit fence are all ordinary states of a view that is being written to, and
+                // a view that keeps colliding with its writers would otherwise reclaim only once per
+                // CLEANUP EVERY, which can be a day.
                 final long prevBackoffMicros = failureBackoffMicros.get(tableKey);
-                final long nextBackoffMicros = prevBackoffMicros == NO_LAST_RUN
+                long nextBackoffMicros = prevBackoffMicros == NO_LAST_RUN
                         ? GLOBAL_CHECK_INTERVAL_MICROS
                         : Math.min(prevBackoffMicros * 2, FAILURE_BACKOFF_CAP_MICROS);
+                if (!isLastCleanupFailed) {
+                    // A deferral costs nothing to retry, so its gap never grows past the cadence the user
+                    // asked for; a failure's cap is free to exceed it.
+                    nextBackoffMicros = Math.min(nextBackoffMicros, cleanupIntervalMicros);
+                }
                 final String key = Chars.toString(tableKey);
                 failureBackoffMicros.put(key, nextBackoffMicros);
                 lastRunByTable.put(key, nowMicros);
