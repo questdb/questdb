@@ -6787,10 +6787,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.FUNCTION
-                && (SqlKeywords.isNowKeyword(node.token)
-                || SqlKeywords.isSysdateKeyword(node.token)
-                || SqlKeywords.isSystimestampKeyword(node.token))) {
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isClockFunctionKeyword(node.token)) {
             return true;
         }
         if (expiryExpressionHasClock(node.lhs) || expiryExpressionHasClock(node.rhs)) {
@@ -6867,14 +6864,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return null;
     }
 
-    // True for a bare zero-arg wall-time clock: now(), sysdate(), systimestamp().
+    // True for a bare zero-arg wall-time clock: now(), now_ns(), sysdate(), systimestamp(), systimestamp_ns().
     private static boolean isBareClockFunction(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
                 && node.paramCount == 0
-                && (SqlKeywords.isNowKeyword(node.token)
-                || SqlKeywords.isSysdateKeyword(node.token)
-                || SqlKeywords.isSystimestampKeyword(node.token));
+                && SqlKeywords.isClockFunctionKeyword(node.token);
     }
 
     /**
@@ -6882,7 +6877,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * time, so a {@code ts < node} threshold only ever moves forward and physical cleanup under it is
      * safe. Three shapes carry a proof:
      * <ul>
-     *     <li>a bare clock ({@code now()} / {@code sysdate()} / {@code systimestamp()});</li>
+     *     <li>a bare clock ({@code now()} / {@code now_ns()} / {@code sysdate()} / {@code systimestamp()} /
+     *         {@code systimestamp_ns()});</li>
      *     <li>{@code <clock> - c} for a constant {@code c >= 0}: with {@code t >= 0} and
      *         {@code c in [0, Long.MAX_VALUE]}, {@code t - c} can neither overflow nor underflow and
      *         advances exactly as {@code t} does;</li>

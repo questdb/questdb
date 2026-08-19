@@ -1327,7 +1327,7 @@ public class SqlParser {
      * {@code NOT(a < b)} (which is true when an operand is NULL) is NOT equivalent to {@code a >= b} (false)
      * unless both operands are guaranteed non-null. The flip is therefore allowed only when one operand is the
      * designated timestamp column (never NULL) and the other is <i>provably</i> non-NULL per
-     * {@link #isOperandProvablyNonNull} (a non-null literal, the now()/systimestamp()/sysdate() clock, or
+     * {@link #isOperandProvablyNonNull} (a non-null literal, a wall-clock function such as now(), or
      * null-preserving timestamp arithmetic over non-null operands) — exactly the {@code ts < now()} shape the
      * partition-pruning optimisation targets. Every other shape (including a column-free but possibly-NULL
      * constant like {@code cast(null as timestamp)}) keeps the {@code NOT(...)}/CASE wrap, which is always
@@ -1352,7 +1352,7 @@ public class SqlParser {
     /**
      * Conservative "this expression can never evaluate to NULL" test, gating the null-unsafe timestamp flip
      * (see {@link #isNullSafeOrderingFlip}). Only an allowlist is treated as provably non-null: a non-null
-     * constant literal; the nullary clock functions {@code now()/systimestamp()/sysdate()}; and the
+     * constant literal; the nullary clock functions ({@link SqlKeywords#isClockFunctionKeyword}); and the
      * null-preserving timestamp functions / arithmetic operators (e.g. {@code dateadd}, {@code date_trunc},
      * {@code timestamp_floor}, {@code +}, {@code -}, {@code *}) applied to provably-non-null operands.
      * Everything else — a column (LITERAL), bind variable, the NULL literal, {@code cast(...)},
@@ -1370,7 +1370,7 @@ public class SqlParser {
             return !SqlKeywords.isNullKeyword(node.token);
         }
         if (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.OPERATION) {
-            if (isNeverNullClockFunction(node.token)) {
+            if (SqlKeywords.isClockFunctionKeyword(node.token)) {
                 return true;
             }
             if (!isNullPreservingTimestampExpr(node.token)) {
@@ -1399,12 +1399,6 @@ public class SqlParser {
             return hasOperand;
         }
         return false;
-    }
-
-    private static boolean isNeverNullClockFunction(CharSequence token) {
-        return Chars.equalsIgnoreCase(token, "now")
-                || Chars.equalsIgnoreCase(token, "systimestamp")
-                || Chars.equalsIgnoreCase(token, "sysdate");
     }
 
     private static boolean isNullPreservingTimestampExpr(CharSequence token) {

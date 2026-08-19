@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1166,6 +1167,59 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
                     .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
             assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nMID\nNEW\n");
+        });
+    }
+
+    @Test
+    public void testNanosecondClockSpellingsReclaimAndPrune() throws Exception {
+        // now_ns() and systimestamp_ns() are wall clocks, so "ts < <clock>" must behave exactly as its
+        // microsecond spelling does: materialized_views() reports FILTER_AND_RECLAIM, the sweep wipes the
+        // wholly-expired partition, and the read filter keeps the flipped bare comparison. A clock the
+        // classifier does not know by name reports FILTER_ONLY, reclaims nothing, and reads through the
+        // CASE form, which neither prunes partitions nor compiles to a JIT filter.
+        // Only the runtime-constant clocks (now/now_ns) additionally reduce to a timestamp interval;
+        // systimestamp/systimestamp_ns evaluate per row, so their flipped comparison stays a filter.
+        assertMemoryLeak(() -> {
+            for (String clock : new String[]{"now_ns()", "systimestamp_ns()"}) {
+                setCurrentMicros(JAN_10);
+                execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO base VALUES
+                        ('OLD', 1.0, '2024-01-05T00:00:00.000000Z'),
+                        ('NEW', 2.0, '2024-01-20T00:00:00.000000Z')""");
+                drainWalAndMatViewQueues();
+                execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts < " + clock);
+                drainWalAndMatViewQueues();
+
+                assertQuery("SELECT expire_enforcement FROM materialized_views() WHERE view_name = 'mv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("expire_enforcement\nFILTER_AND_RECLAIM\n");
+
+                // The keep filter NOT(ts < <clock>) flips to the bare ts >= <clock>; the CASE fallback the
+                // parser uses for a possibly-NULL threshold would show up as "case(".
+                printSql("EXPLAIN SELECT * FROM mv");
+                TestUtils.assertNotContains(sink, "case(");
+                if (Chars.equals(clock, "now_ns()")) {
+                    // A runtime-constant clock reduces further: WhereClauseParser extracts a timestamp
+                    // interval from the flipped comparison and the scan prunes partitions.
+                    TestUtils.assertContains(sink, "Interval forward scan");
+                }
+
+                assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nNEW\n");
+                assertQuery("SELECT count() p FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+
+                Assert.assertTrue("a nanosecond clock policy must reclaim [clock=" + clock + ']', runCleanup("mv"));
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT count() p FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n1\n");
+                assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nNEW\n");
+
+                execute("DROP MATERIALIZED VIEW mv");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
         });
     }
 
