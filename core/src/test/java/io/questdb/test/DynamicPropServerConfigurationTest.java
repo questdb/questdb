@@ -38,10 +38,17 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.window.WindowMapState;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.continuation.Fiber;
@@ -54,6 +61,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -1708,6 +1716,74 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isQueryTracingEnabled());
             }
         });
+    }
+
+    @Test
+    public void testWindowMapFusionReload() throws Exception {
+        // The switch is read once per compile rather than held anywhere, so what the reload has
+        // to reach is the next compile - not the value alone. The assertion is therefore the
+        // binding a fresh compile produces, which is the only thing the two settings differ in:
+        // the results and the EXPLAIN plan are identical either way.
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final CairoEngine engine = serverMain.getEngine();
+                try (SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(AllowAllSecurityContext.INSTANCE)) {
+                    engine.execute(
+                            "CREATE TABLE t (ts TIMESTAMP, k SYMBOL, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                            executionContext
+                    );
+                    Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, true);
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.window.map.fusion.enabled=false\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    assertFalse(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, false);
+
+                    // And back, because an escape hatch a reload cannot undo is half of one.
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.window.map.fusion.enabled=true\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, true);
+                }
+            }
+        });
+    }
+
+    private static void assertWindowMapFusion(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            boolean expectedFused
+    ) throws SqlException {
+        final String sql = "SELECT ts, sum(x) OVER w, count(y) OVER w FROM t "
+                + "WINDOW w AS (PARTITION BY k ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)";
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            // A projection wrapper can sit above the window factory, so the search walks the
+            // whole chain rather than unwrapping one known level.
+            RecordCursorFactory root = factory;
+            while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull("no window factory in the tree", root);
+            final ObjList<WindowMapState> states = ((WindowRecordCursorFactory) root).getWindowMapStates();
+            if (expectedFused) {
+                Assert.assertNotNull("the compile bound no window map group", states);
+                Assert.assertEquals(1, states.size());
+            } else {
+                Assert.assertNull("the compile bound a window map group with fusion off", states);
+            }
+        }
     }
 
     private static Connection getConnection(String user, String pass) throws SQLException {

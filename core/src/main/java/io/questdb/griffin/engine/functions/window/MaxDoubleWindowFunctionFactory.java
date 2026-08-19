@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -144,7 +146,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
                     );
                 } // range between {unbounded | x} preceding and {x preceding | current row}, except unbounded preceding to current row
                 else {
@@ -161,8 +164,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     try {
                         final ArrayColumnTypes valueTypes;
                         if (rowsLo == Long.MIN_VALUE) {
-                            // An unbounded frame start carries no live-view layout: the parser
-                            // turns the shape away at CREATE, so this arm never checkpoints.
+                            // An unbounded frame start carries no live-view layout, and needs none:
+                            // CREATE refuses every route to it. See MaxMinOverPartitionRangeFrameBase
+                            // in MaxMinWindowFunctionFactoryHelper.
                             valueTypes = MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
                         } else {
                             valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
@@ -228,7 +232,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             NAME,
                             partitionByKeyTypes,
                             liveView,
-                            configuration
+                            configuration,
+                            WindowAccumulatorDescriptor.FAMILY_DOUBLE_MAX
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -560,9 +565,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.comparator = comparator;
             this.name = name;
             this.liveView = liveView;
-            // Only the bounded-lo frame reaches a live view; an unbounded start is
-            // rejected at CREATE, so that arm keeps the plain layout and reports no
-            // checkpoint support.
+            // Only the bounded-lo frame carries a live-view layout; CREATE refuses
+            // every route to the unbounded-lo one, so that arm keeps the plain layout
+            // and reports no checkpoint support. See MaxMinOverPartitionRangeFrameBase
+            // in MaxMinWindowFunctionFactoryHelper.
             if (liveView && frameLoBounded) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -666,7 +672,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             // if rangeHi < 0, some elements from the window can be not in the frame
                             if (frameSize > 0) {
                                 if (dequeStartIndex != dequeEndIndex &&
@@ -706,7 +712,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             while (dequeStartIndex != dequeEndIndex &&
@@ -741,7 +747,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             if (Numbers.isNull(oldMax) || comparator.compare(val, oldMax)) {
                                 oldMax = val;
@@ -1581,7 +1587,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         // if rangeHi < 0, some elements from the window can be not in the frame
                         if (frameSize > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1633,7 +1639,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1681,7 +1687,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         if (Numbers.isNull(this.maxMin) || comparator.compare(val, this.maxMin)) {
                             this.maxMin = val;
@@ -1983,6 +1989,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Doesn't require value buffering.
     public static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        // FAMILY_DOUBLE_MAX or FAMILY_DOUBLE_MIN. Passed in rather than read off the
+        // comparator, because min reuses this class with a LESS_THAN and the accumulator
+        // identity must not rest on which lambda instance a caller happened to hand over.
+        private final int accumulatorFamily;
         private final DoubleComparator comparator;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -1993,6 +2003,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final String name;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double maxMin;
+        // The running extremum's slot in the group's fused map value, or -1 when this
+        // function owns its state. Installed by bindWindowStateSlots and cleared the same
+        // way.
+        private int windowStateExtremumSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
@@ -2003,10 +2017,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                                              String name,
                                                              ColumnTypes partitionByKeyTypes,
                                                              boolean liveView,
-                                                             CairoConfiguration configuration) {
+                                                             CairoConfiguration configuration,
+                                                             int accumulatorFamily) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
+            this.accumulatorFamily = accumulatorFamily;
             this.liveView = liveView;
             this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
@@ -2031,8 +2047,38 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's running extremum. The same arithmetic
+         * {@link #computeNext(Record)} runs, against a slot the group has already loaded
+         * rather than a map entry this function has to find - and with the identity NaN
+         * standing in for the {@code isNew()} the private map answers with.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                final double current = value.getDouble(windowStateExtremumSlot);
+                if (Numbers.isNull(current) || comparator.compare(d, current)) {
+                    value.putDouble(windowStateExtremumSlot, d);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateExtremumSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_EXTREMUM);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -2106,6 +2152,16 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reads the extremum the group keeps. No empty-state test: the component's identity
+         * is NaN, which is exactly what this window emits for a partition no finite row has
+         * reached.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            maxMin = value.getDouble(windowStateExtremumSlot);
+        }
+
         @Override
         public void reopen() {
             super.reopen();
@@ -2120,6 +2176,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window re-arms the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own - and
+                // this function has no map left to probe.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -2179,6 +2241,27 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void toTop() {
             super.toTop();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running extremum, which is the whole of this function's per-partition state.
+         * Whether it is the maximum or the minimum is fixed at construction: min reuses this
+         * class with the opposite comparator, and the two keep states neither can read out
+         * of the other.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return accumulatorFamily;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_EXTREMUM;
         }
     }
 
