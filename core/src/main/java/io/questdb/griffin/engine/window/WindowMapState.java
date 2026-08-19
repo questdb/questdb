@@ -52,8 +52,9 @@ import org.jetbrains.annotations.TestOnly;
  * BY columns, whose value carries every accumulator component a {@link WindowAccumulatorPlan}
  * laid out, and the one lookup per row that serves all of them.
  * <p>
- * The sequence a row runs through is always the same: load the value once, put a new entry's
- * components to identity, run every contributor, then run every projection. What the group
+ * It is the ordinary-query counterpart of what {@code LiveViewWindow} does for an anchored
+ * live view, and the row sequence is deliberately the same one: load the value once, put a new
+ * entry's components to identity, run every contributor, then run every projection. What it
  * does not carry is anything durable - no anchor, no bucket, no dirty set, no manifest - so
  * the whole of its state is a map that lives and dies with the cursor.
  * <p>
@@ -153,8 +154,8 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         this.projectionCount = plan.getProjectionCount();
         this.unorderedMapMaxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
         // A group's map is keyed by its spec, so only a plan that carries one is bindable
-        // here. Every plan carries one: WindowAccumulatorPlanBuilder.compileGroups skips a
-        // function whose spec is null and opens a builder per spec over the rest.
+        // here. A live view's plan does not - it is owned by LiveViewWindow, which keys the
+        // fused entry off its own anchor map - and never reaches this constructor.
         final WindowMapSpec spec = plan.getSpec();
         assert spec != null;
         // Every member of a group agrees with its spec on how many passes the traversal takes,

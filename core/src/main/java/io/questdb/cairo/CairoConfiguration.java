@@ -446,14 +446,24 @@ public interface CairoConfiguration {
     long getLiveViewInMemoryMaxMicros();
 
     /**
-     * Reclaimable-partition threshold for the frontier sweep in {@code LiveViewWindow}. The
-     * sweep drops the anchor-map partitions that have fallen behind the previous anchor
-     * bucket, and it runs only once the anchor has advanced past a bucket boundary since the
-     * last sweep and all three of these hold together: the anchor map holds more partitions
-     * than this threshold, at least this many of them are reclaimable, and the reclaimable
-     * ones are at least half the map. A higher value leaves the anchor map larger between
-     * sweeps; a lower one sweeps more often. Neither matters for a view whose anchor is not
-     * provably monotone, or is NULL - such a view never compacts, at any value of this key.
+     * The share of the anchor map, in percent, a frontier sweep must be able to reclaim
+     * before {@code LiveViewWindow} fires one. It is one of three arms of the trigger and
+     * the only one that scales with the map, so at large partition counts it is the arm
+     * that decides: at the 50 default a sweep evicts at least half the map, which makes
+     * sweeps rare and each one large. Lowering it sweeps more often and evicts less each
+     * time, which caps the checkpoint dirty set's peak - the seal has to carry one removal
+     * per evicted key - at the cost of paying the sweep's own walk more often. {@code 0}
+     * turns this arm off and leaves {@link #getLiveViewPartitionCompactThreshold()} to
+     * decide alone.
+     */
+    int getLiveViewPartitionCompactStalePercent();
+
+    /**
+     * Absolute stale-partition count a frontier sweep needs before {@code LiveViewWindow}
+     * fires one, and the floor the anchor map's size must also clear. It keeps the sweep
+     * off small maps, where the walk costs more than the entries it would reclaim.
+     * {@link #getLiveViewPartitionCompactStalePercent()} is the other arm and the one that
+     * binds once the map is large.
      */
     int getLiveViewPartitionCompactThreshold();
 
@@ -1311,8 +1321,19 @@ public interface CairoConfiguration {
      * The switch changes no answer - a group co-locates state that stays each member's own - so
      * it is an operational escape hatch for a shape whose Map implementation or key distribution
      * regresses in the field, and the control the differential tests compare against. It gates
-     * the runtime binding only; the group is compiled either way, and nothing user-visible,
-     * {@code EXPLAIN} included, differs between the two settings.
+     * the runtime binding only; the group is compiled either way, and for a plain SQL query
+     * nothing user-visible, {@code EXPLAIN} included, differs between the two settings. The
+     * key is reloadable and read once per compile, so flipping it moves the next compile and
+     * nothing already compiled.
+     * <p>
+     * An anchored live view is the exception, because it persists the shape this switch selects.
+     * {@code LiveViewWindow} reads the flag when it decides whether to adopt the compiled state
+     * plan, so a view sealed with the switch on and restarted with it off meets a fused window
+     * root it has no plan to restore into. The restore rejects that root as recoverable
+     * corruption and walks back through predecessors, which were sealed fused as well, so the
+     * view rebuilds from the base table. The answers stay correct either way, but turning the
+     * switch off across a restart costs every anchored live view a replay. Turning it back on
+     * is the cheaper direction: a legacy root upgrades into the fused shape in place.
      */
     boolean isSqlWindowMapFusionEnabled();
 

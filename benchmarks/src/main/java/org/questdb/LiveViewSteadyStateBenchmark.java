@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -74,8 +75,10 @@ import java.util.Locale;
  * a sweep against one that does not - the seal stays incremental across a sweep, but has
  * to carry one removal per evicted key on top of the keys the batch touched.
  * <p>
- * {@code --compact-threshold} moves the sweep trigger's absolute arm, which is what
- * decides how often a run sweeps and how much each sweep evicts.
+ * {@code --compact-threshold} and {@code --compact-stale-percent} move the two arms of the
+ * trigger. The threshold is an absolute count and stops binding once the map is large; the
+ * stale percent scales with the map and is what decides at that point. Lowering it sweeps
+ * more often and evicts less each time.
  * <p>
  * Build and run:
  * <pre>
@@ -119,6 +122,7 @@ public class LiveViewSteadyStateBenchmark {
         int recycleAccounts = 0; // 0 = every row a brand new account
         long accountWindow = 0; // 0 = no rolling window, so nothing ages out
         String anchorPeriod = DAILY_ANCHOR_PERIOD;
+        int compactStalePercent = -1; // -1 = leave the configuration default alone
         int compactThreshold = -1; // -1 = leave the configuration default alone
         String shape = Shape.TARGET.name;
         String keyType = "symbol";
@@ -151,6 +155,8 @@ public class LiveViewSteadyStateBenchmark {
                 anchorPeriod = arg.substring(16);
             } else if (arg.startsWith("--compact-threshold=")) {
                 compactThreshold = Integer.parseInt(arg.substring(20));
+            } else if (arg.startsWith("--compact-stale-percent=")) {
+                compactStalePercent = Integer.parseInt(arg.substring(24));
             } else if (arg.startsWith("--shape=")) {
                 shape = arg.substring(8);
             } else if (arg.startsWith("--key-type=")) {
@@ -194,6 +200,7 @@ public class LiveViewSteadyStateBenchmark {
         final long finalCheckpointRows = checkpointRows;
         final long finalCheckpointDuration = checkpointDurationMicros;
         final int finalCompactThreshold = compactThreshold;
+        final int finalCompactStalePercent = compactStalePercent;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
                 @Override
@@ -204,6 +211,13 @@ public class LiveViewSteadyStateBenchmark {
                 @Override
                 public long getLiveViewCheckpointRows() {
                     return finalCheckpointRows;
+                }
+
+                @Override
+                public int getLiveViewPartitionCompactStalePercent() {
+                    return finalCompactStalePercent >= 0
+                            ? finalCompactStalePercent
+                            : super.getLiveViewPartitionCompactStalePercent();
                 }
 
                 @Override
@@ -222,10 +236,11 @@ public class LiveViewSteadyStateBenchmark {
                     Locale.ROOT,
                     "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
-                            + "shape=%s keyType=%s nullPercent=%d sumColumns=%d%n",
+                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
+                    configuration.getLiveViewPartitionCompactStalePercent(),
                     selectShape.name, partitionKeyType.name, nullPercent, sumColumns
             );
 
@@ -554,9 +569,10 @@ public class LiveViewSteadyStateBenchmark {
     /**
      * What the frontier sweep cost the run. {@code seal_after_sweep_ms} is the mean seal
      * in a batch that swept and {@code seal_no_sweep_ms} the mean seal in one that did
-     * not - the two numbers the removal-recording change has to move, since a sweep used
-     * to demote the next seal to a full scan of the entire live state. Each carries its
-     * sample count, because a run that swept once compares a single seal against many.
+     * not - the two numbers the removal-recording change has to move, since a sweep
+     * currently demotes the next seal to a full scan of the entire live state. Each
+     * carries its sample count, because a run that swept once compares a single seal
+     * against many.
      */
     private static void reportSweeps(
             LiveViewInstance instance,
@@ -588,15 +604,57 @@ public class LiveViewSteadyStateBenchmark {
     }
 
     /**
-     * The {@link io.questdb.cairo.map.Map} implementation the anchor window landed on.
-     * {@code MapFactory} picks it from {@code keySize + valueSize} against
-     * {@code cairo.sql.unordered.map.max.entry.size}, so a change to the anchor entry's
-     * width can move a run between {@code Unordered4Map} and {@code OrderedMap} and take
-     * the probe cost with it. Reporting it makes that move visible rather than something
-     * a reader has to infer from the timings.
+     * The fused group's shape and the {@link io.questdb.cairo.map.Map} implementation it
+     * landed on.
+     * <p>
+     * The implementation is the line to watch when the partition key is an INT: fusing the
+     * accumulators into the window's value takes {@code keySize + valueSize} past
+     * {@code cairo.sql.unordered.map.max.entry.size} and moves the map from
+     * {@code Unordered4Map} to {@code OrderedMap}, trading a probe on the fastest shape
+     * for one on a slower one - against four fewer probes per row. A LONG key was already
+     * past the limit before fusing and a SYMBOL or STRING key was never eligible, so this
+     * only ever moves for the INT-keyed control.
      */
     private static void reportWindowState(LiveViewWindow window) {
-        System.out.printf(Locale.ROOT, "# window_state map=%s%n", window.getAnchorMapImplementation());
+        final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+        // The state-root kind and the root counts are the per-seal fixed cost the fusion is
+        // about: a window root replaces the anchor root and every durable projection's root
+        // at once, so a view whose whole SELECT list fuses publishes two metadata files per
+        // seal - window root plus checkpoint root - where it used to publish one per
+        // function on top of those two. The meta_segs column is where that shows up as a
+        // number.
+        //
+        // Two kinds of function still publish a root of their own and they cost the same
+        // per seal, so both are reported: a residual, which owns a map and a probe per row
+        // as well, and a runtime-only member, which is in the group's one map and only its
+        // bytes are separate.
+        System.out.printf(
+                Locale.ROOT,
+                "# window_state map=%s state_root=%s components=%d durable_components=%d projections=%d "
+                        + "entry_state_bytes=%d runtime_only_members=%s residual_functions=%s%n",
+                window.getAnchorMapImplementation(),
+                plan == null ? "anchor" : "window",
+                plan == null ? 0 : plan.getComponentCount(),
+                plan == null ? 0 : plan.getDurableComponentCount(),
+                plan == null ? 0 : plan.getProjectionCount(),
+                plan == null ? Long.BYTES : plan.getTotalInlineStateBytes(),
+                plan == null ? "n/a" : Integer.toString(runtimeOnlyMembers(plan)),
+                plan == null ? "n/a" : Integer.toString(plan.getResidualFunctions().size())
+        );
+    }
+
+    /**
+     * How many of the plan's projections are grouped in the window's map but persist on a
+     * root of their own - the components the leaf budget left out of the manifest.
+     */
+    private static int runtimeOnlyMembers(LiveViewWindowStatePlan plan) {
+        int count = 0;
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (!plan.isDurableProjection(i)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**
@@ -734,8 +792,8 @@ public class LiveViewSteadyStateBenchmark {
                 anchorOffsetMicros, keyType);
         final String rowIndex = "(x + " + (firstRow - 1) + ")";
         final String amount = "(" + rowIndex + " % 2001 - 1000) * 0.01";
-        // A NULL amount is what separates the two counters the TARGET shape carries:
-        // sum(amt_txn) skips the row and count(cod_acct_no) does not.
+        // A NULL amount is what separates the two counters a fused group might otherwise
+        // look equivalent on: sum(amt_txn) skips the row and count(cod_acct_no) does not.
         final String nullableAmount = nullPercent > 0
                 ? "case when " + rowIndex + " % 100 < " + nullPercent + " then null::double else " + amount + " end"
                 : amount;
@@ -752,9 +810,9 @@ public class LiveViewSteadyStateBenchmark {
 
     /**
      * The extra {@code q1..qN} DOUBLE columns the width sweep sums over. Each one is a
-     * distinct argument and therefore one more window function, so {@code N} widens the
-     * view's SELECT list a step at a time with nothing else about the view changing -
-     * which is what makes the per-function refresh and seal cost measurable rather than
+     * distinct argument and therefore a distinct 16-byte component, so {@code N} moves
+     * the fused entry's width by 16 bytes a step with nothing else about the view
+     * changing - which is what makes the leaf-budget question measurable rather than
      * arguable.
      */
     private static String sumColumnDdl(int sumColumns) {
@@ -777,11 +835,11 @@ public class LiveViewSteadyStateBenchmark {
      * The published checkpoint segments, sampled from the view's own
      * {@code _checkpoints} directory between batches.
      * <p>
-     * The two counts are the per-seal fixed cost that does not scale with the dirty set: a
-     * seal publishes one metadata file per state root plus one for the checkpoint root,
-     * each preceded by a probe and followed by an mmap, a sync and a rename. On a small
-     * incremental dirty set that cost dominates the per-entry bytes entirely, so a run
-     * whose refresh time moves without these counts moving has moved in the dirty set.
+     * The two counts are the per-seal fixed cost that does not scale with the dirty set,
+     * and they are what removing a root actually removes: a seal publishes one metadata
+     * file per state root plus one for the checkpoint root, each preceded by a probe and
+     * followed by an mmap, a sync and a rename. On a small incremental dirty set that
+     * cost dominates the per-entry bytes entirely.
      * <p>
      * A segment id only ever increases, so "published since the last sample" is counted
      * as the files whose id is above the highest id seen then - exact even when the same
@@ -889,16 +947,16 @@ public class LiveViewSteadyStateBenchmark {
     }
 
     /**
-     * The partition key's column type, and with it the runtime map shape the anchor
-     * window lands on.
+     * The partition key's column type, and with it the runtime map shape the fused
+     * window value lands on.
      * <p>
      * {@code MapFactory.createUnorderedMap} selects {@code Unordered4Map} or
      * {@code Unordered8Map} only while {@code keySize + valueSize} fits
      * {@code cairo.sql.unordered.map.max.entry.size}, default 16. An INT key with the
-     * anchor-only 10-byte value sits at 14 and is the only one of the three still on the
-     * fast map; a LONG key is past the limit at 18 and a SYMBOL key was never eligible.
-     * The reported workload uses a SYMBOL key, so the INT and LONG runs exist to separate
-     * what a refresh costs in the map from what it costs in the symbol dictionary.
+     * anchor-only 10-byte value sits at 14 and moves to {@code OrderedMap} at 26 once a
+     * 16-byte accumulator joins it; a LONG key was already past the limit at 18 before
+     * fusing, and a SYMBOL key was never eligible. The INT control is therefore the only
+     * run that can show the transition, and it is why it exists.
      */
     private enum KeyType {
         INT("int"),
@@ -934,23 +992,23 @@ public class LiveViewSteadyStateBenchmark {
     }
 
     /**
-     * The SELECT list a run measures. A live view gives every window function a map and a
-     * checkpoint root of its own, so the shape decides how many maps a refresh probes per
-     * row and how many roots a seal publishes - which is what the wider shapes are here to
-     * separate from the one-function controls.
+     * The SELECT list a run measures. Each shape is one row of the acceptance plan: what
+     * the fused group is made of decides how many components the entry carries, how many
+     * of them several projections share, and which functions stay on a legacy root.
      */
     private enum Shape {
         /**
-         * Four dispersion calls plus a {@code count}, all five over one window.
+         * Four dispersion calls plus a {@code count} that folds onto their counter - one
+         * 24-byte Welford component serving five outputs.
          */
         DISPERSION("dispersion"),
         /**
-         * A cumulative {@code sum} beside a bounded ROWS one, which carries a per-key ring
-         * arena as well as a map. The shape the ring reclamation on sweep is about.
+         * A fused group beside a bounded ROWS call, which keeps a ring-backed root of its
+         * own. The mixed shape the acceptance plan asks for.
          */
         MIXED("mixed"),
         /**
-         * {@code count(*)} and {@code row_number()}, the two row counters.
+         * {@code count(*)} and {@code row_number()} over one row-count component.
          */
         ROW_COUNT("row-count"),
         /**
@@ -962,19 +1020,22 @@ public class LiveViewSteadyStateBenchmark {
          */
         SINGLE_SUM("sum"),
         /**
-         * The same single {@code sum} over an expression rather than a column reference.
-         * Same arithmetic, same rows, one function - it exists as the control that pins
-         * how much of {@link #SINGLE_SUM}'s cost is the argument rather than the window.
+         * The same single {@code sum} over an expression rather than a column reference,
+         * which the plan declines for want of an argument key. It is the unfused control
+         * to read {@link #SINGLE_SUM} against: same arithmetic, same rows, one function,
+         * and the only difference is whether the window owns the state or the function
+         * does.
          */
-        SINGLE_SUM_EXPRESSION("sum-expression"),
+        SINGLE_SUM_UNFUSED("sum-unfused"),
         /**
-         * {@code sum}, {@code avg} and {@code count} over one window: three functions, and
-         * so three maps and three probes a row.
+         * Three projections onto one {@code (sum, nonNullCount)} component: the shape the
+         * cross-family derivation exists for.
          */
         SUM_AVG_COUNT("sum-avg-count"),
         /**
          * The reported workload: a {@code sum} over the amount beside a {@code count} over
-         * the key.
+         * the key. Their arguments differ, so the two counters never merge and the entry
+         * carries two components.
          */
         TARGET("target");
 
@@ -1008,7 +1069,7 @@ public class LiveViewSteadyStateBenchmark {
                 case ROW_COUNT -> "count(*) over w as n, row_number() over w as rn";
                 case SINGLE_COUNT -> "count(cod_acct_no) over w as cumulative_count";
                 case SINGLE_SUM -> "sum(amt_txn) over w as cumulative_sum";
-                case SINGLE_SUM_EXPRESSION -> "sum(amt_txn + 0.0) over w as cumulative_sum";
+                case SINGLE_SUM_UNFUSED -> "sum(amt_txn + 0.0) over w as cumulative_sum";
                 case SUM_AVG_COUNT -> "sum(amt_txn) over w as s, avg(amt_txn) over w as a, "
                         + "count(amt_txn) over w as c";
                 case TARGET -> "sum(amt_txn) over w as cumulative_sum, count(cod_acct_no) over w as cumulative_count";

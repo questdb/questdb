@@ -122,10 +122,10 @@ public interface WindowFunction extends Function {
      * maintain exactly {@code (sum, nonNullCount)}, and {@code count(*)} beside
      * {@code row_number()} both report
      * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT} because both maintain one
-     * counter of rows. Declaring a family is a claim about the <b>whole</b> of the
-     * per-partition state, so a function keeps anything the family's fields do not
-     * describe - the live rows behind a bounded frame's scalar tail, say - must not
-     * declare one: the group carries the family's fields and nothing else.
+     * counter of rows. Declaring a family is a claim about
+     * the whole-state image, so it may only be made where
+     * {@link #checkpointStateFixedLength()} declares the family's own width - the plan
+     * checks the two against each other and declines the projection when they disagree.
      */
     default int windowAccumulatorFamily() {
         return WindowAccumulatorDescriptor.FAMILY_NONE;
@@ -148,9 +148,10 @@ public interface WindowFunction extends Function {
      * Absorbs one row into this function's accumulator, which lives in the group's
      * fused map value rather than in a map of its own.
      * <p>
-     * Called once per row by {@link WindowMapState#computeNext(Record)}, the runtime that
-     * owns the group's map, and only on the one function the plan chose as a component's
-     * <b>contributor</b>.
+     * Called once per row by whichever runtime owns the group's map -
+     * {@link WindowMapState#computeNext(Record)} for an ordinary query,
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow} for an anchored live view - and
+     * only on the one function the plan chose as a component's <b>contributor</b>.
      * Every other projection on the same component reads the state this call updates
      * and writes nothing, which is what stops {@code sum(x)} beside {@code avg(x)}
      * counting the row twice.
@@ -173,12 +174,13 @@ public interface WindowFunction extends Function {
      * {@code computeNext}, {@code resetPartition}, {@code markPartitionAlive},
      * {@code retainPartitions} and per-function freeze/restore participation all become
      * no-ops, and its getters return whatever {@link #projectWindowState} last
-     * materialized. Binding is the plan's to do, because the plan is the single owner of
-     * which accumulator is whose.
+     * materialized. Binding is the plan's to do - see
+     * {@code LiveViewWindowStatePlan.bindProjectionFunctions} - because the plan is the
+     * single owner of which accumulator is whose.
      * <p>
-     * The parameter is the runtime projection: a bound function reads map value slots,
-     * and where a component's image would sit in a persisted payload is no business of
-     * the hot path.
+     * The parameter is the runtime projection rather than the durable one a live view
+     * persists: a bound function reads map value slots, and where a component's image
+     * sits in a persisted payload is no business of the hot path.
      * <p>
      * The whole projection rather than a pair of slots, because a family's field set is
      * the family's business: {@code (sum, nonNullCount)} covers the DOUBLE accumulators
@@ -809,10 +811,11 @@ public interface WindowFunction extends Function {
      * Materializes this output's current value from the group's fused map value, so the
      * getters can answer without a map probe of their own.
      * <p>
-     * Called once per row by the runtime that owns the group's map -
+     * Called once per row by whichever runtime owns the group's map -
      * {@link WindowMapState#computeNext(Record)}, or {@link WindowMapState#projectPass2(Record)}
-     * for a two-pass group - on every projection of the group and after every contributor
-     * has run. Running it from the group's owner rather than from this function's own
+     * for a two-pass group, and {@link io.questdb.cairo.lv.LiveViewWindow#processRow} for an
+     * anchored live view - on every projection of the group and after every contributor has
+     * run. Running it from the group's owner rather than from this function's own
      * {@link #computeNext(Record)} is what removes the ordering dependency on the SELECT
      * list: the accumulators are whole before the first output reads one, however the
      * outputs happen to be ordered.
@@ -834,6 +837,25 @@ public interface WindowFunction extends Function {
      * Prepares state before the optional secondary cached traversal.
      */
     default void preparePass2() {
+    }
+
+    /**
+     * Ends the incremental baseline this function's own root is built on, so its next
+     * seal walks its whole live key domain instead of the keys
+     * {@link #getCheckpointDirtyPartitionMap()} names.
+     * <p>
+     * What calls this is a change of owner: a function joining or leaving a window-state
+     * group keeps a root of its own on both sides of the move, but while the group owns
+     * its state the keys that move are recorded in the group's dirty set and not in this
+     * function's. An incremental seal taken after the move would therefore name only the
+     * keys touched since it and leave the rest of the root standing on state that has
+     * moved - a stale entry a restart reads back as live.
+     * <p>
+     * Fail-safe by construction: a function that does not implement this keeps
+     * {@link #isCheckpointFullScanRequired()} answering true, which is the same complete
+     * freeze this asks for.
+     */
+    default void requireCheckpointFullScan() {
     }
 
     /**
@@ -1050,6 +1072,36 @@ public interface WindowFunction extends Function {
      */
     default long checkpointRowsStateExtentOverride() {
         return Long.MIN_VALUE;
+    }
+
+    /**
+     * The exact byte length {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}
+     * emits for <b>every</b> partition of this function, or {@code -1} when the image is not
+     * fixed width. The default declines.
+     * <p>
+     * A fixed width is what lets the checkpoint seal carry the image in the partition-map
+     * leaf's scalar slot instead of writing a data page and naming it with a 40-byte
+     * reference. The leaf holds no per-entry length of its own beyond the scalar's, so a
+     * decoder has only the declaration to size a slice by, and the declaration is therefore a
+     * hard invariant rather than a hint: the framework verifies every frozen image against it
+     * and treats a mismatch as a critical implementation failure
+     * ({@link LiveViewStatePageWriter#freeze(WindowFunction, MapValue)}).
+     * <p>
+     * Declare it only where the <b>complete</b> image is fixed. An unbounded partitioned
+     * accumulator qualifies - a DOUBLE {@code sum}/{@code avg} freezes
+     * {@code (sum, nonNullCount)} and nothing else, a {@code count} freezes one counter - and
+     * a bounded ring or ROWS-buffer variant does not, however fixed its scalar tail is: its
+     * image carries the live rows behind that tail. A
+     * {@link #supportsCheckpointRingState() ring-shaped} function never declares one at all,
+     * since its root entry names chunk pages rather than a whole-state image.
+     * <p>
+     * Declaring a width does not by itself mean the state gets inlined. The seal admits a
+     * declaration into the leaf only within
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES},
+     * and a wider fixed state keeps the page-backed shape.
+     */
+    default int checkpointStateFixedLength() {
+        return -1;
     }
 
     /**

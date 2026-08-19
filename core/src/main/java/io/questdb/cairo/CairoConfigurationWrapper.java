@@ -545,6 +545,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewPartitionCompactStalePercent() {
+        return getDelegate().getLiveViewPartitionCompactStalePercent();
+    }
+
+    @Override
     public int getLiveViewPartitionCompactThreshold() {
         return getDelegate().getLiveViewPartitionCompactThreshold();
     }

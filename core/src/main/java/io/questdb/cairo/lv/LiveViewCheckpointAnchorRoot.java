@@ -118,11 +118,28 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
     }
 
     public void of(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
+        if (!of0(checkpointsDir, rootRef)) {
+            throw LiveViewCheckpointMetadata.invalid("anchor root page kind unknown, kind=").put(reader.getPageKind());
+        }
+    }
+
+    /**
+     * Decodes {@code rootRef} when it names a legacy anchor root, and answers false when
+     * it names the fused {@link LiveViewCheckpointWindowRoot} that stands in the same
+     * place. The two are a tagged union read by page kind, so meeting the other one is
+     * an ordinary answer - a view whose recompile dropped its window-state plan converts
+     * back to the anchor shape on its next seal - rather than corruption.
+     */
+    public boolean ofIfAnchorRoot(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
+        return of0(checkpointsDir, rootRef);
+    }
+
+    private boolean of0(Path checkpointsDir, LiveViewCheckpointPageRef rootRef) {
         LiveViewCheckpointMetadata.validateMetaRef(rootRef, false, "anchor root");
         reader.of(checkpointsDir, rootRef.getSegmentId());
         reader.openPage(rootRef);
         if (reader.getPageKind() != PAGE_KIND) {
-            throw LiveViewCheckpointMetadata.invalid("anchor root page kind unknown, kind=").put(reader.getPageKind());
+            return false;
         }
         final int payloadLength = reader.getPagePayloadLength();
         if (payloadLength < FIXED_SIZE) {
@@ -175,6 +192,7 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
             previous = segmentId;
             offset += 2L * Long.BYTES;
         }
+        return true;
     }
 
     /**

@@ -1233,8 +1233,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             wf.getWindowFunctions(),
                             anchoredFunctions
                     ),
+                    wf.getCheckpointWindowStatePlan(),
                     instance.getMemoryTracker()
             );
+            // The plan is compiled against the factory's window functions and keyed by
+            // their partition-by layout; the window is what decides whether that layout is
+            // the anchor map's, so binding is where the two meet. Adopting it moves the
+            // group's runtime state into the window's own map value and leaves each
+            // grouped function a read-only projection of it; a declined plan leaves every
+            // function on the private map and the legacy root it has outside a group.
+            window.bindCheckpointWindowStatePlan(wf.getCheckpointWindowStatePlan());
             // Commit the anchor Function and window together, only after the full
             // machinery builds. A failure before this point must not leave a
             // half-built anchor (function set, window null): the per-row reset

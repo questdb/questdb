@@ -41,10 +41,12 @@ import java.util.Arrays;
  * left canonically and assigns the slot bases a {@link WindowAccumulatorPlan} is read
  * through.
  * <p>
- * A query buckets its functions by {@link WindowMapSpec} and reads the plan straight.
+ * It decides that layout for <b>both</b> owners. An ordinary query buckets its functions by
+ * {@link WindowMapSpec} and reads the plan straight; {@code LiveViewWindowStatePlan.Builder}
+ * composes one of these and renders the same components into a persisted layout on top of it.
  * Nothing durable is decided here: no manifest, no byte offsets, no codec version and no leaf
- * budget to truncate against. A group's layout is a promise to nothing beyond its own cursor,
- * which is what lets it be re-decided on every compile.
+ * budget to truncate against. A live view's layout is a promise to a predecessor root; an
+ * ordinary query's is a promise to nothing beyond its own cursor.
  * <p>
  * Every rejection is an ordinary answer rather than an error. A function the group does not
  * carry keeps the private map and the per-row update it has today, and a group that carries
@@ -108,12 +110,10 @@ public final class WindowAccumulatorPlanBuilder {
     }
 
     /**
-     * @param spec       the group identity every function of this builder shares. Null is what
-     *                   the signature admits and nothing hands over: the one-argument
-     *                   constructor is this one's only caller and requires a spec, and
-     *                   {@link #compileGroups} - which opens every builder this class makes -
-     *                   goes through it. A builder holding no spec would decline every
-     *                   guarded projection, as the guard below spells out
+     * @param spec       the group identity every function of this builder shares, or null when
+     *                   the owner proves that identity its own way - a live view holds an
+     *                   encoded window identity and a key schema instead, and compiles no
+     *                   {@link WindowMapSpec} at all
      * @param foldPolicy an owner's veto on the containment fold, or null to fold wherever
      *                   {@link WindowAccumulatorDescriptor#derivedSlotOffset} proves it
      */
@@ -121,8 +121,8 @@ public final class WindowAccumulatorPlanBuilder {
         this.spec = spec;
         this.foldPolicy = foldPolicy;
         // The whole of a group's key is its spec's, so one guard serves every function this
-        // builder is offered. A builder holding no spec answers false for every function,
-        // which declines a guarded projection rather than admitting one unproved.
+        // builder is offered. A live view has no spec and offers no guarded projection through
+        // this path: its own compiler resolves the candidate and passes a guard of its own.
         //
         // The key term has to be a column before it can be the argument's: an expression term
         // answers -1, which is a column no argument names, and the explicit test is what keeps
@@ -265,9 +265,9 @@ public final class WindowAccumulatorPlanBuilder {
      * previously added projection already names an identical one. Declines when the family
      * cannot produce {@code projectionKind}.
      * <p>
-     * The window identity is not re-checked here: {@link #compileGroups} opens a builder per
-     * {@link WindowMapSpec} bucket, so belonging to this builder is what having that identity
-     * means.
+     * The window identity is not re-checked here as the live-view builder re-checks it: a
+     * builder is created per {@link WindowMapSpec} bucket, so belonging to this builder is
+     * what having that identity means.
      *
      * @return true when the projection joined the group
      */
@@ -309,8 +309,8 @@ public final class WindowAccumulatorPlanBuilder {
      * Assembles the plan, or returns null when nothing joined the group.
      *
      * @param slotPrefix how many map value slots the group's owner reserved ahead of the
-     *                   components - zero for an ordinary query, which is what
-     *                   {@link #compileGroups} passes
+     *                   components - zero for an ordinary query, the anchor slots for a
+     *                   live view
      */
     public @Nullable WindowAccumulatorPlan build(int slotPrefix) {
         if (components.size() == 0) {
@@ -445,7 +445,8 @@ public final class WindowAccumulatorPlanBuilder {
      * <p>
      * The gates are the same ones {@link #addAccumulatorProjection} applies, so this cannot
      * name a host that walk would decline, and the family half of the test is
-     * {@link WindowAccumulatorCandidate#isRowCountHost}'s.
+     * {@link WindowAccumulatorCandidate#isRowCountHost}'s - the same one the live-view
+     * compiler's own pre-pass reads.
      */
     private static @Nullable WindowFunction rowCountHost(
             ObjList<? extends Function> functions,
@@ -758,9 +759,10 @@ public final class WindowAccumulatorPlanBuilder {
      * Which family pairs contain which is
      * {@link WindowAccumulatorDescriptor#derivedSlotOffset}'s answer and is a fact about the
      * two runtime states. Whether a particular owner will <b>carry</b> that fold can be a
-     * further question - an owner that persisted the host's image would be making a claim
-     * about two byte codecs as well. An owner with nothing to add passes null and folds
-     * wherever the runtime table proves it, which is what every owner does today.
+     * further question: a live view persists the host's image and hands the guest's decoder a
+     * run inside it, so its fold is a claim about two byte codecs as well, and it is withheld
+     * unless both are at the version the claim was proved at. An owner with nothing to add
+     * passes null and folds wherever the runtime table proves it.
      */
     @FunctionalInterface
     public interface FoldPolicy {

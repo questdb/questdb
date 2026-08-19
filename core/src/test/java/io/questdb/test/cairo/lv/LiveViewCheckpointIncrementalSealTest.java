@@ -42,6 +42,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -337,6 +338,14 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             createUnfusedAvgView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
+                // The whole case rests on both calls staying residual. Every per-function
+                // assertion below falls back to the anchor's own numbers for a fused
+                // group, so a plan that learned to accept an expression argument would
+                // leave this passing against state it no longer describes.
+                Assert.assertFalse(
+                        "both calls must decline the fused plan",
+                        isWindowStateFused()
+                );
                 assertDirtySetsClearedByPublish();
                 assertHeadRootPartitionCount(4);
                 final long generation = publishedGeneration();
@@ -1373,8 +1382,23 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * Whether the view's anchored window has adopted a fused plan, and so owns the state
+     * the grouped functions would otherwise each keep. The per-function assertions below
+     * have nothing to read for such a function; the window's own are what carry them.
+     */
+    private boolean isWindowStateFused() {
+        return anchorWindow().getCheckpointWindowStatePlan() != null;
+    }
+
+    /**
      * Asserts every per-partition state root at the head boundary names exactly
      * {@code expected} partitions.
+     * <p>
+     * This view's two calls fuse, so the head's state root is one window root holding
+     * both of them and the function directory is empty. The legacy arm is kept because
+     * the shape is a property of the compiled plan rather than of the assertion: a view
+     * the plan declines still seals one root per function, and the count means the same
+     * thing either way.
      */
     private void assertHeadRootPartitionCount(int expected) {
         final LiveViewInstance instance = viewInstance();
@@ -1390,6 +1414,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
                     LiveViewCheckpointFunctionDirectory functions = new LiveViewCheckpointFunctionDirectory(configuration);
                     LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
+                    LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
                     LiveViewCheckpointPartitionMapReader partitions = new LiveViewCheckpointPartitionMapReader(configuration)
             ) {
                 timeline.of(dir);
@@ -1399,8 +1424,15 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
                 root.of(dir, head.rootRef);
+                root.getStateRootRef(stateRootRef);
                 int stateRoots = 0;
+                if (!stateRootRef.isNull() && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
+                    windowRoot.getPartitionMapRootRef(partitionMapRoot);
+                    assertPartitionCount("window state root", expected, partitions, partitionMapRoot);
+                    stateRoots++;
+                }
                 root.getFunctionDirectoryRef(functionDirectoryRef);
                 functions.of(dir, functionDirectoryRef);
                 for (int i = 0, n = functions.size(); i < n; i++) {
@@ -1463,7 +1495,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     dirty == null || dirty.size() == 0
             );
         }
-        Assert.assertTrue("no window function carries partition state", checked > 0);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1501,7 +1533,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     function.getCheckpointBaselineGeneration()
             );
         }
-        Assert.assertTrue("no window function tracks dirty partitions", checked > 0);
+        Assert.assertTrue("no window function tracks dirty partitions", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1554,7 +1586,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     function.getCheckpointBaselineGeneration()
             );
         }
-        Assert.assertTrue("no window function carries partition state", checked > 0);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1755,7 +1787,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             }
             out.add(dirty.getKeyCapacity());
         }
-        Assert.assertTrue("no window function tracks dirty partitions", out.size() > 1);
+        Assert.assertTrue("no window function tracks dirty partitions", isWindowStateFused() || out.size() > 1);
         return out;
     }
 
@@ -1807,7 +1839,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             }
             out.add(function.getCheckpointLogicalStateBytes());
         }
-        Assert.assertTrue("no window function carries partition state", out.size() > 1);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || out.size() > 1);
         return out;
     }
 

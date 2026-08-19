@@ -1483,6 +1483,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     : WindowAccumulatorProjection.PROJECTION_VAR_POP;
         }
 
+        /**
+         * The whole image is {@code (mean, m2, nonNullCount)} - the frame start is
+         * unbounded, so there are no live rows behind the accumulator to carry.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Double.BYTES + Long.BYTES;
+        }
+
         @Override
         public void computeNext(Record record) {
             if (isWindowStateOwned()) {
