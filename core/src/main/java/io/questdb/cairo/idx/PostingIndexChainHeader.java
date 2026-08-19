@@ -229,11 +229,19 @@ public final class PostingIndexChainHeader {
     /**
      * Re-read the seqlock pair on the page picked by an earlier
      * {@link #readUnderSeqlock} and return true if it has not advanced.
-     * Used by callers that need to extend the seqlock window past the
-     * header payload — e.g. to read chain-entry header bytes that the
-     * writer mutates in place via {@code extendHead} without an inner
-     * seqlock. If this returns false the caller must redo both the header
-     * read and the downstream entry read.
+     * A best-effort staleness check on that one page, NOT a seqlock held
+     * across the caller's downstream reads: {@link #publish} writes the
+     * page the reader did not pick, so one concurrent publish leaves this
+     * pair untouched and only a later publish that lands back on this
+     * page trips it. That makes the single publish in
+     * {@code PostingIndexChainWriter.extendHead} the case this check
+     * misses; the GEN_COUNT fence pairing documented on
+     * {@code PostingIndexChainEntry.read} covers that one instead. On
+     * false the caller redoes both the header read and the downstream
+     * entry read; true proves nothing beyond "no publish has landed back
+     * on this page yet". The sole caller,
+     * {@code AbstractPostingIndexReader}'s chain-read retry loop, works
+     * the consequences through at the call site.
      */
     public static boolean stillStable(MemoryR keyMem, long pageOffset, long expectedSeq) {
         long seqStart = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
@@ -276,9 +284,9 @@ public final class PostingIndexChainHeader {
         public long regionBase;
         public long regionLimit;
         // Even, monotonically-advancing seqlock value of the picked page.
-        // Callers that need to extend the seqlock window past the header
-        // payload (e.g. across an in-place chain-entry mutation) re-validate
-        // this with {@link #stillStable}.
+        // Two consumers: stillStable re-checks it as a best-effort staleness
+        // test on that page, and AbstractPostingIndexReader latches it into
+        // its chainSequence field to detect that the chain advanced.
         public long sequence;
 
         public boolean isEmpty() {
