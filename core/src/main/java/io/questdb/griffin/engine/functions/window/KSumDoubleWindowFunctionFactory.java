@@ -46,6 +46,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -553,7 +555,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 // Kahan subtraction
@@ -592,7 +594,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -611,7 +613,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             // Kahan addition
                             double y = val - c;
@@ -1097,7 +1099,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             // Kahan subtraction
@@ -1132,7 +1134,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1151,7 +1153,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         // Kahan addition
                         double y = val - c;
@@ -1426,6 +1428,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double sum;
+        // The compensation term's slot in the group's fused map value, or -1 when this
+        // function owns its state. The sum and the counter are the base class's two named
+        // slots; this is the third field the Kahan component carries, and no output reads
+        // it. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateCompensationSlot = -1;
         // Single-writer (refresh worker), not volatile.
 
         public KSumOverUnboundedPartitionRowsFrameFunction(
@@ -1462,8 +1469,42 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
+        /**
+         * Absorbs one row into the group's compensated total. The same Kahan step
+         * {@link #computeNext(Record)} runs, against three slots the group has already
+         * loaded rather than a map entry this function has to find - and with no
+         * {@code isNew()} arm, because every slice of a new entry is put to its identity
+         * before any contributor runs and this component's identity is three zeroes.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                final double sum = value.getDouble(windowStateSumSlot);
+                final double c = value.getDouble(windowStateCompensationSlot);
+                final double y = d - c;
+                final double t = sum + y;
+                value.putDouble(windowStateCompensationSlot, (t - sum) - y);
+                value.putDouble(windowStateSumSlot, t);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateCompensationSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_KAHAN_COMPENSATION);
+        }
+
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1535,24 +1576,21 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.findValue();
-            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
-        }
-
-        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        /**
+         * Reads the compensated total the group keeps, NULL until a row has contributed -
+         * the empty test the extremum families do without and this one cannot, because a
+         * zero sum over zero rows and a zero sum over rows that cancelled are the same word.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            sum = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
         }
 
         @Override
@@ -1569,6 +1607,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
             // ANCHOR-driven reset. Zero [sum, compensation, count]; Kahan
             // re-runs cleanly from zero.
             partitionByRecord.of(record);
@@ -1633,6 +1676,27 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void toTop() {
             super.toTop();
             tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The compensated total, its compensation term and the counter - the whole of this
+         * function's per-partition state, and a family of its own rather than a wider
+         * reading of {@code sum}'s: the two totals differ, which is what the compensation
+         * exists to make them do.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_KAHAN_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_KAHAN_SUM;
         }
     }
 

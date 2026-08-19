@@ -115,7 +115,7 @@ public class PostingIndexWriterCloseContractTest extends AbstractCairoTest {
             });
 
             capture.drain();
-            capture.assertNotLogged("posting index close could not size the .pk trim");
+            capture.assertNotLogged("could not size posting index key file on close");
         } finally {
             capture.stop();
         }
