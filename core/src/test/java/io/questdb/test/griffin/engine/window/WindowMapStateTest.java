@@ -807,6 +807,7 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 );
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
+                    Assert.assertEquals(ORDINARY_ROW_COUNT, rows);
                 }
             }
         });

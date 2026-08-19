@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
@@ -48,6 +49,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
@@ -56,6 +58,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
@@ -64,9 +67,12 @@ import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -103,6 +109,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     // Noon, so a bucket crossing lands in the middle of a day rather than on the
     // calendar boundary a careless oracle would agree with by accident.
     private static final String NOON_ANCHOR = "12:00";
+    // Room for anything the window allocates, so a tracker a case has already tripped once
+    // stops standing in the way of the retry that case is really about.
+    private static final long ROOMY_TRACKER_LIMIT_BYTES = 64 * 1024 * 1024L;
     // Four accounts in one anchor bucket. Every sweep case starts here: the trigger
     // demands at least half the map be reclaimable, so three of these have to fall
     // behind the frontier before anything fires.
@@ -441,6 +450,181 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             } finally {
                 marking.reset();
                 failing.reset();
+            }
+        });
+    }
+
+    /**
+     * The stamp is a value slot, and a value slot is only what the last writer left in it.
+     * A key that arrives new lands on whatever heap bytes its entry's offset held before -
+     * OrderedMap.clear() rewinds the append pointer and zeroes the offsets, and leaves the
+     * heap it wrote the entries into exactly as it found it - so the creating row has to
+     * put the slot somewhere no cadence matches before anything that can throw runs.
+     * <p>
+     * Leave it, and the retry after a failed mark reads those bytes rather than
+     * {@code isNew()}: they say "already dirty in this cadence", the flag comes back
+     * false, and the function that threw finishes the cadence never having named the key.
+     * The seal that follows freezes the keys the dirty sets name and leaves the root's
+     * stale image of that one standing.
+     * <p>
+     * The head-miss replay ({@code LiveViewRefreshJob.clearWindowState}) is what empties
+     * the anchor map over a live heap here, and the cadence counter is a SHORT, so it
+     * comes back around to a value the abandoned bytes still carry -
+     * {@link LiveViewWindow#setCheckpointDirtyEpoch(short)} stands in for the 32766 seals
+     * that turn it over.
+     */
+    @Test
+    public void testARetryFindsANewKeyUnmarkedWhenItsStampSlotHeldTheLiveCadence() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final MarkCountingFunctionStub marking = new MarkCountingFunctionStub();
+            final MarkCountingFunctionStub failing = new MarkCountingFunctionStub();
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(marking);
+            functions.add(failing);
+            record.value = 1;
+            try (LiveViewWindow window = standaloneWindow(
+                    functions,
+                    LongKeyRecordStub.PAIR_KEY_TYPES,
+                    LongKeyRecordStub.PAIR_SINK
+            )) {
+                // The poisoning below rests on the anchor map keeping its heap across a
+                // clear(), which is OrderedMap's contract and not the memsetting one every
+                // unordered implementation holds to. Asserted rather than assumed: a
+                // single-column key of this width lands on Unordered8Map at the default
+                // cairo.sql.unordered.map.max.entry.size, and this case would pass on the
+                // memset rather than on the fix.
+                Assert.assertEquals("OrderedMap", window.getAnchorMapImplementation());
+
+                // Cadence 1 stamps the key's slot at the head of the anchor map's heap.
+                window.processRow(record);
+                Assert.assertEquals(1, marking.markedCount);
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+
+                // The replay rewinds every function and this window, which empties both
+                // dirty sets and the anchor map - and leaves the stamp lying in the heap
+                // the next entry at that offset will land on.
+                marking.toTop();
+                failing.toTop();
+                window.toTop();
+                window.setCheckpointDirtyEpoch((short) 1);
+                Assert.assertEquals(0, window.getCheckpointDirtyAnchorMapSize());
+                Assert.assertEquals(0, failing.getCheckpointDirtyPartitionMap().size());
+
+                // The replay's first row creates the key again, onto those same bytes, and
+                // the second function's mark throws before the stamp goes in.
+                failing.isFailing = true;
+                try {
+                    window.processRow(record);
+                    Assert.fail("the failing function's mark must not be swallowed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "mark refused");
+                }
+                Assert.assertEquals(2, marking.markedCount);
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(0, failing.getCheckpointDirtyPartitionMap().size());
+
+                // The retry has to find the row unmarked. It reads the stamp slot rather
+                // than isNew(), so a slot the creating row left holding the live cadence
+                // has every set on this view finish the cadence one key short.
+                failing.isFailing = false;
+                window.processRow(record);
+                Assert.assertEquals(
+                        "the retry must re-enter the key into the dirty set of the function that threw",
+                        1,
+                        failing.getCheckpointDirtyPartitionMap().size()
+                );
+                Assert.assertEquals(2, failing.markedCount);
+                Assert.assertEquals(3, marking.markedCount);
+                Assert.assertEquals(1, marking.getCheckpointDirtyPartitionMap().size());
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+
+                // ...and only then does the stamp stand: a further row of the same cadence
+                // reaches no dirty map at all.
+                window.processRow(record);
+                Assert.assertEquals(2, failing.markedCount);
+                Assert.assertEquals(3, marking.markedCount);
+            } finally {
+                marking.reset();
+                failing.reset();
+            }
+        });
+    }
+
+    /**
+     * The window's own dirty mark is the first thing after {@code createValue()} that can
+     * throw: it builds the dirty set lazily under the per-view tracker, so a breach of
+     * cairo.live.view.refresh.memory.limit.bytes raises on that allocation with the anchor
+     * entry already published. Both flag slots have to stand by then, or the entry the
+     * retry finds keeps whatever the heap region carried - a tombstone byte that has
+     * {@code snapshot()} skip a live partition and then refuse the payload whose count it
+     * no longer matches, and a stamp that has the retry read the key as marked.
+     * <p>
+     * This is what separates seeding the slots ahead of the mark from seeding them beside
+     * the reset that follows it. The map arrives pre-poisoned for the same reason the case
+     * above poisons one: a fresh mapping reads as zero and would pass either way.
+     */
+    @Test
+    public void testAThrownWindowMarkLeavesNoStaleFlagOnTheKeyItCreated() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final MarkCountingFunctionStub marking = new MarkCountingFunctionStub();
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(marking);
+            record.value = 1;
+            try (
+                    // One byte, so the dirty set breaches on its first malloc: the map that
+                    // owns it closes and unwinds before it holds anything, and the anchor
+                    // map - which this test supplies with no tracker bound, and the window
+                    // owns from there - is untouched.
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(1);
+                    LiveViewWindow window = standaloneWindow(
+                            functions,
+                            LongKeyRecordStub.PAIR_KEY_TYPES,
+                            LongKeyRecordStub.PAIR_SINK,
+                            poisonedAnchorMap(record),
+                            tracker
+                    );
+                    MemoryCARWImpl sink = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                // The poison only lands on the next entry if the map keeps the heap it wrote
+                // it into. Asserted rather than assumed - see the case above.
+                Assert.assertEquals("OrderedMap", window.getAnchorMapImplementation());
+
+                // The row publishes the entry onto the poisoned bytes, and the window's own
+                // mark throws before any function is reached.
+                try {
+                    window.processRow(record);
+                    Assert.fail("the tracker breach must not be swallowed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+                Assert.assertEquals(0, marking.markedCount);
+                Assert.assertEquals("the throw leaves the entry published", 1, window.getAnchorMapSize());
+                Assert.assertEquals(0, window.getCheckpointDirtyAnchorMapSize());
+
+                // The retry has room, and has to find the key both unmarked and alive.
+                tracker.setLimit(ROOMY_TRACKER_LIMIT_BYTES);
+                window.processRow(record);
+                Assert.assertEquals(
+                        "the retry must name the key its failed attempt never did",
+                        1,
+                        window.getCheckpointDirtyAnchorMapSize()
+                );
+                Assert.assertEquals(1, marking.markedCount);
+                Assert.assertEquals(1, marking.getCheckpointDirtyPartitionMap().size());
+
+                // The tombstone slot decides whether the partition reaches a root at all.
+                window.snapshot(sink);
+                window.restore(sink);
+                Assert.assertEquals(
+                        "the snapshot must carry the partition the failed row created",
+                        1,
+                        window.getAnchorMapSize()
+                );
+            } finally {
+                marking.reset();
             }
         });
     }
@@ -1500,28 +1684,96 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * An anchor map whose heap already carries a full set of value bytes at the offset the
+     * first entry lands on - the state a live map leaves behind once {@code clear()} has
+     * rewound the append pointer back over the entries it wrote. The stamp is the cadence
+     * the counter starts on, which is what a stamped entry leaves; the tombstone byte is a
+     * 1 the region can carry from anything the allocator recycled into it, since the window
+     * writes that slot only as 0. The anchor value is one no row here computes, so the
+     * partition still crosses into its own bucket.
+     */
+    private Map poisonedAnchorMap(Record record) {
+        final Map map = MapFactory.createUnorderedMap(
+                configuration,
+                LongKeyRecordStub.PAIR_KEY_TYPES,
+                LiveViewWindow.anchorMapValueTypes()
+        );
+        try {
+            final MapKey key = map.withKey();
+            key.put(record, LongKeyRecordStub.PAIR_SINK);
+            final MapValue value = key.createValue();
+            // The anchor value layout in slot order: anchor LONG, initialized BYTE,
+            // tombstone BYTE, dirty-cadence SHORT. See LiveViewWindow.anchorMapValueTypes().
+            value.putLong(0, 42L);
+            value.putByte(1, (byte) 1);
+            value.putByte(2, (byte) 1);
+            value.putShort(3, (short) 1);
+            map.clear();
+            return map;
+        } catch (Throwable th) {
+            map.close();
+            throw th;
+        }
+    }
+
+    /**
      * An anchored window over a single LONG partition key, with a constant anchor so every
      * row of one key stays in one bucket and the frontier sweep never fires. Enough to
      * drive {@link LiveViewWindow#processRow} without a compiled live view, which is what
      * a case needs to fail one function's mark and not another's.
      */
     private LiveViewWindow standaloneWindow(ObjList<WindowFunction> functions) {
-        final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+        return standaloneWindow(functions, new SingleColumnType(ColumnType.LONG), LongKeyRecordStub.SINK);
+    }
+
+    /**
+     * The same window over a caller-chosen partition-key shape, which is what a case that
+     * turns on the anchor map's implementation needs: MapFactory picks that implementation
+     * off the key shape and the value width, so the key is the only handle a test has on
+     * it. See {@link LongKeyRecordStub#PAIR_KEY_TYPES}.
+     */
+    private LiveViewWindow standaloneWindow(
+            ObjList<WindowFunction> functions,
+            ColumnTypes keyTypes,
+            RecordSink keySink
+    ) {
+        return standaloneWindow(
+                functions,
+                keyTypes,
+                keySink,
+                MapFactory.createUnorderedMap(configuration, keyTypes, LiveViewWindow.anchorMapValueTypes()),
+                null
+        );
+    }
+
+    /**
+     * The same window over a caller-supplied anchor map and per-view tracker, which is what
+     * a case that seeds the map's heap or fails one of the window's own allocations needs.
+     * The window takes ownership of the map and frees it on close, as it does the one the
+     * other overloads hand it.
+     */
+    private LiveViewWindow standaloneWindow(
+            ObjList<WindowFunction> functions,
+            ColumnTypes keyTypes,
+            RecordSink keySink,
+            Map anchorMap,
+            MemoryTracker memoryTracker
+    ) {
         return new LiveViewWindow(
                 configuration,
                 "w",
                 new LongConstant(1_000L),
                 ColumnType.LONG,
                 keyTypes,
-                MapFactory.createUnorderedMap(configuration, keyTypes, LiveViewWindow.anchorMapValueTypes()),
-                LongKeyRecordStub.SINK,
+                anchorMap,
+                keySink,
                 // The anchor is not monotone, so no sweep runs and the anchor-key sink is
                 // never reached.
-                LongKeyRecordStub.SINK,
+                keySink,
                 functions,
                 false,
                 null,
-                null
+                memoryTracker
         );
     }
 
@@ -2212,6 +2464,27 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * case can move the key between calls.
      */
     private static final class LongKeyRecordStub implements Record {
+        /**
+         * A two-column partition key, which is the shape that puts the anchor map on
+         * OrderedMap: MapFactory falls back to it for every multi-column key whatever the
+         * value width, and OrderedMap is the one implementation whose clear() leaves the
+         * value bytes it wrote standing rather than memsetting the region. Both columns
+         * read the stub's one field, so a key is still one long.
+         */
+        private static final ArrayColumnTypes PAIR_KEY_TYPES = new ArrayColumnTypes()
+                .add(ColumnType.LONG)
+                .add(ColumnType.LONG);
+        private static final RecordSink PAIR_SINK = new RecordSink() {
+            @Override
+            public void copy(Record r, RecordSinkSPI w) {
+                w.putLong(r.getLong(0));
+                w.putLong(r.getLong(1));
+            }
+
+            @Override
+            public void setFunctions(ObjList<Function> keyFunctions) {
+            }
+        };
         private static final RecordSink SINK = new RecordSink() {
             @Override
             public void copy(Record r, RecordSinkSPI w) {

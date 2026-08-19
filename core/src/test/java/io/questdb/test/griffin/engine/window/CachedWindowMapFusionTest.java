@@ -242,23 +242,29 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
         // group whose pass 1 skips - the buffer its pass 2 projects a missing partition off. A
         // per-query breach can land on the record chain, the sort buffer or the group maps: the
         // cursor binds the per-query tracker on all three, and only an allocation carrying that
-        // tracker checks the cap. The skipping group's identity buffer takes Unsafe's untracked
-        // malloc overload, which checks the global RSS ceiling alone, so it is the one the cap
-        // cannot reach. Whichever it lands on, the close the failed open runs has to leave every
-        // group empty-handed, of both kinds of backing at once, which assertMemoryLeak measures
-        // and the successful drain afterwards says was not achieved by staying shut.
+        // tracker checks the cap. Whichever it lands on, every group's map has to read shut
+        // afterwards - which the assertion below does - because the breach either beat of() to
+        // the group entirely or broke the group's own map.reopen(), which assigns the backing
+        // pointer isMapOpen() reads only once its malloc has returned. The close getCursor()
+        // runs on the failed open then hands back every allocation the open did make, which
+        // assertMemoryLeak measures and the successful drain afterwards says was not achieved
+        // by staying shut.
         //
         // Both shapes, because a failed open has to leave both kinds of group holding nothing:
         // the cumulative one owns a map alone, and the whole-partition one owns a map and an
-        // identity buffer that a different line frees.
+        // identity buffer.
         //
-        // What the identity-buffer assertion below cannot say is that the buffer's own malloc
-        // failed. The cap in force here is the per-query one, and every allocation that carries
-        // the per-query tracker checks it - malloc and realloc alike - while the identity buffer
-        // takes the untracked overload, which answers to the global RSS ceiling alone. So this
-        // cap is not what can make that malloc fail, and what the assertion reads back is not
-        // the unwind of its failure. Reaching that failure needs a global RSS ceiling instead,
-        // which is what testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack arms.
+        // The identity buffer is the one backing this cap says nothing about, so nothing here
+        // asserts over it. It takes Unsafe's untracked malloc overload, which answers to the
+        // global RSS ceiling alone, so the per-query cap cannot break that malloc itself - and no
+        // breach reaches it either, because reopen() allocates the map's backing first and the
+        // 64-byte cap below always breaks that tracked malloc. Every breach this test can reach
+        // therefore lands before the group holds a buffer at all, and an assertion over it would
+        // read back the zero it started from rather than any unwind. Two other tests cover the
+        // buffer where a failure does reach it: testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack
+        // arms a global RSS ceiling and reads reopen()'s own unwind, and
+        // testAPartitionRefusedWholeStaysOutOfTheMap reads reset() taking the buffer back off a
+        // group that holds one.
         assertMemoryLeak(() -> {
             createTable();
             insertRows();
@@ -287,10 +293,6 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         for (int g = 0, n = states.size(); g < n; g++) {
                             final WindowMapState state = states.getQuick(g);
                             Assert.assertFalse("group " + g + " kept its map open", state.isMapOpen());
-                            Assert.assertFalse(
-                                    "group " + g + " kept its identity buffer",
-                                    state.isIdentityValueAllocated()
-                            );
                         }
                     }
                     Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
@@ -340,33 +342,55 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                 // below is the only limit either of them answers to.
                 //
                 // What one whole open costs, measured rather than assumed - the map's backing
-                // plus the buffer, both charged to the global RSS counter.
+                // plus the buffer, both charged to the global RSS counter. The buffer is the
+                // only allocation of the open that takes NATIVE_DEFAULT, so that tag's own
+                // counter splits the cost in two and says which ceilings the map still clears.
                 final long usedBeforeOpen = Unsafe.getRssMemUsed();
+                final long defaultTagBeforeOpen = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                 state.reopen();
                 final long openCost = Unsafe.getRssMemUsed() - usedBeforeOpen;
+                final long bufferCost = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) - defaultTagBeforeOpen;
+                final long mapCost = openCost - bufferCost;
                 state.reset();
                 Assert.assertTrue("a successful open charged the RSS counter nothing", openCost > 0);
+                Assert.assertTrue(
+                        "NATIVE_DEFAULT took " + bufferCost + " of the open's " + openCost + ", so the tag no "
+                                + "longer separates the identity buffer's cost from the map's",
+                        bufferCost > 0 && bufferCost < openCost
+                );
 
                 // A ceiling that admits the map and refuses the buffer sits somewhere in
                 // [0, openCost], and where exactly is how the two allocations split that cost -
-                // the map implementation's business rather than this test's. So walk the
-                // ceiling up a byte at a time and read which malloc broke it off the
-                // exception's own memoryTag: below the split the map's malloc is what breaks
-                // it, and the lowest ceiling the map clears is where the buffer's malloc breaks
-                // instead. Sweeping rather than computing the split is what
-                // keeps this off a byte-exact prediction of a counter the whole process shares:
-                // an allocation elsewhere only moves which byte the transition happens at, and
-                // the first breach that is not the map's is the one under test wherever it
-                // lands.
+                // which the tag counter above just measured. A ceiling of mapCost - 1 is the
+                // highest one the map's own malloc still has to break, and one of mapCost is the
+                // lowest that admits the map and leaves the buffer's malloc the first allocation
+                // over the line. So the walk starts on those two rather than climbing to them
+                // from zero: the counter belongs to the whole process, and every ceiling this
+                // arms below real usage is one another thread's allocation can break on instead.
+                //
+                // The measured split seeds the walk rather than predicting its answer. An
+                // allocation or a free elsewhere between the reading of the counter and the open
+                // moves the transition off the measured byte, so each probe reads which malloc
+                // actually broke the ceiling off the exception's own memoryTag and steps the
+                // next ceiling toward whichever breach is still missing. Two probes is what a
+                // still counter costs; the budget is headroom for a moving one, and the
+                // assertions below fail loudly rather than quietly if it runs out with a breach
+                // unseen.
+                final int probeBudget = 64;
                 boolean hasMapMallocFailed = false;
                 boolean hasIdentityMallocFailed = false;
+                long slack = mapCost - 1;
+                int probe = 0;
                 final long savedRssLimit = Unsafe.getRssMemLimit();
                 try {
-                    for (long slack = 0; slack <= openCost && !hasIdentityMallocFailed; slack++) {
+                    for (; probe < probeBudget && slack > 0
+                            && !(hasMapMallocFailed && hasIdentityMallocFailed); probe++) {
+                        boolean hasOpenBreached = false;
                         Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                         try {
                             state.reopen();
                         } catch (CairoException e) {
+                            hasOpenBreached = true;
                             Assert.assertTrue("expected an out-of-memory error", e.isOutOfMemory());
                             TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
                             if (Chars.contains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_DEFAULT + "]")) {
@@ -390,6 +414,21 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                             // and a breach left the group closed already.
                             state.reset();
                         }
+                        // Step toward the breach still missing: halve the slack while the map's
+                        // is missing, since every ceiling below the split breaks the map's
+                        // malloc; walk up a byte at a time while the buffer's is missing and the
+                        // map still breaks, since that is where a counter that moved up carries
+                        // the transition - and clamp that step to mapCost, so a walk that halving
+                        // took below the measured split resumes at it rather than grinding back up
+                        // a byte at a time; and give a byte back when the open cleared the ceiling
+                        // outright, which says the transition moved the other way.
+                        if (!hasMapMallocFailed) {
+                            slack /= 2;
+                        } else if (hasOpenBreached) {
+                            slack = Math.max(slack + 1, mapCost);
+                        } else {
+                            slack--;
+                        }
                     }
                 } finally {
                     Unsafe.setRssMemLimit(savedRssLimit);
@@ -398,13 +437,19 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                 // Were the map to take NATIVE_DEFAULT too, every reading above would be the
                 // map's and the assertion this test rests on would never run.
                 Assert.assertTrue(
-                        "no ceiling in [0, " + openCost + "] broke on the map's malloc, so its memory tag "
-                                + "no longer distinguishes it from the identity buffer's",
+                        "the walk armed " + probe + " of its " + probeBudget + " ceilings around the measured map "
+                                + "cost " + mapCost + " and stopped at slack " + slack + " without one breaking on "
+                                + "the map's malloc, so it either ran out of probes against a counter the whole "
+                                + "process moves or the map's malloc now carries NATIVE_DEFAULT like the identity "
+                                + "buffer's (identity breach seen: " + hasIdentityMallocFailed + ")",
                         hasMapMallocFailed
                 );
                 Assert.assertTrue(
-                        "no ceiling in [0, " + openCost + "] made the identity buffer's malloc the failing one, "
-                                + "so the branch under test never ran",
+                        "the walk armed " + probe + " of its " + probeBudget + " ceilings around the measured map "
+                                + "cost " + mapCost + " and stopped at slack " + slack + " without one making the "
+                                + "identity buffer's malloc the failing one, so the branch under test never ran - "
+                                + "the walk either ran out of probes against a counter the whole process moves or "
+                                + "the buffer's malloc no longer carries NATIVE_DEFAULT",
                         hasIdentityMallocFailed
                 );
                 // And the group is reusable: with the ceiling down the same reopen() allocates

@@ -354,8 +354,10 @@ public final class CachedWindowMapGroups implements QuietCloseable {
         // Both lists run in SELECT order, so a member sits at or after the previous member's
         // index and the search resumes there rather than at zero. It wraps, so a bucket that
         // arrives in some other order - or holds a function these lists never carried - still
-        // gets the answer a scan from zero would give it, only after more compares. Restarting
-        // every member at zero made this quadratic in the window-function count.
+        // gets the answer a scan from zero would give it, only after more compares. The resume
+        // telescopes within one bucket, not across them - this method resets cursor to zero on
+        // every call - so n single-member buckets still cost n(n+1)/2 compares between them, a
+        // compile-time price the query pays once.
         int cursor = 0;
         for (int i = 0, n = bucket.size(); i < n; i++) {
             final WindowFunction function = bucket.getQuick(i);
