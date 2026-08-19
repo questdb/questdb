@@ -194,6 +194,14 @@ public class ServerMain implements Closeable {
         }
     }
 
+    private static long shutdownDeadlineNanos(long shutdownTimeoutNanos) {
+        try {
+            return Math.addExact(System.nanoTime(), shutdownTimeoutNanos);
+        } catch (ArithmeticException ignored) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     /**
      * Waits for startup background tasks to complete, including metadata cache
      * and recent write tracker hydration. This should be called after {@link #start()}
@@ -534,7 +542,7 @@ public class ServerMain implements Closeable {
 
     private void addShutdownHook() {
         final Thread hook = new Thread(() -> {
-            final long shutdownDeadline = System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
+            final long shutdownDeadline = shutdownDeadlineNanos(getShutdownTimeoutNanos());
             try {
                 System.err.println("SIGTERM received");
                 System.out.println("SIGTERM received");
@@ -956,6 +964,10 @@ public class ServerMain implements Closeable {
 
     protected <T extends Closeable> T freeOnExit(T closeable) {
         return freeOnExit.register(closeable);
+    }
+
+    protected long getShutdownTimeoutNanos() {
+        return WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
     }
 
     /**
