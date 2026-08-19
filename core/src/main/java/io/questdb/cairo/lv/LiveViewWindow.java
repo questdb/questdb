@@ -1383,13 +1383,17 @@ public class LiveViewWindow implements QuietCloseable {
         // a revived key arrives new and re-enters the dirty map, clearing the eviction
         // marker it left behind.
         //
-        // Every window function's own dirty set answers to the same stamp - see the flag
-        // handed to markPartitionAlive below - so this one anchor-value load stands in
-        // for the whole view's per-row dirty marking rather than for the anchor's alone.
-        // A view with F functions used to serialize the partition key and probe a second
-        // map F + 1 times per row; it now does so F + 1 times per key per cadence.
+        // Every dirty set the plan leaves standing answers to this same stamp - see the
+        // flag handed to markPartitionAlive below - so this one anchor-value load stands
+        // in for the view's whole per-row dirty marking rather than for the anchor's
+        // alone. A function whose component this window adopted keeps no set of its own
+        // and marks nothing (BasePartitionedWindowFunction.markPartitionAlive returns on
+        // isWindowStateOwned); a residual one keeps the set it always had. A view with R
+        // residual functions used to serialize the partition key and probe a second map
+        // R + 1 times per row; it now does so R + 1 times per key per cadence, and a view
+        // the plan adopted whole still saves the anchor's own mark.
         //
-        // What one stamp can stand for F + 1 sets is that no row is processed between a
+        // What one stamp can stand for R + 1 sets is that no row is processed between a
         // function's dirty set being emptied and this counter moving on. Every path that
         // empties a function's set either moves this counter on in the same synchronous
         // block or latches that function onto a complete freeze. The seal
