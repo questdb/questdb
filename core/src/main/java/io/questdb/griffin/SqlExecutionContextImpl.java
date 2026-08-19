@@ -269,7 +269,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public ExecutionState getExecutionState() {
+    public @Nullable ExecutionState getExecutionState() {
         return executionState;
     }
 
