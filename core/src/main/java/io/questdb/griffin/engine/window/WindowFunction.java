@@ -264,11 +264,14 @@ public interface WindowFunction extends Function {
      * <p>
      * A function opts in by calling
      * {@link io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction#markCheckpointPartitionDirty}
-     * from {@link #markPartitionAlive(Record)}. That call must be unconditional or
-     * absent altogether: a partial mark leaves a changed key out of the map, and the
-     * seal then publishes a root that still names the key's stale state. Opting out
-     * is fail-safe - the map stays null, the seal full-scans, and correctness does
-     * not depend on the function at all.
+     * from {@link #markPartitionAlive(Record, boolean)} on exactly the rows its
+     * {@code isFirstCadenceTouch} flag names, or on no row at all: a partial mark leaves
+     * a changed key out of the map, and the seal then publishes a root that still names
+     * the key's stale state. Marking on the flag is what makes the set complete without
+     * being per-row - the flag is raised on the first row a cadence sees for a partition,
+     * and every later row of that cadence moves state the flagged row already named.
+     * Opting out is fail-safe - the map stays null, the seal full-scans, and correctness
+     * does not depend on the function at all.
      */
     @Nullable
     default Map getCheckpointDirtyPartitionMap() {
@@ -719,8 +722,22 @@ public interface WindowFunction extends Function {
      * tombstone bit. Implementations must be branchless on the common (no-tombstone)
      * case -- check the function-local tombstoneCount first and bail before the
      * Map lookup.
+     * <p>
+     * {@code isFirstCadenceTouch} carries the anchor's answer to "has this partition
+     * been named in the current checkpoint cadence yet?", which the caller reads off the
+     * anchor value it has already loaded. A function that keeps a checkpoint dirty set
+     * marks it into that set on exactly those rows - see
+     * {@link #getCheckpointDirtyPartitionMap()} for why that is complete - and so pays a
+     * key serialization and a second map probe once per partition per cadence rather
+     * than once per row. The tombstone clear above is not on the flag: the bit is set
+     * and cancelled on the same anchor-cross row, and its guard is a field load rather
+     * than a probe.
+     *
+     * @param record              the current base row
+     * @param isFirstCadenceTouch true when this is the first row the current checkpoint
+     *                            cadence has seen for this partition
      */
-    default void markPartitionAlive(Record record) {
+    default void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
     }
 
     /**

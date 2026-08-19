@@ -223,8 +223,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * maintain a dirty set of its own, which is exactly the population that never freezes
      * incrementally anyway. It never creates the dirty set: only
      * {@link #markCheckpointPartitionDirty(Record)} does, so a function whose
-     * {@link #markPartitionAlive(Record)} never marks cannot be handed the incremental
-     * path by the sweep alone.
+     * {@link #markPartitionAlive(Record, boolean)} never marks cannot be handed the
+     * incremental path by the sweep alone.
      */
     @Override
     public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
@@ -257,13 +257,21 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * fires when at least one tombstoned entry exists, which means
      * processRow saw an anchor cross on some partition in the recent past.
      * <p>
+     * The dirty mark rides on {@code isFirstCadenceTouch} rather than on every row.
+     * That flag is the anchor's, read off a value the caller had already loaded, so a
+     * repeat row inside one cadence costs neither the key serialization the mark's sink
+     * does nor the probe into the dirty map that follows it. What the set has to name is
+     * every key whose state moved since the last publication, and the first row of a
+     * cadence names the key every later row of that cadence moves - see
+     * {@link #markCheckpointPartitionDirty(Record)} for the whole contract.
+     * <p>
      * Subclasses that need to clear additional per-partition scratch state
      * may override; most do not. An override that keeps the checkpoint dirty
      * tracking must call {@link #markCheckpointPartitionDirty(Record)} on every
-     * path through the method - see that method's contract.
+     * flagged path through the method - see that method's contract.
      */
     @Override
-    public void markPartitionAlive(Record record) {
+    public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
         if (isWindowStateOwned()) {
             // A fused function's own map stays closed, so it carries no tombstone bit to
             // clear and no dirty set to mark, and the group keeps neither. Defensive for
@@ -271,7 +279,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             // only caller and a live-view compile binds no function into a group.
             return;
         }
-        markCheckpointPartitionDirty(record);
+        if (isFirstCadenceTouch) {
+            markCheckpointPartitionDirty(record);
+        }
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;
         }
@@ -514,11 +524,14 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * has the same key layout as the state map, so the existing partition sink can
      * populate it without allocating or serialising a key on every input row.
      * <p>
-     * <b>Call this on every path through {@link #markPartitionAlive(Record)} or on
-     * none at all.</b> A seal that finds a dirty map freezes exactly the keys it
-     * names and leaves every other entry of the persistent root alone, so a key
-     * whose state moved without being marked keeps the root's stale image - a wrong
-     * result that only surfaces on a restart. Opting out is fail-safe by
+     * <b>Call this on every {@code isFirstCadenceTouch} path through
+     * {@link #markPartitionAlive(Record, boolean)} or on none at all.</b> A seal that
+     * finds a dirty map freezes exactly the keys it names and leaves every other entry
+     * of the persistent root alone, so a key whose state moved without being marked
+     * keeps the root's stale image - a wrong result that only surfaces on a restart.
+     * The flag loses nothing the set needs: the anchor raises it on the first row a
+     * cadence sees for a partition and lowers it only once that row's marks are all
+     * made, so every key a cadence moves is named, once. Opting out is fail-safe by
      * construction: this is the only place the map is created and the only place
      * {@code hasCheckpointDirtyTracking} is set, so a function that never calls this
      * leaves {@link #getCheckpointDirtyPartitionMap()} null, has the sweep's eviction

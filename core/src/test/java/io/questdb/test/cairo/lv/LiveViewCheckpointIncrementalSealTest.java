@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -58,6 +59,7 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -175,6 +177,270 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    /**
+     * The cadence stamp the anchor keeps is what every window function's own dirty set
+     * now rides on, so a repeat row must cost the residual functions no key serialization
+     * and no probe of their own either. What the assertions read is each function's set
+     * rather than the anchor's - {@link #createUnfusedView} is what makes those sets the
+     * live ones, because a fused group takes its key domain from the anchor entry instead.
+     * <p>
+     * The restart is the half that matters: a set that skipped a key its rows moved still
+     * answers correctly out of memory, and only the root the next incremental seal
+     * publishes shows the omission.
+     */
+    @Test
+    public void testARepeatedKeyEntersEveryFunctionDirtySetOncePerCadence() throws Exception {
+        // Four rows per boundary, as in testARepeatedKeyEntersTheDirtySetOncePerCadence, so
+        // a commit smaller than that refreshes without sealing and the cadence's marks
+        // stay readable.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createUnfusedView(NOON_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // Three rows, one key, one cadence. The residual sum's dirty set names the
+                // key once, and the anchor's mark count says the second and third rows
+                // stopped at the stamp rather than reaching either map.
+                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T11:00:05.000000Z', 'acct-1', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-1', 3.0)", job);
+                assertFunctionDirtySize(1);
+                Assert.assertEquals(
+                        "a repeat row must not enter its key into any dirty set again",
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
+                );
+
+                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    /**
+     * The one row inside a cadence that moves a function's state the most - the anchor
+     * cross, which resets the accumulator to the new bucket - is also a row whose key was
+     * already named earlier in that cadence, so it makes no mark of its own. The mark the
+     * cadence's first row made has to still stand for it.
+     * <p>
+     * The restart is what holds it: the durable image has to be the post-cross
+     * accumulator, and a key the seal never froze would come back as the pre-cross one.
+     */
+    @Test
+    public void testAnAnchorCrossAfterTheCadenceMarkStillNamesTheKey() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createUnfusedView(NOON_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // First row of the cadence names acct-1 while it is still in the pre-noon
+                // bucket. The second crosses noon on the same key in the same cadence:
+                // resetPartition empties the accumulator and this row starts it again,
+                // with no fresh mark anywhere.
+                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T12:00:00.000000Z', 'acct-1', 7.0)", job);
+                assertFunctionDirtySize(1);
+                Assert.assertEquals(
+                        "an anchor cross on an already-named key must not mark it twice",
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
+                );
+
+                // Seal the cadence, then read the restored accumulator back.
+                commit("('2026-01-01T12:00:01.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T12:00:02.000000Z', 'acct-3', 3.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+
+                // A follow-up row in the restored bucket accumulates on top of what came
+                // back, so a stale pre-cross image shows up here as an inflated sum.
+                commit("('2026-01-01T12:30:00.000000Z', 'acct-1', 5.0)", job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    /**
+     * Eviction and revival inside one cadence, read off the residual function's own dirty
+     * set rather than the anchor's. The sweep takes the key out of the anchor map, so the
+     * revived row arrives as a new partition and raises the cadence flag again - which is
+     * what turns the eviction marker the sweep left in the function's set back into an
+     * upsert. A flag that stayed down would leave the seal emitting a removal for a key
+     * the runtime holds.
+     */
+    @Test
+    public void testASweptResidualKeyRevivedInOneCadenceIsNamedAgain() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createUnfusedView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                final long generation = publishedGeneration();
+                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
+
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                assertEvictionMarkerCount(3);
+
+                // acct-2 is back inside the same cadence. The sweep dropped its anchor
+                // entry, so this row is a first touch again and re-names the key in every
+                // dirty set - the function's marker has to go back to 0 with the anchor's.
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-2', 3.0)", job);
+                assertEvictionMarkerCount(2);
+                assertIncrementalGateOpen(generation);
+
+                commit("('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
+                Assert.assertEquals(
+                        "the re-created key must not have produced a duplicate mutation",
+                        sealFailuresBefore,
+                        viewInstance().getCheckpointSealFailures()
+                );
+                assertDirtySetsClearedByPublish();
+                assertUnfusedViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(MIDNIGHT_ANCHOR);
+
+                commit("('2026-01-03T05:00:00.000000Z', 'acct-2', 6.0)", job);
+                assertUnfusedViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+        });
+    }
+
+    /**
+     * {@link #testTheCadenceCounterWrappingStillNamesEveryTouchedKey} over the residual
+     * functions. The turn is the one arm that can leave a stamp matching a cadence no
+     * dirty set holds, and the stamp now gates F + 1 sets rather than the anchor's alone,
+     * so a missed re-raise takes every one of them out at once.
+     */
+    @Test
+    public void testTheCadenceCounterWrappingStillNamesEveryFunctionKey() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createUnfusedView(NOON_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // Stamp acct-1 with the cadence the counter's turn lands back on.
+                anchorWindow().setCheckpointDirtyEpoch((short) 1);
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0)", job);
+                assertFunctionDirtySize(1);
+
+                // Stand the counter one cadence below its turn and seal on OTHER keys, so
+                // acct-1 carries a stale stamp rather than a fresh one.
+                anchorWindow().setCheckpointDirtyEpoch(Short.MAX_VALUE);
+                commit("('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+
+                commit("('2026-01-01T11:00:08.000000Z', 'acct-1', 5.0)", job);
+                assertFunctionDirtySize(1);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    /**
+     * The stamp is the whole of the flag's memory, so what happens between the anchor's
+     * own mark and the last function's is the case the ordering exists for: a function
+     * allocates its dirty set on first use through the per-view tracker, and that
+     * allocation throws on a breach of the refresh memory limit.
+     * <p>
+     * A stamp written ahead of the loop would have the retry read the row as marked,
+     * leaving the function that threw naming one key fewer than its rows moved - a set the
+     * seal cannot tell from a complete one. Driving {@link LiveViewWindow#processRow}
+     * directly is what puts a throw exactly there; a compiled view has no supported way to
+     * fail one function's mark and not the other's.
+     */
+    @Test
+    public void testAFailedFunctionMarkLeavesTheCadenceStampUnwritten() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final MarkCountingFunctionStub marking = new MarkCountingFunctionStub();
+            final MarkCountingFunctionStub failing = new MarkCountingFunctionStub();
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(marking);
+            functions.add(failing);
+            record.value = 1;
+            try (LiveViewWindow window = standaloneWindow(functions)) {
+                failing.isFailing = true;
+                try {
+                    window.processRow(record);
+                    Assert.fail("the failing function's mark must not be swallowed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "mark refused");
+                }
+                Assert.assertEquals(1, marking.markedCount);
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+                Assert.assertEquals(1, window.getCheckpointDirtyMarkCount());
+
+                // The retry has to find the row unmarked, or the function that threw never
+                // names the key at all.
+                failing.isFailing = false;
+                window.processRow(record);
+                Assert.assertEquals(
+                        "the retry must re-raise the flag for every function",
+                        2,
+                        marking.markedCount
+                );
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(2, window.getCheckpointDirtyMarkCount());
+
+                // ...and only then does the stamp stand, which is the whole point of the
+                // gate: a further row of the same cadence reaches no dirty map at all.
+                window.processRow(record);
+                Assert.assertEquals(2, marking.markedCount);
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(2, window.getCheckpointDirtyMarkCount());
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+            } finally {
+                marking.reset();
+                failing.reset();
             }
         });
     }
@@ -1233,6 +1499,32 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         return window;
     }
 
+    /**
+     * An anchored window over a single LONG partition key, with a constant anchor so every
+     * row of one key stays in one bucket and the frontier sweep never fires. Enough to
+     * drive {@link LiveViewWindow#processRow} without a compiled live view, which is what
+     * a case needs to fail one function's mark and not another's.
+     */
+    private LiveViewWindow standaloneWindow(ObjList<WindowFunction> functions) {
+        final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+        return new LiveViewWindow(
+                configuration,
+                "w",
+                new LongConstant(1_000L),
+                ColumnType.LONG,
+                keyTypes,
+                MapFactory.createUnorderedMap(configuration, keyTypes, LiveViewWindow.anchorMapValueTypes()),
+                LongKeyRecordStub.SINK,
+                // The anchor is not monotone, so no sweep runs and the anchor-key sink is
+                // never reached.
+                LongKeyRecordStub.SINK,
+                functions,
+                false,
+                null,
+                null
+        );
+    }
+
     private void assertDirtySetsClearedByPublish() {
         Assert.assertEquals(
                 "a published seal must clear the anchor dirty set",
@@ -1581,6 +1873,28 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         assertNoRefreshFaults("lv");
     }
 
+    /**
+     * The {@link #createUnfusedView} shape's oracle, built the same way
+     * {@link #recompute(String)} builds the fused view's.
+     */
+    private void assertUnfusedViewMatchesRecompute(String anchorTime) throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
+                + anchorTime + ":00.000000Z'::timestamp)";
+        final String recompute = "select created_at, cod_acct_no, "
+                + "sum(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+                + "rows between unbounded preceding and current row) as cumulative_sum "
+                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recompute + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
     private void assertViewMatchesRecompute(String anchorTime) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -1917,6 +2231,62 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * A partitioned window function that marks exactly as the base class does and counts
+     * the marks, with a switch that makes one refuse. The refusal stands in for the
+     * per-view memory tracker tripping inside the dirty set's first allocation, which is
+     * the realistic way a mark throws.
+     */
+    private static final class MarkCountingFunctionStub extends BasePartitionedWindowFunction {
+        private static final ArrayColumnTypes KEY_TYPES = new ArrayColumnTypes().add(ColumnType.LONG);
+        private static final ArrayColumnTypes VALUE_TYPES = new ArrayColumnTypes().add(ColumnType.BYTE);
+        private boolean isFailing;
+        private int markedCount;
+
+        private MarkCountingFunctionStub() {
+            super(null, new VirtualRecord(keyFunctions()), LongKeyRecordStub.SINK, null);
+            this.tombstoneValueIndex = 0;
+        }
+
+        @Override
+        public String getName() {
+            return "mark_counting";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            if (!isFirstCadenceTouch) {
+                return;
+            }
+            if (isFailing) {
+                throw CairoException.critical(0).put("mark refused");
+            }
+            markCheckpointPartitionDirty(record);
+            markedCount++;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, KEY_TYPES, VALUE_TYPES);
+        }
+
+        private static ObjList<Function> keyFunctions() {
+            final ObjList<Function> functions = new ObjList<>();
+            functions.add(LongColumn.newInstance(0));
+            return functions;
+        }
+    }
+
+    /**
      * A partitioned window function carrying everything the frontier sweep needs except
      * the marking itself - a tombstone slot and a scratch-map factory, with a
      * markPartitionAlive that names no key. The shape two unbounded-rows accumulators
@@ -1942,7 +2312,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
         }
 
         @Override

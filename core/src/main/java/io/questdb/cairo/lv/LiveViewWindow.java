@@ -955,9 +955,28 @@ public class LiveViewWindow implements QuietCloseable {
         // of the load. That is also what keeps the sweep's eviction-and-revival path
         // honest: eviction takes the anchor entry out, so a revived key arrives new and
         // re-enters the dirty map, clearing the eviction marker it left behind.
-        if (isNewPartition || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch) {
+        //
+        // Every window function's own dirty set answers to the same stamp - see the flag
+        // handed to markPartitionAlive below - so this one anchor-value load stands in
+        // for the whole view's per-row dirty marking rather than for the anchor's alone.
+        // A view with F functions used to serialize the partition key and probe a second
+        // map F + 1 times per row; it now does so F + 1 times per key per cadence.
+        //
+        // What one stamp can stand for F + 1 sets is that no row is processed between a
+        // function's dirty set being emptied and this counter moving on. Every path that
+        // empties one empties the anchor's in the same breath, functions first and the
+        // anchor last: the seal (LiveViewCheckpointTimelineStoreWriter publishes, then
+        // hands onCheckpointPersisted to the anchor and to each function), the checkpoint
+        // restore and the repair overlay (both rehydrate the functions, then the anchor),
+        // and the head-miss replay (LiveViewRefreshJob.clearWindowState). A function
+        // rebound on its own - reset() frees its dirty set without reaching this window at
+        // all - pins itself to a complete freeze until the next onCheckpointPersisted,
+        // which is a seal, which resyncs the pair; the set it builds in between is one the
+        // seal never reads.
+        final boolean isFirstCadenceTouch = isNewPartition
+                || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch;
+        if (isFirstCadenceTouch) {
             markCheckpointPartitionDirty(record, isNewPartition);
-            value.putShort(SLOT_DIRTY_EPOCH, checkpointDirtyEpoch);
         }
         final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
         final long lastAnchor = initialized == 0 ? 0 : value.getLong(SLOT_ANCHOR_VALUE);
@@ -996,7 +1015,19 @@ public class LiveViewWindow implements QuietCloseable {
         // advanced past its bucket -- by which point its accumulator is no longer
         // needed (the next in-order row starts a fresh bucket; late rows replay).
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).markPartitionAlive(record);
+            functions.getQuick(i).markPartitionAlive(record, isFirstCadenceTouch);
+        }
+
+        // The stamp goes in last, once every mark the flag stood for has been made rather
+        // than before the loop that makes them. A function's dirty set is allocated on
+        // first use through the per-view tracker, so the mark can throw on a breach of
+        // cairo.live.view.refresh.memory.limit.bytes; a stamp already standing would have
+        // the retry read this row as marked and leave that function's set one key short of
+        // what its rows moved - which the seal cannot tell from a complete set. Nothing
+        // between the load above and here touches the anchor map, so the handle still
+        // addresses this key's entry.
+        if (isFirstCadenceTouch) {
+            value.putShort(SLOT_DIRTY_EPOCH, checkpointDirtyEpoch);
         }
 
         // Frontier sweep is the last act on the row: compact() rebuilds the anchor map
