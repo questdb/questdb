@@ -235,9 +235,19 @@ count-prefixed with a fixed stride.
 
 One entry per indexed column, and **a footer carries the complete set**: a publish rewrites the whole section rather
 than appending to the previous footer's, because a per-column append would drop every column sealed before it. The
-section is written LAST in bit order, which is what lets a reader that does not know bit 2 stop its cursor after the
-SCRATCHPAD section and treat the trailing bytes as opaque — see the forward-compatibility contract in `footer.rs`.
-`SUPPORTED_FOOTER_SECTIONS` is 3.
+section is written LAST in bit order, so a reader that does not know bit 2 can stop its cursor after the SCRATCHPAD
+section and treat the trailing bytes as opaque. `SUPPORTED_FOOTER_SECTIONS` is 3.
+
+**But a reader that does not know bit 2 must NOT read such a footer at all.** Writing this section also sets
+`COVERING_INDEX_REQUIRED_BIT` (bit 32) in the footer flags, which is in the REQUIRED range — an older reader is
+obliged to reject the footer rather than skip the section it does not understand. That is deliberate, and it is the
+opposite of the usual optional-section contract: a partition sealed to the parquet form has no native `.pk`/`.pv`
+chain, so a reader that skipped the covering section would conclude no index is published and serve the query from a
+chain the seal discarded — **no rows, no error**. Failing loudly is recoverable; a silent empty result is not.
+
+So the layout note above is about where the bytes sit, not a licence to ignore them. An implementation written from
+this spec must honour bit 32. See `types.rs` `FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT`,
+`reader.rs` `unknown_required`, and `docs/covering-index-parquet.md` for the operator-facing downgrade rule.
 
 A footer that carries this section may derive the same parquet file size as the one it replaces; see **Token-only
 appends** below for what that means for a reader, and `docs/index-metadata.md` for the `_im` it names.
