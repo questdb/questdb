@@ -7933,6 +7933,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // POSTING: link active .pv (resolved from .pk sealTxn) plus .pci and
                 // all sidecar .pc<N>.* files under the renamed (name, nameTxn).
                 linkPostingIndexAuxFiles(plen, plen, columnName, columnNameTxn, newName, newColumnNameTxn, liveSealTxn);
+                // The parquet form too. Its token in the _pm is keyed by WRITER
+                // INDEX, so it survives a rename untouched, while the reader
+                // builds the artifact path from the column's CURRENT name --
+                // without this every indexed read of the partition fails with
+                // "could not read the covering index _im".
+                linkParquetIndexArtifacts(plen, columnName, newName);
             } else {
                 // BITMAP: sealTxn is unused, single .v file.
                 linkFile(ff,
@@ -7943,6 +7949,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    /**
+     * Hard-links a column's parquet-form covering index artifacts
+     * ({@code <col>.pidx.<indexTxn>.parquet} and {@code ._im}) under a new
+     * column name, for {@code RENAME COLUMN}.
+     * <p>
+     * EVERY generation present is linked, not just the committed head: the
+     * {@code _pm} is an append-only chain and a pinned reader may still resolve
+     * an older footer, whose token names an older {@code indexTxn}. Linking only
+     * the head would break exactly those readers.
+     * <p>
+     * The originals are deliberately left in place. A reader that took its
+     * snapshot before the rename still resolves the old name, and leaving a file
+     * behind is the recoverable direction -- unlinking one a reader still needs
+     * is not.
+     */
+    private void linkParquetIndexArtifacts(int plen, CharSequence columnName, CharSequence newName) {
+        final ObjList<String> artifacts = new ObjList<>();
+        final StringSink fileName = Misc.getThreadLocalSink();
+        final StringSink prefix = new StringSink();
+        prefix.put(columnName).put(ParquetIndexSeal.PIDX_INFIX);
+        path.trimTo(plen).$();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.startsWith(fileName, prefix)) {
+                artifacts.add(Chars.toString(fileName));
+            }
+        });
+        for (int i = 0, n = artifacts.size(); i < n; i++) {
+            final CharSequence artifact = artifacts.getQuick(i);
+            // Everything after "<col>.pidx." -- the index txn and the suffix.
+            final CharSequence tail = artifact.subSequence(prefix.length(), artifact.length());
+            path.trimTo(plen).concat(artifact).$();
+            other.trimTo(plen).concat(newName).put(ParquetIndexSeal.PIDX_INFIX).put(tail).$();
+            linkFile(ff, path.$(), other.$());
+        }
+        path.trimTo(plen);
+        other.trimTo(plen);
     }
 
     private void hardLinkAndPurgeSymbolTableFiles(

@@ -381,6 +381,43 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * Final-review I1: RENAME COLUMN must carry the parquet-form index pair.
+     * <p>
+     * {@code hardLinkAndPurgeColumnFiles} links the native chain
+     * ({@code .pk}/{@code .pv}/{@code .pci}/{@code .pc*}) under the new column
+     * name. If it does not also carry {@code <col>.pidx.<txn>.parquet} and its
+     * {@code ._im}, the {@code _pm} token survives the rename (it is keyed by
+     * writer index, not by name) while the reader builds the artifact path from
+     * the NEW name -- so every indexed read of that partition fails.
+     */
+    @Test
+    public void testRenamingAnIndexedColumnCarriesItsParquetIndexPair() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            createIndexedSparseKeyTable();
+
+            sink.clear();
+            printSql("select count() from " + TABLE_NAME
+                    + " where sym = 's7' and ts in '" + INDEXED_PARTITION + "'");
+            final String beforeRename = sink.toString();
+            Assert.assertTrue("the fixture must return rows for the key, or the rename proves nothing",
+                    beforeRename.contains("count") && !beforeRename.contains("\n0\n"));
+
+            execute("ALTER TABLE " + TABLE_NAME + " RENAME COLUMN sym TO sym_renamed");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            sink.clear();
+            printSql("select count() from " + TABLE_NAME
+                    + " where sym_renamed = 's7' and ts in '" + INDEXED_PARTITION + "'");
+            TestUtils.assertEquals(
+                    "renaming an indexed column must not change what it returns",
+                    beforeRename,
+                    sink);
+        });
+    }
+
+    /**
      * W6-I1: an {@code _pm} chain that nothing is resetting must be reported,
      * not left to grow silently. The O3 rewrite trigger normally resets it; this
      * test disables that trigger -- the only thing that does -- and drives
