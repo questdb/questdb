@@ -557,6 +557,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+        return true;
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairScanMaxKeys() {
         return 100_000L;
     }

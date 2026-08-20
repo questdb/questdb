@@ -115,6 +115,13 @@ import java.util.Locale;
  * it. That copy is as large as the state itself, so the control column it restores is the one
  * that shows what a repair paid for the view's key domain rather than for its own range - and
  * it grows with {@code --account-window}, not with the correction.
+ * {@code --repair-segment-yield=false} keeps one segment's replay inside the turn that
+ * started it, which is what both segment loops did before the yield existed. The yield does
+ * not change what a repair reads or writes - it changes how much of it one worker pass
+ * holds - so the column it moves is {@code refresh_max_pass_ms} rather than
+ * {@code refresh_ms}, and the two budgets that cut it are
+ * {@code cairo.live.view.checkpoint.repair.replay.max.rows} and
+ * {@code cairo.live.view.refresh.turn.max.duration.micros}.
  * <p>
  * Build and run:
  * <pre>
@@ -189,6 +196,7 @@ public class LiveViewSteadyStateBenchmark {
         // is how a run reproduces what a repair cost before it kept its ladder.
         int repairMaxChainedBoundaries = -1;
         boolean isRepairIsolatedRuntime = true;
+        boolean isRepairSegmentYield = true;
         boolean isRepairPerSegment = true;
         boolean isBackfillDeferral = false;
         long backfillIntervalMicros = -1;
@@ -253,6 +261,8 @@ public class LiveViewSteadyStateBenchmark {
                 isRepairPerSegment = Boolean.parseBoolean(arg.substring(21));
             } else if (arg.startsWith("--repair-isolated-runtime=")) {
                 isRepairIsolatedRuntime = Boolean.parseBoolean(arg.substring(26));
+            } else if (arg.startsWith("--repair-segment-yield=")) {
+                isRepairSegmentYield = Boolean.parseBoolean(arg.substring(23));
             } else if (arg.startsWith("--backfill-deferral=")) {
                 isBackfillDeferral = Boolean.parseBoolean(arg.substring(20));
             } else if (arg.startsWith("--backfill-interval-us=")) {
@@ -346,6 +356,7 @@ public class LiveViewSteadyStateBenchmark {
         final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
         final boolean finalRepairIsolatedRuntime = isRepairIsolatedRuntime;
         final boolean finalRepairPerSegment = isRepairPerSegment;
+        final boolean finalRepairSegmentYield = isRepairSegmentYield;
         final boolean finalBackfillDeferral = isBackfillDeferral;
         final long finalBackfillInterval = backfillIntervalMicros;
         try {
@@ -407,6 +418,11 @@ public class LiveViewSteadyStateBenchmark {
                 public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
                     return finalRepairPerSegment;
                 }
+
+                @Override
+                public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+                    return finalRepairSegmentYield;
+                }
             };
             System.out.printf(
                     Locale.ROOT,
@@ -416,7 +432,8 @@ public class LiveViewSteadyStateBenchmark {
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
-                            + "repairIsolatedRuntime=%s backfillDeferral=%s backfillIntervalUs=%d%n",
+                            + "repairIsolatedRuntime=%s repairSegmentYield=%s backfillDeferral=%s "
+                            + "backfillIntervalUs=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -428,6 +445,7 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.getLiveViewCheckpointRepairMaxChainedBoundaries(),
                     configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
                     configuration.isLiveViewCheckpointRepairIsolatedRuntimeEnabled(),
+                    configuration.isLiveViewCheckpointRepairSegmentYieldEnabled(),
                     configuration.isLiveViewCheckpointBackfillDeferralEnabled(),
                     configuration.getLiveViewCheckpointBackfillInterval()
             );
@@ -487,7 +505,7 @@ public class LiveViewSteadyStateBenchmark {
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
                 segments.sample();
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\trepair");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\trepair");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -553,7 +571,7 @@ public class LiveViewSteadyStateBenchmark {
                     final long lvPhysRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
                     final long lvApplyUsBefore = job.getLiveViewApplyMicros();
                     final long refreshStart = System.nanoTime();
-                    drainLiveView(engine, instance, job);
+                    final long maxPassNanos = drainLiveView(engine, instance, job);
                     final long refreshNanos = System.nanoTime() - refreshStart;
                     final long lvRows = engine.getMetrics().tableWriterMetrics().getCommittedRows() - lvRowsBefore;
                     final long lvPhysRows =
@@ -624,11 +642,12 @@ public class LiveViewSteadyStateBenchmark {
                     segments.sample();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d\t%s%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d\t%s%n",
                             b,
                             expected,
                             baseNanos / 1e6,
                             refreshNanos / 1e6,
+                            maxPassNanos / 1e6,
                             checkpointMs,
                             refreshNanos / 1e6 - checkpointMs,
                             batchRows / (refreshNanos / 1e9),
@@ -669,8 +688,9 @@ public class LiveViewSteadyStateBenchmark {
                     System.out.printf(
                             Locale.ROOT,
                             "# o3 ingested=%d scan_rows=%d amplification=%.1fx resume_rows=%d boundary_rows=%d "
-                                    + "rejected=%d repair=%s isolated_replays=%d deferred_segments=%d "
-                                    + "passed_segments=%d pending_segments=%d pending_rows=%d%n",
+                                    + "rejected=%d repair=%s isolated_replays=%d segment_yields=%d "
+                                    + "deferred_segments=%d passed_segments=%d pending_segments=%d "
+                                    + "pending_rows=%d%n",
                             ingested,
                             o3ScanRowsTotal,
                             (double) o3ScanRowsTotal / ingested,
@@ -679,6 +699,7 @@ public class LiveViewSteadyStateBenchmark {
                             instance.getO3RejectedCount(),
                             repairName(instance),
                             job.isolatedReplayTurnCountForTest(),
+                            job.segmentYieldCountForTest(),
                             job.deferredSegmentCountForTest(),
                             job.backfillPassSegmentCountForTest(),
                             instance.getPendingRepairsSegments(),
@@ -1145,16 +1166,33 @@ public class LiveViewSteadyStateBenchmark {
      * refresh fix 3 turns on: it is where corrected output meets live-view partitions that
      * already exist, and where a repair reaching a closed partition rewrites the whole of it.
      */
-    private static void drainLiveView(CairoEngine engine, LiveViewInstance instance, LiveViewRefreshJob job) {
+    /**
+     * Drives the view to quiescence and reports the longest single worker pass it took.
+     * <p>
+     * The total is what {@code refresh_ms} carries; this is the other half of the same
+     * question. A repair that may not park holds the worker for its whole replay, so the
+     * longest pass <b>is</b> the repair; one that parks on the turn budget spreads the same
+     * replay over passes, so the longest pass is bounded by that budget while the total
+     * barely moves. One pass is one {@code Job.run()}, which on this single-view benchmark
+     * is one refresh turn plus the drive of whatever it parked.
+     */
+    private static long drainLiveView(CairoEngine engine, LiveViewInstance instance, LiveViewRefreshJob job) {
         instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+        long maxPassNanos = 0;
         for (int i = 0; i < 4_096; i++) {
             boolean isProgressed = false;
-            while (job.run()) {
+            for (; ; ) {
+                final long passStart = System.nanoTime();
+                final boolean isRun = job.run();
+                if (!isRun) {
+                    break;
+                }
+                maxPassNanos = Math.max(maxPassNanos, System.nanoTime() - passStart);
                 isProgressed = true;
             }
             drainWal(engine);
             if (!isProgressed) {
-                return;
+                return maxPassNanos;
             }
             instance.setLastFlushTimeUs(Numbers.LONG_NULL);
         }

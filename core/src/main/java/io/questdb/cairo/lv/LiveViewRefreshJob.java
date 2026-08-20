@@ -212,6 +212,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // The closed segments are repaired; what is left is the residual, which the caller
     // plans from the decomposition's own bounds.
     private static final int SEGMENT_REPAIR_RESIDUAL = 1;
+    // One segment's replay stopped on the refresh turn's budget and parked, taking the
+    // pinned reader and the rest of the loop with it. The caller commits nothing, advances
+    // nothing and must not close the reader; the turn that resumes the replay is the turn
+    // that finishes the loop.
+    private static final int SEGMENT_REPAIR_SUSPENDED = 5;
+    // repairOneSegment's and driveChangeSetSegments' verdicts. The segment - or every
+    // segment the loop had left - is repaired and published.
+    private static final int SEGMENT_STEP_DONE = 0;
+    // The plan refused the segment. Whatever the loop has already published stands; the
+    // caller neither widens the range to reach this one nor advances anything over it.
+    private static final int SEGMENT_STEP_DECLINED = 1;
+    // The replay parked on the refresh turn's budget with the rest of the loop, and owns
+    // the pinned reader until a later turn finishes it.
+    private static final int SEGMENT_STEP_SUSPENDED = 2;
+    // The segment's replacement is in the live view's WAL and not in its table. No later
+    // segment may read coordinates off a table that does not hold it, so the loop stops.
+    private static final int SEGMENT_STEP_UNAPPLIED = 3;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     // Path scratch the backfill pass and the pending-repair set build their checkpoint
     // directory into. Kept separate from `path`, which the watermark advance and the
@@ -330,6 +347,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // worker ran beside the primary runtime rather than through it, so a test can prove
     // which runtime carried a repair without inferring it from the state that did not move.
     private long isolatedReplayTurnCount;
+    // Test-only observability for the segment yield. Counts the segment replays this worker
+    // parked on the refresh turn's budget, so a test can prove a whole-segment replay was
+    // spread across turns rather than run to completion inside one.
+    private long segmentYieldCount;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
@@ -341,6 +362,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // to the frontier. One instance per worker, refilled by classifyChangeSetSegments at
     // the start of each repair that qualifies; repairs never nest.
     private final LiveViewCheckpointSegmentChangeSet segmentChangeSet = new LiveViewCheckpointSegmentChangeSet();
+    // Where a multi-segment repair loop had got to when one of its segments parked, read
+    // out of the resuming turn's session before anything can free it. Worker-owned scratch
+    // for exactly the same reason segmentChangeSet is: one view is latched at a time and
+    // repairs never nest.
+    private final LiveViewCheckpointSegmentLoop segmentLoopScratch = new LiveViewCheckpointSegmentLoop();
     // The projection classifyChangeSetSegments opens a base WAL segment through: the
     // designated timestamp and nothing else. Worker-owned and rewritten per call, because
     // WalSegmentPageFrameCursor.of copies both lists internally.
@@ -643,6 +669,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long segmentRepairCountForTest() {
         return segmentRepairCount;
+    }
+
+    /**
+     * Test-only: number of segment replays this worker parked on the refresh turn's budget
+     * instead of running to completion inside the turn that started them. See
+     * {@link LiveViewCheckpointSegmentLoop}.
+     */
+    @TestOnly
+    public long segmentYieldCountForTest() {
+        return segmentYieldCount;
     }
 
     /**
@@ -1185,8 +1221,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <b>An entry is cleared after its replacement applies</b>, so a crash in between
      * leaves the segment pending and costs one repeated whole-segment recompute rather
      * than a lost correction.
+     * <p>
+     * <b>A segment's replay can park.</b> The pass's own duration budget bounds how many
+     * whole-segment replays one turn chains, checked between segments; it says nothing
+     * about how long one takes, and one whole-segment replay of a daily anchor is up to a
+     * day of base rows. So the replay stops on the refresh turn's budget instead, taking
+     * the pinned snapshot with it, and the drain position travels with it in
+     * {@link LiveViewCheckpointSegmentLoop} - the turn that resumes the replay clears the
+     * entry it finishes and drains what is left.
      *
-     * @return true when the pass repaired at least one segment
+     * @return true when the pass repaired at least one segment, or parked one and spent
+     * the turn on it
      */
     private boolean runCheckpointBackfillPass(LiveViewInstance instance) throws SqlException {
         if (!ensurePendingRepairsLoaded(instance)) {
@@ -1245,82 +1290,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final long commitSeqTxn = instance.getLastProcessedSeqTxn();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
-        final long budgetUs = engine.getConfiguration().getLiveViewCheckpointBackfillMaxDuration();
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
         final TableReader reader = waitForApply(baseToken, commitSeqTxn);
-        int repaired = 0;
+        // True when one segment's replay parked on the turn budget: it owns the pinned
+        // reader from there on, and the turn that resumes it drains the rest of the set.
+        boolean suspended = false;
         try {
-            final long pinnedSeqTxn = reader.getSeqTxn();
-            while (!pending.isEmpty()) {
-                if (repaired > 0
-                        && engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs >= budgetUs) {
-                    // Between segments, never inside one: a whole-segment replay runs to
-                    // completion whatever the budget says. What the budget protects is the
-                    // head - the rest of the backlog waits for the next pass instead of
-                    // this turn disappearing into it.
-                    LOG.info().$("live view backfill pass spent its budget [view=").$(viewName)
-                            .$(", repaired=").$(repaired)
-                            .$(", pending=").$(pending.size()).I$();
-                    break;
-                }
-                if (!repairPlan.ofSegment(
-                        pending.getMinTs(0),
-                        pending.getMaxTs(0),
-                        viewLowerBoundTimestamp,
-                        pinnedSeqTxn,
-                        commitSeqTxn,
-                        anchorPlan,
-                        durableOutputMaxTs,
-                        runtimeFrontierTs
-                )) {
-                    // The oldest segment cannot be planned as a localized, finitely
-                    // converging rebuild. Leave it - and everything behind it - pending
-                    // and visible rather than widening the range to reach it.
-                    LOG.error().$("live view backfill pass could not plan the oldest pending segment [view=")
-                            .$(viewName)
-                            .$(", segmentStart=").$ts(pending.getSegmentStart(0))
-                            .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
-                            .I$();
-                    break;
-                }
-                instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), repairPlan.getDenialReason());
-                LOG.info().$("live view backfill pass repairing a pending segment [view=").$(viewName)
-                        .$(", segmentStart=").$ts(pending.getSegmentStart(0))
-                        .$(", pending=").$(pending.size())
-                        .$(", replayLowTs=").$ts(repairPlan.getReplayLowTs())
-                        .$(", outputLowTs=").$ts(repairPlan.getOutputLowTs())
-                        .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
-                        .$(", commitSeqTxn=").$(commitSeqTxn)
-                        .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
-                // mayYield is false: the loop owns the pinned reader across every segment,
-                // so a parked repair would have nothing to hand the remaining ones.
-                o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, false);
-                if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL) {
-                    // The segment's replacement is in the live view's WAL and not in its
-                    // table. The entry stays pending - clearing it here would drop a
-                    // correction whose output is not stored - and the next turn re-drives
-                    // the apply before anything else.
-                    LOG.info().$("live view backfill pass stopped on an unapplied replacement [view=")
-                            .$(viewName)
-                            .$(", pending=").$(pending.size()).I$();
-                    break;
-                }
-                repaired++;
-                backfillPassSegmentCount++;
-                pendingRepairsScratch.copyFrom(pending);
-                pendingRepairsScratch.removeAt(0);
-                if (!persistPendingRepairs(instance, pendingRepairsScratch)) {
-                    // The segment is repaired and the entry is not cleared, so the next
-                    // pass recomputes it identically. Stop rather than repair the rest
-                    // over a set that cannot record what has been done.
-                    break;
-                }
-                pending.removeAt(0);
-                instance.refreshPendingRepairsSummary();
-            }
+            // The pass queues no segment of its own - the durable set is its work list, and
+            // it outlives any number of turns. What the loop position carries is the
+            // coordinates every segment is planned against, the segment in flight, and the
+            // moment the pass began, so a pass spread over several turns is still bounded
+            // by its own duration budget rather than starting it over on each of them.
+            segmentLoopScratch.ofBackfillPass(
+                    viewLowerBoundTimestamp,
+                    commitSeqTxn,
+                    durableOutputMaxTs,
+                    runtimeFrontierTs,
+                    nowUs
+            );
+            suspended = drainPendingRepairs(instance, windowFactory, reader, anchorPlan, segmentLoopScratch);
         } finally {
-            reader.close();
+            if (!suspended) {
+                reader.close();
+            }
         }
+        if (suspended) {
+            // Nothing durable moved, so there is no rewritten tier to rebuild from. The turn
+            // is spent either way, which is the work this reports.
+            return true;
+        }
+        final int repaired = segmentLoopScratch.getSegmentsRepaired();
         if (repaired > 0) {
             // The replacements rewrote the on-disk tier, so rebuild the in-memory one from
             // it. A pending segment sits below the tier's own window in the common case and
@@ -1333,6 +1332,74 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", pending=").$(pending.size()).I$();
         }
         return repaired > 0;
+    }
+
+    /**
+     * Drains the pending-repair set, oldest first, one whole-segment replay at a time.
+     * <p>
+     * Oldest first is the order the set is kept in and the order a repair must take: a
+     * later segment's cumulative row positions depend on how many rows the earlier ones
+     * added. Each entry is cleared only after its replacement applies, so a crash anywhere
+     * in the drain costs one repeated recompute rather than a lost correction.
+     * <p>
+     * Two budgets bound it, and they bound different things. The pass's own duration budget
+     * is checked <b>between</b> segments and protects the head of the backlog - the rest
+     * waits for the next pass rather than this turn disappearing into it. The refresh
+     * turn's budget is checked inside one segment's replay and parks it, which is what
+     * stops a whole-segment replay of a daily anchor holding a worker for a day of base
+     * rows; the loop position travels with the parked repair so the turn that resumes it
+     * drains what is left.
+     *
+     * @return true when a segment parked on the turn budget and owns the pinned reader
+     */
+    private boolean drainPendingRepairs(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableReader reader,
+            LiveViewCheckpointAnchorPlan anchorPlan,
+            LiveViewCheckpointSegmentLoop loop
+    ) throws SqlException {
+        final String viewName = instance.getDefinition().getViewName();
+        final LiveViewCheckpointPendingRepairs pending = instance.getPendingRepairs();
+        final long budgetUs = engine.getConfiguration().getLiveViewCheckpointBackfillMaxDuration();
+        final long pinnedSeqTxn = reader.getSeqTxn();
+        while (!pending.isEmpty()) {
+            if (loop.getSegmentsRepaired() > 0
+                    && engine.getConfiguration().getMicrosecondClock().getTicks() - loop.getPassStartUs() >= budgetUs) {
+                LOG.info().$("live view backfill pass spent its budget [view=").$(viewName)
+                        .$(", repaired=").$(loop.getSegmentsRepaired())
+                        .$(", pending=").$(pending.size()).I$();
+                break;
+            }
+            final long segmentStart = pending.getSegmentStart(0);
+            // The pass takes its work off the durable set rather than off the queue, so it
+            // has nothing to remove and only the in-flight identity to record - which is
+            // what a resuming turn clears the entry by.
+            loop.segmentStarted(segmentStart);
+            final int step = repairOneSegment(
+                    instance,
+                    windowFactory,
+                    reader,
+                    anchorPlan,
+                    loop,
+                    segmentStart,
+                    pending.getMinTs(0),
+                    pending.getMaxTs(0),
+                    pinnedSeqTxn,
+                    loop.getHoldSeqTxn()
+            );
+            if (step == SEGMENT_STEP_SUSPENDED) {
+                return true;
+            }
+            if (step != SEGMENT_STEP_DONE) {
+                // The oldest segment could not be planned, its replacement has not applied,
+                // or its entry could not be cleared. Leave it - and everything behind it -
+                // pending and visible rather than widening the range to reach it or
+                // repairing the rest over a set that cannot record what has been done.
+                break;
+            }
+        }
+        return false;
     }
 
     /**
@@ -4546,15 +4613,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Anything the decomposition or a segment's own plan declines falls back to the union
      * range for the whole change set. Segments already repaired are not a problem for that
      * fallback - the union range covers them and recomputes them identically.
+     * <p>
+     * <b>The loop can park.</b> One segment is a bounded replay, but the bound is the anchor
+     * period's own base rows - up to a day of them for {@code ANCHOR DAILY} - so a segment
+     * replay may still stop on the refresh turn's budget. It takes the pinned snapshot with
+     * it, and the segments the loop has not reached go with it in
+     * {@link LiveViewCheckpointSegmentLoop}, along with the residual bounds the loop still
+     * owes; the turn that resumes the replay is the turn that finishes the loop. Nothing
+     * durable moves in between, so the caller commits nothing and leaves the reader alone.
      *
+     * @param advanceTo the base {@code seqTxn} the whole change consumes, carried so a
+     *                  parked loop's residual can be planned from a later turn
      * @return {@link #SEGMENT_REPAIR_COMPLETE} when the segments were the whole change set
      * and the watermark has advanced over it, {@link #SEGMENT_REPAIR_DEFERRED} when a
      * segment's replacement did not apply and the turn must stop,
      * {@link #SEGMENT_REPAIR_PENDING} when the segments were the whole change set and went
      * into the pending-repair set unrepaired, so the caller owes the watermark advance,
-     * {@link #SEGMENT_REPAIR_RESIDUAL} when the caller must still repair the residual from
-     * {@link #segmentChangeSet}'s bounds, and {@link #SEGMENT_REPAIR_NOT_TAKEN} when the
-     * caller must plan the whole change set as one union range
+     * {@link #SEGMENT_REPAIR_SUSPENDED} when a segment's replay parked with the rest of the
+     * loop and now owns the pinned reader, {@link #SEGMENT_REPAIR_RESIDUAL} when the caller
+     * must still repair the residual from {@link #segmentChangeSet}'s bounds, and
+     * {@link #SEGMENT_REPAIR_NOT_TAKEN} when the caller must plan the whole change set as
+     * one union range
      */
     private int repairChangeSetSegments(
             LiveViewInstance instance,
@@ -4564,7 +4643,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lateRowTs,
             long changeMaxTs,
             boolean insertOnly,
-            long fromSeqTxn
+            long fromSeqTxn,
+            long advanceTo
     ) throws SqlException {
         if (!engine.getConfiguration().isLiveViewCheckpointRepairPerSegmentEnabled()) {
             return SEGMENT_REPAIR_NOT_TAKEN;
@@ -4670,58 +4750,380 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", residual=").$(!isResidualEmpty).I$();
             return isResidualEmpty ? SEGMENT_REPAIR_PENDING : SEGMENT_REPAIR_RESIDUAL;
         }
-        final long preRepairSeqTxn = instance.getLastProcessedSeqTxn();
+        // The loop position, so a segment whose replay parks on the turn budget can hand the
+        // segments behind it - and the residual behind those - to the turn that resumes it.
+        // Only the final repair of the loop advances the watermark, and it is a repair of
+        // this loop exactly when the change set holds nothing above the closed segments.
+        segmentLoopScratch.ofChangeSet(
+                viewLowerBoundTimestamp,
+                instance.getLastProcessedSeqTxn(),
+                isResidualEmpty ? pinnedSeqTxn : Numbers.LONG_NULL,
+                durableOutputMaxTs,
+                runtimeFrontierTs,
+                segmentChangeSet.getResidualMinTs(),
+                segmentChangeSet.getResidualMaxTs(),
+                insertOnly,
+                advanceTo
+        );
         for (int i = 0; i < segmentCount; i++) {
-            // Only the final repair of the turn advances the watermark, and it is this one
-            // exactly when the change set holds nothing above the closed segments.
-            final boolean isFinalRepair = isResidualEmpty && i == segmentCount - 1;
-            if (!repairPlan.ofSegment(
+            segmentLoopScratch.addSegment(
+                    segmentChangeSet.getSegmentStart(i),
                     segmentChangeSet.getSegmentMinTs(i),
-                    segmentChangeSet.getSegmentMaxTs(i),
-                    viewLowerBoundTimestamp,
-                    pinnedSeqTxn,
-                    isFinalRepair ? pinnedSeqTxn : preRepairSeqTxn,
-                    anchorPlan,
-                    durableOutputMaxTs,
-                    runtimeFrontierTs
-            )) {
-                LOG.info().$("live view O3 per-segment repair declined, planning the union range [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", segment=").$(i)
-                        .$(", segments=").$(segmentCount)
-                        .$(", segmentStart=").$ts(segmentChangeSet.getSegmentStart(i))
-                        .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
-                        .I$();
+                    segmentChangeSet.getSegmentMaxTs(i)
+            );
+        }
+        switch (driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, segmentLoopScratch)) {
+            case SEGMENT_STEP_SUSPENDED:
+                return SEGMENT_REPAIR_SUSPENDED;
+            case SEGMENT_STEP_DECLINED:
+                // Nothing this loop published is wrong - a whole-segment recompute stands on
+                // its own - and the watermark has not moved, so the union range covers what
+                // is left along with what is already done.
                 return SEGMENT_REPAIR_NOT_TAKEN;
-            }
-            instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), repairPlan.getDenialReason());
-            LOG.info().$("live view O3 per-segment repair [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", segment=").$(i)
-                    .$(", segments=").$(segmentCount)
-                    .$(", replayLowTs=").$ts(repairPlan.getReplayLowTs())
-                    .$(", outputLowTs=").$ts(repairPlan.getOutputLowTs())
-                    .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
-                    .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
-                    .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
-            // mayYield is false: the loop owns the pinned reader across every segment, so a
-            // parked repair would have nothing to hand the remaining ones. One segment is a
-            // bounded replay either way, which is the property the union range did not have.
-            o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, false);
-            segmentRepairCount++;
-            if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL) {
-                // The segment's replacement is in the live view's WAL and not in its table.
-                // No later repair may read coordinates off a table that does not hold it,
-                // and the watermark has not moved, so the turn stops here and the whole
-                // change set is replanned once the block lands.
-                LOG.info().$("live view O3 per-segment repair deferred on an unapplied replacement [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", segment=").$(i)
-                        .$(", segments=").$(segmentCount).I$();
+            case SEGMENT_STEP_UNAPPLIED:
                 return SEGMENT_REPAIR_DEFERRED;
+            default:
+                return isResidualEmpty ? SEGMENT_REPAIR_COMPLETE : SEGMENT_REPAIR_RESIDUAL;
+        }
+    }
+
+    /**
+     * Repairs and publishes one anchor segment over its own range, and reports what the
+     * loop that drives it should do next.
+     * <p>
+     * The replay may stop on the refresh turn's budget. It takes the pinned base snapshot
+     * with it - no as-of reader could reopen the snapshot the plan was derived against - so
+     * the segments the loop has not reached park with it: {@code loop} is copied into the
+     * session the replay left on the instance, and the turn that resumes the replay is the
+     * turn that finishes the loop. Nothing durable moves at that point, so the caller
+     * commits nothing, advances nothing and leaves the reader alone.
+     *
+     * @param loop         the loop position as it stands <b>after</b> this segment was taken
+     *                     off it, which is what a resuming turn continues from
+     * @param segmentStart the segment's own inclusive start, for the log and - for a pass -
+     *                     the pending entry the caller clears once the replacement applies
+     * @param commitSeqTxn the base {@code seqTxn} this segment's replacement commits at
+     */
+    private int repairOneSegment(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableReader reader,
+            LiveViewCheckpointAnchorPlan anchorPlan,
+            LiveViewCheckpointSegmentLoop loop,
+            long segmentStart,
+            long segmentMinTs,
+            long segmentMaxTs,
+            long pinnedSeqTxn,
+            long commitSeqTxn
+    ) throws SqlException {
+        final String viewName = instance.getDefinition().getViewName();
+        final boolean pass = loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS;
+        if (!repairPlan.ofSegment(
+                segmentMinTs,
+                segmentMaxTs,
+                loop.getViewLowerBoundTimestamp(),
+                pinnedSeqTxn,
+                commitSeqTxn,
+                anchorPlan,
+                loop.getDurableOutputMaxTs(),
+                loop.getRuntimeFrontierTs()
+        )) {
+            LOG.info().$("live view segment repair declined [view=").$(viewName)
+                    .$(", pass=").$(pass)
+                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", queued=").$(loop.size())
+                    .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
+                    .I$();
+            return SEGMENT_STEP_DECLINED;
+        }
+        instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), repairPlan.getDenialReason());
+        LOG.info().$("live view segment repair [view=").$(viewName)
+                .$(", pass=").$(pass)
+                .$(", segmentStart=").$ts(segmentStart)
+                .$(", queued=").$(loop.size())
+                .$(", repaired=").$(loop.getSegmentsRepaired())
+                .$(", replayLowTs=").$ts(repairPlan.getReplayLowTs())
+                .$(", outputLowTs=").$ts(repairPlan.getOutputLowTs())
+                .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
+                .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
+                .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
+        if (o3HeadMissReplay(
+                instance,
+                windowFactory,
+                repairPlan,
+                reader,
+                false,
+                null,
+                engine.getConfiguration().isLiveViewCheckpointRepairSegmentYieldEnabled()
+        )) {
+            segmentYieldCount++;
+            parkSegmentLoop(instance, loop);
+            return SEGMENT_STEP_SUSPENDED;
+        }
+        return settleRepairedSegment(instance, loop, segmentStart);
+    }
+
+    /**
+     * Books one segment repair that has just published, and reports whether the loop may
+     * move on to the next one.
+     * <p>
+     * The two loops count their segments apart - a pass repairs off the refresh's critical
+     * path and an inline loop repairs on it - and the pass owns one more step: its work
+     * list is durable, so the entry it drained is cleared here, after the replacement
+     * applied and never before. A crash in between therefore costs one repeated
+     * whole-segment recompute rather than a lost correction.
+     */
+    private int settleRepairedSegment(
+            LiveViewInstance instance,
+            LiveViewCheckpointSegmentLoop loop,
+            long segmentStart
+    ) {
+        final boolean pass = loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS;
+        if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL) {
+            // The segment's replacement is in the live view's WAL and not in its table. No
+            // later repair may read coordinates off a table that does not hold it, and the
+            // watermark has not moved, so the loop stops here. A pass leaves its entry
+            // pending - clearing it would drop a correction whose output is not stored -
+            // and the next turn re-drives the apply before anything else.
+            LOG.info().$("live view segment repair stopped on an unapplied replacement [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", pass=").$(pass)
+                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", queued=").$(loop.size()).I$();
+            return SEGMENT_STEP_UNAPPLIED;
+        }
+        if (pass) {
+            backfillPassSegmentCount++;
+        } else {
+            segmentRepairCount++;
+        }
+        loop.segmentRepaired();
+        if (pass && !clearRepairedPendingSegment(instance, segmentStart)) {
+            // The segment is repaired and the entry is not cleared, so the next pass
+            // recomputes it identically. Stop rather than repair the rest over a set that
+            // cannot record what has been done.
+            return SEGMENT_STEP_DECLINED;
+        }
+        return SEGMENT_STEP_DONE;
+    }
+
+    /**
+     * Clears the pending-repair entry of a segment a backfill pass has just published.
+     * <p>
+     * Named rather than positional: a parked pass hands its in-flight segment to a later
+     * turn, and an entry cleared by position there would clear whatever the set's head had
+     * become instead. The set is ordered oldest first and the pass drains it in that
+     * order, so the head is the entry unless something moved it - which is the case this
+     * refuses rather than guesses at.
+     *
+     * @return false when the entry could not be cleared, leaving it pending for the next
+     * pass to recompute identically
+     */
+    private boolean clearRepairedPendingSegment(LiveViewInstance instance, long segmentStart) {
+        final LiveViewCheckpointPendingRepairs pending = instance.getPendingRepairs();
+        if (pending.isEmpty() || pending.getSegmentStart(0) != segmentStart) {
+            LOG.error().$("live view backfill pass repaired a segment its pending set no longer heads [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", pending=").$(pending.size()).I$();
+            return false;
+        }
+        pendingRepairsScratch.copyFrom(pending);
+        pendingRepairsScratch.removeAt(0);
+        if (!persistPendingRepairs(instance, pendingRepairsScratch)) {
+            return false;
+        }
+        pending.removeAt(0);
+        instance.refreshPendingRepairsSummary();
+        return true;
+    }
+
+    /**
+     * Hands the rest of a segment loop to the repair the executor has just parked.
+     * <p>
+     * {@link #o3HeadMissReplay} puts the session on the instance before it reports the
+     * yield, so the loop is read back off the instance rather than threaded through the
+     * executor's signature - the executor knows nothing about loops, and a repair that
+     * stands on its own leaves the position empty.
+     */
+    private void parkSegmentLoop(LiveViewInstance instance, LiveViewCheckpointSegmentLoop loop) {
+        final LiveViewCheckpointRepairSession session = instance.getSuspendedRepair();
+        session.getSegmentLoop().copyFrom(loop);
+        LOG.info().$("live view segment loop parked with its repair [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", kind=").$(loop.getKind())
+                .$(", inFlightSegmentStart=").$ts(loop.getInFlightSegmentStart())
+                .$(", queued=").$(loop.size())
+                .$(", repaired=").$(loop.getSegmentsRepaired()).I$();
+    }
+
+    /**
+     * Repairs every segment a change-set loop still has queued, oldest first.
+     * <p>
+     * Oldest first is not a preference: a later segment's cumulative row positions depend
+     * on how many rows the earlier ones added, so a loop that took them out of order would
+     * publish positions the segments below it then invalidate.
+     */
+    private int driveChangeSetSegments(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableReader reader,
+            LiveViewCheckpointAnchorPlan anchorPlan,
+            LiveViewCheckpointSegmentLoop loop
+    ) throws SqlException {
+        final long pinnedSeqTxn = reader.getSeqTxn();
+        while (loop.size() > 0) {
+            // Only the last segment of the whole loop may advance the watermark, and only
+            // when the change set held nothing above the closed segments; every other one
+            // commits at the pre-repair watermark so the change stays unconsumed until the
+            // loop finishes it.
+            final boolean isFinalRepair = loop.size() == 1 && loop.getFinalSeqTxn() != Numbers.LONG_NULL;
+            final long segmentStart = loop.getSegmentStart(0);
+            final long segmentMinTs = loop.getSegmentMinTs(0);
+            final long segmentMaxTs = loop.getSegmentMaxTs(0);
+            // Off the queue before the replay runs, so a replay that parks parks a loop
+            // holding exactly this segment's successors.
+            loop.removeFirstSegment();
+            final int step = repairOneSegment(
+                    instance,
+                    windowFactory,
+                    reader,
+                    anchorPlan,
+                    loop,
+                    segmentStart,
+                    segmentMinTs,
+                    segmentMaxTs,
+                    pinnedSeqTxn,
+                    isFinalRepair ? loop.getFinalSeqTxn() : loop.getHoldSeqTxn()
+            );
+            if (step != SEGMENT_STEP_DONE) {
+                return step;
             }
         }
-        return isResidualEmpty ? SEGMENT_REPAIR_COMPLETE : SEGMENT_REPAIR_RESIDUAL;
+        return SEGMENT_STEP_DONE;
+    }
+
+    /**
+     * Plans and repairs the residual of a decomposed change set - everything at or above
+     * the active segment's start, which is the correction the runtime is still standing in
+     * - or the whole change set when the decomposition declined it.
+     *
+     * @param preclassified    whether the bounds handed in are the residual's own, derived
+     *                         row by row over the whole range including anything apply
+     *                         raced past the trigger, rather than the raw trigger's
+     * @param segmentsRepaired how many closed segments the loop published before this, for
+     *                         the log
+     * @return true when the replay parked on the turn budget and owns the pinned reader
+     */
+    private boolean repairChangeSetResidual(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableToken baseToken,
+            TableReader reader,
+            long residualLateRowTs,
+            long residualChangeMaxTs,
+            boolean insertOnly,
+            long advanceTo,
+            boolean preclassified,
+            int segmentsRepaired
+    ) throws SqlException {
+        planO3Repair(instance, windowFactory, residualLateRowTs, residualChangeMaxTs, insertOnly, baseToken, advanceTo, reader, preclassified);
+        LOG.info().$("live view O3 replay [view=").$(instance.getDefinition().getViewName())
+                .$(", lateRowTs=").$(residualLateRowTs)
+                .$(", segmentsRepaired=").$(segmentsRepaired)
+                .$(", advanceTo=").$(advanceTo)
+                .$(", pinnedSeqTxn=").$(repairPlan.getPinnedSeqTxn())
+                .$(", correctionTs=").$(repairPlan.getCorrectionTs())
+                .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
+                .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
+                .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
+                // Why this repair reads more than a localized rebuild would, as
+                // live_views().checkpoint_repair_last_denial reports it. Absent for a
+                // repair that read exactly its localized interval.
+                .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(
+                        instance.getCheckpointRepairLastDenialReason()))
+                .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
+                .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
+                // The two estimates the disposition above was chosen on, so a repair
+                // that took the more expensive-looking route is diagnosable. Both are
+                // LONG_NULL when no anchor competed and nothing needed pricing.
+                .$(", resumeScanRows=").$(repairPlan.getResumeScanRows())
+                .$(", rebuildScanRows=").$(repairPlan.getRebuildScanRows()).I$();
+        if (repairPlan.isResumeFromAnchor()) {
+            replayFromAnchor(instance, windowFactory, repairPlan, reader);
+            return false;
+        }
+        // Either no logical boundary sits below the change (the whole timeline is above it,
+        // the trigger carries no timestamp to search with, the timeline is unreadable, or
+        // apply raced ahead over an unclassifiable range), in which case this is the
+        // O(view age) rebuild from the view boundary; or one does and the plan priced its
+        // resume above the localized rebuild, in which case this reads only [L, H).
+        return o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, true);
+    }
+
+    /**
+     * Finishes the segment loop a resumed repair belongs to: the segment whose replay just
+     * published is booked, and the ones behind it - and, for the inline loop, the residual
+     * behind those - are repaired against the same pinned snapshot.
+     * <p>
+     * The loop position is the resuming turn's, read out of the session before the executor
+     * could free it, and it is what makes the yield available at all rather than merely
+     * cheaper. Only the loop's last repair advances the watermark, so a turn that finished
+     * its parked segment and stopped would leave the change unconsumed with that segment
+     * already repaired: the next drain re-classifies the same range, repairs the same
+     * segment, parks in the same place and stops again. The repair converges only if the
+     * turn that resumes it also finishes what it belonged to.
+     *
+     * @return true when a later segment parked in turn and owns the pinned reader
+     */
+    private boolean continueSegmentLoop(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableReader reader,
+            LiveViewCheckpointSegmentLoop loop
+    ) throws SqlException {
+        if (settleRepairedSegment(instance, loop, loop.getInFlightSegmentStart()) != SEGMENT_STEP_DONE) {
+            return false;
+        }
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        final LiveViewCheckpointAnchorPlan anchorPlan = anchorWindow == null
+                ? null
+                : anchorWindow.getCheckpointAnchorPlan();
+        if (anchorPlan == null) {
+            // The view's anchor went away under a parked repair - a recompile that left it
+            // unanchored. Nothing further may be planned against a segmentation that no
+            // longer exists; the watermark has not moved, so the next drain replans what is
+            // left and a pass leaves its remaining entries pending and visible.
+            LOG.error().$("live view lost its anchor plan under a parked segment loop [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", queued=").$(loop.size()).I$();
+            return false;
+        }
+        if (loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS) {
+            return drainPendingRepairs(instance, windowFactory, reader, anchorPlan, loop);
+        }
+        final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop);
+        if (step == SEGMENT_STEP_SUSPENDED) {
+            return true;
+        }
+        if (step != SEGMENT_STEP_DONE || loop.getResidualMinTs() == Numbers.LONG_NULL) {
+            // Either the loop stopped short - what it published stands, the watermark has
+            // not moved and the next drain replans the rest - or the closed segments were
+            // the whole change set and the last of them advanced the watermark over it.
+            return false;
+        }
+        return repairChangeSetResidual(
+                instance,
+                windowFactory,
+                instance.getDefinition().getBaseTableToken(),
+                reader,
+                loop.getResidualMinTs(),
+                loop.getResidualMaxTs(),
+                loop.isResidualInsertOnly(),
+                loop.getResidualAdvanceTo(),
+                true,
+                loop.getSegmentsRepaired()
+        );
     }
 
     /**
@@ -4933,7 +5335,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // decomposition declines comes back NOT_TAKEN and takes the union range, which
             // is what every repair took before this existed.
             final int segmentRepair = repairChangeSetSegments(
-                    instance, windowFactory, baseToken, reader, lateRowTs, changeMaxTs, insertOnly, fromSeqTxn);
+                    instance, windowFactory, baseToken, reader, lateRowTs, changeMaxTs, insertOnly, fromSeqTxn, advanceTo);
+            if (segmentRepair == SEGMENT_REPAIR_SUSPENDED) {
+                // One segment's replay parked on the turn budget, and the rest of the loop -
+                // the segments it has not reached, and the residual it still owes once they
+                // are done - parked with it on the session. It owns the pinned reader from
+                // here on and nothing durable moved, so this turn ends where it is: the next
+                // turn on this worker continues the replay and then the loop.
+                suspended = true;
+                return;
+            }
             if (segmentRepair == SEGMENT_REPAIR_PENDING) {
                 // Every closed segment went into the pending-repair set and the change set
                 // held nothing above them, so this turn repaired nothing and rewrote
@@ -4966,40 +5377,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Rows below the view's boundary are already out of them.
                 final long residualLateRowTs = preclassified ? segmentChangeSet.getResidualMinTs() : lateRowTs;
                 final long residualChangeMaxTs = preclassified ? segmentChangeSet.getResidualMaxTs() : changeMaxTs;
-                planO3Repair(instance, windowFactory, residualLateRowTs, residualChangeMaxTs, insertOnly, baseToken, advanceTo, reader, preclassified);
-                LOG.info().$("live view O3 replay [view=").$(viewName)
-                        .$(", lateRowTs=").$(residualLateRowTs)
-                        .$(", segmentsRepaired=").$(preclassified ? segmentChangeSet.getClosedSegmentCount() : 0)
-                        .$(", advanceTo=").$(advanceTo)
-                        .$(", pinnedSeqTxn=").$(repairPlan.getPinnedSeqTxn())
-                        .$(", correctionTs=").$(repairPlan.getCorrectionTs())
-                        .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
-                        .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
-                        .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
-                        // Why this repair reads more than a localized rebuild would, as
-                        // live_views().checkpoint_repair_last_denial reports it. Absent for a
-                        // repair that read exactly its localized interval.
-                        .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(
-                                instance.getCheckpointRepairLastDenialReason()))
-                        .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
-                        .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
-                        // The two estimates the disposition above was chosen on, so a repair
-                        // that took the more expensive-looking route is diagnosable. Both are
-                        // LONG_NULL when no anchor competed and nothing needed pricing.
-                        .$(", resumeScanRows=").$(repairPlan.getResumeScanRows())
-                        .$(", rebuildScanRows=").$(repairPlan.getRebuildScanRows()).I$();
-                if (repairPlan.isResumeFromAnchor()) {
-                    replayFromAnchor(instance, windowFactory, repairPlan, reader);
-                } else {
-                    // Either no logical boundary sits below the change (the whole
-                    // timeline is above it, the trigger carries no timestamp to search
-                    // with, the timeline is unreadable, or apply raced ahead over an
-                    // unclassifiable range), in which case this
-                    // is the O(view age) rebuild from the view boundary; or one does and
-                    // the plan priced its resume above the localized rebuild, in which
-                    // case this reads only [L, H).
-                    suspended = o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, true);
-                }
+                suspended = repairChangeSetResidual(
+                        instance,
+                        windowFactory,
+                        baseToken,
+                        reader,
+                        residualLateRowTs,
+                        residualChangeMaxTs,
+                        insertOnly,
+                        advanceTo,
+                        preclassified,
+                        preclassified ? segmentChangeSet.getClosedSegmentCount() : 0
+                );
             }
         } finally {
             if (!suspended) {
@@ -5038,6 +5427,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the window state it had reached. So the turn is the same replay continuing, not
      * a new repair: nothing is re-planned, nothing durable has moved, and the
      * bounds stay the ones derived against {@code E}.
+     * <p>
+     * A repair that is one segment of a multi-segment loop hands the rest of the loop over
+     * with it, and this turn finishes that too: the segments the loop had not reached are
+     * repaired against the same pinned snapshot, and - for the inline loop - the residual
+     * behind them. Without that the change would stay unconsumed with its closed segments
+     * already repaired, and the next drain would re-classify the range and repair every one
+     * of them a second time. See {@link LiveViewCheckpointSegmentLoop}.
      * <p>
      * Only the worker that suspended the repair calls this - the resources came out
      * of this worker's pools and its capture freezes through this worker's timeline
@@ -5085,11 +5481,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
+        // Where the loop that started this repair had got to, taken off the session before
+        // the executor can free it. Empty for a repair that stands on its own, which is
+        // every union-range repair and every residual.
+        segmentLoopScratch.copyFrom(session.getSegmentLoop());
         final TableReader reader = session.takeBaseReader();
         instance.recordCheckpointRepairResume();
         boolean suspended = false;
         try {
             suspended = o3HeadMissReplay(instance, windowFactory, session.getPlan(), reader, false, session, true);
+            if (!suspended && segmentLoopScratch.getKind() != LiveViewCheckpointSegmentLoop.KIND_NONE) {
+                // The parked segment published. Book it and take the rest of its loop
+                // against the same pinned snapshot, which is what stops the loop being paid
+                // for twice: the change is still unconsumed, so a turn that stopped here
+                // would have the next drain re-classify it and repair every segment again.
+                suspended = continueSegmentLoop(instance, windowFactory, reader, segmentLoopScratch);
+            }
         } finally {
             if (!suspended) {
                 reader.close();
@@ -5103,6 +5510,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // single-turn repair takes - see o3Replay.
         rebuildInMemoryTier(instance);
         instance.setLeadRowCount(0);
+        // The coupled invariant every drain restores after a completed o3Replay, and the
+        // one a parked repair would otherwise leave broken: the turn that started the
+        // repair set the lead's refresh floor to the watermark as it stood then - correctly,
+        // because nothing had been refreshed - and this turn is the one that moved the
+        // watermark. Leaving the floor behind it makes the next lead drain re-read every
+        // commit the repair just consumed, detect the same out-of-order rows and repair
+        // them a second time. The rebuild above has already made the tier a pure disk
+        // subset with no lead, so the two coordinates belong together.
+        instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
     }
 
     /**

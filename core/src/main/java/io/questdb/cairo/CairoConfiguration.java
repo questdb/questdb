@@ -487,6 +487,31 @@ public interface CairoConfiguration {
     boolean isLiveViewCheckpointRepairPerSegmentEnabled();
 
     /**
+     * Whether one anchor segment's out-of-order repair may stop on the refresh turn's
+     * budget and continue on a later turn, instead of running to completion inside the
+     * turn that started it.
+     * <p>
+     * A segment repair reads and re-emits the whole segment, so its cost is the anchor
+     * period's own base rows - up to a day of them for {@code ANCHOR DAILY} - however few
+     * rows the correction that triggered it carried. Both loops that drive one, the
+     * inline per-segment repair and the backfill pass, own one pinned base snapshot
+     * across every segment they take, so a replay that parks has to park the rest of the
+     * loop with it; {@link io.questdb.cairo.lv.LiveViewCheckpointRepairSession} carries
+     * that loop position, and the resuming turn finishes the parked segment and then the
+     * ones behind it. Nothing durable moves in between - the replacement is uncommitted
+     * and no generation names the staged roots - so a reader sees the pre-repair view
+     * until the loop publishes.
+     * <p>
+     * False keeps a segment replay inside one turn, which is what both loops did before
+     * the yield existed - an escape hatch, and the control column a measurement runs
+     * against. The turn budgets themselves are unchanged either way; see
+     * {@link #getLiveViewCheckpointRepairReplayMaxRows()} and
+     * {@link #getLiveViewRefreshTurnMaxDurationMicros()} for what a turn is allowed to
+     * spend.
+     */
+    boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
+
+    /**
      * Budget on the partition keys one localized out-of-order repair may plan
      * to re-emit. A timestamp-global replacement re-emits every key with a
      * qualifying row in the replacement interval, and the repair holds a

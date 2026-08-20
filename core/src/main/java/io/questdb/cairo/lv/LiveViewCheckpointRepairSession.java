@@ -53,7 +53,8 @@ import org.jetbrains.annotations.Nullable;
  * this session holds, and no timeline generation names the staged roots.
  *
  * <h2>What the session owns, and when</h2>
- * The overlay, the descriptor, the boundary schedule and the plan belong to the
+ * The overlay, the descriptor, the boundary schedule, the plan and - for a repair that is
+ * one segment of a multi-segment loop - the loop position belong to the
  * session for the whole repair - the executing turn reaches them through it. The
  * three resources a turn actively uses - the pinned base reader, the live-view
  * {@link WalWriter} carrying the uncommitted replacement, and the staged
@@ -85,6 +86,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+    // Where the multi-segment loop that started this repair had got to, for a repair that
+    // is one segment of one. Empty for a repair that stands on its own.
+    private final LiveViewCheckpointSegmentLoop segmentLoop = new LiveViewCheckpointSegmentLoop();
     // The compiled factory whose window functions the replay is standing part-way
     // through. Identity only - the session never calls it - so a later turn can refuse
     // a runtime that drifted out from under the candidate. See getWindowFactory().
@@ -172,6 +176,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // the wipe left it owing, which is the safe direction.
         Misc.free(sealCarryover);
         boundaries.clear();
+        segmentLoop.clear();
         isSuspended = false;
     }
 
@@ -343,6 +348,19 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public long getScanRows() {
         return scanRows;
+    }
+
+    /**
+     * @return where the multi-segment loop that started this repair had got to: the
+     * segments it has not reached, the coordinates they are planned against, and - for the
+     * inline loop - the residual it still owes once they are done. Both loops that drive a
+     * segment repair own one pinned base snapshot across every segment they take, so a
+     * replay that parks parks the rest of the loop with it, and the turn that resumes the
+     * replay is the turn that finishes the loop. {@link LiveViewCheckpointSegmentLoop#KIND_NONE}
+     * for a repair that is not part of one
+     */
+    public LiveViewCheckpointSegmentLoop getSegmentLoop() {
+        return segmentLoop;
     }
 
     /**
