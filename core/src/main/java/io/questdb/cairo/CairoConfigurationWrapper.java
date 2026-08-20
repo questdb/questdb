@@ -1800,6 +1800,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlLatestOnHoistEnabled() {
+        return getDelegate().isSqlLatestOnHoistEnabled();
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
     }

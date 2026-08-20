@@ -13499,7 +13499,9 @@ public class SqlOptimiser implements Mutable {
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
-            pushLatestByToTableModel(rewrittenModel, sqlExecutionContext);
+            if (configuration.isSqlLatestOnHoistEnabled()) {
+                pushLatestByToTableModel(rewrittenModel, sqlExecutionContext);
+            }
             rewriteCountDistinct(rewrittenModel);
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);

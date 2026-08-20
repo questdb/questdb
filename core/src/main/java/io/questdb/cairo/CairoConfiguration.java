@@ -1316,6 +1316,14 @@ public interface CairoConfiguration {
     // DistinctTimeSeriesRecordCursorFactory.
     boolean isSqlDistinctGroupByRewriteEnabled();
 
+    // Test-only seam, with no backing production property: always true in a running server, so the
+    // optimiser always rewrites a LATEST ON over a plain sub-query into a direct table read. Tests
+    // override it to false in a CairoConfiguration subclass to obtain the un-rewritten plan, which
+    // LatestByHoistEquivalenceTest compares against, shape by shape.
+    default boolean isSqlLatestOnHoistEnabled() {
+        return true;
+    }
+
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlOrderBySortEnabled();
