@@ -104,7 +104,12 @@ import java.util.Locale;
  * identity would put on the live view's own table. {@code --repair-per-segment=false}
  * restores the union range a repair took before the change set was decomposed into the
  * anchor segments it touches, which is the control column that half of the write side is
- * measured against.
+ * measured against. {@code --backfill-deferral=true} takes the closed segments off the
+ * refresh's critical path entirely - they go into the durable pending-repair set and a
+ * backfill pass drains them - and {@code --backfill-interval-us} is the coalescing window
+ * that decides how many corrections share one segment repair. The pair is the control for
+ * the other half: a run with deferral off pays every correction inside its own refresh
+ * turn, a run with it on pays one repair per segment per interval.
  * <p>
  * Build and run:
  * <pre>
@@ -179,6 +184,8 @@ public class LiveViewSteadyStateBenchmark {
         // is how a run reproduces what a repair cost before it kept its ladder.
         int repairMaxChainedBoundaries = -1;
         boolean isRepairPerSegment = true;
+        boolean isBackfillDeferral = false;
+        long backfillIntervalMicros = -1;
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
@@ -238,6 +245,10 @@ public class LiveViewSteadyStateBenchmark {
                 repairMaxChainedBoundaries = Integer.parseInt(arg.substring(32));
             } else if (arg.startsWith("--repair-per-segment=")) {
                 isRepairPerSegment = Boolean.parseBoolean(arg.substring(21));
+            } else if (arg.startsWith("--backfill-deferral=")) {
+                isBackfillDeferral = Boolean.parseBoolean(arg.substring(20));
+            } else if (arg.startsWith("--backfill-interval-us=")) {
+                backfillIntervalMicros = Long.parseLong(arg.substring(23));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -326,8 +337,17 @@ public class LiveViewSteadyStateBenchmark {
         final int finalCompactStalePercent = compactStalePercent;
         final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
         final boolean finalRepairPerSegment = isRepairPerSegment;
+        final boolean finalBackfillDeferral = isBackfillDeferral;
+        final long finalBackfillInterval = backfillIntervalMicros;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
+                @Override
+                public long getLiveViewCheckpointBackfillInterval() {
+                    return finalBackfillInterval >= 0
+                            ? finalBackfillInterval
+                            : super.getLiveViewCheckpointBackfillInterval();
+                }
+
                 @Override
                 public long getLiveViewCheckpointMaxDurationMicros() {
                     return finalCheckpointDuration;
@@ -365,6 +385,11 @@ public class LiveViewSteadyStateBenchmark {
                 }
 
                 @Override
+                public boolean isLiveViewCheckpointBackfillDeferralEnabled() {
+                    return finalBackfillDeferral;
+                }
+
+                @Override
                 public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
                     return finalRepairPerSegment;
                 }
@@ -376,7 +401,8 @@ public class LiveViewSteadyStateBenchmark {
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
-                            + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s%n",
+                            + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
+                            + "backfillDeferral=%s backfillIntervalUs=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -386,7 +412,9 @@ public class LiveViewSteadyStateBenchmark {
                     o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros, hotKeyEveryN, equalTsEveryN,
                     tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
                     configuration.getLiveViewCheckpointRepairMaxChainedBoundaries(),
-                    configuration.isLiveViewCheckpointRepairPerSegmentEnabled()
+                    configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
+                    configuration.isLiveViewCheckpointBackfillDeferralEnabled(),
+                    configuration.getLiveViewCheckpointBackfillInterval()
             );
 
             engine = new CairoEngine(configuration);
@@ -524,8 +552,20 @@ public class LiveViewSteadyStateBenchmark {
                     final double checkpointMs = isCheckpointWritten ? instance.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
 
                     final long expected = firstRow - 1 + batchRows;
-                    if (instance.getLvRowsTotal() != expected) {
-                        throw new IllegalStateException("row mismatch: expected " + expected + ", got " + instance.getLvRowsTotal());
+                    // A view with deferral on is knowingly stale in every closed anchor
+                    // segment it has recorded a correction for and not yet repaired, so its
+                    // output trails the base until a backfill pass drains them. The pending
+                    // row count bounds that deficit rather than naming it: a pass replays a
+                    // segment off the applied base, so it routinely re-emits corrections the
+                    // drain has not classified yet and the set then records rows that are
+                    // already in the output. So the check is two-sided - the view never
+                    // holds more than the base, and never owes more than it says it owes -
+                    // and collapses to a plain equality the moment the set drains.
+                    final long pendingRows = instance.getPendingRepairsRows();
+                    final long lvRowsNow = instance.getLvRowsTotal();
+                    if (lvRowsNow > expected || expected - lvRowsNow > pendingRows) {
+                        throw new IllegalStateException("row mismatch: expected " + expected
+                                + ", got " + lvRowsNow + " with " + pendingRows + " pending");
                     }
                     // A recompiled window starts its counters at zero, so a delta below the
                     // previous reading is that reading itself, not a negative sweep count.
@@ -614,14 +654,19 @@ public class LiveViewSteadyStateBenchmark {
                     System.out.printf(
                             Locale.ROOT,
                             "# o3 ingested=%d scan_rows=%d amplification=%.1fx resume_rows=%d boundary_rows=%d "
-                                    + "rejected=%d repair=%s%n",
+                                    + "rejected=%d repair=%s deferred_segments=%d passed_segments=%d "
+                                    + "pending_segments=%d pending_rows=%d%n",
                             ingested,
                             o3ScanRowsTotal,
                             (double) o3ScanRowsTotal / ingested,
                             instance.getO3ResumeReplayRows() - o3ResumeRowsAtStart,
                             instance.getO3BoundaryReplayRows() - o3BoundaryRowsAtStart,
                             instance.getO3RejectedCount(),
-                            repairName(instance)
+                            repairName(instance),
+                            job.deferredSegmentCountForTest(),
+                            job.backfillPassSegmentCountForTest(),
+                            instance.getPendingRepairsSegments(),
+                            instance.getPendingRepairsRows()
                     );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly

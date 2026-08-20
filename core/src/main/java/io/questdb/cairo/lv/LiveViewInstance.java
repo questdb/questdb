@@ -240,6 +240,13 @@ public class LiveViewInstance implements QuietCloseable {
     // factory; volatile for the catalogue thread. GATE_UNKNOWN until then.
     private volatile int backfillDeferralGate = LiveViewBackfillEnvelope.GATE_UNKNOWN;
     private volatile int backfillKeyedScanGate = LiveViewBackfillEnvelope.GATE_UNKNOWN;
+    // When the last backfill pass over the pending-repair set ran, on the microsecond
+    // clock. The interval it is compared against is the coalescing window: a segment
+    // corrected forty times inside one interval is repaired once. LONG_NULL until the
+    // refresh worker reads the durable set, which is where the window starts - a view
+    // that has never passed still owes one full interval, not an immediate drain.
+    // Refresh-worker only, like every other cadence field here.
+    private long backfillPassLastUs = Numbers.LONG_NULL;
     // Bounds of the localized repair currently suspended across refresh turns:
     // {inProgress, C, L, H}. Packed into one immutable long[] published by
     // volatile store so the catalogue never pairs one repair's floor with
@@ -465,6 +472,29 @@ public class LiveViewInstance implements QuietCloseable {
     // is active, and the agent's startCheckpoint cannot complete its latch
     // handshake while the worker holds the refresh latch.
     private String pendingInvalidationReason;
+    // The closed anchor segments this view has consumed a correction for and not yet
+    // repaired, mirroring the durable _checkpoints/_pending set. Allocated on the first
+    // deferral or the first pass, so a view that never defers carries nothing. Mutated
+    // under the refresh latch only; the catalogue reads the three volatile summaries
+    // below rather than walking it.
+    private LiveViewCheckpointPendingRepairs pendingRepairs;
+    // Whether the durable set has been read into pendingRepairs since this instance was
+    // constructed. Single-shot: the in-memory half is authoritative from then on, and
+    // every mutation writes through to disk before the watermark that depends on it moves.
+    private boolean pendingRepairsLoaded;
+    // The oldest pending segment's inclusive start, LONG_NULL when nothing is pending.
+    // Surfaced via live_views().checkpoint_pending_oldest_timestamp, which is how far
+    // back the view is knowingly unrepaired.
+    private volatile long pendingRepairsOldestTs = Numbers.LONG_NULL;
+    // Qualifying base rows the pending corrections carried. An upper bound on what the
+    // view still owes rather than a count of it: a crash between the durable write and the
+    // watermark advance re-records the same range, and a backfill pass replays its segment
+    // off the applied base, so it emits corrections the drain has not classified yet.
+    // Surfaced via live_views().checkpoint_pending_rows.
+    private volatile long pendingRepairsRows;
+    // How many distinct closed segments are pending. Surfaced via
+    // live_views().checkpoint_pending_segments.
+    private volatile int pendingRepairsSegments;
     // LV-WRITER space, not base space: the live-view writer's own seqTxn of an
     // out-of-order repair's REPLACE_RANGE block that committed but whose inline
     // apply did not land. LONG_NULL when nothing is outstanding. Refresh is blocked
@@ -904,6 +934,15 @@ public class LiveViewInstance implements QuietCloseable {
         return backfillKeyedScanGate;
     }
 
+    /**
+     * @return the microsecond-clock reading of the last backfill pass over this view's
+     * pending-repair set, or {@link Numbers#LONG_NULL} when none has run. See
+     * {@link #backfillPassLastUs}
+     */
+    public long getBackfillPassLastUs() {
+        return backfillPassLastUs;
+    }
+
     public long getBelowLowerBoundCount() {
         return belowLowerBoundCount;
     }
@@ -1266,6 +1305,42 @@ public class LiveViewInstance implements QuietCloseable {
      * that committed but did not apply, or {@link Numbers#LONG_NULL} when nothing
      * is outstanding. See {@link #pendingReplacementLvSeqTxn}.
      */
+    /**
+     * @return this view's mirror of the durable pending-repair set, allocated on first
+     * use. Meaningful only once {@link #isPendingRepairsLoaded()} reports true - before
+     * that it is an empty scratch, not an empty set.
+     */
+    public @NotNull LiveViewCheckpointPendingRepairs getPendingRepairs() {
+        if (pendingRepairs == null) {
+            pendingRepairs = new LiveViewCheckpointPendingRepairs();
+        }
+        return pendingRepairs;
+    }
+
+    /**
+     * @return the oldest pending closed segment's inclusive start, or
+     * {@link Numbers#LONG_NULL} when nothing is pending
+     */
+    public long getPendingRepairsOldestTs() {
+        return pendingRepairsOldestTs;
+    }
+
+    /**
+     * @return an upper bound on the base rows the pending corrections still owe the view's
+     * output. See {@link #pendingRepairsRows}
+     */
+    public long getPendingRepairsRows() {
+        return pendingRepairsRows;
+    }
+
+    /**
+     * @return how many distinct closed anchor segments this view has consumed a
+     * correction for and not yet repaired
+     */
+    public int getPendingRepairsSegments() {
+        return pendingRepairsSegments;
+    }
+
     public long getPendingReplacementLvSeqTxn() {
         return pendingReplacementLvSeqTxn;
     }
@@ -1480,6 +1555,14 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean isLeadEligibilityComputed() {
         return leadEligibilityComputed;
+    }
+
+    /**
+     * @return whether the durable pending-repair set has been read into
+     * {@link #getPendingRepairs()} since this instance was constructed
+     */
+    public boolean isPendingRepairsLoaded() {
+        return pendingRepairsLoaded;
     }
 
     /**
@@ -2106,8 +2189,43 @@ public class LiveViewInstance implements QuietCloseable {
      * repair leaves behind when its replacement committed without applying. See
      * {@link #pendingReplacementLvSeqTxn}.
      */
+    /**
+     * Republishes the catalogue's view of the pending-repair set from the set itself.
+     * Called by the refresh worker after every mutation, under the refresh latch, so the
+     * three volatile summaries always describe one consistent state of the set rather
+     * than a mixture of two.
+     */
+    public void refreshPendingRepairsSummary() {
+        final LiveViewCheckpointPendingRepairs set = pendingRepairs;
+        if (set == null) {
+            pendingRepairsSegments = 0;
+            pendingRepairsRows = 0;
+            pendingRepairsOldestTs = Numbers.LONG_NULL;
+            return;
+        }
+        pendingRepairsSegments = set.size();
+        pendingRepairsRows = set.getTotalRowCount();
+        pendingRepairsOldestTs = set.oldestSegmentStart();
+    }
+
+    /**
+     * Records when the last backfill pass ran. See {@link #backfillPassLastUs}
+     */
+    public void setBackfillPassLastUs(long nowUs) {
+        this.backfillPassLastUs = nowUs;
+    }
+
     public void setPendingReplacementLvSeqTxn(long lvSeqTxn) {
         this.pendingReplacementLvSeqTxn = lvSeqTxn;
+    }
+
+    /**
+     * Marks the durable pending-repair set as read into {@link #getPendingRepairs()}.
+     * Single-shot per instance: from here on the in-memory half is authoritative and
+     * every mutation writes through to disk.
+     */
+    public void setPendingRepairsLoaded() {
+        this.pendingRepairsLoaded = true;
     }
 
     public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {

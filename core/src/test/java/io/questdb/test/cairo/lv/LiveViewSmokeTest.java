@@ -14873,7 +14873,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
                         + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
                         + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\t"
-                        + "checkpoint_backfill_gate\tcheckpoint_backfill_key_gate\n");
+                        + "checkpoint_backfill_gate\tcheckpoint_backfill_key_gate\t"
+                        + "checkpoint_pending_segments\tcheckpoint_pending_rows\t"
+                        + "checkpoint_pending_oldest_timestamp\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

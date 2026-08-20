@@ -512,6 +512,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointBackfillInterval() {
+        return 60L * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getLiveViewCheckpointBackfillMaxDuration() {
+        return 10L * Micros.SECOND_MICROS;
+    }
+
+    @Override
     public long getLiveViewCheckpointMaxDurationMicros() {
         return 5L * Micros.MINUTE_MICROS;
     }
@@ -529,6 +539,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
         return 256;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointBackfillDeferralEnabled() {
+        return false;
     }
 
     @Override

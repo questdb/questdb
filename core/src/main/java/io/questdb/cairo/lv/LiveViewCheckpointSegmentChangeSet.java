@@ -68,8 +68,9 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
-    // segmentStart, minTs, maxTs per entry, ordered by segmentStart ascending.
-    private static final int STRIDE = 3;
+    // segmentStart, segmentEndExclusive, minTs, maxTs, rowCount per entry, ordered by
+    // segmentStart ascending.
+    private static final int STRIDE = 5;
     private final LongList segments = new LongList();
     private long activeSegmentStart;
     // Containment cache for the row loop: consecutive rows of one commit almost always
@@ -115,15 +116,16 @@ public final class LiveViewCheckpointSegmentChangeSet {
         final int index = indexOf(cachedSegmentStart);
         if (index >= 0) {
             final int base = index * STRIDE;
-            segments.setQuick(base + 1, Math.min(segments.getQuick(base + 1), ts));
-            segments.setQuick(base + 2, Math.max(segments.getQuick(base + 2), ts));
+            segments.setQuick(base + 2, Math.min(segments.getQuick(base + 2), ts));
+            segments.setQuick(base + 3, Math.max(segments.getQuick(base + 3), ts));
+            segments.setQuick(base + 4, segments.getQuick(base + 4) + 1);
             return true;
         }
         if (segments.size() / STRIDE >= MAX_CLOSED_SEGMENTS) {
             overflowed = true;
             return false;
         }
-        insertAt(-index - 1, cachedSegmentStart, ts);
+        insertAt(-index - 1, cachedSegmentStart, cachedSegmentEndExclusive, ts);
         return true;
     }
 
@@ -162,11 +164,21 @@ public final class LiveViewCheckpointSegmentChangeSet {
     }
 
     /**
+     * @return the exclusive end of closed segment {@code index}. Carried alongside the
+     * start because a deferred repair is planned from the entry rather than from this
+     * scratch, and re-deriving the end there would need the anchor plan the segment was
+     * placed against.
+     */
+    public long getSegmentEndExclusive(int index) {
+        return segments.getQuick(index * STRIDE + 1);
+    }
+
+    /**
      * @return the highest in-view timestamp the change set touched inside closed segment
      * {@code index}
      */
     public long getSegmentMaxTs(int index) {
-        return segments.getQuick(index * STRIDE + 2);
+        return segments.getQuick(index * STRIDE + 3);
     }
 
     /**
@@ -174,7 +186,16 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * {@code index}
      */
     public long getSegmentMinTs(int index) {
-        return segments.getQuick(index * STRIDE + 1);
+        return segments.getQuick(index * STRIDE + 2);
+    }
+
+    /**
+     * @return how many qualifying base rows the change set placed inside closed segment
+     * {@code index}. Diagnostic: what a repair over the segment reads and rewrites is the
+     * whole segment, not these rows.
+     */
+    public long getSegmentRowCount(int index) {
+        return segments.getQuick(index * STRIDE + 4);
     }
 
     /**
@@ -233,12 +254,15 @@ public final class LiveViewCheckpointSegmentChangeSet {
         return -(low + 1);
     }
 
-    private void insertAt(int index, long segmentStart, long ts) {
+    private void insertAt(int index, long segmentStart, long segmentEndExclusive, long ts) {
         // Inserted in reverse so each add() lands ahead of the ones before it, leaving
-        // (segmentStart, minTs, maxTs) in order at the entry's own base offset.
+        // (segmentStart, segmentEndExclusive, minTs, maxTs, rowCount) in order at the
+        // entry's own base offset.
         final int base = index * STRIDE;
+        segments.add(base, 1);
         segments.add(base, ts);
         segments.add(base, ts);
+        segments.add(base, segmentEndExclusive);
         segments.add(base, segmentStart);
     }
 }

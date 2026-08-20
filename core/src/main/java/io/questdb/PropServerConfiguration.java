@@ -321,6 +321,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final boolean liveViewCheckpointBackfillDeferralEnabled;
+    private final long liveViewCheckpointBackfillInterval;
+    private final long liveViewCheckpointBackfillMaxDuration;
     private final long liveViewCheckpointCompactionInterval;
     private final long liveViewCheckpointMaxDurationMicros;
     private final long liveViewCheckpointPurgeInterval;
@@ -1546,6 +1549,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
             // live-view config
+            this.liveViewCheckpointBackfillDeferralEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_BACKFILL_DEFERRAL_ENABLED, false);
+            this.liveViewCheckpointBackfillInterval = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_BACKFILL_INTERVAL, 60L * Micros.MINUTE_MICROS);
+            this.liveViewCheckpointBackfillMaxDuration = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_BACKFILL_MAX_DURATION, 10L * Micros.SECOND_MICROS);
             this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
             this.liveViewCheckpointPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 1L);
@@ -4241,6 +4247,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getLiveViewCheckpointBackfillInterval() {
+            return liveViewCheckpointBackfillInterval;
+        }
+
+        @Override
+        public long getLiveViewCheckpointBackfillMaxDuration() {
+            return liveViewCheckpointBackfillMaxDuration;
+        }
+
+        @Override
         public long getLiveViewCheckpointCompactionInterval() {
             return liveViewCheckpointCompactionInterval;
         }
@@ -4263,6 +4279,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
             return liveViewCheckpointRepairMaxChainedBoundaries;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointBackfillDeferralEnabled() {
+            return liveViewCheckpointBackfillDeferralEnabled;
         }
 
         @Override
