@@ -66,31 +66,6 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testToMinTxnFailureClosesCursorImmediately() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, value int) timestamp(ts) PARTITION BY DAY WAL");
-            try (RecordCursorFactory factory = select("select * from wal_transactions('x')")) {
-                injectedCursor = new CloseCountingCursor();
-                injectCursor = true;
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail("expected injected toMinTxn failure");
-                } catch (CairoException e) {
-                    Assert.assertEquals(INJECTED_ERROR, e.getFlyweightMessage().toString());
-                    Assert.assertEquals(1, injectedCursor.acquisitionCount);
-                    Assert.assertEquals(1, injectedCursor.toMinTxnCount);
-                    Assert.assertEquals(1, injectedCursor.closeCount);
-                    Assert.assertTrue(injectedCursor.pool != null);
-                } finally {
-                    injectCursor = false;
-                }
-            } finally {
-                injectedCursor = null;
-            }
-        });
-    }
-
-    @Test
     public void testNonWal() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY BYPASS WAL");
@@ -115,6 +90,31 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist: x");
                 Assert.assertEquals("select * from wal_transactions(".length(), e.getPosition());
+            }
+        });
+    }
+
+    @Test
+    public void testToMinTxnFailureClosesCursorImmediately() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, value int) timestamp(ts) PARTITION BY DAY WAL");
+            try (RecordCursorFactory factory = select("select * from wal_transactions('x')")) {
+                injectedCursor = new CloseCountingCursor();
+                injectCursor = true;
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail("expected injected toMinTxn failure");
+                } catch (CairoException e) {
+                    Assert.assertEquals(INJECTED_ERROR, e.getFlyweightMessage().toString());
+                    Assert.assertEquals(1, injectedCursor.acquisitionCount);
+                    Assert.assertEquals(1, injectedCursor.toMinTxnCount);
+                    Assert.assertEquals(1, injectedCursor.closeCount);
+                    Assert.assertNotNull(injectedCursor.pool);
+                } finally {
+                    injectCursor = false;
+                }
+            } finally {
+                injectedCursor = null;
             }
         });
     }

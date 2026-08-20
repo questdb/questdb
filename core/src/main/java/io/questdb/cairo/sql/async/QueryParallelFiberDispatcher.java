@@ -479,6 +479,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
+    @TestOnly
+    public void signalProgressForTesting() {
+        signalProgress();
+    }
+
     public boolean tryAcquirePublication() {
         if (runtime.isCurrentFiberOwned()) {
             return false;
@@ -700,6 +705,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
 
     void signalProgress() {
         progressVersion.incrementAndGet();
-        progressWaitQueue.fire();
+        progressWaitQueue.fireAll();
     }
 }

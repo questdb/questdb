@@ -108,7 +108,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "INSERT INTO t SELECT (x * 200000000L)::timestamp, 'A', 'g' || (x % 4), x" +
+                                "INSERT INTO t SELECT (x * 200_000_000L)::timestamp, 'A', 'g' || (x % 4), x" +
                                         " FROM long_sequence(8000)",
                                 sqlExecutionContext
                         );

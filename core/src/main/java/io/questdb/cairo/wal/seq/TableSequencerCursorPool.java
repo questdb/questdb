@@ -35,8 +35,8 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2;
 
 public final class TableSequencerCursorPool implements Closeable {
-    private TableMetadataChangeLog metadataChangeLog;
     private final Path path = new Path();
+    private TableMetadataChangeLog metadataChangeLog;
     private TransactionLogCursor transactionLogCursorV1;
     private TransactionLogCursor transactionLogCursorV2;
 

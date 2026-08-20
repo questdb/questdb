@@ -58,6 +58,9 @@ public final class FiberEventWaitQueue {
     }
 
     public void fireAll() {
+        if (waiterCount == 0) {
+            return;
+        }
         fireAll(reason, false);
     }
 

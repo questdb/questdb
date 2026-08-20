@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
+import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
@@ -355,6 +356,41 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testLatestByTaskCancelsSharedBreakerBeforeReleasingOwner() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String injectedError = "injected frame decode failure";
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                    @Override
+                    public boolean checkIfTripped() {
+                        throw new UnsupportedOperationException(injectedError);
+                    }
+                };
+                final int[] releaseCount = new int[1];
+                final boolean[] isCancelledOnRelease = new boolean[1];
+                final CountDownLatchSPI doneLatch = () -> {
+                    releaseCount[0]++;
+                    isCancelledOnRelease[0] = circuitBreaker.getCancelledFlag().get();
+                };
+                try (LatestByTask task = new LatestByTask(configuration)) {
+                    task.of(null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L, doneLatch, circuitBreaker);
+                    try {
+                        task.run();
+                        Assert.fail("expected the injected frame decode failure");
+                    } catch (UnsupportedOperationException e) {
+                        Assert.assertEquals(injectedError, e.getMessage());
+                    }
+                }
+                Assert.assertEquals(1, releaseCount[0]);
+                Assert.assertTrue(
+                        "shared breaker must be cancelled before the owner's done latch is released",
+                        isCancelledOnRelease[0]
+                );
+            }
+        });
+    }
+    @Test
     public void testMergeShardOwnerHelpsWithoutConsumers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -665,6 +701,93 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testProgressSignalWakesEveryParkedOwner() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Push the timer fallback out of reach so the progress signal is the only way out.
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public long getQueryContinuationWakeIntervalMillis() {
+                    return TimeUnit.HOURS.toMillis(1);
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final int ownerCount = 3;
+                final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        dispatcherRuntime
+                );
+                try {
+                    final AtomicReference<Throwable> failure = new AtomicReference<>();
+                    final CountDownLatch resumed = new CountDownLatch(ownerCount);
+                    final AtomicInteger launched = new AtomicInteger();
+                    try (TestWorkerPool ownerPool = new TestWorkerPool(
+                            "progress-broadcast",
+                            1,
+                            Metrics.DISABLED,
+                            WorkerPoolMode.FIBER_HOST
+                    )) {
+                        final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                        ownerPool.assign(_ -> {
+                            if (launched.getAndIncrement() >= ownerCount) {
+                                return false;
+                            }
+                            final FiberTask task = new FiberTask() {
+                                @Override
+                                protected void onDone() {
+                                    resumed.countDown();
+                                }
+
+                                @Override
+                                protected void onError(Throwable th) {
+                                    failure.compareAndSet(null, th);
+                                    resumed.countDown();
+                                }
+
+                                @Override
+                                protected boolean runStep() {
+                                    SuspensionScope.enterTimerShards(engine.getTimerShards());
+                                    dispatcher.awaitProgress(
+                                            dispatcher.getProgressVersion(),
+                                            SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                                    );
+                                    return true;
+                                }
+                            };
+                            final LaunchResult result = ownerRuntime.launch(task);
+                            if (result != LaunchResult.LAUNCHED) {
+                                failure.compareAndSet(null, new AssertionError("owner fiber launch failed [result=" + result + ']'));
+                                resumed.countDown();
+                            }
+                            return true;
+                        });
+                        ownerPool.start(LOG);
+
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                        while (ownerRuntime.getParkedFiberCount() < ownerCount) {
+                            Assert.assertTrue("owner fibers did not park", System.nanoTime() < deadline);
+                            Assert.assertNull(failure.get());
+                            Os.pause();
+                        }
+
+                        dispatcher.signalProgressForTesting();
+
+                        Assert.assertTrue(
+                                "one progress signal must wake every parked owner",
+                                resumed.await(10, TimeUnit.SECONDS)
+                        );
+                        ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                    }
+                    Assert.assertNull(failure.get());
+                } finally {
+                    closeRuntime(dispatcherRuntime);
+                    Misc.free(dispatcher);
+                }
+            }
+        });
+    }
     @Test
     public void testQuiesceDrainFailsParkedLatestByOwner() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

@@ -142,6 +142,9 @@ public class LatestByTask implements QuietCloseable, Mutable {
                 );
             }
             return true;
+        } catch (Throwable th) {
+            circuitBreaker.cancel();
+            throw th;
         } finally {
             complete();
         }
