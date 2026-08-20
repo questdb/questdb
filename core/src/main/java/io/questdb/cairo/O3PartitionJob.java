@@ -3240,7 +3240,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                     timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
-                                    removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+                                    removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn, cellSegment);
 
                                     // nothing to do, skip the partition
                                     updatePartition(
@@ -3306,7 +3306,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // No merge anymore, free the merge index
                         timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
-                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn, cellSegment);
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
@@ -3587,12 +3587,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path pathToTable,
             TableWriter tableWriter,
             long partitionTimestamp,
-            long txn
+            long txn,
+            @Nullable CharSequence cellSegment
     ) {
         // Remove empty partition dir to not create a partition that is not used but can be counted
         // by partition purging logic as a valid version
+        //
+        // Cell-aware: on a composite table the phantom version is <day>/<cell>.<txn>, so resolving it
+        // without the cell names <day>.<txn> -- a directory that does not exist -- and the rmdir is a
+        // silent no-op. The phantom then SURVIVES, purge logic counts it as a valid version, and a
+        // reader opens its empty column files. That is why the dedup noop path returned uninitialised
+        // memory (empty symbol, px=6.15e-31) rather than crashing.
         Path path = Path.getThreadLocal(pathToTable);
-        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn, cellSegment);
         FilesFacade ff = tableWriter.getConfiguration().getFilesFacade();
         if (!ff.rmdir(path)) {
             // This is not critical, the read error will be transient

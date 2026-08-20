@@ -47,14 +47,15 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE, 2026-08-19. Keys = TIMESTAMP ONLY, which takes a"
-            + " different route (no additional key columns): TableWriter#checkDedupCommitIdenticalToPartition."
-            + " Its PARTITION frame is now cell-aware (FrameFactory#openRO's new cellSegment overload) and"
-            + " that is NOT the problem -- the failure reproduces identically with it. Suspect is the"
-            + " COMMIT frame: openROFromMemoryColumns(o3Columns, metadata, commitRowCount) is built over"
-            + " the whole commit's O3 buffers while commitLo/commitHi are per-cell, so the comparison"
-            + " reads outside this cell. Symptom is uninitialised memory, not a crash: empty symbol and"
-            + " px=6.15e-31. The other three dedup cases (keys ts+exch) PASS.")
+    @Ignore("THE ONE REMAINING DEDUP FAILURE, diagnosis sharpened 2026-08-20. Keys = TIMESTAMP ONLY."
+            + " The row survives with the CORRECT timestamp and UNINITIALISED non-key columns:"
+            + "   plain     2023-01-01T01:00  E0  99.0"
+            + "   composite 2023-01-01T01:00  <empty>  6.86e-310"
+            + " So this is NOT the identical-check (its bounds were measured correct: partitionLo=0,"
+            + " partitionHi=0, commitRowCount=1, commitLo=0, commitHi=0) and NOT the phantom-dir removal"
+            + " (made cell-aware, failure unchanged). The dedup REPLACE path writes the key column and"
+            + " leaves the cell's NON-KEY columns unwritten -- look at the O3 copy tasks, not at"
+            + " TableWriter#checkDedupCommitIdenticalToPartition.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
