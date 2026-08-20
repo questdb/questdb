@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
@@ -47,10 +48,11 @@ public class LatestByTask implements QuietCloseable, Mutable {
     private long keyBaseAddress;
     private long keysMemorySize;
     private long prefixesAddress;
-    private AsyncQueryProgressState progressState;
     private long prefixesCount;
+    private AsyncQueryProgressState progressState;
     private long rowHi;
     private long rowLo;
+    private AsyncQueryErrorState scanError;
     private long unIndexedNullCount;
     private long valueBaseAddress;
     private int valueBlockCapacity;
@@ -105,7 +107,8 @@ public class LatestByTask implements QuietCloseable, Mutable {
             long prefixesCount,
             CountDownLatchSPI doneLatch,
             SqlExecutionCircuitBreaker circuitBreaker,
-            AsyncQueryProgressState progressState
+            AsyncQueryProgressState progressState,
+            AsyncQueryErrorState scanError
     ) {
         this.frameMemoryPool.of(addressCache);
         this.keyBaseAddress = keyBaseAddress;
@@ -125,6 +128,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
         this.doneLatch = doneLatch;
         this.circuitBreaker = circuitBreaker;
         this.progressState = progressState;
+        this.scanError = scanError;
         this.completed = false;
     }
 
@@ -151,6 +155,8 @@ public class LatestByTask implements QuietCloseable, Mutable {
             }
             return true;
         } catch (Throwable th) {
+            // must precede cancel(): the owner reads this only after the breaker trips
+            scanError.setError(th);
             circuitBreaker.cancel();
             throw th;
         } finally {

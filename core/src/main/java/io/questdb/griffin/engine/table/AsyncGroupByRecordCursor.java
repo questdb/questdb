@@ -343,7 +343,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByLongTopKTask task = queue.get(cursor);
+                            // run() releases the slot
+                            final AsyncQueryProgressState stolenProgress =
+                                    task.getAtom().getShardingContext().getProgressState();
                             GroupByLongTopKJob.run(-1, task, subSeq, cursor, atom);
+                            if (dispatcher != null) {
+                                dispatcher.signalProgress(stolenProgress);
+                            }
                             reclaimed++;
                         } else {
                             Os.pause();

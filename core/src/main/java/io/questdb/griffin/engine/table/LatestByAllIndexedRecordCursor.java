@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.PlanSink;
@@ -58,6 +59,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final DirectLongList prefixes;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final DirectLongList rows;
+    private final AsyncQueryErrorState scanError = new AsyncQueryErrorState();
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private long aIndex;
     private long aLimit;
@@ -198,6 +200,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             }
 
             sharedCircuitBreaker.reset();
+            scanError.clear();
         } else {
             final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
@@ -311,7 +314,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                         prefixesCount,
                                         doneLatch,
                                         sharedCircuitBreaker,
-                                        progressState
+                                        progressState,
+                                        scanError
                                 );
                                 pubSeq.done(seq);
                                 queuedCount++;
@@ -340,10 +344,15 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     } else {
                         long seq = subSeq.next();
                         if (seq > -1) {
+                            // done(seq) releases the slot
+                            final AsyncQueryProgressState stolenProgress = queue.get(seq).getProgressState();
                             try {
                                 queue.get(seq).run();
                             } finally {
                                 subSeq.done(seq);
+                            }
+                            if (dispatcher != null) {
+                                dispatcher.signalProgress(stolenProgress);
                             }
                         } else {
                             Os.pause();
@@ -371,9 +380,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         }
 
         if (sharedCircuitBreaker.checkIfTripped()) {
-            // A tripped shared breaker on the non-throw path means the dispatcher aborted queued
-            // tasks (quiesce); the row set is incomplete, so the query must fail rather than
-            // return partial rows.
+            // A tripped shared breaker on the non-throw path means a worker scan failed, or the
+            // dispatcher aborted queued tasks (quiesce); either way the row set is incomplete, so
+            // the query must fail rather than return partial rows.
+            if (scanError.hasError()) {
+                scanError.throwError();
+            }
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             throw CairoException.queryCancelled();
         }
@@ -414,10 +426,15 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             } else {
                 long seq = subSeq.next();
                 if (seq > -1) {
+                    // done(seq) releases the slot
+                    final AsyncQueryProgressState stolenProgress = queue.get(seq).getProgressState();
                     try {
                         queue.get(seq).run();
                     } finally {
                         subSeq.done(seq);
+                    }
+                    if (dispatcher != null) {
+                        dispatcher.signalProgress(stolenProgress);
                     }
                 } else {
                     Os.pause();

@@ -27,6 +27,7 @@ package io.questdb.test.tools;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -125,10 +126,13 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
     @Test
     public void testWorkerPoolModeSeededSelectionIsStable() {
-        final Rnd rndA = new Rnd(123, 456);
-        final Rnd rndB = new Rnd(123, 456);
+        final Rnd expected = new Rnd(123, 456);
+        final Rnd actual = new Rnd(123, 456);
         for (int i = 0; i < 100; i++) {
-            Assert.assertSame(TestUtils.getWorkerPoolMode(rndA), TestUtils.getWorkerPoolMode(rndB));
+            Assert.assertSame(
+                    expected.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
+                    TestUtils.getWorkerPoolMode(actual)
+            );
         }
     }
 

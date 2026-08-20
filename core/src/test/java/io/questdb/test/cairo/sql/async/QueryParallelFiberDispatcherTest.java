@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.SqlCompiler;
@@ -278,7 +279,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 );
                 try (RecordCursorFactory factory = compiler.compile("SELECT * FROM tab LATEST ON ts PARTITION BY sym", executionContext)
                         .getRecordCursorFactory()) {
-                    assertInTree(factory, LatestByAllIndexedRecordCursorFactory.class);
+                    TestUtils.assertFactoryInTree(factory, LatestByAllIndexedRecordCursorFactory.class);
                 }
 
                 final MessageBus messageBus = engine.getMessageBus();
@@ -370,12 +371,15 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 };
                 final int[] releaseCount = new int[1];
                 final boolean[] isCancelledOnRelease = new boolean[1];
+                final AsyncQueryErrorState scanError = new AsyncQueryErrorState();
+                final boolean[] hasErrorOnRelease = new boolean[1];
                 final CountDownLatchSPI doneLatch = () -> {
                     releaseCount[0]++;
                     isCancelledOnRelease[0] = circuitBreaker.getCancelledFlag().get();
+                    hasErrorOnRelease[0] = scanError.hasError();
                 };
                 try (LatestByTask task = new LatestByTask(configuration)) {
-                    task.of(null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L, doneLatch, circuitBreaker, new AsyncQueryProgressState());
+                    task.of(null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L, doneLatch, circuitBreaker, new AsyncQueryProgressState(), scanError);
                     try {
                         task.run();
                         Assert.fail("expected the injected frame decode failure");
@@ -388,6 +392,17 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         "shared breaker must be cancelled before the owner's done latch is released",
                         isCancelledOnRelease[0]
                 );
+                Assert.assertTrue(
+                        "scan error must be recorded before the owner's done latch is released, "
+                                + "or the owner reports a bare cancellation instead of the real failure",
+                        hasErrorOnRelease[0]
+                );
+                try {
+                    scanError.throwError();
+                    Assert.fail("expected the recorded scan error to be rethrown");
+                } catch (UnsupportedOperationException e) {
+                    Assert.assertEquals(injectedError, e.getMessage());
+                }
             }
         });
     }
@@ -451,7 +466,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 );
                 try (RecordCursorFactory factory = compiler.compile("select key, max(v) m from tab", executionContext)
                         .getRecordCursorFactory()) {
-                    assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                    TestUtils.assertFactoryInTree(factory, AsyncGroupByRecordCursorFactory.class);
                 }
 
                 final MessageBus messageBus = engine.getMessageBus();
@@ -601,8 +616,8 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         "select key, max(v) m from tab order by m desc limit 10",
                         executionContext
                 ).getRecordCursorFactory()) {
-                    assertInTree(factory, LongTopKRecordCursorFactory.class);
-                    assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                    TestUtils.assertFactoryInTree(factory, LongTopKRecordCursorFactory.class);
+                    TestUtils.assertFactoryInTree(factory, AsyncGroupByRecordCursorFactory.class);
                 }
 
                 final MessageBus messageBus = engine.getMessageBus();
@@ -786,7 +801,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         // Signal in reverse launch order, so the FIFO head of the dispatcher's
                         // shared queue is never the signalled owner.
                         for (int i = ownerCount - 1; i >= 0; i--) {
-                            dispatcher.signalProgressForTesting(progressStates[i]);
+                            dispatcher.signalProgress(progressStates[i]);
                             Assert.assertTrue(
                                     "signalled owner did not resume",
                                     resumed[i].await(10, TimeUnit.SECONDS)
@@ -1173,16 +1188,5 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         }
         Assert.assertTrue(runtime.awaitClosed(deadline));
         runtime.closeAfterDrained();
-    }
-
-    private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (expected.isInstance(f)) {
-                return;
-            }
-            f = f.getBaseFactory();
-        }
-        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
     }
 }

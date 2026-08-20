@@ -472,7 +472,12 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByMergeShardTask task = queue.get(cursor);
+                            // run() releases the slot
+                            final AsyncQueryProgressState stolenProgress = task.getShardingContext().getProgressState();
                             GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
+                            if (dispatcher != null) {
+                                dispatcher.signalProgress(stolenProgress);
+                            }
                             reclaimed++;
                         } else {
                             Os.pause();

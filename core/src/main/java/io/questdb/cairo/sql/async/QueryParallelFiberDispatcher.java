@@ -443,9 +443,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
-    @TestOnly
-    public void signalProgressForTesting(AsyncQueryProgressState progressState) {
-        signalProgress(progressState);
+    public void signalProgress(@Nullable AsyncQueryProgressState progressState) {
+        signalProgress();
+        if (progressState != null) {
+            progressState.signalProgress();
+        }
     }
 
     public boolean tryAcquirePublication() {
@@ -670,13 +672,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     void signalProgress() {
         progressVersion.incrementAndGet();
         progressWaitQueue.fire();
-    }
-
-    void signalProgress(@Nullable AsyncQueryProgressState progressState) {
-        signalProgress();
-        if (progressState != null) {
-            progressState.signalProgress();
-        }
     }
 
     private int awaitProgress(
