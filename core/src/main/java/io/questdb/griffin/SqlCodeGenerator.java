@@ -11419,6 +11419,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.setWhereClause(null);
 
             if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
+                // the empty factory takes over the latest by nodes, so that the later generateLatestBy() is a no-op
+                model.getLatestBy().clear();
                 return new EmptyTableRecordCursorFactory(queryMeta);
             }
 

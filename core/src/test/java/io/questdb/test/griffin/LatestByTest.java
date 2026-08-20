@@ -450,6 +450,55 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestBySubQueryContradictoryFilterReturnsEmpty() throws Exception {
+        // When the WHERE clauses of a LATEST ON query and its sub-query contradict each other, the
+        // intrinsic model collapses to FALSE and the table read becomes an empty factory. That factory
+        // stands in for the whole LATEST ON, so the latest-by node list must be handed over to it the
+        // same way the constant-false-filter branch does; otherwise generateLatestBy() runs on top of a
+        // table model that has no nested model and dereferences null.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE w (k SYMBOL INDEX, v DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("INSERT INTO w VALUES ('A',1.0,'1970-01-01T00:00:00.000000Z'),"
+                    + "('B',2.0,'1970-01-02T00:00:00.000000Z')");
+            final String empty = "k\tv\tts\n";
+            // filter split across the two levels
+            assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A') WHERE k = 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Empty table")
+                    .returns(empty);
+            // both halves inside the sub-query
+            assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A' AND k = 'B') LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // both halves outside the sub-query
+            assertQuery("SELECT * FROM (SELECT * FROM w) WHERE k = 'A' AND k = 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // the same shape spelled as a CTE
+            assertQuery("WITH c AS (SELECT * FROM w WHERE k IN ('A','B')) SELECT * FROM c WHERE k = 'C' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // PARTITION BY a column the contradiction does not mention
+            assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A') WHERE k = 'B' LATEST ON ts PARTITION BY v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // the same query written at one level
+            assertQuery("SELECT * FROM w WHERE k = 'A' AND k = 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+        });
+    }
+
+    @Test
     public void testLatestByLightSubQueryOrderByTimestampNotElided() throws Exception {
         // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
         // which emits one row per partition key in map order, NOT in designated-timestamp order.
