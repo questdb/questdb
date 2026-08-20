@@ -246,6 +246,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // per row.
     private final ObjList<LiveViewCheckpointTimelineEntry> emptyRepairBoundaries = new ObjList<>();
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    // Wall clock this worker has spent applying live-view WAL, in nanoseconds. The apply
+    // is the half of a refresh that writes into live-view partitions already on disk, and
+    // a repair whose replacement range reaches a closed partition rewrites the whole of
+    // it there rather than appending. Nothing else separates that cost from the rest of a
+    // refresh: the global ApplyWal2TableJob skips LV tokens, so the apply runs inline on
+    // this thread and its time is otherwise indistinguishable from the replay's.
+    private long liveViewApplyNanos;
     private final PageFrameMemoryPool memoryPool;
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
@@ -475,6 +482,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         suspendedRepairViews.clear();
+    }
+
+    /**
+     * @return the microseconds this worker has spent applying live-view WAL since it was
+     * created. See {@link #liveViewApplyNanos}
+     */
+    public long getLiveViewApplyMicros() {
+        return liveViewApplyNanos / 1000;
     }
 
     /**
@@ -1169,6 +1184,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setCheckpointRepairDependencyPlans(
                         repairDependencyPlans(instance, plan.getWindowFactory())
                 );
+                // The same reasoning, one step further out: which halves of a deferred,
+                // coalesced repair of a closed anchor segment this SQL would admit. Both
+                // answers are diagnostics - nothing below reads them - and both settle here
+                // for the same reason the mask above does, so live_views() can report them
+                // for a view no late row has reached.
+                recordBackfillGates(instance, plan);
                 instance.setCompiledFactory(factory, plan);
                 committed = true;
             } finally {
@@ -1337,6 +1358,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             plans |= LiveViewInstance.REPAIR_PLAN_ANCHOR;
         }
         return plans;
+    }
+
+    /**
+     * Records which halves of a deferred, coalesced repair the compiled SELECT admits, as
+     * the two {@code LiveViewBackfillEnvelope.GATE_*} codes {@code live_views()} surfaces.
+     * <p>
+     * Neither gate changes what a repair does. They answer, off the SQL alone, whether a
+     * correction landing in a closed anchor segment could be repaired off the refresh's
+     * critical path, and whether that repair's replay could follow the affected keys'
+     * rows rather than every row of the segment - the two questions the deep out-of-order
+     * tail is priced against, and the ones an operator can act on before a late row
+     * arrives.
+     */
+    private static void recordBackfillGates(LiveViewInstance instance, LiveViewCompiledPlan plan) {
+        final WindowRecordCursorFactory windowFactory = plan.getWindowFactory();
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        final LiveViewDefinition.LvAnchorSpec spec = instance.getDefinition().getAnchorSpec();
+        instance.setBackfillGates(
+                LiveViewBackfillEnvelope.deferralGate(
+                        windowFactory.getWindowFunctions(),
+                        windowFactory.getCheckpointRangePlan() != null,
+                        windowFactory.getCheckpointRowsPlan() != null,
+                        anchorWindow != null && anchorWindow.getCheckpointAnchorPlan() != null
+                ),
+                LiveViewBackfillEnvelope.keyedScanGate(
+                        plan,
+                        anchorWindow == null || spec == null ? null : spec.partitionColumnNames,
+                        windowFactory.getWindowFunctions()
+                )
+        );
     }
 
     /**
@@ -1648,6 +1699,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Applies the live view's own WAL inline and charges the wall clock to
+     * {@link #liveViewApplyNanos}.
+     * <p>
+     * Every live-view apply goes through here: {@code ApplyWal2TableJob.doRun} skips LV
+     * tokens, so this worker's {@link #applyJob} is the view's only applier and the whole
+     * of the write side is inside this call. The apply is void and non-throwing - it
+     * silently no-ops when the LV writer is busy - so the timing brackets it rather than
+     * guarding it.
+     */
+    private void applyLiveViewWal(TableToken token) {
+        final long start = System.nanoTime();
+        applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        liveViewApplyNanos += System.nanoTime() - start;
+    }
+
+    /**
      * Returns a {@link RecordToRowCopier} for the live view, compiling a fresh one when
      * the cached one's metadata version is out of sync with the WAL writer.
      */
@@ -1848,7 +1915,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // global ApplyWal2TableJob.doRun skips LV tokens, so without
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
-                applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+                applyLiveViewWal(instance.getLiveViewToken());
                 // Capture the just-applied LV-table seqTxn (matches a query
                 // reader's getSeqTxn()) to stamp the slot below.
                 lvAppliedSeqTxn = engine.getTableSequencerAPI()
@@ -2254,7 +2321,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             boolean lvConsumedPersisted = false;
             if (appendedRows > 0) {
-                applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+                applyLiveViewWal(instance.getLiveViewToken());
                 lvAppliedSeqTxn = engine.getTableSequencerAPI()
                         .getTxnTracker(instance.getLiveViewToken())
                         .getWriterTxn();
@@ -3058,7 +3125,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Captured before the apply so the restamp below can tell a real apply from a no-op /
         // suspend: only when the writer txn advanced did the flushed lead reach disk.
         final long lvAppliedBefore = lvTracker.getWriterTxn();
-        applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        applyLiveViewWal(token);
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
         // below stamps the slot with it, and the getCursor staleness retry depends on the
         // slot's seqTxn never exceeding what an applied-base reader can observe. Reading it
@@ -4604,7 +4671,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         try {
-            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+            applyLiveViewWal(instance.getLiveViewToken());
             if (timelineCapture != null) {
                 // The replacement is durable in the live view's table, so the re-versioned
                 // roots describe real output and the splice may commit. Nothing published
@@ -5816,7 +5883,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (!simulateRepairApplyFailureForTest) {
             try {
-                applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+                applyLiveViewWal(token);
             } catch (Throwable t) {
                 // applyWal2Table suspends the table and returns rather than throwing, so
                 // this is defence against a future path that does raise: the check below
@@ -5979,7 +6046,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Idempotent on a healthy restart - applyWalDirect finds nothing pending.
             // Runs before the resume-attempted flag is stamped so a failure here re-enters
             // this block on the next turn rather than resuming off an under-read floor.
-            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+            applyLiveViewWal(instance.getLiveViewToken());
             // applyWalDirect is void and non-throwing: it silently no-ops when the LV writer is busy
             // (EntryUnavailableException) and suspends-then-swallows on an apply error, leaving the
             // committed block unapplied. Reading the skip-write floor off lvReader.size() below would
@@ -6216,7 +6283,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.setLvRowsTotal(lvRows);
         instance.setSeedDataOffset(dataOffset);
         if (appendedThisTurn > 0) {
-            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+            applyLiveViewWal(instance.getLiveViewToken());
         }
 
         if (yielded) {
@@ -8884,7 +8951,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", appliedSeqTxn=").$(appliedBefore)
                     .$(", committedSeqTxn=").$(tracker.getSeqTxn()).I$();
-            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+            applyLiveViewWal(token);
             final long appliedAfter = tracker.getWriterTxn();
             if (appliedAfter <= appliedBefore) {
                 // The apply no-opped again (the LV writer is busy) or failed and suspended the
@@ -8989,7 +9056,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         try {
-            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+            applyLiveViewWal(token);
         } catch (Throwable t) {
             // applyWal2Table suspends the table and returns rather than throwing, so this
             // guards a future path that does raise. The apply check below decides either way.

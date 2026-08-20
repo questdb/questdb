@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
@@ -81,6 +82,27 @@ import java.util.Locale;
  * stale percent scales with the map and is what decides at that point. Lowering it sweeps
  * more often and evicts less each time.
  * <p>
+ * <b>The write side.</b> A refresh does not only read base rows: it writes corrected output
+ * into live-view partitions that already exist, and a repair whose replacement range reaches
+ * a partition on disk rewrites the whole of that partition rather than appending to it. The
+ * {@code lv_apply_ms}, {@code lv_rows}, {@code lv_phys_rows}, {@code lv_write_amp} and
+ * {@code lv_parts} columns report that half, and the closing {@code # lv_writes} line turns
+ * it into bytes. None of it is visible in a run whose live view holds one partition, so
+ * {@code --ts-step-us} widens the timestamp axis: at the default 444 us a run of a few
+ * million rows spans minutes and one partition, and at 3600 us it spans hours and ten of
+ * them. {@code spanHours} in the header line is what the run covers.
+ * <p>
+ * <b>The out-of-order shape.</b> {@code --o3-spread} decides how many distinct anchor
+ * segments the late rows of one commit reach - consecutive late rows step down by one
+ * further anchor period - which is what the production logs show and what a per-segment
+ * repair is priced against. {@code --hot-key-percent} folds a share of all rows onto one
+ * key, so one posting list holds that share of the base; a keyed scan is priced from
+ * posting counts and loses on exactly that distribution. {@code --equal-ts-percent} makes a
+ * share of the rows repeat the row below them in both timestamp and key, which is the
+ * {@code (timestamp, key)} group a physical row identity would have to number.
+ * {@code --base-dedup} puts dedup keys on the base as the stand-in for what such an
+ * identity would put on the live view's own table.
+ * <p>
  * Build and run:
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
@@ -108,7 +130,11 @@ public class LiveViewSteadyStateBenchmark {
     private static final int MAX_SUM_COLUMNS = 24;
     private static final int RESTART_PROBE_ROWS = 1_000;
     private static final long START_TS = 1_785_496_035_000_000L;
-    private static final long TS_STEP_MICROS = 444L;
+    // The default spacing of the generated stream. --ts-step-us widens it, which is what
+    // lets a run of a few million rows span many base partitions and many anchor segments
+    // - and so lets a repair land in a closed partition the apply has to rewrite whole,
+    // rather than in the head partition it can append to.
+    private static final long DEFAULT_TS_STEP_MICROS = 444L;
     private static final String VIEW_NAME = "mm_transaction_live_created_at_view";
 
     public static void main(String[] args) throws Exception {
@@ -133,6 +159,19 @@ public class LiveViewSteadyStateBenchmark {
         double o3Percent = 0; // 0 = strictly forward, every row above the last
         String o3Lag = "1m";
         int o3FromBatch = 0; // batches below this one stay strictly forward
+        String o3Spread = null; // unset = every late row equally late, so one commit touches one segment
+        double hotKeyPercent = 0; // 0 = no key is hotter than any other
+        double equalTsPercent = 0; // 0 = no two rows share a (timestamp, key) pair
+        long tsStepMicros = DEFAULT_TS_STEP_MICROS;
+        // Dedup keys on the base, as the stand-in for what fix 3C would put on the live
+        // view's own table. A live-view table cannot carry them yet, and the fast paths
+        // the question is about - the WAL-lag append into the last partition, the
+        // all-in-order single-segment block, and the SYMBOL dedup-key remap on apply -
+        // are TableWriter's rather than the live view's, so the same schema on the base
+        // exercises the same code. Rows are unique in (created_at, cod_acct_no) by
+        // construction unless --equal-ts-percent says otherwise, so nothing is deduped
+        // away and the reading is the dedup path's own cost.
+        boolean isBaseDeduped = false;
         // -1 = leave the configuration default alone. 0 declines the chain outright, which
         // is how a run reproduces what a repair cost before it kept its ladder.
         int repairMaxChainedBoundaries = -1;
@@ -181,6 +220,16 @@ public class LiveViewSteadyStateBenchmark {
                 o3Lag = arg.substring(9);
             } else if (arg.startsWith("--o3-from-batch=")) {
                 o3FromBatch = Integer.parseInt(arg.substring(16));
+            } else if (arg.startsWith("--o3-spread=")) {
+                o3Spread = arg.substring(12);
+            } else if (arg.startsWith("--hot-key-percent=")) {
+                hotKeyPercent = Double.parseDouble(arg.substring(18));
+            } else if (arg.startsWith("--equal-ts-percent=")) {
+                equalTsPercent = Double.parseDouble(arg.substring(19));
+            } else if (arg.startsWith("--base-dedup=")) {
+                isBaseDeduped = Boolean.parseBoolean(arg.substring(13));
+            } else if (arg.startsWith("--ts-step-us=")) {
+                tsStepMicros = Long.parseLong(arg.substring(13));
             } else if (arg.startsWith("--repair-max-chained-boundaries=")) {
                 repairMaxChainedBoundaries = Integer.parseInt(arg.substring(32));
             } else {
@@ -207,6 +256,15 @@ public class LiveViewSteadyStateBenchmark {
         if (o3FromBatch < 0) {
             throw new IllegalArgumentException("--o3-from-batch must not be negative: " + o3FromBatch);
         }
+        if (hotKeyPercent < 0 || hotKeyPercent > 100) {
+            throw new IllegalArgumentException("--hot-key-percent must be within [0, 100]: " + hotKeyPercent);
+        }
+        if (equalTsPercent < 0 || equalTsPercent > 50) {
+            throw new IllegalArgumentException("--equal-ts-percent must be within [0, 50]: " + equalTsPercent);
+        }
+        if (tsStepMicros < 1) {
+            throw new IllegalArgumentException("--ts-step-us must be positive: " + tsStepMicros);
+        }
         // Only a SYMBOL key has a dictionary to pre-size or an index to build, so both
         // knobs describe nothing on an INT or LONG key. They are forced off and the
         // header line reports what the run actually used.
@@ -220,14 +278,39 @@ public class LiveViewSteadyStateBenchmark {
         final long totalRows = seedRows + (long) batchRows * batches;
         // What decides whether a sweep can fire at all: an account falls behind the
         // frontier only once the anchor has advanced two buckets past its last row.
-        final long rowsPerBucket = anchorPeriodMicros / TS_STEP_MICROS;
+        final long rowsPerBucket = anchorPeriodMicros / tsStepMicros;
         // Every o3EveryN-th row of a batch carries a timestamp o3LagMicros below the one
         // its position would give it, which is what the reported out-of-order workload
         // looks like on the wire: a forward stream with a minority of late arrivals
         // sprinkled through it. 0 leaves the generator strictly forward.
         final long o3EveryN = o3Percent > 0 ? Math.max(2, Math.round(100 / o3Percent)) : 0;
         final long o3LagMicros = o3EveryN > 0 ? anchorPeriodMicros(o3Lag) : 0;
+        // How many distinct anchor segments the late rows of one commit reach. The
+        // production logs price the deep tail per anchor segment a correction touches,
+        // so a run that lands every late row in the same segment measures the cheapest
+        // shape rather than the reported one. Consecutive late rows step down by one
+        // whole anchor period, which is what puts them in distinct segments; a spread
+        // narrower than the anchor period therefore describes nothing and leaves one
+        // step, which the header line reports.
+        final long o3SpreadMicros = o3EveryN > 0 && o3Spread != null ? anchorPeriodMicros(o3Spread) : 0;
+        final int o3SpreadSteps = (int) Math.max(1, o3SpreadMicros / anchorPeriodMicros + (o3SpreadMicros > 0 ? 1 : 0));
+        // The deepest a late row goes, which is what the generator has to keep above
+        // START_TS: a row shifted below the view's own start produces no output at all
+        // and would be counted as a rejection rather than as a correction.
+        final long o3MaxLagMicros = o3LagMicros + (long) (o3SpreadSteps - 1) * anchorPeriodMicros;
+        // Every hotKeyEveryN-th row carries the same key, so one posting list holds
+        // hotKeyPercent of the base. Fix 3B prices a keyed scan from posting counts
+        // precisely because that distribution decides it, and a run where every key is
+        // equally cold cannot show the case it loses on.
+        final long hotKeyEveryN = hotKeyPercent > 0 ? Math.max(2, Math.round(100 / hotKeyPercent)) : 0;
+        // Every equalTsEveryN-th row repeats the row below it - both its timestamp and
+        // its key - so the (timestamp, key) group holds two qualifying rows. That is the
+        // shape 3C's ordinal exists for, and the one measurement 4 of Stage 0 counts in
+        // the real base.
+        final long equalTsEveryN = equalTsPercent > 0 ? Math.max(2, Math.round(100 / equalTsPercent)) : 0;
         final int commitRows = batchRows / commitsPerBatch;
+        final RowShape rowShape = new RowShape(recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros,
+                partitionKeyType, nullPercent, sumColumns, tsStepMicros, hotKeyEveryN, equalTsEveryN);
 
         final Path dbRoot = Files.createTempDirectory("lv-steady-");
         CairoEngine engine = null;
@@ -280,14 +363,17 @@ public class LiveViewSteadyStateBenchmark {
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
-                            + "repairMaxChainedBoundaries=%d%n",
+                            + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
+                            + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),
                     selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
-                    commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / TS_STEP_MICROS,
-                    o3FromBatch, configuration.getLiveViewCheckpointRepairMaxChainedBoundaries()
+                    commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
+                    o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros, hotKeyEveryN, equalTsEveryN,
+                    tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
+                    configuration.getLiveViewCheckpointRepairMaxChainedBoundaries()
             );
 
             engine = new CairoEngine(configuration);
@@ -309,14 +395,11 @@ public class LiveViewSteadyStateBenchmark {
                             + "cod_acct_no " + partitionKeyType.columnDdl(capacity, indexClause) + ", "
                             + "amt_txn double"
                             + sumColumnDdl(sumColumns)
-                            + ") timestamp(created_at) partition by hour wal",
+                            + ") timestamp(created_at) partition by hour wal"
+                            + (isBaseDeduped ? " dedup upsert keys(created_at, cod_acct_no)" : ""),
                     sqlCtx
             );
-            engine.execute(
-                    insertSql(1, seedRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros,
-                            partitionKeyType, nullPercent, sumColumns, 0, 0),
-                    sqlCtx
-            );
+            engine.execute(insertSql(rowShape, 1, seedRows, 0, 0, 1), sqlCtx);
             drainWal(engine);
 
             engine.execute(
@@ -331,9 +414,8 @@ public class LiveViewSteadyStateBenchmark {
                     sqlCtx
             );
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
-            final CheckpointSegments segments = new CheckpointSegments(
-                    dbRoot.resolve(engine.getTableTokenIfExists(VIEW_NAME).getDirName())
-            );
+            final TableToken lvToken = engine.getTableTokenIfExists(VIEW_NAME);
+            final CheckpointSegments segments = new CheckpointSegments(dbRoot.resolve(lvToken.getDirName()));
 
             try (
                     LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
@@ -349,7 +431,7 @@ public class LiveViewSteadyStateBenchmark {
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
                 segments.sample();
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\trepair");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\trepair");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -370,6 +452,11 @@ public class LiveViewSteadyStateBenchmark {
                 final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
                 final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
                 long o3ScanRowsTotal = 0;
+                // The write side of a refresh, accumulated over the run: what the batches
+                // emitted, what the apply physically wrote for it, and how long that took.
+                long lvRowsTotal = 0;
+                long lvPhysRowsTotal = 0;
+                long lvApplyMicrosTotal = 0;
                 for (int b = 0; b < batches; b++) {
                     // One INSERT is one WAL commit, and O3 is classified per commit, so
                     // the split decides how many repairs a batch triggers as much as the
@@ -383,9 +470,7 @@ public class LiveViewSteadyStateBenchmark {
                         final long commitFirstRow = firstRow + (long) c * commitRows;
                         final int rows = c == commitsPerBatch - 1 ? batchRows - c * commitRows : commitRows;
                         engine.execute(
-                                insertSql(commitFirstRow, rows, recycleAccounts, accountWindow, anchorPeriodMicros,
-                                        anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns, batchO3EveryN,
-                                        o3LagMicros),
+                                insertSql(rowShape, commitFirstRow, rows, batchO3EveryN, o3LagMicros, o3SpreadSteps),
                                 sqlCtx
                         );
                     }
@@ -399,9 +484,28 @@ public class LiveViewSteadyStateBenchmark {
                     // no checkpoint for the most expensive seal the view performs.
                     final long checkpointWrittenUsBefore = instance.getLastCheckpointWrittenUs();
                     sampler.reset();
+                    // What the batch's corrected output costs to land. Committed rows are
+                    // the net row count the view gained; physically written rows are what
+                    // the apply actually wrote for it, which is the whole of every partition
+                    // it had to merge rather than append to. The two are equal for a strictly
+                    // forward run and diverge by the partition rewrite fix 3 is about - a
+                    // repair's replacement commit re-emits its whole range, so the view gains
+                    // one batch and the apply writes the range. Both counters are engine-wide,
+                    // and the base is drained above, so the delta across the refresh is the
+                    // live view's own.
+                    final long lvRowsBefore = engine.getMetrics().tableWriterMetrics().getCommittedRows();
+                    final long lvPhysRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+                    final long lvApplyUsBefore = job.getLiveViewApplyMicros();
                     final long refreshStart = System.nanoTime();
                     drainLiveView(engine, instance, job);
                     final long refreshNanos = System.nanoTime() - refreshStart;
+                    final long lvRows = engine.getMetrics().tableWriterMetrics().getCommittedRows() - lvRowsBefore;
+                    final long lvPhysRows =
+                            engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - lvPhysRowsBefore;
+                    final long lvApplyUs = job.getLiveViewApplyMicros() - lvApplyUsBefore;
+                    lvRowsTotal += lvRows;
+                    lvPhysRowsTotal += lvPhysRows;
+                    lvApplyMicrosTotal += lvApplyUs;
                     final double refreshPeakMb = sampler.peakAboveBaseBytes() / (1024.0 * 1024.0);
                     final boolean isCheckpointWritten = instance.getLastCheckpointWrittenUs() != checkpointWrittenUsBefore;
                     final double checkpointMs = isCheckpointWritten ? instance.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
@@ -452,7 +556,7 @@ public class LiveViewSteadyStateBenchmark {
                     segments.sample();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d\t%s%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -478,7 +582,12 @@ public class LiveViewSteadyStateBenchmark {
                             timelineGeneration(instance),
                             timelineEntries(instance),
                             instance.getHeadCheckpointRootId(),
-                            headLagRows(instance),
+                            headLagRows(instance, tsStepMicros),
+                            lvApplyUs / 1e3,
+                            lvRows,
+                            lvPhysRows,
+                            lvRows > 0 ? (double) lvPhysRows / lvRows : 0.0,
+                            partitionCount(engine, lvToken),
                             repair
                     );
                     firstRow += batchRows;
@@ -502,6 +611,14 @@ public class LiveViewSteadyStateBenchmark {
                             repairName(instance)
                     );
                 }
+                // The write side of the run, which is the term fix 3 turns on. A strictly
+                // forward run appends, so amplification is 1 and the apply is a rounding
+                // error beside the refresh. A repair whose replacement range reaches a
+                // closed partition merges it, and every row of that partition is rewritten
+                // - so amplification is the ratio of live-view rows the apply wrote to
+                // live-view rows the refresh emitted, and bytes_per_row turns it into the
+                // figure the design is priced in.
+                reportLiveViewWrites(engine, lvToken, lvRowsTotal, lvPhysRowsTotal, lvApplyMicrosTotal);
                 reportSweeps(instance, sweptSealMs, sweptSealCount, unsweptSealMs, unsweptSealCount);
                 segments.report();
 
@@ -517,11 +634,7 @@ public class LiveViewSteadyStateBenchmark {
                     final long stateRows = firstRow - 1;
                     engine.getLiveViewRegistry().clear();
                     engine.buildViewGraphs();
-                    engine.execute(
-                            insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts, accountWindow, anchorPeriodMicros,
-                                    anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns, 0, 0),
-                            sqlCtx
-                    );
+                    engine.execute(insertSql(rowShape, firstRow, RESTART_PROBE_ROWS, 0, 0, 1), sqlCtx);
                     drainWal(engine);
                     final LiveViewInstance restarted = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
                     try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
@@ -568,44 +681,6 @@ public class LiveViewSteadyStateBenchmark {
             engine = Misc.free(engine);
             deleteRecursively(dbRoot);
         }
-    }
-
-    /**
-     * The SQL that picks a row's account. Three shapes:
-     * <ul>
-     *     <li>default - a brand-new account per row, so nothing recurs;</li>
-     *     <li>{@code --recycle-accounts=N} - N accounts round-robin, so every account
-     *     recurs forever and none ever falls behind the frontier;</li>
-     *     <li>{@code --account-window=N} - N accounts alive per anchor bucket, the
-     *     window sliding forward by half its width each bucket. Half a bucket's
-     *     accounts therefore recur from the previous bucket and half are new, and the
-     *     half left behind ages out two buckets later, which is what makes the sweep
-     *     fire. When a bucket holds fewer rows than the window, a bucket touches only
-     *     as many accounts as it has rows - the {@code rowsPerBucket} header field
-     *     is what tells the two apart.</li>
-     * </ul>
-     */
-    private static String accountExpression(
-            long firstRow,
-            int recycleAccounts,
-            long accountWindow,
-            long anchorPeriodMicros,
-            long anchorOffsetMicros,
-            KeyType keyType
-    ) {
-        final String rowIndex = "(x + " + (firstRow - 1) + ")";
-        final String accountId;
-        if (accountWindow > 0) {
-            final long slide = Math.max(1, accountWindow / 2);
-            final String bucket = "((" + START_TS + " + " + rowIndex + " * " + TS_STEP_MICROS
-                    + " - " + anchorOffsetMicros + ") / " + anchorPeriodMicros + ")";
-            accountId = "(" + bucket + " * " + slide + " + " + rowIndex + " % " + accountWindow + ")";
-        } else if (recycleAccounts > 0) {
-            accountId = "(" + rowIndex + " % " + recycleAccounts + ")";
-        } else {
-            accountId = rowIndex;
-        }
-        return keyType.accountExpression(accountId);
     }
 
     private static long anchorMapSize(LiveViewInstance instance) {
@@ -686,12 +761,25 @@ public class LiveViewSteadyStateBenchmark {
      * forward, so this is what one would cost; a head that stops advancing while the
      * view keeps ingesting is a resume growing without bound.
      */
-    private static long headLagRows(LiveViewInstance instance) {
+    private static long headLagRows(LiveViewInstance instance, long tsStepMicros) {
         final long headMaxTs = instance.getHeadCheckpointMaxTs();
         final long latestSeenTs = instance.getLatestSeenTs();
         return headMaxTs == Numbers.LONG_NULL || latestSeenTs == Numbers.LONG_NULL
                 ? -1
-                : (latestSeenTs - headMaxTs) / TS_STEP_MICROS;
+                : (latestSeenTs - headMaxTs) / tsStepMicros;
+    }
+
+    /**
+     * How many partitions the live view holds. What one repair rewrites is bounded by
+     * this: a replacement range spanning the whole anchor segment covers every live-view
+     * partition inside it, and each of those the apply merges rather than appends to is
+     * rewritten whole. A run whose live view holds one partition cannot show that cost at
+     * all, which is why {@code --ts-step-us} exists.
+     */
+    private static long partitionCount(CairoEngine engine, TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            return reader.getPartitionCount();
+        }
     }
 
     /**
@@ -731,6 +819,64 @@ public class LiveViewSteadyStateBenchmark {
         }
         final String denial = LiveViewCheckpointRepairPlan.denialReasonName(instance.getCheckpointRepairLastDenialReason());
         return denial == null ? disposition : disposition + "/" + denial;
+    }
+
+    /**
+     * What the run wrote into live-view partitions, and how much of that was rewrite
+     * rather than append.
+     * <p>
+     * {@code rows} is the net row count the view gained and {@code phys_rows} what the
+     * apply physically wrote for it, so {@code amplification} is live-view rows written per
+     * live-view row ingested. The two agree while every commit appends to the head
+     * partition. They diverge as soon as a repair publishes a replacement range that
+     * reaches a partition already on disk: {@code O3PartitionJob} splits a partition only
+     * when the untouched prefix is both absolutely and relatively large, and corrected
+     * output for a repair's key domain is spread across the whole range by construction,
+     * so the merge covers the partition and every row of it is written again.
+     * <p>
+     * {@code row_bytes} is the view's fixed column width read off its metadata, so
+     * {@code rewritten_mb} is what those physical rows actually cost in column data. It is
+     * deliberately not the view's directory size: that also holds the checkpoint store and
+     * every partition copy an O3 merge left behind for a purge job this benchmark does not
+     * run, and dividing it by the row count would inflate the width several times over. A
+     * view carrying a variable-width column reports {@code row_bytes=0} and no bytes, since
+     * no single width describes it.
+     */
+    private static void reportLiveViewWrites(
+            CairoEngine engine,
+            TableToken lvToken,
+            long rows,
+            long physRows,
+            long applyMicros
+    ) {
+        final long lvRows;
+        try (TableReader reader = engine.getReader(lvToken)) {
+            lvRows = reader.size();
+        }
+        long rowBytes = 0;
+        try (TableMetadata lvMeta = engine.getTableMetadata(lvToken)) {
+            for (int i = 0, n = lvMeta.getColumnCount(); i < n; i++) {
+                final int type = lvMeta.getColumnType(i);
+                if (ColumnType.isVarSize(type)) {
+                    rowBytes = 0;
+                    break;
+                }
+                rowBytes += ColumnType.sizeOf(type);
+            }
+        }
+        System.out.printf(
+                Locale.ROOT,
+                "# lv_writes rows=%d phys_rows=%d amplification=%.2fx apply_ms=%.3f apply_rows_per_sec=%.0f "
+                        + "lv_rows=%d row_bytes=%d rewritten_mb=%.1f%n",
+                rows,
+                physRows,
+                rows > 0 ? (double) physRows / rows : 0.0,
+                applyMicros / 1e3,
+                applyMicros > 0 ? physRows / (applyMicros / 1e6) : 0.0,
+                lvRows,
+                rowBytes,
+                physRows * (double) rowBytes / (1024.0 * 1024.0)
+        );
     }
 
     /**
@@ -915,6 +1061,16 @@ public class LiveViewSteadyStateBenchmark {
         });
     }
 
+    /**
+     * Runs the refresh to quiescence.
+     * <p>
+     * The {@code drainWal} inside the loop is the base table's, not the view's:
+     * {@code ApplyWal2TableJob.doRun} skips live-view tokens, so the view's own apply runs
+     * inline inside {@code job.run()} and only {@link LiveViewRefreshJob#getLiveViewApplyMicros()}
+     * separates it from the replay it shares a thread with. That apply is the half of a
+     * refresh fix 3 turns on: it is where corrected output meets live-view partitions that
+     * already exist, and where a repair reaching a closed partition rewrites the whole of it.
+     */
     private static void drainLiveView(CairoEngine engine, LiveViewInstance instance, LiveViewRefreshJob job) {
         instance.setLastFlushTimeUs(Numbers.LONG_NULL);
         for (int i = 0; i < 4_096; i++) {
@@ -945,48 +1101,64 @@ public class LiveViewSteadyStateBenchmark {
     }
 
     /**
-     * One commit's worth of rows. {@code o3EveryN} sprinkles late arrivals through the
-     * otherwise forward stream: every {@code o3EveryN}-th row is stamped
-     * {@code o3LagMicros} below its own position, so the commit's own minimum sits below
-     * the previous commit's maximum and the refresh classifies it as out of order. The
-     * rest of the commit is where it would have been, which is what an ingestion pipeline
-     * emitting mostly fresh rows beside a minority of late ones looks like. A row is only
-     * moved when its position is far enough above {@link #START_TS} for the shift to stay
-     * inside the run, so nothing lands below the view's own lower bound.
+     * One commit's worth of rows, as the {@code shape} describes them. {@code o3EveryN}
+     * sprinkles late arrivals through the otherwise forward stream: every
+     * {@code o3EveryN}-th row is stamped {@code o3LagMicros} below its own position, so
+     * the commit's own minimum sits below the previous commit's maximum and the refresh
+     * classifies it as out of order. The rest of the commit is where it would have been,
+     * which is what an ingestion pipeline emitting mostly fresh rows beside a minority of
+     * late ones looks like. A row is only moved when its position is far enough above
+     * {@link #START_TS} for the deepest shift to stay inside the run, so nothing lands
+     * below the view's own lower bound.
+     * <p>
+     * {@code o3SpreadSteps} decides how many distinct anchor segments those late rows
+     * reach: consecutive late rows step down by one further whole anchor period, cycling
+     * through the steps, so one commit corrects several segments at once. That is the
+     * shape the production logs show and the one a per-segment repair is priced against;
+     * a single step leaves every late row in the same segment.
      */
     private static String insertSql(
+            RowShape shape,
             long firstRow,
             long rows,
-            int recycleAccounts,
-            long accountWindow,
-            long anchorPeriodMicros,
-            long anchorOffsetMicros,
-            KeyType keyType,
-            int nullPercent,
-            int sumColumns,
             long o3EveryN,
-            long o3LagMicros
+            long o3LagMicros,
+            int o3SpreadSteps
     ) {
-        final String acct = accountExpression(firstRow, recycleAccounts, accountWindow, anchorPeriodMicros,
-                anchorOffsetMicros, keyType);
+        // The row's ordinal in the whole generated stream. Every other expression is a
+        // function of it, so a row that repeats an earlier one repeats it here and comes
+        // out identical in both timestamp and key.
         final String rowIndex = "(x + " + (firstRow - 1) + ")";
+        // An equal-timestamp row is the row below it, generated again: same position, same
+        // account. Both have to move together, since a (timestamp, key) group is what an
+        // ordinal would have to number - two rows sharing only the timestamp are separate
+        // groups and need no ordinal at all.
+        final String twinIndex = shape.equalTsEveryN > 0
+                ? "(case when " + rowIndex + " % " + shape.equalTsEveryN + " = 0 and " + rowIndex + " > 0 then "
+                  + rowIndex + " - 1 else " + rowIndex + " end)"
+                : rowIndex;
+        final String acct = shape.accountExpression(twinIndex);
         final String amount = "(" + rowIndex + " % 2001 - 1000) * 0.01";
         // A NULL amount is what separates the two counters a fused group might otherwise
         // look equivalent on: sum(amt_txn) skips the row and count(cod_acct_no) does not.
-        final String nullableAmount = nullPercent > 0
-                ? "case when " + rowIndex + " % 100 < " + nullPercent + " then null::double else " + amount + " end"
+        final String nullableAmount = shape.nullPercent > 0
+                ? "case when " + rowIndex + " % 100 < " + shape.nullPercent + " then null::double else " + amount + " end"
                 : amount;
-        final String position = "(" + START_TS + " + " + rowIndex + " * " + TS_STEP_MICROS + ")";
-        final long o3LagRows = o3LagMicros / TS_STEP_MICROS;
+        final String position = "(" + START_TS + " + " + twinIndex + " * " + shape.tsStepMicros + ")";
+        final long maxLagMicros = o3LagMicros + (long) (o3SpreadSteps - 1) * shape.anchorPeriodMicros;
+        final String lag = o3SpreadSteps > 1
+                ? "(" + o3LagMicros + " + (" + rowIndex + " / " + o3EveryN + ") % " + o3SpreadSteps
+                  + " * " + shape.anchorPeriodMicros + ")"
+                : Long.toString(o3LagMicros);
         final String timestamp = o3EveryN > 0
-                ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + rowIndex + " > " + o3LagRows
-                  + " then " + position + " - " + o3LagMicros + " else " + position + " end"
+                ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + twinIndex + " > "
+                  + maxLagMicros / shape.tsStepMicros + " then " + position + " - " + lag + " else " + position + " end"
                 : position;
         final StringBuilder sql = new StringBuilder("insert into mm_transaction_live_created_at ")
                 .append("select (").append(timestamp).append(")::timestamp, ")
                 .append(acct).append(", ")
                 .append(nullableAmount);
-        for (int i = 1; i <= sumColumns; i++) {
+        for (int i = 1; i <= shape.sumColumns; i++) {
             sql.append(", (").append(rowIndex).append(" % ").append(2000 + i).append(") * 0.01");
         }
         return sql.append(" from long_sequence(").append(rows).append(')').toString();
@@ -1127,6 +1299,85 @@ public class LiveViewSteadyStateBenchmark {
                 }
             });
             return out;
+        }
+    }
+
+    /**
+     * Everything about a generated row that does not change between commits: how the
+     * timestamp axis is spaced, how a row picks its account, and the two distribution
+     * knobs Stage 0 of fix 3 needs. One instance serves the seed, every batch and the
+     * restart probe, so the three can never drift apart.
+     */
+    private static final class RowShape {
+        private final long accountWindow;
+        private final long anchorOffsetMicros;
+        private final long anchorPeriodMicros;
+        private final long equalTsEveryN;
+        private final long hotKeyEveryN;
+        private final KeyType keyType;
+        private final int nullPercent;
+        private final int recycleAccounts;
+        private final int sumColumns;
+        private final long tsStepMicros;
+
+        private RowShape(
+                int recycleAccounts,
+                long accountWindow,
+                long anchorPeriodMicros,
+                long anchorOffsetMicros,
+                KeyType keyType,
+                int nullPercent,
+                int sumColumns,
+                long tsStepMicros,
+                long hotKeyEveryN,
+                long equalTsEveryN
+        ) {
+            this.recycleAccounts = recycleAccounts;
+            this.accountWindow = accountWindow;
+            this.anchorPeriodMicros = anchorPeriodMicros;
+            this.anchorOffsetMicros = anchorOffsetMicros;
+            this.keyType = keyType;
+            this.nullPercent = nullPercent;
+            this.sumColumns = sumColumns;
+            this.tsStepMicros = tsStepMicros;
+            this.hotKeyEveryN = hotKeyEveryN;
+            this.equalTsEveryN = equalTsEveryN;
+        }
+
+        /**
+         * The SQL that picks a row's account, given the SQL expression for its ordinal in
+         * the stream. Three shapes:
+         * <ul>
+         *     <li>default - a brand-new account per row, so nothing recurs;</li>
+         *     <li>{@code --recycle-accounts=N} - N accounts round-robin, so every account
+         *     recurs forever and none ever falls behind the frontier;</li>
+         *     <li>{@code --account-window=N} - N accounts alive per anchor bucket, the
+         *     window sliding forward by half its width each bucket. Half a bucket's
+         *     accounts therefore recur from the previous bucket and half are new, and the
+         *     half left behind ages out two buckets later, which is what makes the sweep
+         *     fire. When a bucket holds fewer rows than the window, a bucket touches only
+         *     as many accounts as it has rows - the {@code rowsPerBucket} header field
+         *     is what tells the two apart.</li>
+         * </ul>
+         * {@code --hot-key-percent} then folds a share of the rows onto account zero
+         * whichever shape picked them, so one posting list holds that share of the base.
+         */
+        private String accountExpression(String rowIndex) {
+            final String accountId;
+            if (accountWindow > 0) {
+                final long slide = Math.max(1, accountWindow / 2);
+                final String bucket = "((" + START_TS + " + " + rowIndex + " * " + tsStepMicros
+                        + " - " + anchorOffsetMicros + ") / " + anchorPeriodMicros + ")";
+                accountId = "(" + bucket + " * " + slide + " + " + rowIndex + " % " + accountWindow + ")";
+            } else if (recycleAccounts > 0) {
+                accountId = "(" + rowIndex + " % " + recycleAccounts + ")";
+            } else {
+                accountId = rowIndex;
+            }
+            final String hotOrNot = hotKeyEveryN > 0
+                    ? "(case when " + rowIndex + " % " + hotKeyEveryN + " = 0 then 0 else " + accountId + " end)"
+                    : accountId;
+            return keyType.accountExpression(hotOrNot);
         }
     }
 

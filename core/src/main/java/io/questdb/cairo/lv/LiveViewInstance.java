@@ -230,6 +230,16 @@ public class LiveViewInstance implements QuietCloseable {
     // via live_views().checkpoint_last_lookup_depth, where the property worth
     // watching is that it tracks log(checkpoint count), not the count itself.
     private volatile long checkpointLastLookupDepth = Numbers.LONG_NULL;
+    // Which of the two halves of a deferred, coalesced repair this view's SQL admits, as
+    // LiveViewBackfillEnvelope GATE_* codes: whether a correction in a closed anchor
+    // segment could be repaired off the refresh's critical path at all, and whether that
+    // repair's replay could follow the affected keys' rows rather than the whole segment.
+    // Both are properties of the compiled SELECT and neither changes what any repair does
+    // today - they exist so a view that would never take the cheaper route is legible
+    // before a late row reaches it. The refresh worker settles them when it compiles the
+    // factory; volatile for the catalogue thread. GATE_UNKNOWN until then.
+    private volatile int backfillDeferralGate = LiveViewBackfillEnvelope.GATE_UNKNOWN;
+    private volatile int backfillKeyedScanGate = LiveViewBackfillEnvelope.GATE_UNKNOWN;
     // Bounds of the localized repair currently suspended across refresh turns:
     // {inProgress, C, L, H}. Packed into one immutable long[] published by
     // volatile store so the catalogue never pairs one repair's floor with
@@ -854,6 +864,26 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getApplyLagDeferUntilUs() {
         return applyLagDeferUntilUs;
+    }
+
+    /**
+     * @return the {@code LiveViewBackfillEnvelope.GATE_*} code naming whether this view's
+     * SQL admits deferring a correction that lands in a closed anchor segment, or
+     * {@code GATE_UNKNOWN} before the view compiles its SELECT. See
+     * {@link #backfillDeferralGate}
+     */
+    public int getBackfillDeferralGate() {
+        return backfillDeferralGate;
+    }
+
+    /**
+     * @return the {@code LiveViewBackfillEnvelope.GATE_*} code naming whether a replay of
+     * one closed anchor segment could follow the affected keys' rows rather than every row
+     * of the segment, or {@code GATE_UNKNOWN} before the view compiles its SELECT. See
+     * {@link #backfillDeferralGate}
+     */
+    public int getBackfillKeyedScanGate() {
+        return backfillKeyedScanGate;
     }
 
     public long getBelowLowerBoundCount() {
@@ -1871,6 +1901,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {
         this.applyLagDeferUntilUs = applyLagDeferUntilUs;
+    }
+
+    /**
+     * Records which halves of a deferred, coalesced repair this view's SQL admits. The
+     * refresh worker calls this every time it compiles the factory, beside
+     * {@link #setCheckpointRepairDependencyPlans(int)}. See {@link #backfillDeferralGate}
+     */
+    public void setBackfillGates(int deferralGate, int keyedScanGate) {
+        this.backfillDeferralGate = deferralGate;
+        this.backfillKeyedScanGate = keyedScanGate;
     }
 
     /**

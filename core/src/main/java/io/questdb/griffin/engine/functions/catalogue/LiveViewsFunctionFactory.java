@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewBackfillEnvelope;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -137,6 +138,20 @@ import io.questdb.std.ObjList;
  *     interval. So a view reporting a {@code rows} plan beside a
  *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
  *     that its base denies at every refresh.</li>
+ *     <li>Deferred repair of closed anchor segments - {@code checkpoint_backfill_gate}
+ *     and {@code checkpoint_backfill_key_gate}. Both describe the view's SQL rather
+ *     than any repair, and neither changes what a repair does today. The first reads
+ *     {@code available} when a correction landing in a closed anchor segment could be
+ *     recorded and repaired off the refresh's critical path, and otherwise names the
+ *     gate standing in the way - most commonly {@code bounded frame}, a ROWS or RANGE
+ *     window declared beside the anchored one whose frame keeps sliding across the
+ *     segment boundary. The second reads {@code available} when such a repair's replay
+ *     could follow the affected keys' rows through the base's posting index rather than
+ *     reading every row of the segment, and otherwise names why not - {@code key not
+ *     indexed} and {@code expression key} being the two an operator can act on. A
+ *     rejected key is not a denial: the segment falls back to a whole-segment replay,
+ *     which costs the same write and only a larger read. Both are NULL until the view
+ *     compiles its SELECT.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -197,6 +212,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
+        private static final int COLUMN_BACKFILL_GATE = 53;
+        private static final int COLUMN_BACKFILL_KEY_GATE = 54;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
         private static final int COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT = 33;
@@ -630,6 +647,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL -> LiveViewCheckpointRepairPlan.denialReasonName(
                                 instance.getCheckpointRepairLastDenialReason()
                         );
+                        // Whether the view's SQL admits deferring a correction that lands
+                        // in a closed anchor segment, and whether such a repair's replay
+                        // could follow the affected keys' rows rather than the whole
+                        // segment. Both describe the definition rather than any repair,
+                        // and neither changes what a repair does today. NULL until the
+                        // view compiles one.
+                        case COLUMN_BACKFILL_GATE ->
+                                LiveViewBackfillEnvelope.gateName(instance.getBackfillDeferralGate());
+                        case COLUMN_BACKFILL_KEY_GATE ->
+                                LiveViewBackfillEnvelope.gateName(instance.getBackfillKeyedScanGate());
                         default -> null;
                     };
                 }
@@ -727,6 +754,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_disposition", ColumnType.STRING)); // 50
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_denial", ColumnType.STRING));      // 51
             metadata.add(new TableColumnMetadata("checkpoint_seal_failures", ColumnType.LONG));            // 52
+            metadata.add(new TableColumnMetadata("checkpoint_backfill_gate", ColumnType.STRING));          // 53
+            metadata.add(new TableColumnMetadata("checkpoint_backfill_key_gate", ColumnType.STRING));      // 54
             METADATA = metadata;
         }
     }
