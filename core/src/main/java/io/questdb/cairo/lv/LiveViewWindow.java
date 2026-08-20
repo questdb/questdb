@@ -621,6 +621,35 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Puts back the incremental-seal bookkeeping {@link #detachCheckpointSealState} took
+     * aside, re-stamped against the generation the caller has since published.
+     * <p>
+     * The dirty set goes back as the same map it left as, so the keys the cadence had
+     * named before the repair are the keys the next seal freezes - together with
+     * whatever the rows since have added. Whatever the replay built in its place is
+     * freed here rather than kept: it names the keys of a state nothing holds any more.
+     * <p>
+     * The anchor entries the {@link LiveViewCheckpointScratchOverlay} restored beside
+     * this carry no cadence stamp - the restore writes {@code EPOCH_NONE} over every one
+     * of them - so the first row to touch a key marks it again. That is a redundant map
+     * insert per key per cadence and nothing worse: the set already holds the key, and
+     * the failure direction of a lost stamp is an extra mark rather than a missing one.
+     *
+     * @param generation the generation the newest root this baseline names belongs to.
+     *                   The caller has proved that root sits at or above the repair's
+     *                   convergence boundary, so its payload is the one this window's
+     *                   restored state was frozen from
+     */
+    public void attachCheckpointSealState(@NotNull LiveViewCheckpointSealState state, long generation) {
+        Misc.free(checkpointDirtyAnchorMap);
+        checkpointDirtyAnchorMap = state.takeDirtySet();
+        hasCheckpointEvictionsRecorded = state.hasEvictionsRecorded();
+        checkpointLogicalStateBytes = state.getLogicalStateBytes();
+        checkpointBaselineGeneration = generation;
+        isCheckpointFullScanRequired = false;
+    }
+
+    /**
      * Drops every anchor entry and the frontier that tracks them so a checkpoint
      * restore can rehydrate the map through {@link #restoreCheckpointEntry}. The
      * caller validates the complete root first, so a framing failure cannot
@@ -753,6 +782,38 @@ public class LiveViewWindow implements QuietCloseable {
         Misc.free(anchorMap);
         Misc.free(checkpointDirtyAnchorMap);
         Misc.free(scratchAnchorMap);
+    }
+
+    /**
+     * Hands this window's incremental-seal bookkeeping to {@code state} and leaves the
+     * window owing a complete freeze, so a converging repair can wipe and replay through
+     * it without the bookkeeping being lost with the state it describes.
+     * <p>
+     * A window already owing one holds no baseline to carry and fills nothing in; the
+     * carryover then leaves it exactly where it is. Everything else leaves here in the
+     * same position a {@code requireCheckpointFullScan} would put it - baseline dropped,
+     * flag raised - except that the dirty set travels rather than being emptied. That is
+     * what makes the exchange safe at every point in between: a repair unwinding before
+     * {@link #attachCheckpointSealState} leaves a window that full-scans, never one
+     * holding a baseline whose dirty set went missing.
+     */
+    public void detachCheckpointSealState(@NotNull LiveViewCheckpointSealState state) {
+        if (isCheckpointFullScanRequired || checkpointBaselineGeneration == Numbers.LONG_NULL) {
+            return;
+        }
+        // Always tracking: the window creates its dirty set on the first key a cadence
+        // touches and never opts out of marking, so there is no per-window equivalent of a
+        // function's hasCheckpointDirtyTracking to carry.
+        state.of(checkpointDirtyAnchorMap, true, hasCheckpointEvictionsRecorded, checkpointLogicalStateBytes);
+        checkpointDirtyAnchorMap = null;
+        hasCheckpointEvictionsRecorded = false;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        checkpointLogicalStateBytes = 0;
+        isCheckpointFullScanRequired = true;
+        // The map the stamps answered to is gone, so the stamps must stop matching in the
+        // same act. Leaving them standing would have the rows between here and the attach
+        // read keys as already marked in a cadence whose set no longer holds them.
+        advanceCheckpointDirtyEpoch();
     }
 
     /**

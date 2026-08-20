@@ -5572,6 +5572,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             windowStateDirty = true;
         }
         try {
+            // The incremental-seal bookkeeping, taken aside before anything else moves. The
+            // wipe below resets it and the overlay's restore resets it again - both through
+            // the contract a checkpoint restore reads state under, which deliberately leaves
+            // every target owing a complete freeze - so without this the seal that closes the
+            // repair images the whole live domain instead of the keys its own batch touched.
+            //
+            // Ahead of the retire rather than beside the overlay capture, because the retire
+            // clears the head and with it the batch-minimum window that travels here. Nothing
+            // between this point and the wipe feeds a row, so what it takes is exactly what
+            // the wipe would have destroyed.
+            //
+            // Only a repair holding a splice capture takes it: without one the timeline is
+            // retired outright and no generation is left for a baseline to name.
+            if (!resuming && timelineCapture != null) {
+                session.getSealCarryover().capture(
+                        windowFactory.getWindowFunctions(),
+                        anchorWindow,
+                        instance.getMinSeenTsSinceCheckpoint()
+                );
+            }
+
             // Retire the checkpoint state this O3 has unsealed. Clearing the head
             // puts the post-replay seal on its first-checkpoint path; the follow-up
             // seal below opens a fresh history, and until then a restart rebuilds
@@ -6108,7 +6129,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // generation that describes the state the primary is about to hold is
             // already published, so a crash from here on restores that generation
             // rather than a runtime nothing recorded.
-            settleRepairRuntime(instance, session, windowFactory, anchorWindow);
+            settleRepairRuntime(
+                    instance,
+                    session,
+                    windowFactory,
+                    anchorWindow,
+                    carriedSealBaselineGeneration(plan, timelineSplice)
+            );
             if (!replacementReconciled) {
                 // The replacement is in the live view's WAL but not in its table. No
                 // watermark may walk past output the table does not hold, so this turn
@@ -6212,7 +6239,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // worse than either. A settle that fails here has already marked the
                 // window state for rebuild, so let the original failure propagate.
                 try {
-                    settleRepairRuntime(instance, session, windowFactory, anchorWindow);
+                    // LONG_NULL: this arm is reached only when the block above unwound, so
+                    // nothing published a generation the carried baselines could name.
+                    settleRepairRuntime(instance, session, windowFactory, anchorWindow, Numbers.LONG_NULL);
                 } catch (Throwable t) {
                     LOG.critical().$("could not settle live view repair runtime [view=")
                             .$(viewName)
@@ -6289,6 +6318,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (anchorWindow != null) {
             anchorWindow.toTop();
         }
+    }
+
+    /**
+     * The generation a repair's carried incremental-seal bookkeeping may be re-stamped
+     * against, or {@link Numbers#LONG_NULL} when it must be dropped instead.
+     * <p>
+     * The baseline names the newest root of the generation it was recorded against, and
+     * the next seal is only allowed to build on that root incrementally while the runtime
+     * still is that root's state entry for entry. A splice re-versions the roots inside
+     * {@code [C, H)} and leaves everything at or above {@code H} carrying the payload it
+     * already had - which is the same convergence the repair leaned on to keep the primary
+     * runtime at all - so the test is whether the newest root the spliced timeline holds
+     * sits at or above {@code H}. A repair that published no splice has no generation to
+     * name; one whose newest root the splice rewrote has one that no longer describes the
+     * restored state.
+     */
+    private static long carriedSealBaselineGeneration(
+            LiveViewCheckpointRepairPlan plan,
+            @Nullable LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice
+    ) {
+        if (timelineSplice == null) {
+            return Numbers.LONG_NULL;
+        }
+        final long headRootMaxTs = timelineSplice.getHeadRootMaxTimestamp();
+        if (headRootMaxTs == Numbers.LONG_NULL || headRootMaxTs < plan.getHighTsExclusive()) {
+            return Numbers.LONG_NULL;
+        }
+        return timelineSplice.getGeneration();
     }
 
     /**
@@ -6383,7 +6440,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance,
             @Nullable LiveViewCheckpointRepairSession session,
             WindowRecordCursorFactory windowFactory,
-            LiveViewWindow anchorWindow
+            LiveViewWindow anchorWindow,
+            long sealBaselineGeneration
     ) {
         if (repairPublication.isRuntimeSettled()) {
             return;
@@ -6397,6 +6455,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 markWindowStateDirty(instance);
                 throw t;
             }
+            // The bookkeeping follows the state it describes, in the same exchange and
+            // straight after it: the state is back, so the dirty sets naming the keys that
+            // moved since the baseline root describe it again. Ahead of the post-repair head
+            // seal, which is the first thing that reads any of it - so that seal freezes the
+            // keys the cadence touched rather than the live domain.
+            //
+            // A LONG_NULL generation drops the bookkeeping instead, leaving every target on
+            // the complete freeze the wipe left it owing. That is what a repair that
+            // published no splice, or one whose newest root the splice re-versioned, has to
+            // do: there is no root left that the restored state is the state of.
+            session.getSealCarryover().restore(
+                    instance,
+                    windowFactory.getWindowFunctions(),
+                    anchorWindow,
+                    sealBaselineGeneration
+            );
+        } else if (session != null) {
+            // The replay's own state is the runtime now, and the carried bookkeeping
+            // describes the state it replaced.
+            session.getSealCarryover().clear();
         }
     }
 

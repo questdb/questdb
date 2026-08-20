@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
+import io.questdb.cairo.lv.LiveViewCheckpointSealState;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -47,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
@@ -160,6 +162,22 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         return partitionByRecord == null ? null : partitionByRecord.getFunctions();
     }
 
+    /**
+     * Puts the parked bookkeeping back and re-stamps the baseline against the generation
+     * the repair's splice published. Whatever dirty set the replay built in the meantime
+     * is freed: it names the keys of a state nothing holds any more.
+     */
+    @Override
+    public void attachCheckpointSealState(@NotNull LiveViewCheckpointSealState state, long generation) {
+        Misc.free(checkpointDirtyPartitions);
+        checkpointDirtyPartitions = state.takeDirtySet();
+        hasCheckpointDirtyTracking = state.hasDirtyTracking();
+        hasCheckpointEvictionsRecorded = state.hasEvictionsRecorded();
+        checkpointLogicalStateBytes = state.getLogicalStateBytes();
+        checkpointBaselineGeneration = generation;
+        isCheckpointFullScanRequired = false;
+    }
+
     @Override
     public void close() {
         super.close();
@@ -171,6 +189,33 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         // invariant of a live dirty set, and this one is no longer live.
         hasCheckpointDirtyTracking = false;
         Misc.freeObjList(partitionByRecord.getFunctions());
+    }
+
+    /**
+     * Hands the baseline, the byte figure and the dirty set to {@code state} and leaves
+     * this function in the position {@link #requireCheckpointFullScan()} leaves it in -
+     * except that the set travels rather than being emptied, so an attach can put the
+     * cadence back exactly where it stood.
+     */
+    @Override
+    public void detachCheckpointSealState(@NotNull LiveViewCheckpointSealState state) {
+        if (isCheckpointFullScanRequired || checkpointBaselineGeneration == Numbers.LONG_NULL) {
+            return;
+        }
+        state.of(
+                checkpointDirtyPartitions,
+                hasCheckpointDirtyTracking,
+                hasCheckpointEvictionsRecorded,
+                checkpointLogicalStateBytes
+        );
+        checkpointDirtyPartitions = null;
+        // Goes with the map for the reason close() and reset() give: the flag is an
+        // invariant of a live dirty set, and this function no longer holds one.
+        hasCheckpointDirtyTracking = false;
+        hasCheckpointEvictionsRecorded = false;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        checkpointLogicalStateBytes = 0;
+        isCheckpointFullScanRequired = true;
     }
 
     @Override

@@ -82,6 +82,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
     private final LiveViewCheckpointRepairState descriptor;
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
+    private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
     // The compiled factory whose window functions the replay is standing part-way
@@ -166,6 +167,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         descriptor.discard();
         Misc.free(descriptor);
         Misc.free(overlay);
+        // Abandoned rather than settled, so nothing published a generation the parked
+        // baselines could name. Dropping them leaves every target on the complete freeze
+        // the wipe left it owing, which is the safe direction.
+        Misc.free(sealCarryover);
         boundaries.clear();
         isSuspended = false;
     }
@@ -212,6 +217,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         functions = null;
         anchorWindow = null;
         overlay.clear();
+        // The dirty sets name keys of partition maps a recompile has already freed, and
+        // the baseline names a root the rebuilt factory never froze. Both go with the
+        // state they describe.
+        sealCarryover.clear();
     }
 
     /**
@@ -334,6 +343,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public long getScanRows() {
         return scanRows;
+    }
+
+    /**
+     * @return the incremental-seal bookkeeping this repair holds aside while its replay
+     * runs through the compiled factory. Captured before the retire that resets the
+     * batch-minimum window, and handed back in the repair's single runtime exchange
+     */
+    public LiveViewCheckpointSealCarryover getSealCarryover() {
+        return sealCarryover;
     }
 
     /**

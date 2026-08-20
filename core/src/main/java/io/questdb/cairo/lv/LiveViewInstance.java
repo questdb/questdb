@@ -836,6 +836,24 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Non-monotonic restore of {@link #getMinSeenTsSinceCheckpoint()}, used by a
+     * converging out-of-order repair to put the batch-minimum window back where the
+     * pre-repair runtime left it.
+     * <p>
+     * The repair's replay reads down to its own scan floor and every row it feeds lowers
+     * this value, but the runtime the repair puts back afterwards holds none of those
+     * rows - it is the state the replay was taken aside from. So the value has to go back
+     * up, which {@link #setLatestSeenTs} cannot express. Travels with
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointSealCarryover}, which restores it only
+     * alongside the dirty sets whose keys describe the same batch. Bypassing the
+     * monotonic clamp is intentional and unsafe in any other context, hence the explicit
+     * name.
+     */
+    public void forceSetMinSeenTsSinceCheckpoint(long ts) {
+        minSeenTsSinceCheckpoint = ts;
+    }
+
+    /**
      * Releases the base-table snapshot pinned across the seed sweep (see
      * {@link #getSeedBaseReader()}). The reader is borrowed, not detached, so
      * {@code close()} returns it to the pool from any thread. Idempotent (null-safe).

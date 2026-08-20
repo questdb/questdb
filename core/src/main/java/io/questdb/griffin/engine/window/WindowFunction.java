@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
 import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewCheckpointSealState;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
@@ -197,6 +198,21 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Puts back the incremental-seal bookkeeping {@link #detachCheckpointSealState} took
+     * aside, re-stamped against the generation the caller has since published. The dirty
+     * set goes back as the same map it left as, so the keys the cadence had already named
+     * are the keys the next seal freezes.
+     * <p>
+     * Only a function whose {@code detachCheckpointSealState} filled the slot is offered
+     * it back, so an implementation may assume the slot describes its own bookkeeping.
+     * Default no-op, matching the default detach that carries nothing.
+     *
+     * @param generation the generation the newest root this baseline names belongs to
+     */
+    default void attachCheckpointSealState(@NotNull LiveViewCheckpointSealState state, long generation) {
+    }
+
+    /**
      * Returns the compiler-produced localized-repair dependency descriptor, or
      * {@code null} outside a live-view compile / for a function that does not
      * support checkpoint state.
@@ -231,6 +247,20 @@ public interface WindowFunction extends Function {
     @Nullable
     default ObjList<? extends Function> checkpointPartitionByFunctions() {
         return null;
+    }
+
+    /**
+     * Hands this function's incremental-seal bookkeeping to {@code state} and leaves the
+     * function owing a complete freeze, so a converging live-view repair can wipe and
+     * replay through it without the bookkeeping being lost with the state it describes.
+     * See {@link io.questdb.cairo.lv.LiveViewCheckpointSealCarryover} for why the two
+     * move together or not at all.
+     * <p>
+     * A function already owing a complete freeze carries nothing and fills nothing in.
+     * Default no-op: a function that tracks no dirty keys full-scans every seal anyway,
+     * so there is nothing for the carryover to preserve.
+     */
+    default void detachCheckpointSealState(@NotNull LiveViewCheckpointSealState state) {
     }
 
     default void computeNext(Record record) {

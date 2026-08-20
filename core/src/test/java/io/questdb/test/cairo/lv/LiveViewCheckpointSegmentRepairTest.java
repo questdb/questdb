@@ -147,28 +147,24 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testASegmentRepairLeavesTheNextSealOnTheCompleteScan() throws Exception {
-        // The known cost of the per-segment repair, pinned so it is visible rather than
-        // discovered in a latency profile.
+    public void testASegmentRepairKeepsTheNextSealOnTheIncrementalPath() throws Exception {
+        // A converging repair runs through the compiled factory's own window functions, so it
+        // wipes them to identity before the replay and puts the pre-repair state back from the
+        // scratch overlay afterwards. Both halves of that exchange go through the contract a
+        // checkpoint restore reads state under, which deliberately leaves every target owing a
+        // complete freeze - it clears the baseline generation, drops the dirty set and raises
+        // the full-scan flag. LiveViewCheckpointSealCarryover carries the bookkeeping across
+        // instead, so the seal that follows images the keys its own batch touched.
         //
-        // A converging repair runs through the compiled factory's own window functions, so
-        // it wipes them to identity before the replay and puts the pre-repair state back
-        // from the scratch overlay afterwards. What the overlay does not carry is the
-        // incremental-seal bookkeeping: the restore rehydrates the anchor map through the
-        // same contract a checkpoint restore uses, which clears the baseline generation,
-        // drops the dirty set and raises the complete-scan flag. So the next cadence seal
-        // freezes the whole live domain instead of the keys its own batch touched - once
-        // per repair, since that seal then adopts a baseline of its own.
-        //
-        // Safe, and only safe: a repair that kept a baseline it could not also keep the
-        // dirty set for would publish a root missing the keys the dirty set named, which
-        // no reader detects and a restart fails on. Making it cheap means preserving both
-        // across the exchange - seal the pending dirty keys before the wipe, then put the
-        // baseline, the byte figure and the emptied set back after the restore - which is
-        // its own change, not this one.
+        // The two assertions are one claim in two halves. The flag says the window came out of
+        // the repair still holding a baseline; the freeze key count says the seal after it
+        // actually imaged one key out of the four the domain holds. Neither is visible in the
+        // published artifacts - an incremental root and a complete one both name the whole
+        // domain, because the incremental one keeps every key it did not touch from its
+        // predecessor.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
-            createView(seedThreeDays());
+            createView(seedFourAccountsOverThreeDays());
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
@@ -183,10 +179,77 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                         1,
                         job.segmentRepairCountForTest()
                 );
-                Assert.assertTrue(
-                        "a segment repair leaves the window owing a complete freeze",
+                Assert.assertFalse(
+                        "a segment repair must leave the window holding its baseline",
                         anchorWindow().isCheckpointFullScanRequired()
                 );
+
+                // One ordinary forward row on one account. The cadence seal it triggers stands
+                // on the root the repair left in place and owes only that account's key.
+                commit(row(5, 4, "acct-3"), job);
+                Assert.assertEquals(
+                        "the seal after a segment repair must image the keys its own batch touched",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testASegmentRepairDoesNotLoseTheDirtyKeysItCarries() throws Exception {
+        // The other half of the carryover's contract, and the one an incremental seal cannot
+        // be made cheap without: a target that put its baseline back without also putting the
+        // dirty set back would publish a root missing exactly the keys that set named. Nothing
+        // detects that at the seal - the root is well formed and names the whole domain - and
+        // nothing detects it at read time either, because the runtime still holds the state.
+        // Only a restart does, by restoring the root and finding an account's accumulator short.
+        //
+        // A cadence far above what the case commits is what puts keys in the set at repair
+        // time: the seed's own seal is the last one before the correction, so acct-3's head row
+        // is still pending when the repair wipes the runtime. The post-repair seal is then the
+        // one that has to freeze it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // Above the seed's boundary and below the cadence, so it moves acct-3's
+                // accumulator and leaves the key pending rather than sealed.
+                commit(row(5, 1, "acct-3"), job);
+
+                commit(row(2, 3, "acct-1"), job);
+                Assert.assertEquals(
+                        "the correction must be repaired as a segment of its own",
+                        1,
+                        job.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(
+                        "the post-repair seal must image the carried dirty keys, not the domain",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                // The row that reads the restored accumulator back. A root sealed over a lost
+                // dirty set holds acct-3's pre-commit image, so this row's cumulative sum comes
+                // out one row short of the recompute's.
+                commit(row(5, 5, "acct-3"), job);
                 assertViewMatchesRecompute();
             }
         });
@@ -399,6 +462,24 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     private String row(int day, int hour, String account) {
         return "('2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", hour)
                 + ":00:00.000000Z', '" + account + "', 1.0)";
+    }
+
+    /**
+     * Four accounts on each of 2026-01-02, 2026-01-03 and 2026-01-04. The wider key domain is
+     * what separates an incremental freeze from a complete one: a batch touching one account
+     * images one key where a complete freeze images four.
+     */
+    private String seedFourAccountsOverThreeDays() {
+        final StringBuilder rows = new StringBuilder();
+        for (int day = 2; day <= 4; day++) {
+            for (int account = 1; account <= 4; account++) {
+                if (rows.length() > 0) {
+                    rows.append(", ");
+                }
+                rows.append(row(day, account, "acct-" + account));
+            }
+        }
+        return rows.toString();
     }
 
     /**
