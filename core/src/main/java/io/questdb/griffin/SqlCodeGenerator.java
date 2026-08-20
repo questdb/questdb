@@ -334,6 +334,8 @@ import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
+import io.questdb.griffin.engine.union.MergeUnionAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.MergeUnionAllRecordCursorFactoryBuilder;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
@@ -1289,6 +1291,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
+        if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
+            mergeFactory.prepareCursor();
+        }
+    }
+
+    private boolean canMergeUnionAll(
+            IQueryModel model,
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
+            RecordMetadata metadataA,
+            RecordMetadata metadataB
+    ) {
+        final int timestampIndex = metadataA.getTimestampIndex();
+        final int scanDirection = factoryA.getScanDirection();
+
+        // timestamp order is requested directly via order-by advice on this union model or transitively
+        final boolean isTsOrderRequested =
+                isTimestampOrderRequested(model, metadataA, timestampIndex, scanDirection)
+                        || factoryA instanceof MergeUnionAllRecordCursorFactory
+                        || (factoryA instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
+                        && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory);
+        return timestampIndex != -1
+                && timestampIndex == metadataB.getTimestampIndex()
+                && metadataA.getColumnType(timestampIndex) == metadataB.getColumnType(timestampIndex)
+                && scanDirection == factoryB.getScanDirection()
+                && (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                || scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)
+                && isTsOrderRequested;
+    }
+
     // Cheap structural predicate for the parallel top-K gate. Returns true when
     // the outer factory, or a single projection wrapper above it, can reach a
     // page-frame leaf that feeds AsyncTopKRecordCursorFactory. The unified
@@ -1444,6 +1477,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    private static boolean directionMatchesScan(int orderDirection, int scanDirection) {
+        return (orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING
+                && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                || (orderDirection == IQueryModel.ORDER_DIRECTION_DESCENDING
+                && scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
+    }
+
     /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
@@ -1526,6 +1566,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    private static boolean isTimestampOrderRequested(
+            IQueryModel model,
+            RecordMetadata metadataA,
+            int timestampIndex,
+            int scanDirection
+    ) {
+        final ObjList<ExpressionNode> advice = model.getOrderByAdvice();
+        return advice.size() == 1
+                && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
+                && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -1932,7 +1984,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadataB,
             boolean symbolDisallowed,
             IntList symbolUnionColumns,
-            boolean isSeedRequired
+            boolean isSeedRequired,
+            @Nullable IntList pendingSymbolColumnsB
     ) {
         int columnCount = metadataA.getColumnCount();
         assert columnCount == metadataB.getColumnCount();
@@ -1943,6 +1996,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int candidateCount = symbolUnionColumns.size();
         int nextCandidate = !isSeedRequired && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
         int retainedCandidateCount = 0;
+        int pendingIndexB = 0;
+        final int pendingCountB = pendingSymbolColumnsB != null ? pendingSymbolColumnsB.size() : 0;
+        int nextPendingB = pendingCountB > 0 ? pendingSymbolColumnsB.getQuick(0) : -1;
         // This compatibility pass already has to read every column in a UNION segment. Seed the
         // sorted SYMBOL candidate list here, then compact it in place on later legs so tracking
         // adds no second metadata traversal and no work proportional to eliminated candidates.
@@ -1952,12 +2008,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
                 castIsRequired = true;
             }
+            // Operand B can be a UNION ALL segment that an outer merge still holds pending: it reads
+            // STRING now, but pendingSymbolColumnsB lists the columns every branch behind it holds as
+            // SYMBOL, so those columns remain SYMBOL candidates for this segment too. Both lists are
+            // sorted, so one cursor walks B's list alongside the column scan.
+            boolean isSymbolB = isSymbol(typeB);
+            if (i == nextPendingB) {
+                isSymbolB = true;
+                nextPendingB = ++pendingIndexB < pendingCountB ? pendingSymbolColumnsB.getQuick(pendingIndexB) : -1;
+            }
             if (isSeedRequired) {
-                if (isSymbol(typeA) && isSymbol(typeB)) {
+                if (isSymbol(typeA) && isSymbolB) {
                     symbolUnionColumns.add(i);
                 }
             } else if (i == nextCandidate) {
-                if (isSymbol(typeB)) {
+                if (isSymbolB) {
                     symbolUnionColumns.setQuick(retainedCandidateCount++, i);
                 }
                 nextCandidate = ++candidateIndex < candidateCount
@@ -7237,6 +7302,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generateMergeUnionAllFactory(
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB,
+            RecordMetadata mergeMetadata,
+            @Nullable IntList symbolUnionColumns
+    ) throws SqlException {
+        final MergeUnionAllRecordCursorFactory mergeFactory = MergeUnionAllRecordCursorFactoryBuilder.build(
+                mergeMetadata,
+                factoryA,
+                model.getModelPosition(),
+                factoryB,
+                model.getUnionModel().getModelPosition(),
+                castFunctionsA,
+                castFunctionsB,
+                factoryA.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                symbolUnionColumns,
+                (toMetadata, fromMetadata, modelPosition) -> generateCastFunctions(
+                        executionContext,
+                        toMetadata,
+                        fromMetadata,
+                        modelPosition
+                )
+        );
+
+        if (model.getUnionModel().getUnionModel() != null) {
+            return generateSetFactory(model.getUnionModel(), mergeFactory, executionContext, symbolUnionColumns);
+        }
+        // Finalise every merge before a parent binds its metadata. The N-way builder can unwrap the
+        // SYMBOL projection when this factory is an immediate operand of another compatible merge.
+        mergeFactory.prepareCursor();
+        return maybeResymboliseUnion(mergeFactory, symbolUnionColumns);
+    }
+
     private RecordCursorFactory generateMultiHorizonJoinFactory(
             IQueryModel parentModel,
             HorizonJoinContext horizonContext,
@@ -7879,16 +7981,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int index = SqlUtil.getColumnIndexQuiet(metadata, column);
                     if (index == timestampIndex) {
                         if (orderByColumnCount == 1) {
-                            if (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_ASCENDING
-                                    && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                                return recordCursorFactory;
-                            } else if (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_DESCENDING
-                                    && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+                            if (directionMatchesScan(orderByColumnNameToIndexMap.get(column), recordCursorFactory.getScanDirection())) {
                                 return recordCursorFactory;
                             }
                         } else { // orderByColumnCount > 1
-                            preSortedByTs = (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
-                                    || (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
+                            preSortedByTs = directionMatchesScan(orderByColumnNameToIndexMap.get(column), recordCursorFactory.getScanDirection());
                         }
                     }
                 }
@@ -8126,7 +8223,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
+        final RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
             return generateSetFactory(model, factory, executionContext, null);
         }
@@ -10893,9 +10990,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> castFunctionsA = null;
         ObjList<Function> castFunctionsB = null;
         try {
+            final int setOperationType = model.getSetOperationType();
+            if (symbolUnionColumns == null && factoryA instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
+                symbolUnionColumns = mergeFactory.getSymbolUnionColumns();
+            }
             factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
 
-            final int setOperationType = model.getSetOperationType();
+            if (setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
+                prepareMergeUnionAllFactory(factoryA);
+                prepareMergeUnionAllFactory(factoryB);
+            }
             if (symbolUnionColumns != null
                     && setOperationType != IQueryModel.SET_OPERATION_UNION
                     && setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
@@ -10910,6 +11014,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();
             final int positionB = model.getUnionModel().getModelPosition();
+            // A right-nested operand can be a merge segment this generator still holds pending, in
+            // which case its metadata reads the segment's internal STRING widening rather than the
+            // SYMBOL a finalised segment exposes. Carry its SYMBOL candidates into the compatibility
+            // pass so the enclosing segment keeps them and re-symbolises them at the end. factoryA
+            // needs no equivalent: a pending factoryA either arrives with symbolUnionColumns from the
+            // chain, or has them recovered above.
+            final IntList pendingSymbolColumnsB = factoryB instanceof MergeUnionAllRecordCursorFactory pendingMergeB
+                    ? pendingMergeB.getSymbolUnionColumns()
+                    : null;
 
             switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
@@ -10920,7 +11033,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadataB,
                             true,
                             nextSymbolUnionColumns,
-                            isSeedRequired
+                            isSeedRequired,
+                            pendingSymbolColumnsB
                     );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
@@ -10948,8 +11062,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadataB,
                             true,
                             nextSymbolUnionColumns,
-                            isSeedRequired
+                            isSeedRequired,
+                            pendingSymbolColumnsB
                     );
+                    if (canMergeUnionAll(model, factoryA, factoryB, metadataA, metadataB)) {
+                        final RecordMetadata mergeMetadata;
+                        if (castIsRequired) {
+                            final GenericRecordMetadata widened = (GenericRecordMetadata) widenSetMetadata(metadataA, metadataB);
+                            widened.setTimestampIndex(metadataA.getTimestampIndex());
+                            mergeMetadata = widened;
+                            castFunctionsA = generateCastFunctions(executionContext, mergeMetadata, metadataA, positionA);
+                            castFunctionsB = generateCastFunctions(executionContext, mergeMetadata, metadataB, positionB);
+                        } else {
+                            mergeMetadata = GenericRecordMetadata.copyOfNew(metadataA);
+                        }
+                        return generateMergeUnionAllFactory(
+                                model,
+                                executionContext,
+                                factoryA,
+                                factoryB,
+                                castFunctionsA,
+                                castFunctionsB,
+                                mergeMetadata,
+                                nextSymbolUnionColumns
+                        );
+                    }
+
+                    prepareMergeUnionAllFactory(factoryA);
+                    prepareMergeUnionAllFactory(factoryB);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
