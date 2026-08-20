@@ -148,7 +148,52 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setInt(0, 2);
                 execute("ALTER TABLE cnv3 CONVERT PARTITION TO PARQUET WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                // CONVERT leaves the row count alone, so the count on its own says nothing about
+                // which partition the WHERE clause selected; the parquet flag does. The stride is
+                // -2 days from 2024-07-11, so only 2024-07-08 falls below the cut-off.
                 assertQuery("SELECT count() FROM cnv3").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+                assertQuery("SELECT name, isParquet FROM table_partitions('cnv3')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tisParquet
+                                2024-07-08\ttrue
+                                2024-07-09\tfalse
+                                2024-07-10\tfalse
+                                2024-07-11\tfalse
+                                """);
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testConvertPartitionWhereNegatedBindVariableStrideIsAcceptedForWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // a WAL table compiles the statement twice - once to sequence it, once to apply it -
+            // and the guard has to take the unary negation both times. CONVERT leaves the row count
+            // alone, so the count says nothing about which compile ran; the parquet flag does. Only
+            // the WAL apply owns a reader, so only it can select a partition and convert it.
+            createFourDailyPartitions("cnv4", true);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE cnv4 CONVERT PARTITION TO PARQUET WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM cnv4").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+                assertQuery("SELECT name, isParquet FROM table_partitions('cnv4')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tisParquet
+                                2024-07-08\ttrue
+                                2024-07-09\tfalse
+                                2024-07-10\tfalse
+                                2024-07-11\tfalse
+                                """);
             } finally {
                 bindVariableService.clear();
             }
@@ -193,6 +238,26 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 bindVariableService.setInt(0, 2);
                 execute("ALTER TABLE det3 DETACH PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
                 assertQuery("SELECT count() FROM det3").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionWhereNegatedBindVariableStrideIsAcceptedForWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // a WAL table compiles the statement twice - once to sequence it, once to apply it -
+            // and the guard has to take the unary negation both times. The sequencing compile owns
+            // no reader, so it selects no partition and detaches nothing; the row count below falls
+            // only if the WAL apply re-compiled the statement and took it again.
+            createFourDailyPartitions("det4", true);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE det4 DETACH PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM det4").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
             } finally {
                 bindVariableService.clear();
             }
@@ -1763,6 +1828,12 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         } catch (SqlException e) {
             rejected = true;
             TestUtils.assertContains(e.getFlyweightMessage(), "INT arithmetic overflow");
+            // both spellings of the refusal - proven wrap and not-proven - end with the same
+            // three remedies, and the message is the only place a caller learns what to do
+            TestUtils.assertContains(
+                    e.getFlyweightMessage(),
+                    "widen an operand (1_000_000L, expr::long), use a timestamp literal, or bind the computed value itself"
+            );
         }
         drainWalQueue();
         // the row count assertion comes first on purpose: it is the one that goes red on the

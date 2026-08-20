@@ -152,6 +152,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 7;
     // Node kinds hasWideLaneConversionSource() looks for. See hasWideLaneSourceNode().
+    private static final int WIDE_LANE_SOURCE_DOUBLE_CONST_ARITH = 4;
     private static final int WIDE_LANE_SOURCE_FLOAT_LEAF = 0;
     private static final int WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST = 1;
     private static final int WIDE_LANE_SOURCE_I8_OPERAND = 3;
@@ -696,6 +697,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private boolean requiresWideLaneArithmetic0(ExpressionNode node) {
         if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
             if (arithExprType(node) == I8_TYPE && containsNarrowIntegerValue(node)) {
+                return true;
+            }
+            if (isNarrowLaneDoubleConstArith(node)) {
                 return true;
             }
             return requiresWideLaneArithmetic(node.lhs) || requiresWideLaneArithmetic(node.rhs);
@@ -1939,6 +1943,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST))
                 || (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_NARROW_INT_LEAF)
                 && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_I8_OPERAND))
+                || hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_DOUBLE_CONST_ARITH)
                 || hasNarrowIntCmpWideningConstPair(node);
     }
 
@@ -1955,8 +1960,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST -> isFloatWideningConst(node);
             case WIDE_LANE_SOURCE_NARROW_INT_LEAF -> isNarrowIntLeaf(node);
             case WIDE_LANE_SOURCE_I8_OPERAND -> arithExprType(node) == I8_TYPE;
+            case WIDE_LANE_SOURCE_DOUBLE_CONST_ARITH -> isNarrowLaneDoubleConstArith(node);
             default -> {
-                // Unreachable: kind is always one of the four constants above. Answer true rather
+                // Unreachable: kind is always one of the five constants above. Answer true rather
                 // than throwing, because true is the conservative side - it only keeps the
                 // short-circuit suppression this method exists to lift - whereas an error raised
                 // here would reach SqlCodeGenerator's catch (Throwable) and fail the query outright,
@@ -2125,6 +2131,84 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 && node.type == ExpressionNode.OPERATION
                 && !isDoubleConst(node)
                 && arithExprType(node) == F8_TYPE;
+    }
+
+    /**
+     * Reports whether {@code node} is an arithmetic node that computes at DOUBLE width ONLY
+     * because a DOUBLE literal operand pulled it there, over columns and bind variables the type
+     * observer counts at four bytes.
+     * <p>
+     * That is exactly the shape {@link #markDoubleWidthArithConstOperand} widens to an 8-byte IMM
+     * and {@link #hasWidthChangingI64WidenConstant()} then reports as a lane-width hazard, so
+     * {@link #getExecHint} used to drop the whole filter - co-conjuncts included - onto the scalar
+     * backend. The four-lane loop is the vectorized one that carries it: its lanes are eight bytes
+     * wide whatever the observed columns are, and {@code avx2::convert} promotes the f32 operand
+     * through {@code cvt_ftod} there, so the node computes at the f64 width the Java filter reads
+     * it at. The widening the wrong-rows fix rests on is untouched: the arithmetic node itself
+     * serializes byte for byte as it did, {@code afloat * 2.0 > 1.5} emitting
+     * {@code (f32 1.5D)(f64 2.0D)(f32 afloat)(*)(>)} with and without this admission.
+     * <p>
+     * The operator stream AROUND that node can differ, though. Admitting the node makes
+     * {@link #hasWideLaneConversionSource} report a conversion source for the filter, so
+     * {@link #serialize} stops running the mixed-size detector over it, and the AND_SC / OR_SC
+     * short-circuit and the {@link #sortPredicates} reordering that detector unlocked go with it.
+     * Measured, {@code afloat * 2.0 > 1.5 AND along > 5} serialized as
+     * {@code (f32 1.5D)(f64 2.0D)(f32 afloat)(*)(>)(&&_sc)(i64 5L)(i64 along)(>)(ret)} at SCALAR
+     * before and serializes as
+     * {@code (i64 5L)(i64 along)(>)(f32 1.5D)(f64 2.0D)(f32 afloat)(*)(>)(&&)(ret)} at WIDE_LANE
+     * now: {@link #hasEightByteLeaf} inspects the arithmetic node alone, so an eight-byte column in
+     * a SIBLING conjunct does not suppress the source. Neither difference changes the answer -
+     * AND_SC only short-circuits an AND chain and {@link #sortPredicates} only reorders one - and
+     * {@code CompiledFilterRegressionTest.testDoubleConstantInFourByteArithmeticRunsFourLaneLoop}
+     * pins the rows the four-lane loop returns against the Java filter's.
+     * <p>
+     * Requiring the DOUBLE literal to be the ONLY 8-byte source is what keeps the answer narrow. A
+     * predicate that already reads a LONG or DOUBLE column types every constant at eight bytes
+     * anyway ({@code adouble + 1.0}, {@code along + 1.0}), so the widening changes no width there
+     * and those filters keep the single-size loop they had.
+     * <p>
+     * A narrow-int leaf under such a node ({@code anint / 2.0}) answers true here, but
+     * {@link #isWideLaneEligible} does not admit the shape - its float arm needs a float expression
+     * on an operand and its integer arm needs both operands integer - so the filter stays scalar
+     * whatever this reports. Admitting the (i32, f64) pairing to wide-lane eligibility is the
+     * separate change the SYMBOL and {@code (i64, f32)} pairings are already deferred for.
+     */
+    private boolean isNarrowLaneDoubleConstArith(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION || !isArithmeticOperation(node)) {
+            return false;
+        }
+        if (arithExprType(node) != F8_TYPE) {
+            return false;
+        }
+        if (!isDoubleConst(node.lhs) && !isDoubleConst(node.rhs)) {
+            return false;
+        }
+        return !hasEightByteLeaf(node);
+    }
+
+    /**
+     * Reports whether the subtree reads a COLUMN or BIND VARIABLE the type observer counts at eight
+     * bytes. Constants are deliberately not counted: the observer never sees them, and the whole
+     * point of {@link #isNarrowLaneDoubleConstArith} is the width a DOUBLE literal carries that the
+     * observer cannot report.
+     */
+    private boolean hasEightByteLeaf(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return type == I8_TYPE || type == F8_TYPE;
+        }
+        if (hasEightByteLeaf(node.lhs) || hasEightByteLeaf(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasEightByteLeaf(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Reference (not value) membership: the same node objects are marked and serialized.
@@ -2461,7 +2545,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * is exactly what {@code IntFunction#getDouble} does on the Java side. Marking its LEAVES
      * instead would make the backend dispatch {@code int64_mul} and stop the product wrapping.
      * <p>
-     * Five operand shapes deliberately do NOT take any widening:
+     * Six operand shapes deliberately do NOT take any widening:
      * <ul>
      * <li>a BYTE or SHORT leaf, which spans at most +-32767 and so converts to f32 exactly - both
      * backends already agree with the Java filter for it;</li>
@@ -2474,14 +2558,46 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * into the single I8 immediate the Java filter's own constant fold produces. That leaves an
      * (i64, f32) pairing, and it also stops the immediate rounding through {@code cvt_itof} the
      * way the per-operation IR did;</li>
-     * <li>a pure-constant subtree that fold declines - one whose INT-width value IS the NULL
-     * sentinel ({@code 1073741824 * 2}), or whose divisor wraps to zero. Both engines answer NaN
-     * for it already: {@code Numbers.intToDouble(INT_NULL)} is NaN on the Java side and
-     * {@code int32_to_float(INT_NULL, null_check)} ({@code impl/x86.h:68-86}) is NaN in the
-     * backend. {@link #descend} may replace such a subtree with an immediate before
-     * {@code visit()} ever sees it, so it must not carry a mark that no emission site can consume.
-     * </li>
+     * <li>a pure-constant subtree whose fold declines because its INT-width value IS the NULL
+     * sentinel ({@code 1073741824 * 2}). Both engines answer NaN for it already:
+     * {@code Numbers.intToDouble(INT_NULL)} is NaN on the Java side and
+     * {@code int32_to_float(INT_NULL, null_check)} ({@code impl/x86.h:68-86}) and
+     * {@code avx2::cvt_itof} ({@code impl/avx2.h:760-770}) are NaN in the two backends - for
+     * {@code null_check} set, which {@code SqlCodeGenerator} always passes: {@code
+     * enableJitNullChecks} starts true and no configuration property clears it. The exclusion is
+     * load-bearing rather than merely thrifty: {@link #descend} folds
+     * such a subtree to a single I4 immediate and returns {@code false}, so {@code visit()} never
+     * reaches the node, {@link #maybeEmitI64ArithRootWidening} never runs, and a mark left on it
+     * would trip the outstanding-mark gate in {@code visit()} and decline the whole filter.</li>
+     * <li>a pure-constant subtree whose divisor is non-zero at LONG width but wraps to zero at INT
+     * width ({@code 7 / (65_536 * 65_536)}), which leaves {@code tryFoldConstantArith} succeeding,
+     * so it takes the same early return as the sentinel and gets no mark - but not the same
+     * immediate: {@code descend} folds only the inner product and emits the division itself, so
+     * the subtree reaches the backend as an {@code (i32, f32)} pairing that answers NaN through
+     * {@code int32_div} and {@code cvt_itof}.</li>
      * </ul>
+     * A pure-constant subtree that BOTH folds decline - {@code 10 / 0} or {@code 10 / (3 - 3)},
+     * whose divisor is zero at INT width and at LONG width alike - takes NEITHER of the two exits
+     * above and DOES join {@link #i64WidenArithRoots}. Both folds have to decline for that:
+     * {@code 10 / (2_000_000_000 / (65_536 * 65_537))} divides by zero at LONG width only, since
+     * the inner product wraps onto 65536 at INT width, so {@link #markFoldedI64ConstArith}
+     * succeeds and that subtree takes the fold exit instead. {@link #isConstantArithSubtree}
+     * answers through {@link #tryFoldConstantArith}, which throws the same
+     * {@link NumericException} for a zero divisor as it throws for a column, so it cannot tell the
+     * two apart. The consequences are benign, though not because of the widening: {@code descend}
+     * emits the per-operation IR (the fold threw), {@code visit()} does reach the node, the mark
+     * IS consumed, and the SX_I64 carries {@code int32_div}'s INT_NULL to LONG_NULL, which
+     * {@code int64_to_double} reads as NaN. {@code DivInt#getInt} folds to INT_NULL on the Java
+     * side and {@code Numbers.intToDouble} turns THAT into the NaN the comparison reads. Unwidened
+     * the same INT_NULL would reach {@code int32_to_float} / {@code cvt_itof} instead, and those
+     * answer NaN too, so the integer side reads NaN either way - the widening is the conservative
+     * default, not the source of the NaN. The cost is the scalar backend for a predicate a
+     * divisor-free spelling would have vectorized. Relaxing it needs no new machinery -
+     * {@link #tryFoldConstantArithFloat} already accepts any pure-constant arithmetic subtree and
+     * has no zero-divisor check to throw on - but the payoff is degenerate: every shape it would
+     * cover folds to INT_NULL on the Java side, so the comparison's integer side is a compile-time
+     * NULL. The conservative answer stands on that, not on the cost of the test.
+     * <p>
      * An F4 arithmetic PEER needs no such care: {@code +(FF)} and {@code *(FF)} exist, so
      * {@code f * 2} evaluates at f32 in the Java filter too (it reads the INT operand through
      * {@code IntFunction#getFloat}), which is exactly what {@code cvt_itof} does inside an
@@ -2526,12 +2642,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (isConstantArithSubtree(intSide)) {
-            // The fold declined - its INT-width value is the NULL sentinel, or a divisor wrapped
-            // to zero - so the subtree keeps whichever immediate or per-operation IR descend()
-            // gives it. Both engines already answer NaN for it; see the javadoc.
+            // The width-aware fold declined on a subtree the LONG-width fold accepts: its INT-width
+            // value is the NULL sentinel (1073741824 * 2), or a divisor that is non-zero at long
+            // width wrapped to zero at INT width (7 / (65_536 * 65_536)). The two shapes skip the
+            // mark for different reasons. For the sentinel a mark would be unsafe: descend()
+            // replaces the whole subtree with one I4 immediate and returns false, so visit() never
+            // sees the node and the outstanding-mark gate would decline the filter. For the
+            // wrapped divisor descend() emits the division itself and visit() DOES see the node,
+            // so a mark there would be consumed - skipping it is a throughput choice, and that
+            // shape reaches the backend as an (i32, f32) pairing. Both fold to INT_NULL, which
+            // reads as NaN on every path; see the javadoc.
             return;
         }
-        // A wrapping INT-width subtree over a column or bind variable. Widen its RESULT.
+        // A wrapping INT-width subtree over a column or bind variable - or a pure-constant one
+        // whose zero divisor makes BOTH folds throw, which isConstantArithSubtree cannot
+        // distinguish from the former and which the javadoc explains costs only throughput here.
+        // Widen its RESULT.
         i64WidenArithRoots.add(intSide);
     }
 
@@ -2665,8 +2791,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // wraps is not an arithmetic operand at all, so marking it would drop a filter
                 // such as "afloat > -1.5" onto the scalar backend for nothing.
                 if (exprType == F8_TYPE) {
-                    markDoubleWidthArithConstOperand(node.lhs);
-                    markDoubleWidthArithConstOperand(node.rhs);
+                    markDoubleWidthArithConstOperand(node, node.lhs);
+                    markDoubleWidthArithConstOperand(node, node.rhs);
                 }
                 markWidthSemanticsOperand(node.lhs, exprType, childCtx);
                 markWidthSemanticsOperand(node.rhs, exprType, childCtx);
@@ -2893,10 +3019,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Marks a DOUBLE literal operand of a DOUBLE-width arithmetic node for 8-byte emission. See
      * {@link #isDoubleConst} for why the Java filter always reads such a literal at f64, and
      * {@link #markDoubleWidthConst} for what the mark costs.
+     * <p>
+     * {@code parent} is the arithmetic node the literal is an operand of, which is what decides
+     * whether the mark also announces a wide-lane conversion - see
+     * {@link #isNarrowLaneDoubleConstArith}.
      */
-    private void markDoubleWidthArithConstOperand(ExpressionNode child) {
+    private void markDoubleWidthArithConstOperand(ExpressionNode parent, ExpressionNode child) {
         if (isDoubleConst(child)) {
             markDoubleWidthConst(child);
+            // The widened IMM meets four-byte lanes, so the four-lane loop has to promote the peer
+            // through cvt_ftod: that IS a wide-lane conversion, and getExecHint() reads the flag to
+            // tell a filter that merely ENTERED the mode from one the mode is load-bearing for.
+            // hasWideLaneConversionSource() answers the same question ahead of the traversal
+            // through WIDE_LANE_SOURCE_DOUBLE_CONST_ARITH, so the two stay in step and the
+            // short-circuit path is never handed a filter the four-lane backend will run.
+            if (isWideLaneMode && isNarrowLaneDoubleConstArith(parent)) {
+                hasEmittedWideLaneConversion = true;
+            }
         }
     }
 
