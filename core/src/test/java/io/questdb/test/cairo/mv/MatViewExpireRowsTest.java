@@ -893,7 +893,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view mv as (select * from base) EXPIRE ROWS WHEN no_such_col < now()",
                     25,
-                    "invalid EXPIRE ROWS predicate"
+                    "invalid EXPIRE ROWS predicate: Invalid column: no_such_col"
             );
             org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
         });
@@ -1336,7 +1336,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view mv set expire rows when no_such < 2.0",
                     48,
-                    "invalid EXPIRE ROWS predicate"
+                    "invalid EXPIRE ROWS predicate: Invalid column: no_such"
             );
             try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
                 org.junit.Assert.assertNull(metadata.getExpiryPredicate());

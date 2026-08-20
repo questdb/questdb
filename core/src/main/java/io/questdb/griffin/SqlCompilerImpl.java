@@ -804,7 +804,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 f = functionParser.parseFunction(node, metadata, executionContext);
             } catch (SqlException | CairoException e) {
-                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
+                final String reason = reasonOf(e);
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
             }
             if (f == null || !ColumnType.isBoolean(f.getType())) {
                 throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
@@ -1086,6 +1087,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Copies the reason out of {@code e} so it survives being wrapped in a new {@link SqlException}.
+     * <p>
+     * {@link SqlException#position(int)} hands back the thread's shared carrier and clears its message
+     * sink, and only under {@code -ea} does it allocate a fresh instance instead. So on a production
+     * build {@code SqlException.$(pos, "prefix: ").put(e.getFlyweightMessage())} appends the new
+     * message to itself and the reason is gone, while every test sees the reason. Reading the sink
+     * before the wrapping exception is built is what keeps the two builds saying the same thing.
+     * <p>
+     * Call it into a local, never inline as an argument: Java evaluates the receiver of
+     * {@code SqlException.$(...).put(...)} first, so an inline call would read the sink after the
+     * clear and reproduce the very doubling it exists to prevent.
+     */
+    private static String reasonOf(FlyweightMessageContainer e) {
+        return Chars.toString(e.getFlyweightMessage());
     }
 
     /**
@@ -6692,7 +6710,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
             // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
-            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(e.getFlyweightMessage());
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(reason);
         }
     }
 

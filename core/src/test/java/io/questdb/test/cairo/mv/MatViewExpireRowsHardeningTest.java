@@ -891,6 +891,55 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectionCarriesTheUnderlyingReason() throws Exception {
+        // Both EXPIRE ROWS validators wrap the reason they caught into their own message. The reason has
+        // to be copied out of the caught exception first: SqlException.position() hands back the thread's
+        // shared carrier and clears its sink, so reading the flyweight message after the wrapping
+        // exception is built appends that message to itself and loses the reason. Under -ea the carrier
+        // is a fresh instance and the loss is invisible, so these assertions name the reason explicitly
+        // to pin what a production build (assertions off) must also say.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+
+            // scalar WHEN, unknown column
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN nope > 1",
+                    25,
+                    "invalid EXPIRE ROWS predicate: Invalid column: nope"
+            );
+            // scalar WHEN, unknown function
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN nosuchfunc(v) > 1",
+                    25,
+                    "invalid EXPIRE ROWS predicate: unknown function name: nosuchfunc(DOUBLE)"
+            );
+            // window WHEN, unknown column in the OVER clause
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY nope)",
+                    25,
+                    "invalid EXPIRE ROWS policy: Invalid column: nope"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+            // the ALTER path goes through the same validator
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN nope > 1",
+                    48,
+                    "invalid EXPIRE ROWS predicate: Invalid column: nope"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY nope)",
+                    48,
+                    "invalid EXPIRE ROWS policy: Invalid column: nope"
+            );
+            Assert.assertNull("no policy must have been stored", expiryPredicate("mv"));
+        });
+    }
+
+    @Test
     public void testRootLevelAggregatePredicateRejected() throws Exception {
         // The read filter embeds the predicate as a CASE argument, where an aggregate is illegal. The
         // function parser rejects an aggregate only when it is an argument of another function, so a
