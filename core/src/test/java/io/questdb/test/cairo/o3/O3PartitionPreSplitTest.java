@@ -903,9 +903,10 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
     /**
      * A dedup commit whose overlapping rows are all duplicates, plus a few genuinely new rows above the
-     * piece's last row. The whole piece goes out as one merged image, so it is relocated to the tail of
-     * its own column files and every pre-existing row has to survive the move - before and after a reader
-     * reopen, and after a squash folds the appended tail back.
+     * piece's last row. The duplicate side merges to a no-op - the merged image is byte-identical to the
+     * piece's own bytes, so the piece is kept at its existing file offset instead of being relocated - and
+     * the few new rows land immediately after it with no gap, so the two tile into one piece with no dead
+     * space. Verified before and after a reader reopen, and after a squash folds the appended tail back.
      */
     @Test
     public void testDedupDowngradeDoesNotStampMergeAppend() throws Exception {
@@ -925,7 +926,8 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
             // One commit whose overlapping rows are entirely duplicates - selected out of the snapshot, so
             // the non-key columns are identical too - plus five rows past the day's last row but inside
-            // the day.
+            // the day. The duplicates alone would merge-append the whole piece to the tail; tacking on the
+            // five trailing rows must not found a second, tiny piece next to it.
             execute(
                     "CREATE TABLE w2 AS (SELECT x::INT + 9000000 i, -x - 9000000L AS j," +
                             " timestamp_sequence('2020-02-03T23:59:52', 1000000L) ts FROM long_sequence(5))"
@@ -938,9 +940,14 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT * FROM w");
             drainWalQueue();
 
-            Assert.assertTrue(
-                    "the piece was rewritten in place instead of at the tail: " + describePieces("x"),
-                    pieceRowOffsetOfDay("x", 0) > 0
+            Assert.assertEquals(
+                    "the trailing rows founded a piece of their own instead of tiling onto the kept one: "
+                            + describePieces("x"),
+                    1, piecesOfDay("x")
+            );
+            Assert.assertEquals(
+                    "the no-op merge relocated the piece instead of keeping it in place: " + describePieces("x"),
+                    0L, pieceRowOffsetOfDay("x", 0)
             );
 
             final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM w2) ORDER BY ts";
