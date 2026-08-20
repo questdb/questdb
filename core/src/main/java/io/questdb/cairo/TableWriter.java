@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -9089,7 +9090,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
-                            try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
+                            try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter,
+                                    (columnIndex, columnTop) -> columnVersionWriter.upsertColumnTop(newSplitPartitionTimestamp, columnIndex, columnTop), 0)) {
                                 FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
                             }
                         }
@@ -13405,7 +13407,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
             setPathForNativePartition(other, timestampType, partitionBy, partitionTs, newNameTxn);
             createDirsOrFail(ff, other, configuration.getMkDirMode());
-            targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter, 0);
+            targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter,
+                    (columnIndex, columnTop) -> columnVersionWriter.upsertColumnTop(partitionTs, columnIndex, columnTop), 0);
 
             // Per column: does its recorded top survive this rewrite unchanged, or does some piece past
             // the first physically materialize NULLs below it? Mirrors
@@ -14258,7 +14261,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
         FrameFactory frameFactory = engine.getFrameFactory();
-        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
+        // targetPartition itself isn't effectively final (reassigned by the search loop above), so the
+        // sink closes over this copy instead.
+        final long targetPartitionTs = targetPartition;
+        ColumnTopSink columnTopSink = (columnIndex, columnTop) -> columnVersionWriter.upsertColumnTop(targetPartitionTs, columnIndex, columnTop);
+        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, columnTopSink, originalSize);
         try {
             if (copyTargetFrame) {
                 try {
@@ -14266,7 +14273,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
-                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
+                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, columnTopSink, 0);
                     FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);

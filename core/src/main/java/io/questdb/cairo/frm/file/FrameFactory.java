@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -89,6 +90,24 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return frame;
     }
 
+    /**
+     * Same as {@link #createRW(Path, long, RecordMetadata, ColumnVersionWriter, long)}, but column-top
+     * updates go to {@code columnTopSink} instead of a {@code ColumnVersionWriter} - see {@link ColumnTopSink}.
+     * This method is thread safe.
+     */
+    public Frame createRW(
+            Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            ColumnTopSink columnTopSink,
+            long size
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.createRW(partitionPath, partitionTimestamp, metadata, cvr, columnTopSink, size);
+        return frame;
+    }
+
     @Override
     public boolean isClosed() {
         return closed;
@@ -108,6 +127,19 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
         if (rw) {
             return openRW(path, targetPartition, metadata, cvr, size);
+        } else {
+            return openRO(path, targetPartition, metadata, cvr, size);
+        }
+    }
+
+    /**
+     * Same as {@link #open(boolean, Path, long, RecordMetadata, ColumnVersionWriter, long)}, but when
+     * {@code rw} is true, column-top updates go to {@code columnTopSink} instead of a
+     * {@code ColumnVersionWriter} - see {@link ColumnTopSink}. This method is thread safe.
+     */
+    public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
+        if (rw) {
+            return openRW(path, targetPartition, metadata, cvr, columnTopSink, size);
         } else {
             return openRO(path, targetPartition, metadata, cvr, size);
         }
@@ -213,6 +245,32 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     ) {
         FrameImpl frame = getOrCreate();
         frame.openRW(partitionPath, partitionTimestamp, metadata, cvw, size);
+        return frame;
+    }
+
+    /**
+     * Opens a frame for reading and writing whose column-top updates go to {@code columnTopSink}
+     * rather than straight into a {@code ColumnVersionWriter}. For a caller reachable from an O3
+     * worker thread - see {@link ColumnTopSink}. This method is thread safe.
+     *
+     * @param partitionPath      the path to the partition directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param metadata           the metadata for the frame
+     * @param cvr                the column version reader, for column name txns and pre-existing tops
+     * @param columnTopSink      where this frame's column-top updates are reported instead
+     * @param size               the size of the frame, in row count
+     * @return a new frame ready for reading and writing
+     */
+    public Frame openRW(
+            Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            ColumnTopSink columnTopSink,
+            long size
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.openRW(partitionPath, partitionTimestamp, metadata, cvr, columnTopSink, size);
         return frame;
     }
 
