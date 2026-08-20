@@ -217,6 +217,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 return cleanupTable0(tableToken, predicate);
             } finally {
                 viewState.unlock();
+                // The per-view lock is also what a concurrent drop/close of the state contends on: their own
+                // free attempt fails while this sweep holds the lock, so whoever releases the lock owns the
+                // free. Both refresh and cleanup pair every unlock with these two calls.
+                viewState.tryCloseIfDropped();
+                viewState.tryCloseIfClosed();
             }
         }
         // No view state (materialized views disabled, so no policied views exist in practice): fall back to

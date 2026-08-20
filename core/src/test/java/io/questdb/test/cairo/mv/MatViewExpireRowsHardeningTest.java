@@ -31,6 +31,8 @@ import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -38,8 +40,10 @@ import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1699,6 +1703,65 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCleanupFreesViewStateDroppedMidSweep() throws Exception {
+        // The per-view lock the sweep holds is also what a concurrent teardown of that state contends on:
+        // removeViewState marks the state dropped and then tries to free it, and that attempt fails while
+        // the sweep owns the lock. The state is out of the store's map by then, so nothing else will come
+        // back for it - the sweep's own release has to finish the teardown, which is why every release in
+        // the refresh job and in this job pairs unlock() with tryCloseIfDropped()/tryCloseIfClosed().
+        // A stranded state keeps the cursor factory the last refresh parked in it, and assertMemoryLeak
+        // stays green on that, so the assertions below read the state directly.
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-02T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            // test_latched_counter() gives the sweep's own thread a callback inside the per-view lock: the
+            // cleanup evaluates the policy predicate row by row while counting survivors.
+            execute("create materialized view mv as (select * from base) expire rows when test_latched_counter() and v < 2");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(token);
+            Assert.assertNotNull("mat view must have a refresh state", state);
+            // Sanity check on what a discarded state strands: a refresh parks a cursor factory in it. Take
+            // that one and let the next refresh park a fresh one for the sweep to strand.
+            Assert.assertTrue("refresh must park a cursor factory in the view state", hasParkedFactory(state));
+            execute("insert into base values (4.0, '2024-01-03T01:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            final boolean[] wasLockedAtDrop = {false};
+            final boolean[] isDropFired = {false};
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (!isDropFired[0]) {
+                        isDropFired[0] = true;
+                        wasLockedAtDrop[0] = state.isLocked();
+                        engine.getMatViewStateStore().removeViewState(token);
+                    }
+                    return true;
+                }
+            });
+            try {
+                runCleanup("mv");
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+
+            Assert.assertTrue("the drop must have fired mid-sweep", isDropFired[0]);
+            Assert.assertTrue("the drop must have landed while the sweep held the view lock", wasLockedAtDrop[0]);
+            Assert.assertNull("the state must be out of the store's map", engine.getMatViewStateStore().getViewState(token));
+            Assert.assertTrue(state.isDropped());
+            // The sweep finishes the teardown the drop could not.
+            Assert.assertTrue("the sweep's unlock must close the dropped state", state.isClosed());
+            Assert.assertFalse("the dropped state must not hold a cursor factory", hasParkedFactory(state));
+        });
+    }
+
+    @Test
     public void testCleanupWithStalePredicateDuringUnappliedDropExpireSurvives() throws Exception {
         assertConcurrentPolicyChangeKeepsRows("alter materialized view mv drop expire", null);
     }
@@ -2075,6 +2138,22 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         try (TableMetadata m = engine.getTableMetadata(token)) {
             return m.getExpiryPredicate();
         }
+    }
+
+    /**
+     * Reports whether the state holds a parked cursor factory, consuming it and freeing it on the way out so
+     * a failed assertion does not also surface as a native-memory leak that hides the real cause.
+     */
+    private boolean hasParkedFactory(MatViewState state) {
+        Assert.assertTrue(state.tryLock());
+        final RecordCursorFactory factory;
+        try {
+            factory = state.acquireRecordFactory();
+        } finally {
+            state.unlock();
+        }
+        Misc.free(factory);
+        return factory != null;
     }
 
     private boolean runCleanup(String name) {
