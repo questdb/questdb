@@ -47,15 +47,19 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE, diagnosis sharpened 2026-08-20. Keys = TIMESTAMP ONLY."
-            + " The row survives with the CORRECT timestamp and UNINITIALISED non-key columns:"
-            + "   plain     2023-01-01T01:00  E0  99.0"
-            + "   composite 2023-01-01T01:00  <empty>  6.86e-310"
-            + " So this is NOT the identical-check (its bounds were measured correct: partitionLo=0,"
-            + " partitionHi=0, commitRowCount=1, commitLo=0, commitHi=0) and NOT the phantom-dir removal"
-            + " (made cell-aware, failure unchanged). The dedup REPLACE path writes the key column and"
-            + " leaves the cell's NON-KEY columns unwritten -- look at the O3 copy tasks, not at"
-            + " TableWriter#checkDedupCommitIdenticalToPartition.")
+    @Ignore("THE ONE REMAINING DEDUP FAILURE, narrowed to the O3 COPY 2026-08-20. Keys = TIMESTAMP"
+            + " ONLY. Measured after the commit:"
+            + "   on disk  c~1/2023-01-01/E0.1/{ts,exch,px}.d = 8,4,8 bytes -- EXACTLY one row's worth,"
+            + "            so the destination files are allocated at the right size"
+            + "   query    ts CORRECT, exch <empty>, px 6.86e-310 -- the non-key columns are"
+            + "            uninitialised, i.e. allocated but never POPULATED"
+            + " ELIMINATED, each by measurement, so do not re-check them: the identical-check bounds"
+            + " (partitionLo/Hi=0, commitLo/Hi=0, commitRowCount=1, all correct); the phantom-dir"
+            + " removal (made cell-aware, no change); openROFromMemoryColumns; and the partition"
+            + " nameTxn/update sink -- partitionIndexRaw IS resolved cell-aware via"
+            + " findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey)."
+            + " What is left: the O3 COPY tasks populate the key column and skip the cell's non-key"
+            + " columns in dedup replace mode. Start at O3CopyJob/O3OpenColumnJob, not TableWriter.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
