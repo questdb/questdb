@@ -512,6 +512,23 @@ public interface CairoConfiguration {
     boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
 
     /**
+     * What one index open costs a keyed repair scan, in base rows, so the two halves of
+     * its price are comparable.
+     * <p>
+     * A keyed scan substitutes one index-backed row cursor per affected key into every page
+     * frame it crosses, and {@code HeapRowCursorFactory} rebuilds those cursors per frame -
+     * so a base partitioned by hour against a daily anchor segment opens the index
+     * {@code 24 * |Q|} times before it reads a row. That term is what sinks a keyed scan
+     * over a sparse key domain, and it is not rows, so the comparison against the
+     * whole-range scan needs it expressed in them.
+     * <p>
+     * The default is deliberately conservative: overstating an index open only ever moves a
+     * marginal segment onto the whole-range scan, which is correct for every shape and
+     * merely reads more. See {@code LiveViewCheckpointKeyedScanCost}.
+     */
+    long getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+
+    /**
      * Budget on the partition keys one localized out-of-order repair may plan
      * to re-emit. A timestamp-global replacement re-emits every key with a
      * qualifying row in the replacement interval, and the repair holds a

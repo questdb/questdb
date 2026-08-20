@@ -332,6 +332,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean liveViewCheckpointRepairPerSegmentEnabled;
     private final boolean liveViewCheckpointRepairSegmentYieldEnabled;
     private final long liveViewCheckpointRepairReplayMaxRows;
+    private final long liveViewCheckpointRepairKeyedScanIndexOpenRows;
     private final long liveViewCheckpointRepairScanMaxKeys;
     private final long liveViewCheckpointRepairScanMaxRows;
     private final long liveViewCheckpointRows;
@@ -1562,6 +1563,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewCheckpointRepairPerSegmentEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, true);
             this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRepairSegmentYieldEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED, true);
+            this.liveViewCheckpointRepairKeyedScanIndexOpenRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 256L);
             this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
             this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
@@ -4303,6 +4305,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
             return liveViewCheckpointRepairSegmentYieldEnabled;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+            return liveViewCheckpointRepairKeyedScanIndexOpenRows;
         }
 
         @Override

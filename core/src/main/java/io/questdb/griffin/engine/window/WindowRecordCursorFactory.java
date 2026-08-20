@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
@@ -62,6 +63,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // Union of the finite RANGE dependencies every window function in this factory carries,
     // or null when the factory mixes shapes, is not a live-view compile, or has no window
     // function with a finite RANGE frame. Bounds the localized O3 repair interval.
+    private final LiveViewCheckpointKeyProjector checkpointKeyProjector;
     private final LiveViewCheckpointRangePlan checkpointRangePlan;
     // The same for the finite ROWS dependencies, plus the key projector the repair counts
     // per-key rows through. A factory mixing shapes carries both plans - each describes
@@ -98,7 +100,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null, null, null, null, null, null);
+        this(base, metadata, functions, null, null, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -107,7 +109,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null, null);
+        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -115,6 +117,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions,
+            LiveViewCheckpointKeyProjector checkpointKeyProjector,
             LiveViewCheckpointRangePlan checkpointRangePlan,
             LiveViewCheckpointRowsPlan checkpointRowsPlan,
             LiveViewWindowStatePlan checkpointWindowStatePlan,
@@ -125,6 +128,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.functions = functions;
         this.anchorableWindowFunctions = anchorableWindowFunctions;
+        this.checkpointKeyProjector = checkpointKeyProjector;
         this.checkpointRangePlan = checkpointRangePlan;
         this.checkpointRowsPlan = checkpointRowsPlan;
         this.checkpointWindowStatePlan = checkpointWindowStatePlan;
@@ -167,6 +171,15 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    /**
+     * Returns the partition identity every window function on this factory shares, or null
+     * when they do not share one. Compiled once, and the only key schema the view has: the
+     * anchor window, the checkpoint roots and every repair speak it.
+     */
+    public @Nullable LiveViewCheckpointKeyProjector getCheckpointKeyProjector() {
+        return checkpointKeyProjector;
     }
 
     /**
@@ -312,7 +325,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         // ordering it first keeps that independence obvious rather than incidental.
         failure = Misc.freeObjListBestEffort(failure, windowMapStates);
         failure = Misc.freeObjListBestEffort(failure, functions);
+        // The rows plan first: it frees the key projector only when it compiled one of its
+        // own, and the shared one below is the object it would then not be holding.
         failure = Misc.freeBestEffort(failure, checkpointRowsPlan);
+        failure = Misc.freeBestEffort(failure, checkpointKeyProjector);
         CairoException.rethrowCleanupFailure(failure);
     }
 

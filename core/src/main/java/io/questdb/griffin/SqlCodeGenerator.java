@@ -51,6 +51,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
@@ -10228,6 +10229,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<WindowMapSpec> windowMapSpecs = executionContext.isLiveViewCompile() ? null : new ObjList<>();
         ObjList<WindowFunction> naturalOrderFunctions = null;
         ObjList<Function> partitionByFunctions = null;
+        LiveViewCheckpointKeyProjector checkpointKeyProjector = null;
         LiveViewCheckpointRowsPlan checkpointRowsPlan = null;
         // The bound window Map groups own a map each, so they are built into a local the
         // outer catch can free: the factory takes ownership only once its constructor has
@@ -10502,10 +10504,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // into a local the outer catch can free: the factory only takes ownership
                 // once its constructor has returned.
                 if (lvCompile) {
+                    // The identity every checkpoint-capable function shares, compiled once
+                    // and handed to everything that has to name a key. The ROWS plan takes
+                    // it when its own functions partition that way, which is every view
+                    // that has one identity at all.
+                    checkpointKeyProjector = LiveViewCheckpointFunctionCompiler.sharedKeyProjector(
+                            functions,
+                            columns,
+                            baseMetadata,
+                            configuration,
+                            asm,
+                            functionParser,
+                            executionContext
+                    );
                     checkpointRowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(
                             functions,
                             columns,
                             baseMetadata,
+                            checkpointKeyProjector,
                             configuration,
                             asm,
                             functionParser,
@@ -10527,6 +10543,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata,
                         functions,
                         anchorableWindowFunctions,
+                        checkpointKeyProjector,
                         lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
                         checkpointRowsPlan,
                         // The fused window-state plan holds only non-owning references into
@@ -10542,6 +10559,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         windowAccumulatorPlans,
                         windowMapStates
                 );
+                checkpointKeyProjector = null;
                 checkpointRowsPlan = null;
                 windowMapStates = null;
                 return windowFactory;
@@ -10948,6 +10966,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             Misc.free(base);
             Misc.free(checkpointRowsPlan);
+            Misc.free(checkpointKeyProjector);
             Misc.freeObjList(windowMapStates);
             Misc.free(cachedWindowMapGroups);
             Misc.freeObjList(functions);

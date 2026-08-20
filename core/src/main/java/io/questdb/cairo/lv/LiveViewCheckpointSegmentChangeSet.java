@@ -24,9 +24,12 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * One out-of-order change set decomposed into the anchor segments it actually touches.
@@ -56,6 +59,18 @@ import org.jetbrains.annotations.NotNull;
  * rather than letting them drag the change floor down to a boundary that denies the
  * repair.
  * <p>
+ * <h2>The affected keys</h2>
+ * A segment also collects the partition keys its corrections carried, when the caller asks
+ * for them. Inside one closed segment only those keys' output has changed - every other key
+ * is already correct - so they are what a keyed replay would follow through the base's
+ * posting index instead of reading every row of the segment. The values are the resolved
+ * logical ones rather than the WAL's own symbol integers, because those index one
+ * transaction's symbol space and a repair replays against a table reader's.
+ * <p>
+ * The collection is bounded per segment and its overflow is not a denial: a segment past
+ * its budget reports {@link #isSegmentKeyDomainComplete(int)} false and reads whole, which
+ * costs the same write and only a larger read.
+ * <p>
  * Worker-owned scratch: {@link #of} clears every field, so one instance serves every
  * repair a refresh worker plans.
  */
@@ -68,11 +83,20 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
-    // segmentStart, segmentEndExclusive, minTs, maxTs, rowCount per entry, ordered by
-    // segmentStart ascending.
-    private static final int STRIDE = 5;
+    // segmentStart, segmentEndExclusive, minTs, maxTs, rowCount, keySetIndex,
+    // isKeyDomainOverflowed per entry, ordered by segmentStart ascending.
+    private static final int STRIDE = 7;
+    // The affected keys of each segment, in the order the segments were opened rather than
+    // in segment order: an entry names its set by index, so a segment inserted ahead of
+    // another does not have to move anyone's keys. Retained across repairs and cleared
+    // rather than dropped, so a worker pays for the growth once.
+    private final ObjList<CharSequenceHashSet> keySets = new ObjList<>();
     private final LongList segments = new LongList();
     private long activeSegmentStart;
+    // How many distinct keys one segment may collect before the collection stops being
+    // worth its memory. Zero collects none, which is what a view with no keyed repair
+    // available - or a caller that cannot read the key column - asks for.
+    private int maxKeysPerSegment;
     // Containment cache for the row loop: consecutive rows of one commit almost always
     // share a segment, and a hit skips both the floor arithmetic and the lookup.
     private long cachedSegmentEndExclusive;
@@ -86,11 +110,16 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * {@code activeSegmentStart} joins the residual; anything below it lands in - or opens -
      * the closed segment that holds it.
      *
+     * @param key the row's resolved partition key, or null for the null symbol. Ignored
+     *            when the caller asked for no keys, and read only for a row that lands in a
+     *            closed segment - a residual row is repaired by the ordinary resume, which
+     *            follows no key
+     *
      * @return false once the change set has opened more than {@link #MAX_CLOSED_SEGMENTS}
      * closed segments, after which the decomposition is abandoned and the caller
      * falls back to the union range
      */
-    public boolean addRow(long ts, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
+    public boolean addRow(long ts, @Nullable CharSequence key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
         if (ts >= activeSegmentStart) {
             addResidual(ts, ts);
             return true;
@@ -119,13 +148,15 @@ public final class LiveViewCheckpointSegmentChangeSet {
             segments.setQuick(base + 2, Math.min(segments.getQuick(base + 2), ts));
             segments.setQuick(base + 3, Math.max(segments.getQuick(base + 3), ts));
             segments.setQuick(base + 4, segments.getQuick(base + 4) + 1);
+            addKey(base, key);
             return true;
         }
         if (segments.size() / STRIDE >= MAX_CLOSED_SEGMENTS) {
             overflowed = true;
             return false;
         }
-        insertAt(-index - 1, cachedSegmentStart, cachedSegmentEndExclusive, ts);
+        final int base = insertAt(-index - 1, cachedSegmentStart, cachedSegmentEndExclusive, ts);
+        addKey(base, key);
         return true;
     }
 
@@ -199,6 +230,38 @@ public final class LiveViewCheckpointSegmentChangeSet {
     }
 
     /**
+     * @return the affected keys of closed segment {@code index} - the resolved logical
+     * values the corrections carried, which a keyed replay would follow through the base's
+     * posting index. Empty when the caller collected none, and meaningless unless
+     * {@link #isSegmentKeyDomainComplete(int)} holds.
+     * <p>
+     * The set does not carry the null symbol, which
+     * {@link #hasSegmentNullKey(int)} reports separately - it is a partition key like any
+     * other and the set keeps it apart from its list.
+     */
+    public @NotNull CharSequenceHashSet getSegmentKeys(int index) {
+        return keySets.getQuick((int) segments.getQuick(index * STRIDE + 5));
+    }
+
+    /**
+     * @return whether closed segment {@code index} was touched by a correction carrying a
+     * null partition key
+     */
+    public boolean hasSegmentNullKey(int index) {
+        return getSegmentKeys(index).contains(null);
+    }
+
+    /**
+     * @return whether the keys collected for closed segment {@code index} are all of them.
+     * False once the segment reached its key budget, or when the caller collected no keys
+     * at all - in both cases a repair of that segment has to read every row of it, which
+     * costs the same write and only a larger read.
+     */
+    public boolean isSegmentKeyDomainComplete(int index) {
+        return maxKeysPerSegment > 0 && segments.getQuick(index * STRIDE + 6) == 0;
+    }
+
+    /**
      * @return the inclusive start of closed segment {@code index}. Segments come back
      * oldest first, which is the order a repair must take them in: a later segment's
      * cumulative row positions depend on how many rows the earlier ones added.
@@ -223,7 +286,21 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * stays with the residual.
      */
     public void of(long activeSegmentStart) {
+        of(activeSegmentStart, 0);
+    }
+
+    /**
+     * Rebinds this scratch to one repair that also collects the keys its corrections carry.
+     * {@code maxKeysPerSegment} bounds one segment's key domain; a segment that reaches it
+     * keeps the keys it has and reports the domain incomplete, which demotes that segment
+     * to a whole-segment replay rather than denying it.
+     */
+    public void of(long activeSegmentStart, int maxKeysPerSegment) {
         this.activeSegmentStart = activeSegmentStart;
+        this.maxKeysPerSegment = maxKeysPerSegment;
+        for (int i = 0, n = keySets.size(); i < n; i++) {
+            keySets.getQuick(i).clear();
+        }
         segments.clear();
         overflowed = false;
         residualMinTs = Numbers.LONG_NULL;
@@ -254,15 +331,54 @@ public final class LiveViewCheckpointSegmentChangeSet {
         return -(low + 1);
     }
 
-    private void insertAt(int index, long segmentStart, long segmentEndExclusive, long ts) {
+    /**
+     * Joins one row's key to the segment at {@code base}, and records the budget overflow
+     * that leaves the segment's key domain incomplete.
+     */
+    private void addKey(int base, CharSequence key) {
+        if (maxKeysPerSegment < 1) {
+            return;
+        }
+        final CharSequenceHashSet keys = keySets.getQuick((int) segments.getQuick(base + 5));
+        if (key == null) {
+            // Kept apart from the set's list, so it costs no budget and no slot.
+            keys.addNull();
+            return;
+        }
+        final int keyIndex = keys.keyIndex(key);
+        if (keyIndex < 0) {
+            return;
+        }
+        if (keys.size() >= maxKeysPerSegment) {
+            segments.setQuick(base + 6, 1);
+            return;
+        }
+        // addAt copies the sequence, which the WAL's own symbol table hands out as a
+        // flyweight over its mapped pages.
+        keys.addAt(keyIndex, key);
+    }
+
+    /**
+     * @return the entry's base offset in {@link #segments}
+     */
+    private int insertAt(int index, long segmentStart, long segmentEndExclusive, long ts) {
+        // The key set is taken off the pool in discovery order and named by index, so an
+        // entry inserted ahead of another leaves every other segment's keys where they are.
+        final int keySetIndex = segments.size() / STRIDE;
+        if (keySets.size() <= keySetIndex) {
+            keySets.extendAndSet(keySetIndex, new CharSequenceHashSet());
+        }
         // Inserted in reverse so each add() lands ahead of the ones before it, leaving
-        // (segmentStart, segmentEndExclusive, minTs, maxTs, rowCount) in order at the
-        // entry's own base offset.
+        // (segmentStart, segmentEndExclusive, minTs, maxTs, rowCount, keySetIndex,
+        // isKeyDomainOverflowed) in order at the entry's own base offset.
         final int base = index * STRIDE;
+        segments.add(base, 0);
+        segments.add(base, keySetIndex);
         segments.add(base, 1);
         segments.add(base, ts);
         segments.add(base, ts);
         segments.add(base, segmentEndExclusive);
         segments.add(base, segmentStart);
+        return base;
     }
 }

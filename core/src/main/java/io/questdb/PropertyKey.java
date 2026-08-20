@@ -241,6 +241,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED("cairo.live.view.checkpoint.repair.isolated.runtime.enabled"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED("cairo.live.view.checkpoint.repair.per.segment.enabled"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS("cairo.live.view.checkpoint.repair.replay.max.rows"),
+    CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS("cairo.live.view.checkpoint.repair.keyed.scan.index.open.rows"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS("cairo.live.view.checkpoint.repair.scan.max.keys"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS("cairo.live.view.checkpoint.repair.scan.max.rows"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED("cairo.live.view.checkpoint.repair.segment.yield.enabled"),

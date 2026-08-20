@@ -57,7 +57,7 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         final LiveViewCheckpointAnchorPlan plan = dailyPlan();
         final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
         changeSet.of(DAY_8 + Micros.HOUR_MICROS * 6);
-        Assert.assertFalse(changeSet.addRow(DAY_8 + Micros.HOUR_MICROS, plan));
+        Assert.assertFalse(changeSet.addRow(DAY_8 + Micros.HOUR_MICROS, null, plan));
         Assert.assertTrue(changeSet.isOverflowed());
     }
 
@@ -69,9 +69,9 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         Assert.assertEquals(Numbers.LONG_NULL, changeSet.getResidualMinTs());
         Assert.assertEquals(Numbers.LONG_NULL, changeSet.getResidualMaxTs());
 
-        Assert.assertTrue(changeSet.addRow(DAY_8 + 7, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8 + 3, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 7, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 3, null, plan));
 
         Assert.assertEquals(0, changeSet.getClosedSegmentCount());
         Assert.assertEquals(DAY_8, changeSet.getResidualMinTs());
@@ -85,9 +85,9 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         changeSet.of(DAY_8);
         // Deliberately not in timestamp order: the WAL segment of an out-of-order commit is
         // not sorted, and the decomposition walks it as it is written.
-        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 500, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 10, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 900, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 500, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 10, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 900, null, plan));
 
         Assert.assertEquals(1, changeSet.getClosedSegmentCount());
         Assert.assertEquals(DAY_8 - DAY, changeSet.getSegmentStart(0));
@@ -101,13 +101,13 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         final LiveViewCheckpointAnchorPlan plan = dailyPlan();
         final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
         changeSet.of(DAY_8);
-        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 1, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8 - 5 * DAY + 1, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8 + 4, plan));
-        Assert.assertTrue(changeSet.addRow(DAY_8 - 3 * DAY + 1, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 1, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - 5 * DAY + 1, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 4, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - 3 * DAY + 1, null, plan));
         // The middle segment again, so the insert has to find the existing entry rather than
         // open a fourth one.
-        Assert.assertTrue(changeSet.addRow(DAY_8 - 3 * DAY + 9, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - 3 * DAY + 9, null, plan));
 
         Assert.assertEquals(3, changeSet.getClosedSegmentCount());
         Assert.assertEquals(DAY_8 - 5 * DAY, changeSet.getSegmentStart(0));
@@ -126,22 +126,22 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
         changeSet.of(DAY_8);
         for (int i = 1; i <= LiveViewCheckpointSegmentChangeSet.MAX_CLOSED_SEGMENTS; i++) {
-            Assert.assertTrue("segment " + i + " must still fit", changeSet.addRow(DAY_8 - i * DAY + 1, plan));
+            Assert.assertTrue("segment " + i + " must still fit", changeSet.addRow(DAY_8 - i * DAY + 1, null, plan));
         }
         Assert.assertEquals(LiveViewCheckpointSegmentChangeSet.MAX_CLOSED_SEGMENTS, changeSet.getClosedSegmentCount());
         Assert.assertFalse(changeSet.isOverflowed());
 
         // One more distinct segment gives up; a row of a segment already open still does not.
         final long extraDay = DAY_8 - (LiveViewCheckpointSegmentChangeSet.MAX_CLOSED_SEGMENTS + 1) * DAY;
-        Assert.assertFalse(changeSet.addRow(extraDay + 1, plan));
+        Assert.assertFalse(changeSet.addRow(extraDay + 1, null, plan));
         Assert.assertTrue(changeSet.isOverflowed());
-        Assert.assertFalse("an overflowed change set stays overflowed", changeSet.addRow(DAY_8 - DAY + 2, plan));
+        Assert.assertFalse("an overflowed change set stays overflowed", changeSet.addRow(DAY_8 - DAY + 2, null, plan));
 
         // of() rebinds the scratch for the next repair, overflow flag included.
         changeSet.of(DAY_8);
         Assert.assertFalse(changeSet.isOverflowed());
         Assert.assertEquals(0, changeSet.getClosedSegmentCount());
-        Assert.assertTrue(changeSet.addRow(extraDay + 1, plan));
+        Assert.assertTrue(changeSet.addRow(extraDay + 1, null, plan));
     }
 
     private static LiveViewCheckpointAnchorPlan dailyPlan() {

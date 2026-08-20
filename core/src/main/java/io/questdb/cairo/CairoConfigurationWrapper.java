@@ -540,6 +540,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+        return getDelegate().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairScanMaxKeys() {
         return getDelegate().getLiveViewCheckpointRepairScanMaxKeys();
     }

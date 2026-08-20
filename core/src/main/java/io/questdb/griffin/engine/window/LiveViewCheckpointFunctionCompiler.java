@@ -40,6 +40,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -467,6 +468,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<Function> functions,
             @NotNull ObjList<QueryColumn> columns,
             @NotNull RecordMetadata baseMetadata,
+            @Nullable LiveViewCheckpointKeyProjector sharedProjector,
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @NotNull FunctionParser functionParser,
@@ -518,6 +520,82 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (firstRows == null || partitionBy.size() == 0 || maxPrecedingRows < 1) {
             return null;
         }
+        LiveViewCheckpointKeyProjector projector = sharedProjector;
+        if (projector == null || !projector.getPartitionSignature().equals(firstRows.getPartitionSignature())) {
+            // The view's checkpoint-capable functions do not all partition the way its ROWS
+            // functions do, so there is no one identity to share and the plan compiles - and
+            // owns - the ROWS one for itself. A keyed repair is unavailable to such a view
+            // anyway; the discovery is not.
+            projector = keyProjector(
+                    partitionBy,
+                    firstRows.getPartitionSignature(),
+                    baseMetadata,
+                    configuration,
+                    asm,
+                    functionParser,
+                    executionContext
+            );
+        }
+        if (projector == null) {
+            return null;
+        }
+        final boolean ownsProjector = projector != sharedProjector;
+        try {
+            return new LiveViewCheckpointRowsPlan(
+                    rowsFunctionCount,
+                    maxPrecedingRows,
+                    firstRows.getPartitionSignature(),
+                    firstRows.getOrderSignature(),
+                    projector,
+                    ownsProjector,
+                    timestampIndex,
+                    firstRows.getTimestampType()
+            );
+        } catch (Throwable th) {
+            if (ownsProjector) {
+                Misc.free(projector);
+            }
+            throw th;
+        }
+    }
+
+    /**
+     * Compiles the partition identity {@code partitionBy} names into the projector every
+     * repair of the view reads its keys through, or returns null when the shape cannot be
+     * projected at all.
+     * <p>
+     * Two shapes, decided by whether every term is a plain column of {@code baseMetadata}:
+     * <ul>
+     *     <li><b>Plain columns.</b> The projector is a sink over their column indexes, and
+     *     those indexes are also what lets a repair seek one key's rows through a SYMBOL
+     *     index instead of walking every key's. A SYMBOL column is projected as its
+     *     table-local integer, which is stable for one reader's lifetime - exactly the
+     *     scope one repair plans and replays in - and a second sink writes the resolved
+     *     string a checkpoint partition map keys its entries by.</li>
+     *     <li><b>Expressions.</b> One term written as {@code upper(sym)} or {@code x % 10}
+     *     has no column index to read or to seek through, so <i>every</i> term is projected
+     *     through a compiled function instead. A SYMBOL-typed key function is projected
+     *     through its resolved string, because the integers a function hands out index its
+     *     own map rather than the reader's, and two cursors would not agree on them.</li>
+     * </ul>
+     * A non-deterministic expression key is refused: two cursors read the same base row and
+     * have to land on the same key both times, and a key that answers {@code now()} does
+     * not.
+     */
+    public static @Nullable LiveViewCheckpointKeyProjector keyProjector(
+            @NotNull ObjList<ExpressionNode> partitionBy,
+            @NotNull CharSequence partitionSignature,
+            @NotNull RecordMetadata baseMetadata,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (partitionBy.size() == 0) {
+            // A window with no PARTITION BY compiles to a scalar function that carries no
+            // per-key state, so there is no identity here to name.
+            return null;
+        }
         final IntList partitionByColumnIndexes = new IntList(partitionBy.size());
         final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
@@ -536,12 +614,9 @@ public final class LiveViewCheckpointFunctionCompiler {
                 // One term the sink cannot read off a page-frame record puts every term on
                 // a key function, so the projector stays one shape rather than two halves
                 // whose SYMBOL keys would live in different spaces.
-                return expressionKeyedPlan(
+                return expressionKeyProjector(
                         partitionBy,
-                        firstRows,
-                        rowsFunctionCount,
-                        maxPrecedingRows,
-                        timestampIndex,
+                        partitionSignature,
                         baseMetadata,
                         configuration,
                         asm,
@@ -573,25 +648,68 @@ public final class LiveViewCheckpointFunctionCompiler {
         final RecordSink keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter);
         // The checkpoint projector does set it, because the key it writes has to compare
         // equal to the one a window function's partition map already holds, and those
-        // maps key a SYMBOL partition column by its resolved string. A plan with no
+        // maps key a SYMBOL partition column by its resolved string. A projector with no
         // SYMBOL key column needs no second sink at all.
         final RecordSink checkpointKeySink = writeSymbolAsString == null
                 ? keySink
                 : RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter, writeSymbolAsString);
-        return new LiveViewCheckpointRowsPlan(
-                rowsFunctionCount,
-                maxPrecedingRows,
-                firstRows.getPartitionSignature(),
-                firstRows.getOrderSignature(),
+        return new LiveViewCheckpointKeyProjector(
                 partitionByColumnIndexes,
                 null,
                 keyColumnTypes,
                 keySink,
                 checkpointKeyColumnTypes != null ? checkpointKeyColumnTypes : keyColumnTypes,
                 checkpointKeySink,
-                timestampIndex,
-                firstRows.getTimestampType()
+                partitionSignature,
+                baseMetadata
         );
+    }
+
+    /**
+     * Compiles the partition identity every checkpoint-capable window function in the
+     * factory shares, or returns null when they do not share one.
+     * <p>
+     * The compiler encodes each function's identity as a signature precisely so two of
+     * them can be compared without re-deriving either one's key layout, and this is the
+     * one place that comparison decides an object rather than a diagnostic:
+     * {@link LiveViewBackfillEnvelope#keyedScanGate} reports the same answer as
+     * {@code GATE_MIXED_PARTITION_KEYS}. A view with no shared identity keeps every repair
+     * it has today - what it loses is the ability to name one key domain for the whole
+     * view, which a keyed repair would have to rebuild.
+     */
+    public static @Nullable LiveViewCheckpointKeyProjector sharedKeyProjector(
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<QueryColumn> columns,
+            @NotNull RecordMetadata baseMetadata,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        String signature = null;
+        ObjList<ExpressionNode> partitionBy = null;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!(functions.getQuick(i) instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency == null) {
+                return null;
+            }
+            if (signature == null) {
+                if (!(columns.getQuick(i) instanceof WindowExpression window)) {
+                    return null;
+                }
+                signature = dependency.getPartitionSignature();
+                partitionBy = window.getPartitionBy();
+            } else if (!signature.equals(dependency.getPartitionSignature())) {
+                return null;
+            }
+        }
+        if (signature == null) {
+            return null;
+        }
+        return keyProjector(partitionBy, signature, baseMetadata, configuration, asm, functionParser, executionContext);
     }
 
     /**
@@ -880,25 +998,22 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     /**
      * Builds the projector of a view whose PARTITION BY holds at least one expression, by
-     * compiling every term into a key function of the plan's own. The window runtime keeps
-     * its separate copies, so the two never share evaluation state.
+     * compiling every term into a key function of the projector's own. The window runtime
+     * keeps its separate copies, so the two never share evaluation state.
      * <p>
-     * There is no index seek on this path and no column list to name one: the plan's
-     * column indexes stay empty, and the discovery falls back to the unrestricted backward
-     * walk. The key types follow what the generated sink writes rather than what the
-     * function returns - a SYMBOL-typed key function is written through its resolved
-     * string, because the integers it hands out index its own map rather than the
+     * There is no index seek on this path and no column list to name one: the projector's
+     * column indexes stay empty, and a repair that would have sought one key's rows walks
+     * every key's instead. The key types follow what the generated sink writes rather than
+     * what the function returns - a SYMBOL-typed key function is written through its
+     * resolved string, because the integers it hands out index its own map rather than the
      * reader's, and two cursors would not agree on them.
      * <p>
-     * The functions are freed unless the plan takes ownership of them, so a parse failure,
-     * a declined key or a codegen failure leaves nothing behind.
+     * The functions are freed unless the projector takes ownership of them, so a parse
+     * failure, a declined key or a codegen failure leaves nothing behind.
      */
-    private static @Nullable LiveViewCheckpointRowsPlan expressionKeyedPlan(
+    private static @Nullable LiveViewCheckpointKeyProjector expressionKeyProjector(
             ObjList<ExpressionNode> partitionBy,
-            LiveViewCheckpointDependency firstRows,
-            int rowsFunctionCount,
-            long maxPrecedingRows,
-            int timestampIndex,
+            CharSequence partitionSignature,
             RecordMetadata baseMetadata,
             CairoConfiguration configuration,
             BytecodeAssembler asm,
@@ -928,11 +1043,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                     keyFunctions,
                     null
             );
-            final LiveViewCheckpointRowsPlan plan = new LiveViewCheckpointRowsPlan(
-                    rowsFunctionCount,
-                    maxPrecedingRows,
-                    firstRows.getPartitionSignature(),
-                    firstRows.getOrderSignature(),
+            final LiveViewCheckpointKeyProjector projector = new LiveViewCheckpointKeyProjector(
                     null,
                     keyFunctions,
                     keyColumnTypes,
@@ -942,11 +1053,11 @@ public final class LiveViewCheckpointFunctionCompiler {
                     // holds, so the checkpoint form is the same projector.
                     keyColumnTypes,
                     keySink,
-                    timestampIndex,
-                    firstRows.getTimestampType()
+                    partitionSignature,
+                    baseMetadata
             );
             keyFunctions = null;
-            return plan;
+            return projector;
         } finally {
             Misc.freeObjList(keyFunctions);
         }

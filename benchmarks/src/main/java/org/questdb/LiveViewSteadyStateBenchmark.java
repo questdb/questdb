@@ -705,6 +705,23 @@ public class LiveViewSteadyStateBenchmark {
                             instance.getPendingRepairsSegments(),
                             instance.getPendingRepairsRows()
                     );
+                    // What a keyed replay of each corrected closed segment would have read,
+                    // beside what the whole-segment replay this run actually performed did.
+                    // Nothing in the run takes the keyed route - its publication does not
+                    // exist - so posting_rows is a counterfactual and whole_rows is the
+                    // measurement it is counterfactual to. cheaper counts the segments where
+                    // the keyed side wins once the merge and the per-key-per-frame setup are
+                    // priced in; unpriced counts the ones with no usable key domain, which
+                    // read whole either way.
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# keyed priced=%d cheaper=%d posting_rows=%d whole_rows=%d unpriced=%d%n",
+                            job.keyedScanPricedCountForTest(),
+                            job.keyedScanCheaperCountForTest(),
+                            job.keyedScanPostingRowsForTest(),
+                            job.keyedScanWholeRangeRowsForTest(),
+                            job.keyedScanUnpricedCountForTest()
+                    );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly
                 // forward run appends, so amplification is 1 and the apply is a rounding
