@@ -140,10 +140,14 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
 
     @Test
     public void testAConvergingRepairLeavesThePrimaryFrontierAndCompactionCountersUnchanged() throws Exception {
-        // The scalars the state image does not carry, and the ones the copy-aside path was
-        // never able to preserve: the anchor snapshot writes entries alone, so the wipe's
-        // resetFrontier() and the restore's rebuild-from-entries decide them. An isolated
-        // replay never runs either.
+        // The scalars the state image does not carry: the anchor snapshot writes entries
+        // alone, so the copy-aside path decides them through the wipe's resetFrontier() and
+        // the restore's rebuild-from-entries, while an isolated replay runs neither.
+        //
+        // On this shape no compaction has swept and no tombstone exists, so the copy-aside
+        // path lands on the same numbers and this case does not separate the two routes.
+        // It pins the invariant - a repair reclaims nothing and compacts nothing - which is
+        // what would go red if a future isolation let the replay's frontier reach here.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverThreeDays());
