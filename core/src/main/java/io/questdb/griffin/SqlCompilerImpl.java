@@ -37,6 +37,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
@@ -6586,6 +6587,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validationResult = ExpiryValidationResult.MONOTONIC;
         } else if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
             rejectKeepColumnCollision(selectMetadata, pos);
+            if (RowExpiryUtil.isKeepBy(predicate)) {
+                validateKeepByColumn(selectMetadata, predicate, pos);
+            }
             // Validate by compiling the projection-CASE keep query against the view's defining SELECT (the
             // view does not exist yet); this validates the window predicate, its columns and types.
             validateWindowPolicy(executionContext, "(" + createTableOp.getSelectText() + ")", tsName(selectMetadata), predicate, pos);
@@ -6638,6 +6642,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return ExpiryValidationResult.MONOTONIC;
         }
         rejectKeepColumnCollision(tableMetadata, position);
+        if (RowExpiryUtil.isKeepBy(predicate)) {
+            validateKeepByColumn(tableMetadata, predicate, position);
+        }
         validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
         return RowExpiryUtil.isKeepBy(predicate)
                 ? ExpiryValidationResult.MONOTONIC
@@ -6660,6 +6667,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Validates a window/keep-by policy by compiling (and opening) the projection-CASE keep query against
      * {@code source} (the view's defining SELECT, parenthesised, at CREATE; the view name at ALTER). Surfaces
      * any compile/bind error (bad column, type, window syntax) as a clear "invalid EXPIRE ROWS policy".
+     * <p>
+     * {@code LIMIT 0} keeps the probe cheap: a window over the whole view would otherwise have to run at DDL
+     * time. It also means no row is evaluated, so a per-row implicit cast cannot surface here - the keep
+     * column's type is checked up front instead, by {@link #validateKeepByColumn}.
      */
     private void validateWindowPolicy(
             SqlExecutionContext executionContext,
@@ -6673,12 +6684,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                // Open the cursor so column references and types are fully resolved/validated.
+                // Open the cursor so column references and types are fully resolved.
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     cursor.hasNext();
                 }
             }
-        } catch (SqlException | CairoException e) {
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
+            // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
             throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(e.getFlyweightMessage());
         }
     }
@@ -6686,6 +6699,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private static CharSequence tsName(RecordMetadata metadata) {
         final int i = metadata.getTimestampIndex();
         return i >= 0 ? metadata.getColumnName(i) : null;
+    }
+
+    /**
+     * Validates the keep column of a KEEP [N] HIGHEST/LOWEST policy against {@code metadata}: it must resolve,
+     * and its type must support the comparison the policy desugars to. The bare form takes the group extreme
+     * ({@code <col> < max(<col>) OVER (...)}), which only the numeric, temporal, LONG256 and DECIMAL types
+     * support; the top-N form orders by the column instead, so it accepts any comparable type. Checking the
+     * type here is what keeps a text-ish keep column from defining a view whose every read throws an implicit
+     * cast error - the {@code LIMIT 0} probe in {@link #validateWindowPolicy} evaluates no row and so cannot
+     * see it. {@code stored} is the encoded policy.
+     */
+    private void validateKeepByColumn(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
+        final CharSequence col = RowExpiryUtil.keepByColumn(stored);
+        final int index = metadata.getColumnIndexQuiet(col);
+        if (index < 0) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS KEEP column: ").put(col);
+        }
+        final int type = metadata.getColumnType(index);
+        if (RowExpiryUtil.keepByCount(stored) > 0) {
+            if (!ColumnType.isComparable(type)) {
+                throw SqlException.$(position, "EXPIRE ROWS KEEP <N> HIGHEST/LOWEST requires an orderable column, but '")
+                        .put(col).put("' is ").put(ColumnType.nameOf(type));
+            }
+            return;
+        }
+        if (!RowExpiryUtil.isKeepExtremeType(type)) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a numeric, temporal or decimal column, but '")
+                    .put(col).put("' is ").put(ColumnType.nameOf(type))
+                    .put("; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type");
+        }
     }
 
     /**

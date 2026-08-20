@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -219,6 +221,22 @@ public final class RowExpiryUtil {
     }
 
     /**
+     * True when the group extreme of {@code columnType} is well-defined, i.e. the bare
+     * {@code KEEP HIGHEST|LOWEST <col>} form ({@link #keepByCount} == 0) may desugar to
+     * {@code <col> < max(<col>) OVER (...)} on it. The window {@code max}/{@code min} overloads take LONG,
+     * DOUBLE, DATE, TIMESTAMP, LONG256 or DECIMAL, so a text-ish column reaches them only through an
+     * implicit parsing cast that throws per row at read time. The top-N form orders the column instead, and
+     * ORDER BY accepts every comparable type, so it uses {@link ColumnType#isComparable} rather than this.
+     */
+    public static boolean isKeepExtremeType(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG256 -> true;
+            default -> ColumnType.isDecimal(columnType);
+        };
+    }
+
+    /**
      * True if {@code stored} is an encoded KEEP LATEST policy.
      */
     public static boolean isKeepLatest(CharSequence stored) {
@@ -254,6 +272,27 @@ public final class RowExpiryUtil {
      */
     public static boolean isWindow(CharSequence stored) {
         return hasMode(stored, MODE_WINDOW);
+    }
+
+    /**
+     * The keep column of an encoded KEEP [N] HIGHEST/LOWEST policy (check {@link #isKeepBy}).
+     */
+    public static CharSequence keepByColumn(CharSequence stored) {
+        final int s2 = sentinelIndex(stored, sentinelIndex(stored, 2) + 1);
+        return unescapeField(stored, s2 + 1, sentinelIndex(stored, s2 + 1));
+    }
+
+    /**
+     * The row count {@code N} of an encoded KEEP [N] HIGHEST/LOWEST policy (check {@link #isKeepBy}), or 0
+     * for the bare KEEP HIGHEST/LOWEST form that keeps every row tied at the group extreme. Unparseable text
+     * also reads as 0, which is the form under the stricter validation rules.
+     */
+    public static int keepByCount(CharSequence stored) {
+        try {
+            return Numbers.parseInt(stored, 2, sentinelIndex(stored, 2));
+        } catch (NumericException e) {
+            return 0;
+        }
     }
 
     /**

@@ -622,7 +622,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep highest nope partition by k",
                     25,
-                    "invalid EXPIRE ROWS policy"
+                    "invalid EXPIRE ROWS KEEP column: nope"
             );
         });
     }
@@ -636,6 +636,90 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     72,
                     "positive row count"
             );
+        });
+    }
+
+    @Test
+    public void testKeepExtremeAcceptsEveryOrderableTypeUnderTopN() throws Exception {
+        // The top-N form ranks the column with ORDER BY instead of taking its group extreme, so it accepts
+        // every comparable type -- including the text-ish ones the bare form has to reject.
+        assertMemoryLeak(() -> {
+            createTypedBase();
+            for (String col : new String[]{"s", "vc", "sy", "c", "b", "u", "ip", "g"}) {
+                final String view = "mv_topn_" + col;
+                execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST " + col + " PARTITION BY k");
+                drainWalAndMatViewQueues();
+                // Three rows under one key, all values distinct: the top two by the column survive.
+                assertQuery("SELECT count() FROM " + view).noRandomAccess().expectSize().noLeakCheck().returns("count\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testKeepExtremeAcceptsNumericTemporalAndDecimalColumns() throws Exception {
+        // The types max()/min() genuinely support. Each view must both define AND read: a keep column whose
+        // extreme needs an implicit parsing cast would define fine and throw on every read.
+        assertMemoryLeak(() -> {
+            createTypedBase();
+            for (String col : new String[]{"by", "sh", "i", "l", "f", "d", "dt", "l256", "dec", "ts"}) {
+                final String view = "mv_ext_" + col;
+                execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST " + col + " PARTITION BY k");
+                drainWalAndMatViewQueues();
+                // k1 holds the three rows and every column rises with the timestamp, so only the last one
+                // sits at the per-key maximum and survives.
+                assertQuery("SELECT s FROM " + view).noLeakCheck().returns("s\nc\n");
+            }
+        });
+    }
+
+    @Test
+    public void testKeepExtremeRejectsNonNumericColumn() throws Exception {
+        // The bare KEEP HIGHEST/LOWEST form desugars to "<col> < max(<col>) OVER (...)". max() takes LONG,
+        // DOUBLE, DATE, TIMESTAMP, LONG256 or DECIMAL, so a text-ish column would only reach it through an
+        // implicit parsing cast -- accepted at DDL, then thrown on every single read of the view. Reject the
+        // policy up front, and say which form does handle the column.
+        assertMemoryLeak(() -> {
+            createTypedBase();
+            assertKeepExtremeRejected("s", "STRING");
+            assertKeepExtremeRejected("vc", "VARCHAR");
+            assertKeepExtremeRejected("sy", "SYMBOL");
+            assertKeepExtremeRejected("c", "CHAR");
+            assertKeepExtremeRejected("b", "BOOLEAN");
+            assertKeepExtremeRejected("u", "UUID");
+            assertKeepExtremeRejected("ip", "IPv4");
+            assertKeepExtremeRejected("g", "GEOHASH(8c)");
+            assertKeepExtremeRejected("bin", "BINARY");
+        });
+    }
+
+    @Test
+    public void testKeepExtremeRejectsNonNumericColumnOnAlter() throws Exception {
+        // Same check on the ALTER path: an existing readable view must not be turned into an unreadable one.
+        assertMemoryLeak(() -> {
+            createTypedBase();
+            execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM typed) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST s PARTITION BY k",
+                    46,
+                    "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a numeric, temporal or decimal column, but 's' is STRING"
+            );
+            // The view kept no policy and still reads.
+            assertQuery("SELECT count() FROM mvalt").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testKeepExtremeRejectsNonOrderableColumnUnderTopN() throws Exception {
+        // BINARY cannot be ordered either, so the top-N form rejects it too, with its own message.
+        assertMemoryLeak(() -> {
+            createTypedBase();
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST bin PARTITION BY k",
+                    25,
+                    "EXPIRE ROWS KEEP <N> HIGHEST/LOWEST requires an orderable column, but 'bin' is BINARY"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
         });
     }
 
@@ -661,6 +745,22 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "create materialized view mvbad as (select * from base) expire rows keep 3 bogus v partition by k",
                     74,
                     "'highest' or 'lowest' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testKeepUnknownColumnRejectedOnAlter() throws Exception {
+        // The keep column resolves against the view's metadata before the policy is stored, so it names the
+        // column whatever the mode. The create-path counterpart is testRejectedForUnknownColumn.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP 2 LOWEST nope PARTITION BY k",
+                    46,
+                    "invalid EXPIRE ROWS KEEP column: nope"
             );
         });
     }
@@ -976,6 +1076,16 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         return worked;
     }
 
+    private void assertKeepExtremeRejected(String col, String typeName) throws Exception {
+        assertExceptionNoLeakCheck(
+                "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST " + col + " PARTITION BY k",
+                25,
+                "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a numeric, temporal or decimal column, but '" + col
+                        + "' is " + typeName + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
+        );
+        Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
+    }
+
     private void createBase() throws Exception {
         execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
         execute("""
@@ -989,6 +1099,31 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                 ('C', null, '2024-01-01T00:00:00.000000Z'),
                 ('C', null, '2024-01-02T00:00:00.000000Z'),
                 ('D', 7.0, '2024-01-01T00:00:00.000000Z')""");
+        drainWalAndMatViewQueues();
+    }
+
+    /**
+     * One row per column type, three rows under a single key so a KEEP HIGHEST policy has something to expire.
+     */
+    private void createTypedBase() throws Exception {
+        execute("""
+                CREATE TABLE typed (
+                    k SYMBOL, s STRING, vc VARCHAR, sy SYMBOL, c CHAR, b BOOLEAN,
+                    by BYTE, sh SHORT, i INT, l LONG, f FLOAT, d DOUBLE, dt DATE,
+                    u UUID, ip IPV4, l256 LONG256, dec DECIMAL(10,2), g GEOHASH(8c), bin BINARY,
+                    ts TIMESTAMP
+                ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+        execute("""
+                INSERT INTO typed VALUES
+                    ('k1', 'a', 'a', 'sy1', 'a', false, 1, 1, 1, 1, 1.0, 1.0, '2024-01-01',
+                     '11111111-1111-1111-1111-111111111111', '1.1.1.1', '0x01'::long256, 1.50::decimal(10,2),
+                     #sp052w91, null, '2024-01-01T00:00:00.000000Z'),
+                    ('k1', 'b', 'b', 'sy2', 'b', false, 2, 2, 2, 2, 2.0, 2.0, '2024-01-02',
+                     '22222222-2222-2222-2222-222222222222', '2.2.2.2', '0x02'::long256, 2.50::decimal(10,2),
+                     #sp052w92, null, '2024-01-02T00:00:00.000000Z'),
+                    ('k1', 'c', 'c', 'sy3', 'c', true, 3, 3, 3, 3, 3.0, 3.0, '2024-01-03',
+                     '33333333-3333-3333-3333-333333333333', '3.3.3.3', '0x03'::long256, 3.50::decimal(10,2),
+                     #sp052w93, null, '2024-01-03T00:00:00.000000Z')""");
         drainWalAndMatViewQueues();
     }
 
