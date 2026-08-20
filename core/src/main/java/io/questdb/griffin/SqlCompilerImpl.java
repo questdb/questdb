@@ -6723,11 +6723,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Validates the keep column of a KEEP [N] HIGHEST/LOWEST policy against {@code metadata}: it must resolve,
      * and its type must support the comparison the policy desugars to. The bare form takes the group extreme
-     * ({@code <col> < max(<col>) OVER (...)}), which only the numeric, temporal, LONG256 and DECIMAL types
+     * ({@code <col> < max(<col>) OVER (...)}), which only the types of {@link RowExpiryUtil#isKeepExtremeType}
      * support; the top-N form orders by the column instead, so it accepts any comparable type. Checking the
      * type here is what keeps a text-ish keep column from defining a view whose every read throws an implicit
      * cast error - the {@code LIMIT 0} probe in {@link #validateWindowPolicy} evaluates no row and so cannot
-     * see it. {@code stored} is the encoded policy.
+     * see it. It also catches LONG256, which the probe accepts because its cast to LONG succeeds, silently
+     * ranking rows by the low 64 bits. {@code stored} is the encoded policy.
      */
     private void validateKeepByColumn(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
         final CharSequence col = RowExpiryUtil.keepByColumn(stored);
@@ -6744,7 +6745,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
         if (!RowExpiryUtil.isKeepExtremeType(type)) {
-            throw SqlException.$(position, "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a numeric, temporal or decimal column, but '")
+            throw SqlException.$(position, "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP or DECIMAL column, but '")
                     .put(col).put("' is ").put(ColumnType.nameOf(type))
                     .put("; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type");
         }

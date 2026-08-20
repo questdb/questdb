@@ -224,14 +224,16 @@ public final class RowExpiryUtil {
      * True when the group extreme of {@code columnType} is well-defined, i.e. the bare
      * {@code KEEP HIGHEST|LOWEST <col>} form ({@link #keepByCount} == 0) may desugar to
      * {@code <col> < max(<col>) OVER (...)} on it. The window {@code max}/{@code min} overloads take LONG,
-     * DOUBLE, DATE, TIMESTAMP, LONG256 or DECIMAL, so a text-ish column reaches them only through an
-     * implicit parsing cast that throws per row at read time. The top-N form orders the column instead, and
+     * DOUBLE, DATE, TIMESTAMP or DECIMAL, and only the types listed here reach one of them through a
+     * widening cast that preserves order. A text-ish column reaches them through an implicit parsing cast
+     * that throws per row at read time, and LONG256 binds to the LONG overload through a cast that keeps
+     * the low 64 bits alone, which ranks by the wrong value. The top-N form orders the column instead, and
      * ORDER BY accepts every comparable type, so it uses {@link ColumnType#isComparable} rather than this.
      */
     public static boolean isKeepExtremeType(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
-                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG256 -> true;
+                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP -> true;
             default -> ColumnType.isDecimal(columnType);
         };
     }

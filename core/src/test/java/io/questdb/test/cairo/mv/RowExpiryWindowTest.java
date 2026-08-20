@@ -645,7 +645,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // every comparable type -- including the text-ish ones the bare form has to reject.
         assertMemoryLeak(() -> {
             createTypedBase();
-            for (String col : new String[]{"s", "vc", "sy", "c", "b", "u", "ip", "g"}) {
+            for (String col : new String[]{"s", "vc", "sy", "c", "b", "u", "ip", "g", "l256"}) {
                 final String view = "mv_topn_" + col;
                 execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST " + col + " PARTITION BY k");
                 drainWalAndMatViewQueues();
@@ -661,7 +661,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // extreme needs an implicit parsing cast would define fine and throw on every read.
         assertMemoryLeak(() -> {
             createTypedBase();
-            for (String col : new String[]{"by", "sh", "i", "l", "f", "d", "dt", "l256", "dec", "ts"}) {
+            for (String col : new String[]{"by", "sh", "i", "l", "f", "d", "dt", "dec", "ts"}) {
                 final String view = "mv_ext_" + col;
                 execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST " + col + " PARTITION BY k");
                 drainWalAndMatViewQueues();
@@ -673,11 +673,46 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeepExtremeRejectsNonNumericColumn() throws Exception {
+    public void testKeepExtremeRejectsLong256() throws Exception {
+        // LONG256 has no window max()/min() overload of its own and binds to the LONG one through a cast that
+        // keeps the low 64 bits, signed. The bare form would therefore rank by that low word and expire the
+        // genuinely highest row, so it is rejected; the top-N form ranks the full 256-bit value and is right.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l256base (k SYMBOL, v LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // The first value is the larger of the two as a 256-bit number, the smaller by its low word.
+            execute("""
+                    INSERT INTO l256base VALUES
+                        ('k1', '0xffffffffffffffffffffffffffffffffffffffffffffffff0000000000000001'::long256,
+                         '2024-01-01T00:00:00.000000Z'),
+                        ('k1', '0x02'::long256, '2024-01-02T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM l256base) EXPIRE ROWS KEEP HIGHEST v PARTITION BY k",
+                    25,
+                    "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE,"
+                            + " TIMESTAMP or DECIMAL column, but 'v' is LONG256"
+                            + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
+
+            // The form the message recommends keeps the row the bare form would have expired.
+            execute("CREATE MATERIALIZED VIEW mv256 AS (SELECT * FROM l256base) EXPIRE ROWS KEEP 1 HIGHEST v PARTITION BY k");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT v FROM mv256").noLeakCheck().returns("""
+                    v
+                    0xffffffffffffffffffffffffffffffffffffffffffffffff0000000000000001
+                    """);
+        });
+    }
+
+    @Test
+    public void testKeepExtremeRejectsUnsupportedColumnType() throws Exception {
         // The bare KEEP HIGHEST/LOWEST form desugars to "<col> < max(<col>) OVER (...)". max() takes LONG,
-        // DOUBLE, DATE, TIMESTAMP, LONG256 or DECIMAL, so a text-ish column would only reach it through an
-        // implicit parsing cast -- accepted at DDL, then thrown on every single read of the view. Reject the
-        // policy up front, and say which form does handle the column.
+        // DOUBLE, DATE, TIMESTAMP or DECIMAL, so a text-ish column would only reach it through an implicit
+        // parsing cast -- accepted at DDL, then thrown on every single read of the view. LONG256 reaches the
+        // LONG overload through a cast that keeps the low 64 bits alone, which ranks by the wrong value; see
+        // testKeepExtremeRejectsLong256. Reject the policy up front, and say which form does handle the column.
         assertMemoryLeak(() -> {
             createTypedBase();
             assertKeepExtremeRejected("s", "STRING");
@@ -689,11 +724,12 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertKeepExtremeRejected("ip", "IPv4");
             assertKeepExtremeRejected("g", "GEOHASH(8c)");
             assertKeepExtremeRejected("bin", "BINARY");
+            assertKeepExtremeRejected("l256", "LONG256");
         });
     }
 
     @Test
-    public void testKeepExtremeRejectsNonNumericColumnOnAlter() throws Exception {
+    public void testKeepExtremeRejectsUnsupportedColumnTypeOnAlter() throws Exception {
         // Same check on the ALTER path: an existing readable view must not be turned into an unreadable one.
         assertMemoryLeak(() -> {
             createTypedBase();
@@ -702,7 +738,8 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST s PARTITION BY k",
                     46,
-                    "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a numeric, temporal or decimal column, but 's' is STRING"
+                    "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE,"
+                            + " TIMESTAMP or DECIMAL column, but 's' is STRING"
             );
             // The view kept no policy and still reads.
             assertQuery("SELECT count() FROM mvalt").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
@@ -1080,8 +1117,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertExceptionNoLeakCheck(
                 "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST " + col + " PARTITION BY k",
                 25,
-                "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a numeric, temporal or decimal column, but '" + col
-                        + "' is " + typeName + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
+                "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP"
+                        + " or DECIMAL column, but '" + col + "' is " + typeName
+                        + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
         );
         Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
     }
