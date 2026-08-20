@@ -2171,6 +2171,101 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQuiescePreservesSuccessfulOrderedSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> Assert.fail("ordered reducer must not run during shutdown drain"),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                Assert.assertFalse(frameSequence.isActive());
+
+                final int shard = 0;
+                final MCSequence subSeq = engine.getMessageBus().getPageFrameReduceSubSeq(shard);
+                final long cursor = engine.getMessageBus().getPageFrameReducePubSeq(shard).next();
+                Assert.assertTrue(cursor > -1);
+                engine.getMessageBus()
+                        .getPageFrameReduceQueue(shard)
+                        .get(cursor)
+                        .of(frameSequence, 0, false);
+                engine.getMessageBus().getPageFrameReducePubSeq(shard).done(cursor);
+
+                runtime.beginQuiesce();
+
+                Assert.assertTrue(dispatcher.isQuiesced());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, frameSequence.getCancelReason());
+                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
+                Assert.assertEquals(cursor, subSeq.current());
+            } finally {
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+            }
+        });
+    }
+
+    @Test
+    public void testQuiescePreservesSuccessfulUnorderedSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _, _) -> Assert.fail("unordered reducer must not run during shutdown drain"),
+                    1
+            );
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                Assert.assertFalse(frameSequence.isActive());
+
+                final RingQueue<UnorderedPageFrameReduceTask> queue = engine.getMessageBus()
+                        .getUnorderedPageFrameReduceQueue();
+                final MCSequence subSeq = engine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
+                final long cursor = engine.getMessageBus().getUnorderedPageFrameReducePubSeq().next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(frameSequence, 0);
+                engine.getMessageBus().getUnorderedPageFrameReducePubSeq().done(cursor);
+
+                runtime.beginQuiesce();
+
+                Assert.assertTrue(dispatcher.isQuiesced());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, frameSequence.getCancelReason());
+                Assert.assertEquals(-1, frameSequence.getDoneLatch().getCount());
+                Assert.assertEquals(cursor, subSeq.current());
+                Assert.assertNull(queue.get(cursor).getFrameSequence());
+            } finally {
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+            }
+        });
+    }
+
+    @Test
     public void testQuiesceWakesProgressWaiterHoldingPublication() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
