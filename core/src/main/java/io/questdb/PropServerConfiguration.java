@@ -414,6 +414,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionCompactionMaxJoinsPerCommit;
     private final int partitionCompactionMaxPieces;
     private final long partitionCompactionMaxRowsPerCommit;
+    private final int partitionCompactionPrefixMinPercent;
     private final long partitionCompactionTableDeadMaxSize;
     private final int partitionCompactionTableDeadPercent;
     private final int partitionCompactionTableDeadStopPercent;
@@ -1824,6 +1825,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionTimeBudget = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 200 * Micros.MILLI_MICROS);
             this.partitionCompactionCooldown = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_COOLDOWN, 10 * Micros.MINUTE_MICROS);
             this.partitionCompactionDeclineBackoffMax = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX, 60 * Micros.MINUTE_MICROS);
+            this.partitionCompactionPrefixMinPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT, 50);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
@@ -4473,6 +4475,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPartitionCompactionMaxRowsPerCommit() {
             return partitionCompactionMaxRowsPerCommit;
+        }
+
+        @Override
+        public int getPartitionCompactionPrefixMinPercent() {
+            return partitionCompactionPrefixMinPercent;
         }
 
         @Override

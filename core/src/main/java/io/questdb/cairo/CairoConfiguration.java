@@ -535,6 +535,13 @@ public interface CairoConfiguration {
     long getPartitionCompactionMaxRowsPerCommit();
 
     /**
+     * MOVE-TAIL only splits off the tail when the clean front is at least this percentage of the
+     * partition's live rows - below it, a two-way split is not worth the extra directory and REWRITE runs
+     * instead.
+     */
+    int getPartitionCompactionPrefixMinPercent();
+
+    /**
      * The table-pressure rule turns on when the table's estimated dead BYTES exceed this, whatever the
      * percentage says.
      */

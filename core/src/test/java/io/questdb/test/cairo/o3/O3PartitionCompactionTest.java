@@ -49,10 +49,14 @@ import org.junit.Test;
  * reference repo calls a "folder" - one directory, one {@code _txn} entry, one {@code _geometry}
  * chain. See PARTITION_COMPACTION_state.md for the corrections this port required.
  * <p>
- * Only JOIN and REWRITE are implemented (PARTITION_COMPACTION.md Sec.9 steps 0, 1, 2, 3, 5). MOVE-TAIL,
- * MAKE-PLAIN and TRIM-FILES (step 4) are not. The three tests that assert step-4-specific behaviour are
- * expected to fail on that one assertion while their data-integrity assertions pass - see the state doc
- * for the exact failure recorded for each.
+ * JOIN, MOVE-TAIL and REWRITE are implemented (PARTITION_COMPACTION.md Sec.9 steps 0, 1, 2, 3, 5).
+ * MOVE-TAIL is ported onto this branch's classic-split machinery (a new sibling {@code attachedPartitions}
+ * entry for the tail) rather than the reference's hardlink/{@code partitionTop} scheme - see
+ * PARTITION_COMPACTION_state.md. MAKE-PLAIN and TRIM-FILES (also step 4) are not implemented: a MOVE-TAIL'd
+ * front's own leftover dead space is left for its own later REWRITE to reclaim, not shrunk in place. The
+ * two tests that assert MAKE-PLAIN/TRIM-FILES-specific behaviour are expected to fail on that one
+ * assertion while their data-integrity assertions pass - see the state doc for the exact failure recorded
+ * for each.
  */
 public class O3PartitionCompactionTest extends AbstractCairoTest {
 
@@ -180,9 +184,10 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     /**
      * MAKE-PLAIN lowers {@code E} so the partition stops being composite, waiting for readers to move
-     * on first. Not implemented in this pass - REWRITE runs regardless of a pinned reader, since it
-     * never writes below {@code E} - so this is expected to fail on the "still composite while a
-     * reader is pinned" assertion. See PARTITION_COMPACTION_state.md.
+     * on first. Not implemented in this pass. This fixture's stride sits mid-partition (~25% front),
+     * below MOVE-TAIL's default {@code prefix.min.percent} (50%), so REWRITE is what runs - regardless of
+     * a pinned reader, since it never writes below {@code E} - so this is expected to fail on the
+     * "still composite while a reader is pinned" assertion. See PARTITION_COMPACTION_state.md.
      */
     @Test
     public void testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction() throws Exception {
@@ -232,45 +237,76 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * MOVE-TAIL copies the messy tail into a new partition and leaves the clean front alone. Not
-     * implemented in this pass - REWRITE copies the WHOLE partition instead - so this is expected to
-     * fail on the "copied only the tail" assertion while still reclaiming all the waste.
+     * MOVE-TAIL leaves the clean front's directory untouched and copies only the messy tail pieces into
+     * a new sibling partition. Unlike REWRITE-only compaction, the day ends up as TWO {@code _txn}
+     * entries and the front's own {@code nameTxn} is unchanged - proof the front was never rewritten,
+     * not just that fewer bytes moved.
      */
     @Test
     public void testMoveTailCopiesTheTailNotTheWholePartition() throws Exception {
         assertMemoryLeak(() -> {
             enableMergeAppend();
-            enableCompaction();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+            // The clean front is deliberately huge relative to the dead space one relocated 200-row
+            // stride leaves behind, so the waste-ratio rule (dead > ratio*live) never fires here - the
+            // piece-count rule is what selects this partition instead.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "2");
+            // Small enough that the pre-split isolates the repeatedly-touched stride into its own piece
+            // instead of merge-append relocating the whole partition - MOVE-TAIL needs a genuine clean
+            // front left standing at row 0 to have anything to leave alone.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
-            // 20k rows, and the churn is aimed at a 200-row stride near the end, so the clean front
-            // is the overwhelming majority of the partition.
+            // 20k rows spanning 1s each (~5.5 hours from day start), and the churn is aimed at a 200-row
+            // stride near the end of that span, so the clean front is the overwhelming majority of the
+            // partition.
             createDayTable("x", "2024-01-01", 20_000);
-            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
-            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
-            backdate("x", "2024-01-01T23:00:00", 200);
-            backdate("x", "2024-01-01T23:00:00", 200);
-            backdate("x", "2024-01-01T23:00:00", 200);
+            // Three rewrites: each one relocates only the pre-split-isolated stride, adding one more
+            // piece each time until the piece-count rule (max.pieces=2) fires.
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
 
             final long deadBefore = deadRowsOfDay("x", "2024-01-01");
             Assert.assertTrue("fixture produced no waste", deadBefore > 0);
+            final long partitionsBefore = partitionCountOfDay("x", "2024-01-01");
+            final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
 
+            enableCompaction();
             final long writtenBefore = physicallyWrittenRows();
             final long insertedByPasses = runCompactionPasses("x");
             // Net of the rows the housekeeping commits wrote themselves.
             final long written = physicallyWrittenRows() - writtenBefore - insertedByPasses;
 
+            Assert.assertTrue(
+                    "MOVE-TAIL copied more than the tail [rowsWritten=" + written + ", partitionRows=20000]",
+                    written > 0 && written < 5_000
+            );
             Assert.assertEquals(
-                    "compaction did not clear the day's waste [before=" + deadBefore +
-                            ", after=" + deadRowsOfDay("x", "2024-01-01") + ']',
-                    0,
-                    deadRowsOfDay("x", "2024-01-01")
+                    "MOVE-TAIL did not leave a new sibling partition behind for the day",
+                    partitionsBefore + 1,
+                    partitionCountOfDay("x", "2024-01-01")
+            );
+            Assert.assertEquals(
+                    "the front partition's own nameTxn changed - it was rewritten, not left alone",
+                    frontNameTxnBefore,
+                    frontNameTxnOfDay("x", "2024-01-01")
             );
             Assert.assertTrue(
-                    "REWRITE copied more than the tail, as expected without MOVE-TAIL" +
-                            " [rowsWritten=" + written + ", partitionRows=20000]",
-                    written > 0 && written < 5_000
+                    "the front partition was made non-composite - MOVE-TAIL must leave its E untouched," +
+                            " not reclaim it in place",
+                    isComposite("x", "2024-01-01")
+            );
+            // MOVE-TAIL does not reclaim the front's pre-existing dead space - only REWRITE (or a later
+            // pass over the now much smaller front) does that. Total dead can only grow here, by exactly
+            // the tail's own size: the moved rows' OLD location becomes dead the moment a fresh copy
+            // lives in the new sibling partition, on top of whatever was already dead before.
+            Assert.assertEquals(
+                    "dead rows should grow by exactly the moved tail's size - the front's pre-existing" +
+                            " dead space is deliberately left for a later REWRITE, not reclaimed here",
+                    deadBefore + written,
+                    deadRowsOfDay("x", "2024-01-01")
             );
         });
     }
@@ -394,10 +430,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * TRIM-FILES is not implemented in this pass, so once REWRITE has reclaimed a partition's waste on
+     * TRIM-FILES is not implemented in this pass, so once compaction has reclaimed a partition's waste on
      * the first pass, there is nothing left for a later pass to shrink further - unlike the reference
-     * design's staged MOVE-TAIL/MAKE-PLAIN/TRIM-FILES, where the file shortening is a separate, later
-     * step. Expected to fail on the final "disk actually fell further" assertion.
+     * design's staged MAKE-PLAIN/TRIM-FILES, where the file shortening is a separate, later step. This
+     * fixture's stride sits mid-partition (~25% front), below MOVE-TAIL's default
+     * {@code prefix.min.percent} (50%), so REWRITE is what reclaims the waste here, not MOVE-TAIL. Expected
+     * to fail on the final "disk actually fell further" assertion.
      */
     @Test
     public void testTrimFilesWaitsForAReaderThatMappedTheOldExtent() throws Exception {
@@ -559,6 +597,17 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return count + "/" + sum;
     }
 
+    /** The {@code nameTxn} of the day's OWN (first, front) partition - unchanged by MOVE-TAIL. */
+    private static long frontNameTxnOfDay(String table, String day) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            return txReader.getPartitionNameTxn(partitionIndex);
+        }
+    }
+
     /**
      * Whether the day's own partition is composite: more than one piece, or dead space above the live
      * rows, or rows starting above file row 0.
@@ -583,6 +632,11 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     private static long parseMicros(String ts) throws Exception {
         return MicrosTimestampDriver.floor(ts);
+    }
+
+    /** How many {@code table_partitions()} rows the day has - more than one after a classic split. */
+    private static long partitionCountOfDay(String table, String day) throws Exception {
+        return scalar("select count() from table_partitions('" + table + "') where name like '" + day + "%'");
     }
 
     private static long physicallyWrittenRows() {

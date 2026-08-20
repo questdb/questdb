@@ -816,6 +816,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionPrefixMinPercent() {
+        return 50;
+    }
+
+    @Override
     public long getPartitionCompactionTableDeadMaxSize() {
         return 10 * Numbers.SIZE_1GB;
     }

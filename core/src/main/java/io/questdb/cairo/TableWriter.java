@@ -191,6 +191,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final int COMPACTION_JOINED = 1;
+    private static final int COMPACTION_MOVED_TAIL = 3;
     private static final int COMPACTION_NONE = 0;
     private static final int COMPACTION_REWRITTEN = 2;
     private static final long IGNORE = -1L;
@@ -5065,20 +5066,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Compacts ONE partition, reclaiming the dead space a merge-append left in its column files. Two
+     * Compacts ONE partition, reclaiming the dead space a merge-append left in its column files. Three
      * ways, cheapest first: JOIN folds pieces that already sit next to each other in the files and
-     * copies nothing, then, if the partition is still composite, REWRITE copies its live rows into a
-     * fresh directory and puts the old one on the remove-candidate list.
+     * copies nothing; MOVE-TAIL, when the caller allows it, leaves a clean front-at-row-0 piece exactly
+     * where it is and copies only the messy tail pieces into a new sibling partition (see
+     * {@link #moveTailToFreshPartition}); REWRITE, the fallback, copies every live row into a fresh
+     * directory and puts the old one on the remove-candidate list.
      * <p>
-     * MOVE-TAIL, MAKE-PLAIN and TRIM-FILES (PARTITION_COMPACTION.md Sec.5) are not implemented, so this
-     * is whole-partition compaction only. Nothing here writes below {@code E} or shortens any file,
-     * which is why none of it needs a reader check: the rows go into a directory no committed
-     * {@code _txn} has ever named, and the old directory is unlinked by the ordinary purge, under its
-     * own check.
+     * MAKE-PLAIN and TRIM-FILES (PARTITION_COMPACTION.md Sec.5) are not implemented - see
+     * PARTITION_COMPACTION_state.md for why - so a MOVE-TAIL'd front's own leftover dead space is left for
+     * its own later REWRITE to reclaim, not shrunk in place. Nothing here writes below {@code E} or
+     * shortens any file, which is why none of it needs a reader check: new rows only ever go into a
+     * directory no committed {@code _txn} has ever named, and a directory REWRITE retires is unlinked by
+     * the ordinary purge, under its own check.
      *
-     * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED} or {@link #COMPACTION_REWRITTEN}
+     * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL} or
+     * {@link #COMPACTION_REWRITTEN}
      */
-    private int compactPhysicalPartition(int partitionIndex, boolean unlimited, long deadlineMicros) {
+    private int compactPhysicalPartition(int partitionIndex, boolean unlimited, boolean allowMoveTail, long deadlineMicros) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             return COMPACTION_NONE;
         }
@@ -5097,6 +5102,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // taken before the folds.
             return COMPACTION_JOINED;
         }
+        if (allowMoveTail) {
+            final int moved = moveTailToFreshPartition(partitionIndex, unlimited);
+            if (moved != COMPACTION_NONE) {
+                return moved;
+            }
+        }
         return rewritePhysicalPartition(partitionIndex, unlimited) ? COMPACTION_REWRITTEN : COMPACTION_NONE;
     }
 
@@ -5111,12 +5122,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * needs the partition compacted NOW, in this transaction, not eventually over several commits. JOIN
      * runs first and is free; REWRITE, when JOIN alone cannot finish the job, copies the partition's live
      * rows into a fresh directory - the same shape {@link #squashPartitionForce} already gives a classic
-     * split partition, just for pieces instead of sibling directories.
+     * split partition, just for pieces instead of sibling directories. MOVE-TAIL is deliberately never
+     * allowed here: this caller needs {@code partitionIndex} ITSELF to end up plain, and MOVE-TAIL would
+     * leave a new sibling partition behind as a side effect instead - the wrong shape for a caller about
+     * to convert one specific directory to parquet.
      */
     private void compactPartitionForConversion(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, true, Long.MAX_VALUE) == COMPACTION_NONE) {
+            if (compactPhysicalPartition(partitionIndex, true, false, Long.MAX_VALUE) == COMPACTION_NONE) {
                 final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 throw CairoException.critical(0)
                         .put("cannot compact composite partition ahead of parquet conversion [table=").put(tableToken.getTableName())
@@ -8330,6 +8344,136 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+    }
+
+    /**
+     * MOVE-TAIL (PARTITION_COMPACTION.md Sec.5, ported to this branch's classic-split machinery instead of
+     * the reference's hardlink/partitionTop scheme - see PARTITION_COMPACTION_state.md). Leaves the clean
+     * front's directory completely untouched and copies only the tail pieces into a brand new sibling
+     * {@code attachedPartitions} entry. Declines (returns {@link #COMPACTION_NONE}) when there is nothing
+     * useful to move: fewer than two pieces, the first piece does not start at row 0 (JOIN already ran, so
+     * a still-nonzero first offset means the whole partition was relocated wholesale and there is no clean
+     * front to preserve - the reference's own "first piece does not start at row 0 -> REWRITE" rule), no
+     * live tail rows, or the front is not a big enough share of the partition to be worth a two-way split.
+     * <p>
+     * Unlike REWRITE, the front's {@code E} is deliberately left unchanged - its remaining dead space (the
+     * old tail pieces' abandoned bytes, still counted in {@code E}) is reclaimed later by the front's own
+     * future REWRITE, not by this method. See PARTITION_COMPACTION_state.md for why MAKE-PLAIN/TRIM-FILES
+     * (the reference's steps that shrink the front in place) are not implemented in this pass.
+     *
+     * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}
+     */
+    private int moveTailToFreshPartition(int partitionIndex, boolean unlimited) {
+        final PartitionGeometry geometry = getGeometry();
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        if (pieceCount < 2 || geometry.getPieceRowOffset(partitionIndex, 0) != 0) {
+            return COMPACTION_NONE;
+        }
+        final long prefixRows = geometry.getPieceRowCount(partitionIndex, 0);
+        long tailRows = 0;
+        for (int p = 1; p < pieceCount; p++) {
+            tailRows += geometry.getPieceRowCount(partitionIndex, p);
+        }
+        if (tailRows == 0) {
+            return COMPACTION_NONE;
+        }
+        final long liveRows = prefixRows + tailRows;
+        if (prefixRows * 100 < liveRows * (long) configuration.getPartitionCompactionPrefixMinPercent()) {
+            return COMPACTION_NONE;
+        }
+        if (!unlimited && tailRows > configuration.getPartitionCompactionMaxRowsPerCommit()) {
+            LOG.info().$("moving a compaction tail over the per-commit row budget, nothing else has run" +
+                            " this pass [table=").$(tableToken)
+                    .$(", rows=").$(tailRows)
+                    .$(", budget=").$(configuration.getPartitionCompactionMaxRowsPerCommit())
+                    .I$();
+        }
+
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long e = geometry.getE(partitionIndex);
+        // The tail's own floor timestamp: the first tail piece's tsLo. A partition's pieces never span
+        // more than its own attachedPartitions entry (this branch's model, unlike the reference's
+        // hardlink-split folders), and this timestamp sits strictly between this entry's own dirTs and
+        // the next attachedPartitions entry's floor by construction, so it cannot collide with an
+        // existing _txn record timestamp.
+        final long tailPartitionTs = geometry.getPieceTimestampLo(partitionIndex, 1);
+        assert tailPartitionTs > partitionTs;
+
+        LOG.info().$("moving compaction tail to a fresh partition [table=").$(tableToken)
+                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
+                .$(", tailRows=").$(tailRows)
+                .$(", prefixRows=").$(prefixRows)
+                .I$();
+
+        final long newNameTxn = txWriter.getTxn();
+        final FrameFactory frameFactory = engine.getFrameFactory();
+        Frame targetFrame = null;
+        long written = 0;
+        try {
+            other.trimTo(pathSize);
+            setPathForNativePartition(other, timestampType, partitionBy, tailPartitionTs, newNameTxn);
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            targetFrame = frameFactory.openRW(other, tailPartitionTs, metadata, columnVersionWriter, 0);
+
+            path.trimTo(pathSize);
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
+            try (Frame sourceFrame = frameFactory.openRO(path, partitionTs, metadata, columnVersionWriter, e)) {
+                for (int p = 1; p < pieceCount; p++) {
+                    final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+                    if (rowCount == 0) {
+                        continue;
+                    }
+                    final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                    addPhysicallyWrittenRows(rowCount);
+                    compactionWrittenRows += rowCount;
+                    written += rowCount;
+                }
+            }
+        } finally {
+            Misc.free(targetFrame);
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // Front keeps its own nameTxn and E unchanged; only its live-row total and geometry (piece 0
+        // only, unmoved) change.
+        txWriter.updatePartitionSizeByTimestamp(partitionTs, prefixRows);
+        geometry.beginUpdate(partitionIndex);
+        geometry.addPiece(
+                geometry.getPieceTimestampLo(partitionIndex, 0),
+                geometry.getPieceTimestampHi(partitionIndex, 0),
+                0,
+                prefixRows
+        );
+        geometry.commitUpdate(partitionIndex, e);
+        // E must not move: assert what commitUpdate's own max() already enforces, defensively.
+        assert geometry.getE(partitionIndex) == e;
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                configuration.getMicrosecondClock().getTicks(),
+                configuration.getCommitMode()
+        );
+        txWriter.setPartitionGeometryRef(partitionTs, geometryRef);
+
+        txWriter.insertPartition(partitionIndex + 1, tailPartitionTs, written, newNameTxn);
+
+        try {
+            if (sealPostingIndexForPartition(tailPartitionTs, false)) {
+                restorePostingIndexersToLastPartition();
+            }
+        } catch (Throwable th) {
+            LOG.critical().$("compaction tail move succeeded but posting-index reseal failed `").$(th).$('`').$();
+            distressed = true;
+            throw th;
+        }
+
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        commitTxWriterAndPublishPendingPostingSealPurges();
+        return COMPACTION_MOVED_TAIL;
     }
 
     private Row newRowO3(long timestamp) {
@@ -13491,12 +13635,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         final int partitionIndex = partitionCompactionPolicy.getSelectedPartitionIndex();
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final int reason = partitionCompactionPolicy.getSelectedReason();
         // The piece-count rule is the one case allowed over the row budget: the alternative is a
         // geometry file that grows without end.
-        final boolean unlimited = partitionCompactionPolicy.getSelectedReason() == PartitionCompactionPolicy.REASON_PIECE_COUNT;
+        final boolean unlimited = reason == PartitionCompactionPolicy.REASON_PIECE_COUNT;
+        // An idle partition (the age rule) will not be written to again, so there is no future write to
+        // spare a clean front for - MOVE-TAIL's whole point. Every other rule goes through it first.
+        final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
-        switch (compactPhysicalPartition(partitionIndex, unlimited, deadline)) {
-            case COMPACTION_REWRITTEN ->
+        switch (compactPhysicalPartition(partitionIndex, unlimited, allowMoveTail, deadline)) {
+            case COMPACTION_REWRITTEN, COMPACTION_MOVED_TAIL ->
                 // Cooling off matters only after a copy. A fold cannot repeat - the pieces it merged are
                 // gone - so suppressing the partition after one would only delay the copy that follows it.
                     partitionCompactionPolicy.onCompacted(partitionTs, wallClockMicros);
