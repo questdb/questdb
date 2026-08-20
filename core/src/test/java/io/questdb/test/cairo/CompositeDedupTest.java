@@ -47,20 +47,19 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. Single-cell composite O3 dispatch"
-            + " (measured: composite=true, multiCell=false, last=true, srcOooLo=srcOooHi=0)."
-            + " EIGHT suspects now eliminated BY MEASUREMENT -- do not re-check any of them:"
-            + " identical-check bounds; phantom-dir removal; openROFromMemoryColumns; partition nameTxn;"
-            + " the open-column job's path builds; the identical-check's column source; 'the O3 path is"
-            + " not reached' (it IS); and passing the true `last` for dedup commits -- that one HANGS"
-            + " WAL apply, because O3PartitionJob reads tableWriter.columns when last=true and a routed"
-            + " composite table does not maintain them. dispatchCompositeCellRange's unconditional"
-            + " last=false is load-bearing."
-            + " Everything on the dispatch side is cell-correct: srcDataMax via"
-            + " findAttachedPartitionRawIndexBy(ts,cellKey), o3Columns with original O3 indices,"
-            + " cell-aware paths. SYMPTOM unchanged: cell E0.1 files sized 8/4/8 with uninitialised"
-            + " content; ts correct, exch and px not. NEXT: instrument O3CopyJob for THIS shape"
-            + " (srcDataMax>=1, last=false, dedup) and find which column tasks actually run.")
+    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. NINE suspects eliminated by"
+            + " measurement -- do not re-check: identical-check bounds; phantom-dir removal;"
+            + " openROFromMemoryColumns; partition nameTxn; the open-column job's path builds; the"
+            + " identical-check's column source; 'the O3 path is not reached' (it IS: composite=true,"
+            + " multiCell=false); passing the true `last` (HANGS WAL apply -- O3PartitionJob reads"
+            + " tableWriter.columns when last=true and composite does not maintain them); and now"
+            + " COLUMN DISPATCH -- instrumented O3OpenColumnJob and ALL THREE columns receive tasks in"
+            + " every phase (ts/exch/px, mode=3 then mode=4, mergeType=3, mergeRowCount=1). So no column"
+            + " is skipped: the copy RUNS for exch and px and writes the wrong bytes."
+            + " NEXT: the copy's SOURCE addresses for non-key columns under dedup. ts is copied from"
+            + " sortedTimestampsAddr and is correct; exch/px come from the o3 column addresses via the"
+            + " dedup merge index -- instrument those addresses in O3CopyJob for mergeType=3."
+            + " SYMPTOM: cell E0.1 files sized 8/4/8 with uninitialised content.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
