@@ -804,12 +804,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * increments: a later row-bearing deferred frame whose own rows have become
      * durable would otherwise jump the watermark straight over it.
      * <p>
-     * The row-bearing case needs no such marker. Those frames carry nothing but
-     * their own rows, so once the rows are committed a later ack may cover them
-     * freely. A rowless deferred frame is the opposite: it carries only symbol
-     * dictionary state that LATER frames reference, and the client's
-     * store-and-forward ring trims on the cumulative ack. Its
-     * {@code publishDictionaryChunks} contract says so directly -- the chunks
+     * The row-bearing case needs no such marker, but not because those frames
+     * are self-contained -- in delta-dictionary mode they carry a delta section
+     * that later frames reference by id. It is safe because the client can
+     * re-derive that: it keeps a lifetime mirror of every delta it has sent and
+     * replays the whole dictionary as a catch-up before any post-reconnect
+     * traffic, so trimming such a frame orphans nothing.
+     * <p>
+     * A rowless deferred frame is the case with no such re-derivation. The
+     * full-dictionary chunks of {@code publishDictionaryChunks} carry symbol
+     * state that the data frames after them reference, and that mode
+     * deliberately sends no catch-up. Its own contract says so -- the chunks
      * "cannot be trimmed away ahead of the data frames that depend on them".
      */
     public void markRowlessDeferredSequence(long seq) {
@@ -1440,14 +1445,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             this.highestProcessedSequence = Math.max(this.highestProcessedSequence, firstUnresolvedSequence - 1);
             return;
         }
-        // A rowless deferred frame carries symbol-dictionary state that later
-        // frames reference, and a cumulative ack past it lets the client trim it
-        // away from them. Withholding its own ack cannot express that, because
-        // the watermark is assigned, not incremented -- so hold every sequence
-        // at or beyond it until the group-closing commitAll clears the marker.
-        if (firstRowlessDeferredSequence != -1 && highestProcessedSequence >= firstRowlessDeferredSequence) {
-            return;
-        }
         // LAST-RESORT CONTAINMENT for the deferred-commit ack hole (#7144): while
         // FLAG_DEFER_COMMIT rows sit uncommitted in WAL writers, a cumulative OK
         // ack covering their frames would let the client trim slots the server
@@ -1463,6 +1460,23 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     .$(highestProcessedSequence)
                     .$(", current=").$(this.highestProcessedSequence)
                     .$(']').$();
+            return;
+        }
+        // A rowless deferred frame carries symbol-dictionary state that later
+        // frames reference, and a cumulative ack past it lets the client trim it
+        // away from them. Withholding its own ack cannot express that, because
+        // the watermark is assigned, not incremented.
+        //
+        // Stop just short of it rather than refusing outright. Everything BEFORE
+        // a rowless frame precedes it on the wire, so nothing there can depend on
+        // it, and reaching this line means the uncommitted-rows clamp above
+        // already found nothing uncommitted -- so those frames' rows are durable
+        // and covering them is exactly what the ack promises. Refusing the whole
+        // advance would leave them in the client's replay queue to be re-sent and
+        // duplicated, which is the very thing this change exists to stop.
+        if (firstRowlessDeferredSequence != -1 && highestProcessedSequence >= firstRowlessDeferredSequence) {
+            this.highestProcessedSequence =
+                    Math.max(this.highestProcessedSequence, firstRowlessDeferredSequence - 1);
             return;
         }
         this.highestProcessedSequence = highestProcessedSequence;

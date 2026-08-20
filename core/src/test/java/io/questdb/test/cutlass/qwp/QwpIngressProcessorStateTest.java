@@ -470,10 +470,17 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue("premise: frame 2 is ack-coverable",
                         driveDeferredFrame(state, "defer_jump", 1));
 
-                // ...but covering it would also cover frame 1.
+                // ...but covering it would also cover frame 1, so the ack stops
+                // just short of the rowless frame instead.
                 state.setHighestProcessedSequence(2);
                 Assert.assertEquals("an ack must not jump the withheld rowless frame",
-                        -1, state.getHighestProcessedSequence());
+                        0, state.getHighestProcessedSequence());
+
+                // Everything before the rowless frame is still covered: those
+                // frames precede it, so nothing there can depend on it, and
+                // refusing them would leave durable rows to be replayed.
+                Assert.assertEquals("frames before the rowless one must still be covered",
+                        0, state.getHighestProcessedSequence());
 
                 // The group-closing commit covers both, so the block lifts.
                 state.commit();
