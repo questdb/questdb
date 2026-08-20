@@ -47,26 +47,22 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. TEN suspects eliminated by"
-            + " measurement -- do not re-check: identical-check bounds; phantom-dir removal;"
-            + " openROFromMemoryColumns; partition nameTxn; the open-column job's path builds; the"
-            + " identical-check's column source; 'the O3 path is not reached' (it IS: composite=true,"
-            + " multiCell=false); passing the true `last` (HANGS WAL apply -- O3PartitionJob reads"
-            + " tableWriter.columns when last=true and composite does not maintain them); and now"
-            + " COLUMN DISPATCH -- instrumented O3OpenColumnJob and ALL THREE columns receive tasks in"
-            + " every phase (ts/exch/px, mode=3 then mode=4, mergeType=3, mergeRowCount=1). So no column"
-            + " is skipped: the copy RUNS for exch and px and writes the wrong bytes."
-            + " NEXT: the copy's SOURCE addresses for non-key columns under dedup. ts is copied from"
-            + " sortedTimestampsAddr and is correct; exch/px come from the o3 column addresses via the"
-            + " dedup merge index -- instrument those addresses in O3CopyJob for mergeType=3."
-            + " SYMPTOM: cell E0.1 files sized 8/4/8 with uninitialised content."
-            + " AND: the defect IS dedup-specific. CompositeSquashTest#testSameTimestampSecondCommitWithoutDedup"
-            + " drives the IDENTICAL physical shape -- second row at the same timestamp, last partition,"
-            + " one cell -- with NO dedup, and PASSES. So the composite same-timestamp merge itself is"
-            + " sound; only the dedup variant corrupts. With ts as the only key the additional-keys path"
-            + " is unused (columnCount=0), so the suspect narrows to the merge index that"
-            + " mergeDedupTimestampWithLongIndexIntKeys produces and how the copy applies it to the"
-            + " non-key columns.")
+    @Ignore("ROOT CAUSE FOUND 2026-08-20 -- the dedup MERGE INDEX references a row that does not exist."
+            + " Instrumented the index right after mergeDedupTimestampWithLongIndexIntKeys returns:"
+            + "   DBGIDX [dedupRows=1, mergeRowCount=2, mergeDataLo=0, mergeDataHi=0, mergeOOOLo=0,"
+            + "           mergeOOOHi=0, e0ts=1672534800000000, e0row=1]"
+            + " e0ts is CORRECT (2023-01-01T01:00). e0row=1 points at DATA row 1, but the partition"
+            + " holds ONE row, index 0 (mergeDataLo=mergeDataHi=0). The copy therefore reads row 1 --"
+            + " off the end -- which is why the non-key columns come back uninitialised while ts is"
+            + " right: ts is taken from the index's own ts field, not from the referenced row."
+            + " The expected entry is the O3 row (the newer value), which in this codebase is encoded"
+            + " with the high bit set, not as a bare 1. So the index is being built with the wrong"
+            + " row-reference convention for this shape -- fix that, not the copy."
+            + " TEN other suspects already eliminated by measurement: identical-check bounds;"
+            + " phantom-dir removal; openROFromMemoryColumns; partition nameTxn; open-column path"
+            + " builds; identical-check column source; 'O3 path not reached'; the `last` flag (HANGS if"
+            + " changed); column dispatch (all columns DO get tasks); and a general composite"
+            + " same-timestamp merge bug (the no-dedup control passes).")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
