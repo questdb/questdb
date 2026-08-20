@@ -350,9 +350,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 queue.get(seq).run();
                             } finally {
                                 subSeq.done(seq);
-                            }
-                            if (dispatcher != null) {
-                                dispatcher.signalProgress(stolenProgress);
+                                if (dispatcher != null) {
+                                    dispatcher.signalProgress(stolenProgress);
+                                }
                             }
                         } else {
                             Os.pause();
@@ -432,9 +432,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         queue.get(seq).run();
                     } finally {
                         subSeq.done(seq);
-                    }
-                    if (dispatcher != null) {
-                        dispatcher.signalProgress(stolenProgress);
+                        if (dispatcher != null) {
+                            dispatcher.signalProgress(stolenProgress);
+                        }
                     }
                 } else {
                     Os.pause();

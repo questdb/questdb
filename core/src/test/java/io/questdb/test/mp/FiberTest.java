@@ -24,6 +24,7 @@
 
 package io.questdb.test.mp;
 
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
@@ -34,6 +35,7 @@ import io.questdb.mp.continuation.FiberWalWaitQueue;
 import io.questdb.mp.continuation.FiberWalWaitRegistration;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -86,6 +88,40 @@ public class FiberTest {
     public void testCurrentUnsetOutsideMount() {
         Assert.assertFalse(Fiber.isMounted());
         Assert.assertNull(Fiber.current());
+    }
+
+    @Test
+    public void testCancellationSourceFollowsFiberAcrossCarriers() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final CancellationSourceRecordingTask task = new CancellationSourceRecordingTask(waitQueue);
+            final AtomicReference<Throwable> resumeFailure = new AtomicReference<>();
+            final AtomicReference<CancellationBinding.Source> carrierSourceAfterDrain = new AtomicReference<>();
+            final CancellationBinding.Source carrierSource = new RecordingCancellationSource();
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertFalse(task.isDone());
+
+            waitQueue.fire(1, false);
+            final Thread resumeThread = new Thread(() -> {
+                try {
+                    SuspensionScope.enterCancellationSource(carrierSource);
+                    Assert.assertEquals(1, runtime.drain(1));
+                    carrierSourceAfterDrain.set(SuspensionScope.getCancellationSource());
+                } catch (Throwable th) {
+                    resumeFailure.set(th);
+                }
+            });
+            resumeThread.start();
+            join(resumeThread);
+            Assert.assertNull(resumeFailure.get());
+            Assert.assertTrue(task.isDone());
+            Assert.assertSame(task.installedSource, task.resumedSource);
+            Assert.assertSame(carrierSource, carrierSourceAfterDrain.get());
+            close(runtime);
+        });
     }
 
     @Test
@@ -341,6 +377,23 @@ public class FiberTest {
         }
     }
 
+    private static class CancellationSourceRecordingTask extends WaitingTask {
+        private final CancellationBinding.Source installedSource = new RecordingCancellationSource();
+        private volatile CancellationBinding.Source resumedSource;
+
+        private CancellationSourceRecordingTask(FiberWalWaitQueue waitQueue) {
+            super(waitQueue);
+        }
+
+        @Override
+        protected boolean runStep() {
+            SuspensionScope.enterCancellationSource(installedSource);
+            awaitWal();
+            resumedSource = SuspensionScope.getCancellationSource();
+            return true;
+        }
+    }
+
     private static class CurrentRecordingTask extends FiberTask {
         private Fiber observedFiber;
         private boolean wasMounted;
@@ -374,6 +427,17 @@ public class FiberTest {
         protected boolean runStep() {
             hasRun = true;
             return true;
+        }
+    }
+
+    private static class RecordingCancellationSource implements CancellationBinding.Source {
+        @Override
+        public void copyCancelledFlagTo(CancellationBinding target) {
+            target.clear();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
         }
     }
 

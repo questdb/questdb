@@ -155,7 +155,6 @@ public class LatestByTask implements QuietCloseable, Mutable {
             }
             return true;
         } catch (Throwable th) {
-            // must precede cancel(): the owner reads this only after the breaker trips
             scanError.setError(th);
             circuitBreaker.cancel();
             throw th;
