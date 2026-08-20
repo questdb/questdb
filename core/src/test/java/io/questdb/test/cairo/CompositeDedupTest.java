@@ -47,7 +47,7 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. NINE suspects eliminated by"
+    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. TEN suspects eliminated by"
             + " measurement -- do not re-check: identical-check bounds; phantom-dir removal;"
             + " openROFromMemoryColumns; partition nameTxn; the open-column job's path builds; the"
             + " identical-check's column source; 'the O3 path is not reached' (it IS: composite=true,"
@@ -59,7 +59,14 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
             + " NEXT: the copy's SOURCE addresses for non-key columns under dedup. ts is copied from"
             + " sortedTimestampsAddr and is correct; exch/px come from the o3 column addresses via the"
             + " dedup merge index -- instrument those addresses in O3CopyJob for mergeType=3."
-            + " SYMPTOM: cell E0.1 files sized 8/4/8 with uninitialised content.")
+            + " SYMPTOM: cell E0.1 files sized 8/4/8 with uninitialised content."
+            + " AND: the defect IS dedup-specific. CompositeSquashTest#testSameTimestampSecondCommitWithoutDedup"
+            + " drives the IDENTICAL physical shape -- second row at the same timestamp, last partition,"
+            + " one cell -- with NO dedup, and PASSES. So the composite same-timestamp merge itself is"
+            + " sound; only the dedup variant corrupts. With ts as the only key the additional-keys path"
+            + " is unused (columnCount=0), so the suspect narrows to the merge index that"
+            + " mergeDedupTimestampWithLongIndexIntKeys produces and how the copy applies it to the"
+            + " non-key columns.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {

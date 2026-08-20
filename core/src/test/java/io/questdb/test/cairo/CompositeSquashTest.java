@@ -365,6 +365,29 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * IS THE DEDUP FAILURE ACTUALLY DEDUP-SPECIFIC? This is the same physical shape as the failing
+     * dedup case -- a second row landing at the SAME timestamp as the current max, on the last
+     * partition, in a single cell -- but with NO dedup configured, so it needs no gate lifted. Without
+     * dedup both rows must simply survive.
+     *
+     * <p>If this fails too, the defect is a general composite same-timestamp merge bug and dedup is
+     * merely how it was noticed. If it passes, the defect really is in the dedup path.
+     */
+    @Test(timeout = 60_000)
+    public void testSameTimestampSecondCommitWithoutDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',99.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            assertTwinEqual("");
+        });
+    }
+
+    /**
      * PREMISE CHECK for the backward-scan defect: is the trigger really "a split fragment", or is it
      * "cells whose timestamps interleave"? No fragment here at all -- two cells, each holding rows on
      * BOTH sides of the other's rows. A backward walk over partition entries can only produce ts-DESC
