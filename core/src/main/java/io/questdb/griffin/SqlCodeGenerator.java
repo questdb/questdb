@@ -724,6 +724,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
+        // `prefixes` holds the within(...) filter extracted for one query, and the extraction runs only
+        // while the within-latest-by optimisation is enabled. Clearing here keeps that filter out of the
+        // factories a later compilation generates.
+        prefixes.clear();
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();

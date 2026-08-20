@@ -373,6 +373,55 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByIndexedSubQueryReorderedProjectionKeepsColumnOrder() throws Exception {
+        // The relocation to the direct-table indexed fast path drops the projection layer that sits
+        // between LATEST ON and the table read. That layer is free to list the table's columns in an
+        // order of its own, so dropping it must not let the table's storage order reach the result. The
+        // dataset puts key order (CC, BB) out of step with timestamp order, and the storage order
+        // (sym, v, ts) out of step with every projection below.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table reord (sym symbol index, v double, ts #TIMESTAMP) timestamp(ts) partition by DAY",
+                    timestampType.getTypeName()
+            );
+            execute("insert into reord values ('CC',10.0,'1970-01-01T00:00:00.000000Z'),"
+                    + "('BB',20.0,'1970-01-02T00:00:00.000000Z'),"
+                    + "('BB',30.0,'1970-01-03T00:00:00.000000Z'),"
+                    + "('CC',40.0,'1970-01-04T00:00:00.000000Z')");
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // (v, sym, ts) in, (v, sym, ts) out - not the table's (sym, v, ts)
+            assertQuery("select * from (select v, sym, ts from reord) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("v\tsym\tts\n"
+                            + "30.0\tBB\t1970-01-03T00:00:00.000000" + suffix + "\n"
+                            + "40.0\tCC\t1970-01-04T00:00:00.000000" + suffix + "\n");
+            // an outer projection in a third order, over the reordered sub-query
+            assertQuery("select ts, sym, v from (select v, sym, ts from reord) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("ts\tsym\tv\n"
+                            + "1970-01-03T00:00:00.000000" + suffix + "\tBB\t30.0\n"
+                            + "1970-01-04T00:00:00.000000" + suffix + "\tCC\t40.0\n");
+            // the sub-query's WHERE moves up with the table read; the reordering still holds
+            assertQuery("select * from (select v, sym, ts from reord where v > 15.0) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByDeferredListValuesFiltered")
+                    .returns("v\tsym\tts\n"
+                            + "30.0\tBB\t1970-01-03T00:00:00.000000" + suffix + "\n"
+                            + "40.0\tCC\t1970-01-04T00:00:00.000000" + suffix + "\n");
+            // same rows, same column order, same types as the equivalent same-level query
+            assertSqlCursors(
+                    "select v, sym, ts from reord latest on ts partition by sym order by sym",
+                    "select * from (select v, sym, ts from reord) latest on ts partition by sym order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testLatestByLightSubQueryOrderByTimestampNotElided() throws Exception {
         // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
         // which emits one row per partition key in map order, NOT in designated-timestamp order.

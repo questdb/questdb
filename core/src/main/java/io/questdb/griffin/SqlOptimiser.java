@@ -2599,7 +2599,10 @@ public class SqlOptimiser implements Mutable {
                     return false;
                 }
             }
-            // (4) each projection layer exposes exactly the table's columns, each a plain reference
+            // (4) each projection layer exposes exactly the table's columns, each a plain reference.
+            // A layer may list those columns in any order: the code generator builds the factory's
+            // metadata from the top-down columns of the model that survives (buildQueryMetadata), so
+            // the projected order reaches the result, not the table's storage order.
             final int columnCount = metadata.getColumnCount();
             for (IQueryModel m = nested; m != null && m != table; m = m.getNestedModel()) {
                 final ObjList<QueryColumn> cols = m.getBottomUpColumns();
