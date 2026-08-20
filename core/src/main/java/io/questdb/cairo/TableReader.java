@@ -124,6 +124,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txTruncateVersion;
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
+    private long txnScoreboardSeqTxn = TxnScoreboard.UNKNOWN_SEQ_TXN;
 
     public TableReader(
             int id,
@@ -924,8 +925,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean acquireTxn() {
         if (!txnAcquired) {
             try {
-                if (txnScoreboard.acquireTxn(id, txn)) {
+                final long seqTxn = txFile.getSeqTxn();
+                if (txnScoreboard.acquireTxn(id, txn, seqTxn)) {
                     txnAcquired = true;
+                    txnScoreboardSeqTxn = seqTxn;
                 } else {
                     return false;
                 }
@@ -1916,6 +1919,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (txnAcquired) {
             long readerCount = txnScoreboard.releaseTxn(id, txn);
             txnAcquired = false;
+            txnScoreboardSeqTxn = TxnScoreboard.UNKNOWN_SEQ_TXN;
             return readerCount == 0;
         }
         return false;
@@ -1939,12 +1943,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadAtTxn(TableReader srcReader, boolean reshuffle) {
         releaseTxn();
         final long txn = srcReader.getTxn();
-        if (!txnScoreboard.incrementTxn(id, txn)) {
+        final long seqTxn = srcReader.txnScoreboardSeqTxn;
+        if (!txnScoreboard.incrementTxn(id, txn, seqTxn)) {
             throw CairoException.critical(0).put("could not acquire txn for copy, source reader has to be active [table=")
                     .put(tableToken.getTableName()).put(", txn=").put(txn).put(']');
         }
         this.txn = txn;
         txnAcquired = true;
+        txnScoreboardSeqTxn = seqTxn;
         txFile.loadAllFrom(srcReader.txFile);
         hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
         columnVersionReader.readFrom(srcReader.columnVersionReader);
