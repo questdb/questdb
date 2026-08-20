@@ -307,6 +307,7 @@ public final class PGConnectionFiberTask extends FiberTask {
     @Override
     protected boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
+        SuspensionScope.enterCancellationSource(context.getCircuitBreaker());
         final int eventAction = takeEvent();
         final int operation = eventAction == EVENT_READ ? IOOperation.READ : IOOperation.WRITE;
         disconnectReason = NO_DISCONNECT;

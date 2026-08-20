@@ -370,14 +370,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public NetworkSqlExecutionCircuitBreaker getOrCreateCircuitBreaker(CairoEngine engine) {
-        if (SuspensionScope.isFiberMode()) {
-            SuspensionScope.enterTimerShards(engine.getTimerShards());
-        }
         if (httpCircuitBreaker == null) {
             httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     engine,
                     engine.getConfiguration().getCircuitBreakerConfiguration()
             );
+        }
+        if (SuspensionScope.isFiberMode()) {
+            SuspensionScope.enterTimerShards(engine.getTimerShards());
+            SuspensionScope.enterCancellationSource(httpCircuitBreaker);
         }
         return httpCircuitBreaker;
     }

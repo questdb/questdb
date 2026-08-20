@@ -237,4 +237,17 @@ public final class CancellationBinding {
         Unsafe.storeFence();
         version++;
     }
+
+    /**
+     * The cancellation face of a query circuit breaker, visible to the fiber runtime without
+     * a cairo dependency. Installed per connection fiber via
+     * {@link SuspensionScope#enterCancellationSource}; waits built outside a reduce scope
+     * resolve the current cancelled flag from it at wait-build time.
+     */
+    public interface Source {
+
+        void copyCancelledFlagTo(CancellationBinding target);
+
+        void statefulThrowExceptionIfTrippedNoThrottle();
+    }
 }

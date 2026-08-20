@@ -3477,6 +3477,15 @@ public class CairoEngine implements Closeable, WriterSource {
         frameFactory = new FrameFactory(configuration);
     }
 
+    /**
+     * For subclass signalClose overrides that wake parked work before delegating to super:
+     * woken code classifies its abort as a benign shutdown only if {@link #isClosing()}
+     * already reads true, and super's own publish would come too late for it.
+     */
+    protected final void publishClosing() {
+        closing = true;
+    }
+
     @TestOnly
     public void resetNameRegistryMemory() {
         tableNameRegistry.resetMemory();

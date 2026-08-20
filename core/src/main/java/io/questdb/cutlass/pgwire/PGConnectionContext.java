@@ -386,6 +386,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
      * pooled lifecycle: recycled together, reopened by the dispatch job when a new
      * connection incarnation finds its gate terminal.
      */
+    public NetworkSqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
     public PGConnectionFiberTask getFiberTask(IODispatcher<PGConnectionContext> dispatcher, Metrics metrics) {
         if (fiberTask == null) {
             fiberTask = new PGConnectionFiberTask(this, dispatcher, metrics, engine.getTimerShards());

@@ -29,7 +29,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
+public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, CancellationBinding.Source {
 
     int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {

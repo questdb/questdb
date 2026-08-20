@@ -59,6 +59,10 @@ public final class SuspensionScope {
                 : CancellationBinding.NO_GENERATION;
     }
 
+    public static void enterCancellationSource(@Nullable CancellationBinding.Source cancellationSource) {
+        SCOPE.get().cancellationSource = cancellationSource;
+    }
+
     public static void enterRoleSwitchReadLock(CarrierScope scope, Lock lock) {
         final RoleSwitchReadLockState state = getRoleSwitchReadLockState(scope);
         final boolean isFirstLock = !state.hasAny();
@@ -118,6 +122,14 @@ public final class SuspensionScope {
 
     public static long getCancellationSignalGeneration(CarrierScope scope) {
         return scope.cancellationSignalGeneration;
+    }
+
+    public static @Nullable CancellationBinding.Source getCancellationSource() {
+        return SCOPE.get().cancellationSource;
+    }
+
+    public static @Nullable CancellationBinding.Source getCancellationSource(CarrierScope scope) {
+        return scope.cancellationSource;
     }
 
     public static @Nullable Mode getMode() {
@@ -223,6 +235,7 @@ public final class SuspensionScope {
         final CancellationBinding cancellationBindingScratch = new CancellationBinding();
         FiberCancellationSignal cancellationSignal;
         long cancellationSignalGeneration = CancellationBinding.NO_GENERATION;
+        CancellationBinding.Source cancellationSource;
         Fiber fiber;
         Mode mode;
         final RoleSwitchReadLockState roleSwitchReadLocks = new RoleSwitchReadLockState();
