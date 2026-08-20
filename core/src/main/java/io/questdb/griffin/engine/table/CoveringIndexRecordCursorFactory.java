@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
@@ -89,6 +90,7 @@ import java.util.Arrays;
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
+    private final CompositeAwarePartitionFrameCursor compositeFrameCursor = new CompositeAwarePartitionFrameCursor();
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
@@ -189,6 +191,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public void close() {
         Misc.free(dfcFactory);
+        Misc.free(compositeFrameCursor);
         Misc.free(latestByFilter);
         Misc.free(symbolFunction);
         Misc.freeObjList(keyValueFuncs);
@@ -200,10 +203,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                latestBy
         );
         try {
             if (multiKeyCursor != null) {
@@ -288,10 +294,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             throw CairoException.nonCritical().put("backward covering scan is not supported for multi-key index queries");
         }
         int configMaxRows = executionContext.getPageFrameMaxRows();
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                descending
         );
         try {
             TableReader reader = frameCursor.getTableReader();
@@ -2271,7 +2280,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     final long rowLo = frame.getRowLo();
                     final long rowHi = frame.getRowHi();
                     try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey), rowLo, rowHi - 1)) {
-                        if (rowLo == 0 && rowHi == tableReader.getPartitionRowCount(frame.getPartitionIndex())) {
+                        // rc.size() counts the key across the whole persisted index chain, up to the
+                        // reader's own dirty-vs-clean boundary -- it ignores the [rowLo, rowHi) bound
+                        // just passed to getCursor(). That is only safe when this frame's range IS the
+                        // whole (non-composite) partition: a composite partition's index chain can carry
+                        // postings for dead-space rows this frame's [rowLo, rowHi) does not cover, e.g. a
+                        // piece a MERGE has since relocated, so rc.size() would overcount even when this
+                        // frame happens to look like a full scan (rowLo == 0, rowHi == live row count).
+                        if (rowLo == 0 && rowHi == tableReader.getPartitionRowCount(frame.getPartitionIndex())
+                                && !tableReader.getTxFile().isPartitionComposite(frame.getPartitionIndex())) {
                             long count = rc.size();
                             if (count >= 0) {
                                 total += count;

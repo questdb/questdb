@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3CompositeMergeStrategy;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.PartitionGeometryFile;
@@ -70,11 +71,14 @@ import org.junit.Test;
  * below goes through {@link PartitionGeometry} at a partition index and a piece ordinal. The SCENARIOS
  * are the same; only the way the shape is read has changed.
  * <p>
- * One mechanism from the earlier implementation has no counterpart here at all: it distinguished a
+ * One mechanism from the earlier implementation has a different counterpart here: it distinguished a
  * merge-append, which relocated a piece to the tail of the shared files, from an IN-PLACE append at a
- * piece's own end. This tree writes everything at {@code E} and nothing anywhere else, so the tests that
- * turned on that distinction assert the invariant it protected - the files grow by exactly what the commit
- * wrote - rather than which arm ran.
+ * piece's own end. This tree writes everything at {@code E} and nothing anywhere else, so most of the
+ * tests that turned on that distinction instead assert the invariant it protected - the files grow by
+ * exactly what the commit wrote - rather than which arm ran. {@link O3CompositeMergeStrategy.ActionType#APPEND}
+ * reintroduces the in-place case directly: a batch landing above a KEPT piece that already owns the shared
+ * files' tail extends that piece's own {@code tsHi} and row count instead of founding a new one - see
+ * {@link #testAppendExtendsTheTailPieceAroundABelowFloorBatch()}.
  */
 public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
@@ -2004,6 +2008,82 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("ALTER TABLE x SQUASH PARTITIONS");
             drainWalQueue();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * The worked example {@code core/src/main/java/io/questdb/cairo/append-piece.md} designs
+     * {@link O3CompositeMergeStrategy.ActionType#APPEND} around: a partition holds one piece, 11:00-14:00,
+     * and one commit brings rows both BELOW its floor (09:00-10:00) and ABOVE its ceiling (15:00-16:00).
+     * <p>
+     * Without APPEND this is three pieces: a head piece, the untouched original, and a tail piece. With it,
+     * two - the existing piece is KEPT-eligible (it claims none of the batch itself) and already owns the
+     * shared files' tail, so the tail rows extend it in place instead of founding a piece next to it. The
+     * head rows still found their own piece; APPEND only ever concerns the tail.
+     * <p>
+     * The extended piece keeps its file row offset - its bytes never move - so the head piece, written
+     * AFTER it despite sorting BEFORE it by timestamp, ends up at the higher file offset: proof that write
+     * order and record order are different things here.
+     */
+    @Test
+    public void testAppendExtendsTheTailPieceAroundABelowFloorBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 10);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
+
+            final String middle = "SELECT x::INT i," +
+                    " timestamp_sequence('2020-02-03T11:00:00', 60*1000000L) ts FROM long_sequence(181)";
+            execute("CREATE TABLE x AS (" + middle + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            Assert.assertEquals("setup did not land as a single piece", 1, piecesOfDay("x"));
+            // Materialised once, so the oracle below reads back these exact rows rather than
+            // re-evaluating timestamp_sequence a second time - a stateful, row-order-dependent function
+            // that a second, differently-parallelised evaluation is not guaranteed to reproduce.
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            final String head = "SELECT x::INT + 100000 i," +
+                    " timestamp_sequence('2020-02-03T09:00:00', 60*1000000L) ts FROM long_sequence(61)";
+            final String tail = "SELECT x::INT + 200000 i," +
+                    " timestamp_sequence('2020-02-03T15:00:00', 60*1000000L) ts FROM long_sequence(61)";
+            execute("CREATE TABLE b AS (" + head + " UNION ALL " + tail + ")");
+
+            final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            execute("INSERT INTO x SELECT * FROM b");
+            drainWalQueue();
+            final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
+
+            Assert.assertEquals("exactly two pieces: the head and the extended original", 2, piecesOfDay("x"));
+            assertNoOverlappingPieces("x");
+            assertRowsInTimestampOrder("x");
+
+            final long middleLo = MicrosTimestampDriver.floor("2020-02-03T11:00:00.000000Z");
+            final long tailHi = MicrosTimestampDriver.floor("2020-02-03T16:00:00.000000Z");
+            final long headLo = MicrosTimestampDriver.floor("2020-02-03T09:00:00.000000Z");
+            final long headHi = MicrosTimestampDriver.floor("2020-02-03T10:00:00.000000Z");
+
+            // The extended piece: still rooted at file row 0 - its bytes never moved - now 242 rows
+            // (181 original + 61 tail) and its recorded top has grown to the tail's last row.
+            assertPieceRowCount("x", middleLo, 242);
+            assertPieceCoversRange("x", 242, middleLo, tailHi);
+            Assert.assertEquals("the extended piece kept its original file row offset",
+                    0L, pieceRowOffsetOfDay("x", 1));
+            // The head piece: founded fresh, and - because it is written AFTER the tail extension despite
+            // sorting BEFORE it by timestamp - it lands ABOVE the extended piece in file rows.
+            assertPieceCoversRange("x", 61, headLo, headHi);
+            Assert.assertEquals("the head piece landed above the extended piece in file rows",
+                    242L, pieceRowOffsetOfDay("x", 0));
+
+            // The win the design exists for: the commit wrote only the 122 rows it brought, not the 181
+            // rows of the piece it extended. A regression into a merge would jump this to 303.
+            Assert.assertEquals("physicallyWrittenRows must equal exactly the batch, proving an extension"
+                    + " rather than a rewrite; " + describePieces("x"), 122L, written);
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM b) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x ORDER BY ts", LOG);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x ORDER BY ts", LOG);
         });
     }
 

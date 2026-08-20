@@ -71,6 +71,7 @@ import io.questdb.tasks.O3PartitionTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.O3OpenColumnJob.*;
@@ -81,8 +82,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     // Bin cap for transaction clustering: the finest bin is a minute, widened when a partition's span
     // needs more bins than this.
-    private static final int O3_CLUSTER_MAX_BINS = 4096;
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    private static final int O3_CLUSTER_MAX_BINS = 4096;
     /**
      * Per-worker scratch for the composite plan, held the same way the parquet path holds its context: the
      * plan is recomputed for every partition a commit touches, and none of its lists outlive the call.
@@ -139,15 +140,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     <li>execute the action list, then publish one {@code _geometry} record and one {@code _txn}
      *     record.</li>
      * </ol>
-     * Steps 1 to 3 are here. Step 4 is not written yet: KEEP copies nothing by design - the piece's bytes
-     * stay and only its extent is carried forward - while MERGE and NEW_PIECE both write at the shared
-     * files' tail, and that executor is the next piece of work. Until it exists nothing produces a
-     * composite partition, so this method is unreachable, and it throws rather than silently doing
-     * something else if that ever stops being true.
+     * Steps 1 to 3 are here. Step 4, execution, is {@link #executeCompositePlan}: KEEP copies nothing by
+     * design - the piece's bytes stay and only its extent is carried forward - while MERGE, NEW_PIECE and
+     * APPEND all write at the shared files' tail.
      *
-     * @return the number of actions planned
+     * @return {@code plan}, for a fluent call at the use site
      */
-    public static int processCompositePartition(
+    public static O3CompositeMergeStrategy.Plan processCompositePartition(
             Path pathToTable,
             int partitionIndex,
             long srcOooLo,
@@ -158,7 +157,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             @Nullable WalTxnClusterer clusterer,
             LongList boundsOut,
             LongList cutsOut,
-            ObjList<O3CompositeMergeStrategy.Action> actionsOut,
+            O3CompositeMergeStrategy.Plan plan,
             long replaceRangeTsLo,
             long replaceRangeTsHi
     ) {
@@ -284,14 +283,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ff.close(tsFd);
         }
 
-        // 3. Every O3 row assigned to a piece or to a gap between pieces.
+        // 3. Every O3 row assigned to a piece or to a gap between pieces. APPEND is disabled under
+        // replace-range mode by passing an unreachable physicalRows: the two cuts above already guarantee
+        // every piece sits fully inside or fully outside the declared range, and a KEEP downgrades to DROP
+        // once it does - a would-be KEEP that instead became APPEND would carry the piece's rows straight
+        // through that downgrade, keeping exactly what the range means to delete.
+        final long physicalRows = tableWriter.isCommitReplaceMode() ? -1 : e;
         return O3CompositeMergeStrategy.computeActions(
                 boundsOut,
                 sortedTimestampsAddr,
                 srcOooLo,
                 srcOooHi,
                 minPieceRows,
-                actionsOut
+                physicalRows,
+                plan
         );
     }
 
@@ -345,7 +350,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // absence from an updated table-wide maxTimestamp the way section 21 already made it learn a
         // dropped piece's absence from minTimestamp. Declining here leaves the known gap where it already
         // was rather than trading it for a wrong maxTimestamp assert failure.
-        int actionCount = processCompositePartition(
+        O3CompositeMergeStrategy.Plan plan = processCompositePartition(
                 pathToTable,
                 partitionIndex,
                 srcOooLo,
@@ -356,7 +361,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ctx.clusterer,
                 ctx.bounds,
                 ctx.cuts,
-                ctx.actions,
+                ctx.plan,
                 o3TimestampLo,
                 o3TimestampHi
         );
@@ -378,8 +383,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // reference and writes only the incoming rows, leaving the piece's old bytes as dead space the same
         // way a genuine DROP does.
         if (tableWriter.isCommitReplaceMode()) {
-            for (int i = 0; i < actionCount; i++) {
-                final O3CompositeMergeStrategy.Action action = ctx.actions.getQuick(i);
+            for (int i = 0; i < plan.actions.size(); i++) {
+                final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
                 if (action.type != O3CompositeMergeStrategy.ActionType.KEEP && action.type != O3CompositeMergeStrategy.ActionType.MERGE) {
                     continue;
                 }
@@ -400,7 +405,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // version on every commit that reaches an already-composite partition: assemble a fresh, ordinary
         // directory instead of one more piece, merging this commit's rows in as it goes, rather than let
         // the normal execute-then-publish path write real bytes for a plan that will not be published.
-        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, ctx.actions, actionCount)) {
+        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan.actions, plan.actions.size())) {
             assembleFreshPartitionVersion(
                     pathToTable,
                     partitionTimestamp,
@@ -411,8 +416,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     dedupColSinkAddr,
                     ctx.bounds,
-                    ctx.actions,
-                    actionCount,
+                    plan,
                     partitionUpdateSinkAddr,
                     oldPartitionSize,
                     o3TimestampLo
@@ -422,16 +426,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final long piecesBefore = ctx.bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
         final long eBefore = geometry.getE(partitionIndex);
-        int keepCount = 0, mergeCount = 0, newPieceCount = 0, dropCount = 0;
-        for (int i = 0; i < actionCount; i++) {
-            switch (ctx.actions.getQuick(i).type) {
+        int keepCount = 0, mergeCount = 0, newPieceCount = 0, appendCount = 0, dropCount = 0;
+        for (int i = 0; i < plan.actions.size(); i++) {
+            switch (plan.actions.getQuick(i).type) {
                 case KEEP -> keepCount++;
                 case MERGE -> mergeCount++;
                 case NEW_PIECE -> newPieceCount++;
+                case APPEND -> appendCount++;
                 case DROP -> dropCount++;
             }
         }
 
+        final int columnCount = tableWriter.getMetadata().getColumnCount();
+        final long[] columnTopAfter = new long[columnCount];
+        Arrays.fill(columnTopAfter, -1L);
+        // readFrom() clears ctx.transientVersions itself, so no separate reset is needed - see
+        // TransientColumnVersions and executeCompositePlan's own comment.
+        ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
         final long e = executeCompositePlan(
                 pathToTable,
                 partitionTimestamp,
@@ -443,9 +454,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter,
                 dedupColSinkAddr,
                 ctx.bounds,
-                ctx.actions,
-                actionCount,
-                ctx.pieces
+                plan,
+                ctx.pieces,
+                ctx.transientVersions,
+                columnTopAfter
         );
 
         // Does this partition END UP composite AT ALL? Pieces that TILE [0, physicalRows) with no holes are
@@ -513,6 +525,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 .$(", keep=").$(keepCount)
                 .$(", merge=").$(mergeCount)
                 .$(", newPieces=").$(newPieceCount)
+                .$(", append=").$(appendCount)
                 .$(", drop=").$(dropCount)
                 .$(", newRows=").$(liveRows)
                 .$(", newPhysicalRows=").$(e)
@@ -547,6 +560,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, geometryRef);
+        // Publishes columnTopAfter (see executeCompositePlan) through the sink TableWriter.updateO3ColumnTops
+        // applies from; -1 means no change.
+        for (int i = 0; i < columnCount; i++) {
+            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, columnTopAfter[i]);
+        }
     }
 
     /**
@@ -561,7 +579,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     carried into the new geometry. This is the action that pays for the whole design;</li>
      *     <li>{@code NEW_PIECE} appends the incoming rows as they are;</li>
      *     <li>{@code MERGE} appends the piece and the incoming rows interleaved, in timestamp order. The
-     *     piece's old bytes stay put and become dead space.</li>
+     *     piece's old bytes stay put and become dead space;</li>
+     *     <li>{@code APPEND} appends the incoming rows as they are, exactly like {@code NEW_PIECE}, but
+     *     records them as an EXTENSION of the last piece rather than a new one. It is written FIRST, before
+     *     the loop below runs in the plan's own (timestamp) order, because it needs the tail - a
+     *     {@code NEW_PIECE} emitted earlier in that order would otherwise take it first.</li>
      * </ul>
      * The source and the target are the SAME FILES, wrapped in two frames: one reading a region below
      * {@code E}, one writing at {@code E}. Reading one region while appending to another is exactly what
@@ -581,9 +603,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             long dedupColSinkAddr,
             LongList bounds,
-            ObjList<O3CompositeMergeStrategy.Action> actions,
-            int actionCount,
-            LongList piecesOut
+            O3CompositeMergeStrategy.Plan plan,
+            LongList piecesOut,
+            TransientColumnVersions transientVersions,
+            long[] columnTopAfter
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
@@ -598,12 +621,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcNameTxn
         );
 
+        final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
+        final int actionCount = actions.size();
         piecesOut.clear();
         long e = partitionE;
+        // Valid only when plan.appendActionIndex > -1: the extended piece's new tsHi and rowCount, worked
+        // out here so the loop below can just record them when it reaches that action's position.
+        long appendTsHi = 0;
+        long appendRowCount = 0;
         try (
-                Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), partitionE);
+                Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, (columnIndex, columnTop) -> {
+                    transientVersions.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
+                    columnTopAfter[columnIndex] = transientVersions.getColumnTop(partitionTimestamp, columnIndex);
+                }, partitionE);
                 Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
         ) {
+            if (plan.appendActionIndex > -1) {
+                final O3CompositeMergeStrategy.Action append = actions.getQuick(plan.appendActionIndex);
+                final long o3Rows = append.getO3RowCount();
+                FrameAlgebra.append(target, o3, append.o3Lo, append.o3Hi + 1, upcomingTableTxn, commitMode);
+                tableWriter.addPhysicallyWrittenRows(o3Rows);
+                e += o3Rows;
+                appendTsHi = getTimestampIndexValue(sortedTimestampsAddr, append.o3Hi);
+                appendRowCount = O3CompositeMergeStrategy.getRowCount(bounds, append.pieceIndex) + o3Rows;
+            }
             for (int i = 0; i < actionCount; i++) {
                 final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                 final long o3Rows = action.getO3RowCount();
@@ -620,6 +661,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", e=").$(e)
                         .I$();
                 switch (action.type) {
+                    case APPEND -> {
+                        // The write already happened above, before this loop, so only the piece record is
+                        // added here: the original piece's tsLo and rowOffset, extended tsHi and rowCount.
+                        addNewPiece(
+                                piecesOut,
+                                O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                                appendTsHi,
+                                O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex),
+                                appendRowCount
+                        );
+                    }
                     case DROP -> {
                         // A replace-range commit's declared range covers this piece and this commit put no
                         // O3 rows of its own on it: nothing is read, nothing is written, and unlike KEEP the
@@ -672,7 +724,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // rewritten, which is the whole claim this design makes.
                         try (
                                 Frame source = frameFactory.openRO(
-                                        partitionPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), pieceHi
+                                        partitionPath, partitionTimestamp, metadata, transientVersions, pieceHi
                                 )
                         ) {
                             // The column stays OPEN across both calls below. Its address is only valid
@@ -856,8 +908,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             long dedupColSinkAddr,
             LongList bounds,
-            ObjList<O3CompositeMergeStrategy.Action> actions,
-            int actionCount,
+            O3CompositeMergeStrategy.Plan plan,
             long partitionUpdateSinkAddr,
             long oldPartitionSize,
             long o3TimestampLo
@@ -880,11 +931,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         long e = 0;
         long firstTsLo = Numbers.LONG_NULL;
-        // Per column: -1 until some action's below-top padding physically WRITES NULLs into the fresh
-        // directory (appendNulls) rather than just extending its top for free (addTop) - at which point
-        // it becomes 0. addTop is a bookkeeping-only move: the fresh directory's own top now correctly
-        // says the same thing the old directory's did, so nothing here needs to change for it. Read by
-        // TableWriter.updateO3ColumnTops via the sink once every action below has run.
+        // -1 until some action reports a column-top change through target's sink; read by
+        // TableWriter.updateO3ColumnTops via the partition-update sink once every action below has run.
         final int columnCount = metadata.getColumnCount();
         final long[] columnTopAfter = new long[columnCount];
         for (int i = 0; i < columnCount; i++) {
@@ -897,14 +945,55 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
             createDirsOrFail(tableWriter.getFilesFacade(), dstPath, tableWriter.getConfiguration().getMkDirMode());
 
+            // Neither frame below may read or write through the live tableWriter.getColumnVersionWriter()
+            // directly (worker threads share it - see ColumnTopSink). srcColumnVersions is a frozen,
+            // read-only snapshot for the OLD directory's KEEP/MERGE source opens. targetVersions is a
+            // SEPARATE, writable one for the fresh directory: target's own clamp needs to see an earlier
+            // action's write to the same column within this same call, which a frozen snapshot can't give
+            // it. columnTopAfter (published below) is set directly from whatever targetVersions converges
+            // to, action by action.
+            final ColumnVersionReader srcColumnVersions = new ColumnVersionReader();
+            srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
+            final TransientColumnVersions targetVersions = new TransientColumnVersions();
+            targetVersions.readFrom(tableWriter.getColumnVersionWriter());
             try (
-                    Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), 0);
+                    Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, targetVersions,
+                            (columnIndex, columnTop) -> {
+                                targetVersions.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
+                                columnTopAfter[columnIndex] = targetVersions.getColumnTop(partitionTimestamp, columnIndex);
+                            }, 0);
                     Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
             ) {
-                for (int i = 0; i < actionCount; i++) {
+                final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
+                for (int i = 0, actionCount = actions.size(); i < actionCount; i++) {
                     final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                     final long o3Rows = action.getO3RowCount();
                     switch (action.type) {
+                        case APPEND -> {
+                            // Unlike executeCompositePlan, there is no shared-tail write order to protect
+                            // here - every action lands in a brand-new directory, strictly in plan order -
+                            // so this is simply KEEP's piece copy followed by NEW_PIECE's O3 append, folded
+                            // into one action instead of the two separate ones the plan would have carried
+                            // without the optimisation.
+                            final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                            final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                            final long pieceHi = pieceLo + pieceRows;
+                            if (firstTsLo == Numbers.LONG_NULL) {
+                                firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
+                            }
+                            try (
+                                    Frame source = frameFactory.openRO(
+                                            srcPath, partitionTimestamp, metadata, srcColumnVersions, pieceHi
+                                    )
+                            ) {
+                                FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
+                            }
+                            tableWriter.addPhysicallyWrittenRows(pieceRows);
+                            e += pieceRows;
+                            FrameAlgebra.append(target, o3, action.o3Lo, action.o3Hi + 1, upcomingTableTxn, commitMode);
+                            tableWriter.addPhysicallyWrittenRows(o3Rows);
+                            e += o3Rows;
+                        }
                         case DROP -> {
                             // A replace-range commit's declared range covers this piece and this commit put
                             // no O3 rows of its own on it: it contributes nothing to the fresh directory
@@ -917,20 +1006,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             if (firstTsLo == Numbers.LONG_NULL) {
                                 firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
                             }
-                            // Unlike executeCompositePlan's KEEP, which writes nothing because the piece's
-                            // bytes already sit where they need to be, there IS nothing at the fresh
-                            // directory's row 0 yet - every piece has to be copied in, not just the ones
-                            // this commit's own rows touch.
-                            if (e > 0) {
-                                // Only when something else already sits at the fresh directory's tail:
-                                // FrameAlgebra.append's own below-top padding takes a free ride (addTop)
-                                // when it is the very first thing written to a column, and only falls back
-                                // to physically writing NULLs (appendNulls) once that is no longer true.
-                                markMaterializedColumns(tableWriter, partitionTimestamp, pieceLo, columnCount, columnTopAfter);
-                            }
+                            // Unlike executeCompositePlan's KEEP, the piece's bytes are not already where
+                            // they need to be - every piece has to be copied in, not just the ones this
+                            // commit's own rows touch.
                             try (
                                     Frame source = frameFactory.openRO(
-                                            srcPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), pieceHi
+                                            srcPath, partitionTimestamp, metadata, srcColumnVersions, pieceHi
                                     )
                             ) {
                                 FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
@@ -953,11 +1034,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             if (firstTsLo == Numbers.LONG_NULL) {
                                 firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
                             }
-                            // Unconditionally, unlike KEEP's append: a MERGE interleaves the piece with the
-                            // O3 batch by timestamp in one write, so a below-top row from the piece and a
-                            // real row from the batch can land side by side - there is no single leading
-                            // top boundary left to represent that, only physical NULLs, every time.
-                            markMaterializedColumns(tableWriter, partitionTimestamp, pieceLo, columnCount, columnTopAfter);
                             final long maxMergeRows = pieceRows + o3Rows;
                             long mergeRows = maxMergeRows;
                             final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
@@ -965,7 +1041,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             try {
                                 try (
                                         Frame source = frameFactory.openRO(
-                                                srcPath, partitionTimestamp, metadata, tableWriter.getColumnVersionWriter(), pieceHi
+                                                srcPath, partitionTimestamp, metadata, srcColumnVersions, pieceHi
                                         )
                                 ) {
                                     try (FrameColumn timestampColumn = source.createColumn(metadata.getTimestampIndex())) {
@@ -1050,35 +1126,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, TableWriter.NO_GEOMETRY_REF);
-        // columnTopAfter[i] is -1 (leave columnVersionWriter's record exactly as it was) unless some
-        // action above physically wrote NULLs below that column's top, in which case it is 0.
-        // TableWriter.updateO3ColumnTops reads exactly this sink region and upserts it; a partition that
-        // only mutates in place (executeCompositePlan) never populates it at all, so its column tops
-        // stay untouched, at whatever they already were.
+        // Publishes columnTopAfter; -1 means no change. TableWriter.updateO3ColumnTops reads this sink
+        // region and upserts it.
         for (int i = 0; i < columnCount; i++) {
             Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, columnTopAfter[i]);
-        }
-    }
-
-    /**
-     * Marks every column whose recorded top is above {@code pieceLo} as materialized - its fresh-
-     * directory top must become 0 - because a piece starting at {@code pieceLo} needs SOME below-top
-     * padding for it, and the caller has already decided that padding writes physical NULLs rather than
-     * taking the addTop free ride. {@code columnTopAfter} is only ever tightened from -1 to 0, never
-     * back, so one materializing action for a column is final regardless of what runs after it.
-     */
-    private static void markMaterializedColumns(
-            TableWriter tableWriter,
-            long partitionTimestamp,
-            long pieceLo,
-            int columnCount,
-            long[] columnTopAfter
-    ) {
-        final ColumnVersionReader columnVersionReader = tableWriter.getColumnVersionWriter();
-        for (int column = 0; column < columnCount; column++) {
-            if (columnTopAfter[column] != 0 && columnVersionReader.getColumnTop(partitionTimestamp, column) > pieceLo) {
-                columnTopAfter[column] = 0L;
-            }
         }
     }
 
@@ -5143,7 +5194,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * The composite plan's scratch, reused across partitions on one worker.
      */
     private static class O3CompositeContext implements Mutable, Closeable {
-        private final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
         private final LongList bounds = new LongList();
         private final WalTxnClusterer clusterer = new WalTxnClusterer();
         private final LongList cuts = new LongList();
@@ -5158,6 +5208,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         private final PartitionGeometry geometry = new PartitionGeometry();
         // Flat quads describing what the executor actually wrote: tsLo, tsHi, rowOffset, rowCount.
         private final LongList pieces = new LongList();
+        // computeActions resets plan.actions itself (setPos(0), not clear()) so its pooled Action objects
+        // survive a shorter plan; nothing here needs to touch it.
+        private final O3CompositeMergeStrategy.Plan plan = new O3CompositeMergeStrategy.Plan();
+        // executeCompositePlan's own private, in-memory column-version view - see TransientColumnVersions.
+        private final TransientColumnVersions transientVersions = new TransientColumnVersions();
 
         @Override
         public void clear() {
@@ -5169,6 +5224,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         @Override
         public void close() {
             geometry.close();
+            transientVersions.close();
         }
     }
 }

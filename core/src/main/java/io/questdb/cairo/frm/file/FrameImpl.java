@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.DeletedFrameColumn;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumn;
@@ -49,6 +50,7 @@ public class FrameImpl implements Frame {
     private final FrameColumnPool columnPool;
     private boolean canWrite = false;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
+    private ColumnTopSink columnTopSink;
     private boolean create = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
@@ -67,6 +69,7 @@ public class FrameImpl implements Frame {
     @Override
     public void close() {
         this.columnsMemory = null;
+        this.columnTopSink = null;
         this.crv = null;
         if (frameRecycleBin != null && !frameRecycleBin.isClosed()) {
             frameRecycleBin.put(this);
@@ -118,6 +121,24 @@ public class FrameImpl implements Frame {
     public void createRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
         this.metadata = metadata;
         this.crv = cvw;
+        this.columnTopSink = null;
+        this.rowCount = size;
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionPath.of(partitionPath);
+        this.canWrite = true;
+        this.create = true;
+        this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.timestampIndexAddr = 0;
+    }
+
+    /**
+     * Same as {@link #createRW(Path, long, RecordMetadata, ColumnVersionWriter, long)}, but column-top
+     * updates go to {@code columnTopSink} instead of a {@code ColumnVersionWriter} - see {@link ColumnTopSink}.
+     */
+    public void createRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
+        this.metadata = metadata;
+        this.crv = cvr;
+        this.columnTopSink = columnTopSink;
         this.rowCount = size;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
@@ -179,6 +200,24 @@ public class FrameImpl implements Frame {
     public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
         this.metadata = metadata;
         this.crv = cvw;
+        this.columnTopSink = null;
+        this.rowCount = size;
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionPath.of(partitionPath);
+        this.canWrite = true;
+        this.create = false;
+        this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.timestampIndexAddr = 0;
+    }
+
+    /**
+     * Opens a writable frame whose column-top updates go to {@code columnTopSink} instead of a
+     * {@code ColumnVersionWriter} - see {@link ColumnTopSink}.
+     */
+    public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
+        this.metadata = metadata;
+        this.crv = cvr;
+        this.columnTopSink = columnTopSink;
         this.rowCount = size;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
@@ -192,8 +231,18 @@ public class FrameImpl implements Frame {
         if (!canWrite) {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
         }
-        ColumnVersionWriter cvw = (ColumnVersionWriter) crv;
-        cvw.upsertColumnTop(partitionTimestamp, frameColumn.getColumnIndex(), frameColumn.getColumnTop());
+        if (columnTopSink != null) {
+            columnTopSink.setColumnTop(frameColumn.getColumnIndex(), frameColumn.getColumnTop());
+        } else {
+            // no sink implies this caller's column tops never change - see ColumnTopSink
+            if (crv.getColumnTop(partitionTimestamp, frameColumn.getColumnIndex()) != frameColumn.getColumnTop()) {
+                throw CairoException.critical(0).put("cannot save changed column top, " +
+                        "partition frame is opened without column top sink [path=").put(partitionPath)
+                        .put(", before=" ).put(crv.getColumnTop(partitionTimestamp, frameColumn.getColumnIndex()))
+                        .put(", after=").put(frameColumn.getColumnTop())
+                        .put(']');
+            }
+        }
     }
 
     @Override
