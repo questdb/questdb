@@ -43,6 +43,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     private final QueryParallelFiberDispatcher dispatcher;
     private final QueryParallelFiberTaskPool<?> pool;
     private final TimerShards timerShards;
+    private AsyncQueryProgressState progressState;
 
     protected AbstractQueryParallelFiberTask(
             QueryParallelFiberDispatcher dispatcher,
@@ -67,7 +68,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             failure = addFailure(failure, th);
         }
         try {
-            dispatcher.signalProgress();
+            dispatcher.signalProgress(progressState);
         } catch (Throwable th) {
             failure = addFailure(failure, th);
         }
@@ -83,10 +84,15 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         circuitBreaker.copyCancelledFlagTo(cancellationBinding);
     }
 
+    final void bindProgress(AsyncQueryProgressState progressState) {
+        this.progressState = progressState;
+    }
+
     @Override
     public void close() {
         clearBinding();
         cancellationBinding.clear();
+        progressState = null;
     }
 
     @Override
@@ -113,7 +119,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             completeOwnership();
         } finally {
             try {
-                dispatcher.signalProgress();
+                dispatcher.signalProgress(progressState);
             } finally {
                 recycle();
             }
@@ -142,7 +148,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     protected abstract boolean runTask();
 
     protected final void signalProgress() {
-        dispatcher.signalProgress();
+        dispatcher.signalProgress(progressState);
     }
 
     private static Throwable addFailure(@Nullable Throwable primary, Throwable failure) {
@@ -158,6 +164,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     private void recycle() {
         clearBinding();
         cancellationBinding.clear();
+        progressState = null;
         try {
             tryReopen();
         } finally {

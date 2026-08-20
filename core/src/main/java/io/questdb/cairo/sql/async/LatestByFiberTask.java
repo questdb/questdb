@@ -49,6 +49,7 @@ final class LatestByFiberTask extends AbstractQueryParallelFiberTask {
         this.subSeq = subSeq;
         this.cursor = cursor;
         bindCancellation(task.getCircuitBreaker());
+        bindProgress(task.getProgressState());
     }
 
     @Override

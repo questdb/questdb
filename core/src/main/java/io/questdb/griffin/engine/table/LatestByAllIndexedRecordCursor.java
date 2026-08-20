@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,6 +56,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final long indexShift = 0;
     private final DirectLongList prefixes;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final DirectLongList rows;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private long aIndex;
@@ -261,13 +263,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         }
 
                         while (true) {
-                            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                            final long observedProgress = progressState.getVersion();
+                            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
                             if (seq < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                 if (publicationPermit && isOwnerParkable) {
-                                    if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                    if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                         Os.pause();
                                     }
                                     continue;
@@ -307,7 +310,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                         prefixesAddress,
                                         prefixesCount,
                                         doneLatch,
-                                        sharedCircuitBreaker
+                                        sharedCircuitBreaker,
+                                        progressState
                                 );
                                 pubSeq.done(seq);
                                 queuedCount++;
@@ -322,14 +326,15 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 }
 
                 while (true) {
-                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     if (doneLatch.done(queuedCount)) {
                         break;
                     }
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                             Os.pause();
                         }
                     } else {
@@ -393,7 +398,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final Sequence subSeq = bus.getLatestBySubSeq();
         final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
         while (true) {
-            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = progressState.getVersion();
+            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
             if (doneLatch.done(queuedCount)) {
                 break;
@@ -402,7 +408,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 sharedCircuitBreaker.cancel();
             }
             if (isOwnerParkable) {
-                if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                     Os.pause();
                 }
             } else {

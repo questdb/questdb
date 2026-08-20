@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
@@ -251,6 +252,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final MCSequence subSeq = messageBus.getGroupByLongTopKSubSeq();
         final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
         final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        final AsyncQueryProgressState progressState = atom.getShardingContext().getProgressState();
         final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
 
         int queuedCount = 0;
@@ -275,7 +277,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     continue;
                 }
                 while (true) {
-                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
@@ -291,7 +294,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             break;
                         }
                         if (isOwnerParkable) {
-                            if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                            if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                 Os.pause();
                             }
                         } else {
@@ -326,7 +329,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 }
             } finally {
                 while (true) {
-                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
@@ -345,7 +349,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             Os.pause();
                         }
                     } else if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                             Os.pause();
                         }
                     } else {

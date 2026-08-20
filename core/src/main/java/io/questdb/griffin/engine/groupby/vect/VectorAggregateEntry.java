@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
@@ -53,6 +54,7 @@ public class VectorAggregateEntry implements Mutable {
     private AtomicInteger oomCounter;
     private long[] pRosti;
     private PerWorkerLocks perWorkerLocks;
+    private AsyncQueryProgressState progressState;
     private RostiAllocFacade raf;
     private AtomicInteger startedCounter;
     private int valueColIndex;
@@ -118,6 +120,7 @@ public class VectorAggregateEntry implements Mutable {
         this.raf = null;
         this.perWorkerLocks = null;
         this.circuitBreaker = null;
+        this.progressState = null;
         this.frameRowCount = 0;
         this.keyColIndex = -1;
         this.valueColIndex = -1;
@@ -136,6 +139,10 @@ public class VectorAggregateEntry implements Mutable {
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
     }
 
     public void run(int workerId, Sequence seq, long cursor) {
@@ -241,7 +248,8 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull AsyncQueryErrorState aggregateError,
             @Nullable RostiAllocFacade raf,
             @NotNull PerWorkerLocks perWorkerLocks,
-            @NotNull SqlExecutionCircuitBreaker circuitBreaker
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull AsyncQueryProgressState progressState
     ) {
         this.frameIndex = frameIndex;
         this.frameRowCount = frameRowCount;
@@ -257,5 +265,6 @@ public class VectorAggregateEntry implements Mutable {
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;
+        this.progressState = progressState;
     }
 }

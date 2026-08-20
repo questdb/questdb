@@ -66,6 +66,7 @@ final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
         this.subSeq = subSeq;
         this.cursor = cursor;
         bindCancellation(circuitBreaker);
+        bindProgress(shardingContext.getProgressState());
         task.clear();
         releaseCursor();
     }

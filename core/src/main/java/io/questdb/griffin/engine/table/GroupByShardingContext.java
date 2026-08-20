@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.engine.PerWorkerLocks;
@@ -86,6 +87,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ObjList<GroupByMapFragment> perWorkerFragments;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final PerWorkerLocks perWorkerLocks;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ColumnTypes valueTypes;
     volatile boolean sharded;
     boolean shardedHint;
@@ -147,6 +149,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
     }
 
     public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
@@ -405,7 +411,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
-                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
@@ -419,7 +426,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             break;
                         }
                         if (isOwnerParkable) {
-                            if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                            if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                 Os.pause();
                             }
                         } else {
@@ -451,7 +458,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                 }
             } finally {
                 while (true) {
-                    final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
@@ -470,7 +478,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             Os.pause();
                         }
                     } else if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                             Os.pause();
                         }
                     } else {

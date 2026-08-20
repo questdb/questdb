@@ -130,50 +130,12 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
-    public int awaitProgress(
+    public boolean awaitProgress(
+            AsyncQueryProgressState progressState,
             long observedVersion,
-            @Nullable FiberCancellationSignal cancellationSignal,
-            long cancellationSignalGeneration
+            long observedGlobalVersion,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
-            return FiberWaitCoordinator.REASON_SHUTDOWN;
-        }
-        if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
-            return FiberWaitCoordinator.REASON_NONE;
-        }
-        final Fiber fiber = Fiber.current();
-        if (fiber == null) {
-            return FiberWaitCoordinator.REASON_NONE;
-        }
-        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 2 : 3);
-        if (token == Fiber.TOKEN_REFUSED) {
-            return FiberWaitCoordinator.REASON_SHUTDOWN;
-        }
-        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
-        try {
-            if (!coordinator.armEvent(token, progressWaitQueue)) {
-                throw new IllegalStateException("query parallel progress wait registration failed");
-            }
-            if (cancellationSignal != null
-                    && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
-                throw new IllegalStateException("query parallel progress cancellation registration failed");
-            }
-            if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
-                return FiberWaitCoordinator.REASON_SHUTDOWN;
-            }
-            if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
-                return FiberWaitCoordinator.REASON_SHUTDOWN;
-            }
-            if (progressVersion.get() != observedVersion) {
-                return FiberWaitCoordinator.REASON_PROGRESS;
-            }
-            return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
-        } finally {
-            coordinator.teardownWait(token);
-        }
-    }
-
-    public boolean awaitProgress(long observedVersion, SqlExecutionCircuitBreaker circuitBreaker) {
         FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
         long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
         if (cancellationSignal == null) {
@@ -186,7 +148,9 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             }
         }
         final int reason = awaitProgress(
+                progressState,
                 observedVersion,
+                observedGlobalVersion,
                 cancellationSignal,
                 cancellationSignalGeneration
         );
@@ -480,8 +444,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     @TestOnly
-    public void signalProgressForTesting() {
-        signalProgress();
+    public void signalProgressForTesting(AsyncQueryProgressState progressState) {
+        signalProgress(progressState);
     }
 
     public boolean tryAcquirePublication() {
@@ -705,6 +669,59 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
 
     void signalProgress() {
         progressVersion.incrementAndGet();
-        progressWaitQueue.fireAll();
+        progressWaitQueue.fire();
+    }
+
+    void signalProgress(@Nullable AsyncQueryProgressState progressState) {
+        signalProgress();
+        if (progressState != null) {
+            progressState.signalProgress();
+        }
+    }
+
+    private int awaitProgress(
+            AsyncQueryProgressState progressState,
+            long observedVersion,
+            long observedGlobalVersion,
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
+        if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
+            return FiberWaitCoordinator.REASON_SHUTDOWN;
+        }
+        if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
+            return FiberWaitCoordinator.REASON_NONE;
+        }
+        final Fiber fiber = Fiber.current();
+        if (fiber == null) {
+            return FiberWaitCoordinator.REASON_NONE;
+        }
+        final long token = fiber.tryBeginWaitBuild(cancellationSignal == null ? 3 : 4);
+        if (token == Fiber.TOKEN_REFUSED) {
+            return FiberWaitCoordinator.REASON_SHUTDOWN;
+        }
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        try {
+            if (!coordinator.armEvent(token, progressState.getWaitQueue())
+                    || !coordinator.armEvent(token, progressWaitQueue)) {
+                throw new IllegalStateException("query parallel progress wait registration failed");
+            }
+            if (cancellationSignal != null
+                    && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
+                throw new IllegalStateException("query parallel progress cancellation registration failed");
+            }
+            if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
+                return FiberWaitCoordinator.REASON_SHUTDOWN;
+            }
+            if (progressState.getVersion() != observedVersion || progressVersion.get() != observedGlobalVersion) {
+                return FiberWaitCoordinator.REASON_PROGRESS;
+            }
+            return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
+        } finally {
+            coordinator.teardownWait(token);
+        }
     }
 }

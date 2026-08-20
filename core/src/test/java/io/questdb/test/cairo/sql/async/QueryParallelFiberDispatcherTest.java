@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -374,7 +375,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     isCancelledOnRelease[0] = circuitBreaker.getCancelledFlag().get();
                 };
                 try (LatestByTask task = new LatestByTask(configuration)) {
-                    task.of(null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L, doneLatch, circuitBreaker);
+                    task.of(null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L, doneLatch, circuitBreaker, new AsyncQueryProgressState());
                     try {
                         task.run();
                         Assert.fail("expected the injected frame decode failure");
@@ -703,9 +704,9 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testProgressSignalWakesEveryParkedOwner() throws Exception {
+    public void testProgressSignalWakesOnlyItsOwner() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            // Push the timer fallback out of reach so the progress signal is the only way out.
+            // Push the timer fallback out of reach so progress signals are the only way out.
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getQueryContinuationWakeIntervalMillis() {
@@ -722,63 +723,79 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 );
                 try {
                     final AtomicReference<Throwable> failure = new AtomicReference<>();
-                    final CountDownLatch resumed = new CountDownLatch(ownerCount);
+                    final AsyncQueryProgressState[] progressStates = new AsyncQueryProgressState[ownerCount];
+                    final CountDownLatch[] resumed = new CountDownLatch[ownerCount];
+                    for (int i = 0; i < ownerCount; i++) {
+                        progressStates[i] = new AsyncQueryProgressState();
+                        resumed[i] = new CountDownLatch(1);
+                    }
                     final AtomicInteger launched = new AtomicInteger();
                     try (TestWorkerPool ownerPool = new TestWorkerPool(
-                            "progress-broadcast",
+                            "progress-precision",
                             1,
                             Metrics.DISABLED,
                             WorkerPoolMode.FIBER_HOST
                     )) {
                         final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
                         ownerPool.assign(_ -> {
-                            if (launched.getAndIncrement() >= ownerCount) {
+                            final int ownerIndex = launched.getAndIncrement();
+                            if (ownerIndex >= ownerCount) {
                                 return false;
                             }
+                            final AsyncQueryProgressState progressState = progressStates[ownerIndex];
+                            final CountDownLatch ownerResumed = resumed[ownerIndex];
                             final FiberTask task = new FiberTask() {
                                 @Override
                                 protected void onDone() {
-                                    resumed.countDown();
+                                    ownerResumed.countDown();
                                 }
 
                                 @Override
                                 protected void onError(Throwable th) {
                                     failure.compareAndSet(null, th);
-                                    resumed.countDown();
+                                    ownerResumed.countDown();
                                 }
 
                                 @Override
                                 protected boolean runStep() {
                                     SuspensionScope.enterTimerShards(engine.getTimerShards());
-                                    dispatcher.awaitProgress(
-                                            dispatcher.getProgressVersion(),
-                                            SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
-                                    );
+                                    // A spuriously woken owner re-parks, exactly like a production
+                                    // owner that finds its done latch still open.
+                                    while (progressState.getVersion() == 0) {
+                                        dispatcher.awaitProgress(
+                                                progressState,
+                                                progressState.getVersion(),
+                                                dispatcher.getProgressVersion(),
+                                                SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                                        );
+                                    }
                                     return true;
                                 }
                             };
                             final LaunchResult result = ownerRuntime.launch(task);
                             if (result != LaunchResult.LAUNCHED) {
                                 failure.compareAndSet(null, new AssertionError("owner fiber launch failed [result=" + result + ']'));
-                                resumed.countDown();
+                                ownerResumed.countDown();
                             }
                             return true;
                         });
                         ownerPool.start(LOG);
 
-                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-                        while (ownerRuntime.getParkedFiberCount() < ownerCount) {
-                            Assert.assertTrue("owner fibers did not park", System.nanoTime() < deadline);
-                            Assert.assertNull(failure.get());
-                            Os.pause();
+                        awaitParkedCount(ownerRuntime, ownerCount, failure);
+
+                        // Signal in reverse launch order, so the FIFO head of the dispatcher's
+                        // shared queue is never the signalled owner.
+                        for (int i = ownerCount - 1; i >= 0; i--) {
+                            dispatcher.signalProgressForTesting(progressStates[i]);
+                            Assert.assertTrue(
+                                    "signalled owner did not resume",
+                                    resumed[i].await(10, TimeUnit.SECONDS)
+                            );
+                            awaitParkedCount(ownerRuntime, i, failure);
+                            for (int j = 0; j < i; j++) {
+                                Assert.assertEquals("unsignalled owner must stay parked", 1, resumed[j].getCount());
+                            }
                         }
-
-                        dispatcher.signalProgressForTesting();
-
-                        Assert.assertTrue(
-                                "one progress signal must wake every parked owner",
-                                resumed.await(10, TimeUnit.SECONDS)
-                        );
                         ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
                     }
                     Assert.assertNull(failure.get());
@@ -1136,6 +1153,15 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         } finally {
             closeRuntime(dispatcherRuntime);
             Misc.free(dispatcher);
+        }
+    }
+
+    private static void awaitParkedCount(FiberRuntime runtime, int expected, AtomicReference<Throwable> failure) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (runtime.getParkedFiberCount() != expected) {
+            Assert.assertTrue("parked owner count did not settle at " + expected, System.nanoTime() < deadline);
+            Assert.assertNull(failure.get());
+            Os.pause();
         }
     }
 

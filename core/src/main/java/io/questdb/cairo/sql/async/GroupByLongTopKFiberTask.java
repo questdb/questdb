@@ -73,6 +73,7 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
         this.subSeq = subSeq;
         this.cursor = cursor;
         bindCancellation(circuitBreaker);
+        bindProgress(atom.getShardingContext().getProgressState());
         task.clear();
         releaseCursor();
     }

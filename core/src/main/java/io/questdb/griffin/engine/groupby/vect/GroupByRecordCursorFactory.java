@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
@@ -91,6 +92,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final AtomicInteger startedCounter = new AtomicInteger();
@@ -314,6 +316,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             MCSequence subSeq,
             RingQueue<VectorAggregateTask> queue,
             @Nullable QueryParallelFiberDispatcher dispatcher,
+            AsyncQueryProgressState progressState,
             AsyncQueryErrorState aggregateError,
             int queuedCount,
             int reclaimed,
@@ -325,7 +328,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             WorkStealingStrategy workStealingStrategy
     ) {
         while (true) {
-            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            final long observedProgress = progressState.getVersion();
+            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
             if (doneLatch.done(queuedCount)) {
                 break;
@@ -353,7 +357,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     Os.pause();
                 }
             } else if (isOwnerParkable) {
-                if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                     Os.pause();
                 }
             } else {
@@ -638,7 +642,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (aggregateError.hasError()) {
                                 break dispatch;
                             }
-                            final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                            final long observedProgress = progressState.getVersion();
+                            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
                             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
@@ -665,7 +670,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     break;
                                 }
                                 if (isOwnerParkable) {
-                                    if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                    if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                         Os.pause();
                                     }
                                 } else {
@@ -688,7 +693,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         aggregateError,
                                         raf,
                                         perWorkerLocks,
-                                        sharedCircuitBreaker
+                                        sharedCircuitBreaker,
+                                        progressState
                                 );
                                 queue.get(cursor).entry = entry;
                                 pubSeq.done(cursor);
@@ -712,6 +718,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             bus.getVectorAggregateSubSeq(),
                             queue,
                             dispatcher,
+                            progressState,
                             aggregateError,
                             queuedCount,
                             reclaimed,

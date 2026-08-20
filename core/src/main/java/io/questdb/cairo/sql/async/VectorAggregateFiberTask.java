@@ -53,6 +53,7 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
         this.subSeq = subSeq;
         this.cursor = cursor;
         bindCancellation(entry.getCircuitBreaker());
+        bindProgress(entry.getProgressState());
         task.entry = null;
         releaseCursor();
     }

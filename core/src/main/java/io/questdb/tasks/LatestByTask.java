@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Misc;
@@ -46,6 +47,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
     private long keyBaseAddress;
     private long keysMemorySize;
     private long prefixesAddress;
+    private AsyncQueryProgressState progressState;
     private long prefixesCount;
     private long rowHi;
     private long rowLo;
@@ -81,6 +83,10 @@ public class LatestByTask implements QuietCloseable, Mutable {
         return circuitBreaker;
     }
 
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
+    }
+
     public void of(
             PageFrameAddressCache addressCache,
             long keyBaseAddress,
@@ -98,7 +104,8 @@ public class LatestByTask implements QuietCloseable, Mutable {
             long prefixesAddress,
             long prefixesCount,
             CountDownLatchSPI doneLatch,
-            SqlExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker,
+            AsyncQueryProgressState progressState
     ) {
         this.frameMemoryPool.of(addressCache);
         this.keyBaseAddress = keyBaseAddress;
@@ -117,6 +124,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
         this.circuitBreaker = circuitBreaker;
+        this.progressState = progressState;
         this.completed = false;
     }
 
