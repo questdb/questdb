@@ -31,6 +31,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.qwp.AbstractQwpBootstrapTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -216,6 +217,12 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             String table,
             boolean expectAckBeforeCommit
     ) throws Exception {
+        // The last-resort clamp in setHighestProcessedSequence absorbs a regressed
+        // ack path silently -- it refuses the advance and logs critical, so the
+        // wire looks correct and only the scream distinguishes the two. Capture it,
+        // or bypassing the withhold branch entirely is untestable from out here.
+        final LogCapture capture = new LogCapture();
+        capture.start();
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getEnvVarName(), maxUncommittedRows
         )) {
@@ -282,21 +289,43 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             // this independent of the ack batch threshold and of how many
             // sequences the handshake consumes.
             Assert.assertTrue("the server sent no OK ack at all; acks seen: " + observed, okAckCount > 0);
+            // The client sends DEFERRED_FRAME_COUNT deferred frames at sequences
+            // 0..n-1, then close() sends the group-closing commit frame at n.
+            final long commitSeq = DEFERRED_FRAME_COUNT;
+            Assert.assertEquals(
+                    "the group-closing frame must always be acked, whichever arm this is; "
+                            + "acks seen: " + observed,
+                    commitSeq,
+                    maxAckSeq
+            );
             if (expectAckBeforeCommit) {
                 Assert.assertTrue(
                         "the force-commit made each deferred frame's rows durable, so an ack must "
                                 + "cover one before the group-closing frame; acks seen: " + observed,
-                        minAckSeq < maxAckSeq
+                        minAckSeq < commitSeq
                 );
             } else {
+                // Pin WHICH sequence, not merely that the distinct count is one.
+                // "min == max" alone is satisfied by a server that acked only a
+                // deferred frame and never the commit frame -- the data-loss
+                // direction -- because a single sample is trivially its own min.
                 Assert.assertEquals(
                         "no force-commit fired, so every deferred frame's rows are still "
                                 + "rollback-able and only the group-closing frame may be acked; "
                                 + "acks seen: " + observed,
-                        maxAckSeq,
+                        commitSeq,
                         minAckSeq
                 );
             }
+
+            // Nothing may reach the containment. It exists to catch a regressed
+            // ack path, so a run that trips it is a run whose correct-looking
+            // wire output is being produced by the backstop, not by the decision
+            // under test.
+            capture.drain();
+            capture.assertNotLogged("tried to advance over uncommitted deferred rows");
+        } finally {
+            capture.stop();
         }
     }
 

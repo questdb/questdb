@@ -1534,6 +1534,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // carries the group's real per-table seqTxns for durable-ack
                 // tracking. Until then the frame stays replayable client-side,
                 // exactly as #7144's error-handling contract requires.
+                //
+                // Withholding this frame's own ack is not enough when it
+                // appended no rows: the ack is CUMULATIVE, so a later deferred
+                // frame whose own rows have become durable would jump the
+                // watermark straight over this one. Such a frame carries only
+                // symbol-dictionary state that later frames reference, so mark
+                // its sequence uncoverable until the group commits.
+                state.withholdDeferredFrame(seq);
                 LOG.debug().$("WebSocket deferred frame ack withheld until group commit [fd=").$(context.getFd())
                         .$(", seq=").$(seq).I$();
             } else {

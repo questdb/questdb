@@ -365,9 +365,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    // Three arms, differing only in the connection's max-uncommitted-rows cap and
-    // whether the frame carries rows. Each runs the real decoder, WAL appender and
-    // TUD cache in handleBinaryMessage's call order for a FLAG_DEFER_COMMIT frame.
+    // Two arms differing only in the connection's max-uncommitted-rows cap, each
+    // running the real decoder, WAL appender and TUD cache in handleBinaryMessage's
+    // call order for a FLAG_DEFER_COMMIT frame. The rowless case is separate, in
+    // testZeroRowDeferredFrameIsNeverAckCovered.
     @Test
     public void testDeferredFrameIsAckableOnlyOnceItsOwnRowsAreCommitted() throws Exception {
         assertMemoryLeak(() -> {
@@ -386,9 +387,11 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
                 Assert.assertTrue("a fired force-commit makes this frame's own rows durable",
                         driveDeferredFrame(capped, "defer_capped", 1));
-                // Positive evidence the force-commit actually fired: an empty cache
-                // reports "nothing uncommitted" too, and that is the data-loss
-                // direction, so the flag alone does not discriminate.
+                // Positive evidence a commit actually fired: an empty cache reports
+                // "nothing uncommitted" too, and that is the data-loss direction, so
+                // the flag alone does not discriminate. This does not isolate WHICH
+                // commit fired -- the cap is on the connection, so both the
+                // appender's in-append commit and the outer loop's honour it.
                 Assert.assertTrue("the frame must have appended a row",
                         capped.hasAppendedRowsInMessage());
                 Assert.assertEquals("the force-commit must have reported a seqTxn",
@@ -433,16 +436,61 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A deferred frame that appends NO rows must never be ack-covered, however
-     * clean the connection is.
-     * <p>
-     * The client's dictionary chunks are exactly this frame: {@code tableCount=0}
-     * with FLAG_DEFER_COMMIT, published onto its replay ring, with the data frames
-     * that reference the ids they register still unacked behind them. Acking a
-     * chunk would let the client trim it away from those frames, and on a
-     * reconnect the replay would carry symbol ids nothing registered.
-     */
+    // Withholding a rowless deferred frame's own ack is not enough: the watermark
+    // is assigned, not incremented, so the next deferred frame whose own rows have
+    // become durable would carry coverage straight over it. The client's dictionary
+    // chunks are exactly such frames, and the data frames after them reference the
+    // ids they register.
+    @Test
+    public void testAckCannotJumpAWithheldRowlessDeferredFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE defer_jump (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+
+            // Cap 1 so the row-bearing frame below is genuinely ack-coverable on
+            // its own -- otherwise the clamp would hold for the ordinary reason
+            // and the test would prove nothing about the jump.
+            QwpIngressProcessorState state =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Frame 1: rowless deferred -- withheld.
+                addNativeData(state, wrapQwpPayload(new byte[0], QwpConstants.FLAG_DEFER_COMMIT, (short) 0));
+                state.processMessage();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertFalse("premise: a rowless frame is not ack-coverable",
+                        state.refreshDeferredAckCoverage());
+                state.withholdDeferredFrame(1);
+                state.clearMessageState();
+
+                // Frame 2: row-bearing deferred, force-committed by the cap, so
+                // it IS ack-coverable on its own merits.
+                Assert.assertTrue("premise: frame 2 is ack-coverable",
+                        driveDeferredFrame(state, "defer_jump", 1));
+
+                // ...but covering it would also cover frame 1.
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("an ack must not jump the withheld rowless frame",
+                        -1, state.getHighestProcessedSequence());
+
+                // The group-closing commit covers both, so the block lifts.
+                state.commit();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("commitAll covers the rowless frame too",
+                        2, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    // A deferred frame that appends NO rows must never be ack-covered, however
+    // clean the connection is: the client's dictionary chunks are exactly this
+    // frame, and the data frames behind them reference the ids they register.
     @Test
     public void testZeroRowDeferredFrameIsNeverAckCovered() throws Exception {
         assertMemoryLeak(() -> {
@@ -513,7 +561,11 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         tudB.isFirstRow());
                 Assert.assertTrue("a partial commit must not release the clamp", cache.hasUncommittedRows());
 
-                commitAll(cache);
+                try {
+                    cache.commitAll();
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
                 Assert.assertFalse("full coverage releases the clamp", cache.hasUncommittedRows());
 
                 // A dropped table's buffered rows are discarded on eviction, so
@@ -5716,16 +5768,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         );
         Assert.assertNotNull(tud);
         return tud;
-    }
-
-    private static void commitAll(QwpTudCache cache) throws Exception {
-        try {
-            cache.commitAll();
-        } catch (Exception e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new AssertionError("unexpected throwable", t);
-        }
     }
 
     private static void addEncodedRow(QwpIngressProcessorState state, String tableName, int value, byte flags) {

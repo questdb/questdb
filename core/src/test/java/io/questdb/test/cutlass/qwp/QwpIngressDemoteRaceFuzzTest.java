@@ -281,10 +281,6 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                                 break;
                             default:
                                 tudCache.maxRowsCommitHook = demoteRefuseThenRevert;
-                                // Arm the clamp for this iteration: a deferred frame
-                                // that leaves rows uncommitted is the state the
-                                // demote has to be contained against.
-                                tudCache.uncommittedRows = true;
                                 message = zeroTableMessage(QwpConstants.FLAG_DEFER_COMMIT);
                                 where = "revert vs deferred commit";
                                 break;
@@ -586,18 +582,6 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         volatile Runnable commitHook;
         volatile Runnable getTudHook;
         volatile Runnable maxRowsCommitHook;
-        // This cache never populates tableUpdateDetails, so the inherited
-        // hasUncommittedRows() would always answer false and every deferred
-        // iteration would run with the clamp released. The fuzz exists to race a
-        // demote against a deferred commit, and the armed clamp is half of that
-        // state, so let the driver choose the answer.
-        volatile boolean uncommittedRows;
-
-        @Override
-        public boolean hasUncommittedRows() {
-            return uncommittedRows;
-        }
-
         RaceTudCache(CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
             super(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
         }

@@ -236,6 +236,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // server never wrote. Enforced in setHighestProcessedSequence.
     private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
+    // Lowest sequence of a FLAG_DEFER_COMMIT frame that appended NO rows and is
+    // still uncovered; -1 when there is none. Survives per-message clear();
+    // reset by a successful commitAll and by onDisconnected().
+    private long firstRowlessDeferredSequence = -1;
     // True when the message currently being processed appended at least one row.
     // Reset at the top of every processMessage(), so it describes THIS frame and
     // not the connection. A frame that registers symbols and nothing else -- the
@@ -423,6 +427,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // deferred group (if any) is now durable in the WAL and the
             // cumulative-ack watermark may advance over it.
             uncommittedDeferredRows = false;
+            // commitAll covered every frame of the group, rowless ones included.
+            firstRowlessDeferredSequence = -1;
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
@@ -554,6 +560,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Whether the message just processed appended at least one row.
+     * <p>
+     * A deferred frame may only be ack-covered when THIS frame's own rows are
+     * durable. "Nothing is uncommitted on the connection" is not the same claim:
+     * it is vacuously true for a frame that appended nothing.
+     *
+     * @see #markRowlessDeferredSequence(long) for why a rowless deferred frame
+     * needs more than withholding its own ack
+     */
+    public boolean hasAppendedRowsInMessage() {
+        return messageAppendedRows;
+    }
+
+    /**
      * True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
      * uncommitted. While true, no cumulative OK ack may cover the deferred
      * frames' sequences -- see {@link #setHighestProcessedSequence}.
@@ -562,21 +582,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * decide whether an outgoing ack closes a run of withheld deferred frames
      * and so must flush eagerly rather than wait for the batch threshold.
      */
-    /**
-     * Whether the message just processed appended at least one row.
-     * <p>
-     * A deferred frame may only be ack-covered when THIS frame's own rows are
-     * durable. "Nothing is uncommitted on the connection" is not the same claim:
-     * it is vacuously true for a frame that appended nothing, and acking such a
-     * frame would let a store-and-forward client trim it away from the frames
-     * that follow it. The client relies on that not happening -- its
-     * dictionary-chunk frames carry {@code tableCount=0} and FLAG_DEFER_COMMIT,
-     * and the data frames encoded after them reference the ids they register.
-     */
-    public boolean hasAppendedRowsInMessage() {
-        return messageAppendedRows;
-    }
-
     public boolean hasUncommittedDeferredRows() {
         return uncommittedDeferredRows;
     }
@@ -787,6 +792,43 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // Survives per-message clear(); reset only on onDisconnected().
     public boolean hasUnresolvedSequence() {
         return firstUnresolvedSequence != -1;
+    }
+
+    /**
+     * Records that a FLAG_DEFER_COMMIT frame which appended NO rows was withheld
+     * at {@code seq}, so no later ack may cover it until the group commits.
+     * Keeps the minimum across calls.
+     * <p>
+     * Withholding such a frame's own ack is not enough, because an OK ack is
+     * CUMULATIVE and {@link #setHighestProcessedSequence} assigns rather than
+     * increments: a later row-bearing deferred frame whose own rows have become
+     * durable would otherwise jump the watermark straight over it.
+     * <p>
+     * The row-bearing case needs no such marker. Those frames carry nothing but
+     * their own rows, so once the rows are committed a later ack may cover them
+     * freely. A rowless deferred frame is the opposite: it carries only symbol
+     * dictionary state that LATER frames reference, and the client's
+     * store-and-forward ring trims on the cumulative ack. Its
+     * {@code publishDictionaryChunks} contract says so directly -- the chunks
+     * "cannot be trimmed away ahead of the data frames that depend on them".
+     */
+    public void markRowlessDeferredSequence(long seq) {
+        if (firstRowlessDeferredSequence == -1 || seq < firstRowlessDeferredSequence) {
+            firstRowlessDeferredSequence = seq;
+        }
+    }
+
+    /**
+     * Records a FLAG_DEFER_COMMIT frame at {@code seq} whose ack is being
+     * withheld. A frame that appended rows needs nothing beyond the withholding
+     * itself -- once its rows commit, a later cumulative ack may cover it. A
+     * rowless one must additionally block coverage; see
+     * {@link #markRowlessDeferredSequence(long)}.
+     */
+    public void withholdDeferredFrame(long seq) {
+        if (!messageAppendedRows) {
+            markRowlessDeferredSequence(seq);
+        }
     }
 
     /**
@@ -1027,6 +1069,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         roleChangeCloseInitiated = false;
         roleChangeCloseReason.clear();
         firstUnresolvedSequence = -1;
+        firstRowlessDeferredSequence = -1;
         wsHandshakeSent = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
@@ -1395,6 +1438,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     .$(", firstUnresolved=").$(firstUnresolvedSequence)
                     .$(']').$();
             this.highestProcessedSequence = Math.max(this.highestProcessedSequence, firstUnresolvedSequence - 1);
+            return;
+        }
+        // A rowless deferred frame carries symbol-dictionary state that later
+        // frames reference, and a cumulative ack past it lets the client trim it
+        // away from them. Withholding its own ack cannot express that, because
+        // the watermark is assigned, not incremented -- so hold every sequence
+        // at or beyond it until the group-closing commitAll clears the marker.
+        if (firstRowlessDeferredSequence != -1 && highestProcessedSequence >= firstRowlessDeferredSequence) {
             return;
         }
         // LAST-RESORT CONTAINMENT for the deferred-commit ack hole (#7144): while
