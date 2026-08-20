@@ -47,19 +47,17 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE, narrowed to the O3 COPY 2026-08-20. Keys = TIMESTAMP"
-            + " ONLY. Measured after the commit:"
-            + "   on disk  c~1/2023-01-01/E0.1/{ts,exch,px}.d = 8,4,8 bytes -- EXACTLY one row's worth,"
-            + "            so the destination files are allocated at the right size"
-            + "   query    ts CORRECT, exch <empty>, px 6.86e-310 -- the non-key columns are"
-            + "            uninitialised, i.e. allocated but never POPULATED"
-            + " ELIMINATED, each by measurement, so do not re-check them: the identical-check bounds"
-            + " (partitionLo/Hi=0, commitLo/Hi=0, commitRowCount=1, all correct); the phantom-dir"
-            + " removal (made cell-aware, no change); openROFromMemoryColumns; and the partition"
-            + " nameTxn/update sink -- partitionIndexRaw IS resolved cell-aware via"
-            + " findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey)."
-            + " What is left: the O3 COPY tasks populate the key column and skip the cell's non-key"
-            + " columns in dedup replace mode. Start at O3CopyJob/O3OpenColumnJob, not TableWriter.")
+    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. 2026-08-20 finding: the second"
+            + " commit does not log ANY composite O3 activity -- no 'o3 composite cell task', no dedup"
+            + " merge, no 'deduplication resulted in noop' -- so it is NOT taking the O3 merge path the"
+            + " last four commits instrumented. Identify which path a same-timestamp dedup commit"
+            + " actually takes on a composite table BEFORE changing anything else."
+            + " On disk the cell E0.1 has correctly-sized files (8/4/8 bytes) with uninitialised"
+            + " contents; ts reads back correct, exch and px do not."
+            + " ELIMINATED by measurement, do not re-check: identical-check bounds; phantom-dir removal;"
+            + " openROFromMemoryColumns; partition nameTxn (partitionIndexRaw IS cell-aware); the"
+            + " open-column job's two path builds (both already pass cellSegment); and the"
+            + " identical-check's column source (now the task's scratch columns, fixed, no change).")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
@@ -79,8 +77,7 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * distinct rows and must both survive -- a dedup that collapsed them would be losing data that the
      * plain twin keeps, because on the plain table the dimension column is just another column.
      */
-    @Ignore("DEDUP gated overall (see the timestamp-only case), but THIS case PASSES as of 2026-08-19 --"
-            + " verified with both gates lifted. Un-ignore together with the rest when the gate comes off.")
+    @Ignore("Gated with the rest; this case PASSES with the gates lifted (verified 2026-08-20).")
     @Test(timeout = 60_000)
     public void testSameTimestampInDifferentCellsBothSurvive() throws Exception {
         assertMemoryLeak(() -> {
@@ -99,8 +96,7 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * timestamp. This is the shape {@code getDedupRowsWithAdditionalKeys} has to get right: the key set
      * spans a column that also decides which cell a row lives in.
      */
-    @Ignore("DEDUP gated overall (see the timestamp-only case), but THIS case PASSES as of 2026-08-19 --"
-            + " verified with both gates lifted. Un-ignore together with the rest when the gate comes off.")
+    @Ignore("Gated with the rest; this case PASSES with the gates lifted (verified 2026-08-20).")
     @Test(timeout = 60_000)
     public void testUpsertWithinACellWhileSiblingHoldsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -121,8 +117,7 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * Dedup across an O3 write, which is where dedup and the composite cell router interact: the
      * incoming batch is out of order AND spans two cells.
      */
-    @Ignore("DEDUP gated overall (see the timestamp-only case), but THIS case PASSES as of 2026-08-19 --"
-            + " verified with both gates lifted. Un-ignore together with the rest when the gate comes off.")
+    @Ignore("Gated with the rest; this case PASSES with the gates lifted (verified 2026-08-20).")
     @Test(timeout = 60_000)
     public void testDedupAcrossAnO3Write() throws Exception {
         assertMemoryLeak(() -> {

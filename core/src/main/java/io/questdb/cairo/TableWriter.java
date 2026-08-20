@@ -19980,6 +19980,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the commit is identical to the partition, false otherwise
      */
     boolean checkDedupCommitIdenticalToPartition(
+            ReadOnlyObjList<? extends MemoryCR> taskO3Columns,
             int cellKey,
             long partitionTimestamp,
             long partitionNameTxn,
@@ -19997,7 +19998,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // this call site instead returned uninitialised memory -- the path has to be built exactly the
         // way FrameImpl builds it, so the cell segment goes in there, not here.
         try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount, cellSegmentOrNull(cellKey))) {
-            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+            // The TASK's columns, not the writer's o3Columns field. On a composite table a multi-cell
+            // commit is dispatched per cell over a per-cell SCRATCH column set
+            // (buildCompositeCellGroupScratch), 0-based over that cell's rows -- while o3Columns still
+            // holds the whole commit. commitLo/commitHi are cell-local, so pairing them with the global
+            // columns compares the wrong rows. For a plain table the task is handed the writer's own
+            // columns, so this is the same object it used before.
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(taskO3Columns, this.metadata, commitRowCount)) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     // Do not compare dedup keys, already a match
                     if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
