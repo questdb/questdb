@@ -319,7 +319,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     /**
      * A cumulative OK ack must not cover a rowless deferred frame, even once a
      * LATER deferred frame's own rows have become durable.
-     *
+     * <p>
      * This drives the real {@code handleBinaryMessage} and reads the acks off
      * the wire, so it covers the processor's wiring -- the state-level test can
      * only call the decision by hand. Deleting the processor's
