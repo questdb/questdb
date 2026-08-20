@@ -6721,14 +6721,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates the keep column of a KEEP [N] HIGHEST/LOWEST policy against {@code metadata}: it must resolve,
-     * and its type must support the comparison the policy desugars to. The bare form takes the group extreme
+     * Validates a KEEP [N] HIGHEST/LOWEST policy against {@code metadata}. The keep column must resolve, and
+     * its type must support the comparison the policy desugars to. The bare form takes the group extreme
      * ({@code <col> < max(<col>) OVER (...)}), which only the types of {@link RowExpiryUtil#isKeepExtremeType}
      * support; the top-N form orders by the column instead, so it accepts any comparable type. Checking the
      * type here is what keeps a text-ish keep column from defining a view whose every read throws an implicit
      * cast error - the {@code LIMIT 0} probe in {@link #validateWindowPolicy} evaluates no row and so cannot
      * see it. It also catches LONG256, which the probe accepts because its cast to LONG succeeds, silently
-     * ranking rows by the low 64 bits. {@code stored} is the encoded policy.
+     * ranking rows by the low 64 bits. Every PARTITION BY key must resolve too: the parser captures that list
+     * as raw text and {@link RowExpiryUtil#buildKeepByPredicate} drops it into {@code OVER (PARTITION BY ...)}
+     * verbatim, so anything the key check lets through becomes part of the predicate. The optional list is
+     * what separates this from {@link #validateKeepLatestColumns}, which requires one. {@code stored} is the
+     * encoded policy.
      */
     private void validateKeepByColumn(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
         final RowExpiryUtil.KeepBy keepBy = new RowExpiryUtil.KeepBy(stored);
@@ -6737,6 +6741,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (index < 0) {
             throw SqlException.$(position, "invalid EXPIRE ROWS KEEP column: ").put(col);
         }
+        final String mode = keepBy.isHighest ? "KEEP HIGHEST" : "KEEP LOWEST";
+        validateKeepPartitionByColumns(metadata, keepBy.keys, mode, position);
         final int type = metadata.getColumnType(index);
         if (keepBy.n > 0) {
             if (!ColumnType.isComparable(type)) {
@@ -6750,6 +6756,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(col).put("' is ").put(ColumnType.nameOf(type))
                     .put("; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type");
         }
+    }
+
+    /**
+     * Resolves every column of a KEEP policy's PARTITION BY list against {@code metadata}. {@code keysCsv} is
+     * the raw list text the parser captured, so this is where a name that is not a column - a window frame
+     * clause, an injected {@code ) AND (1=0} that closes the generated {@code OVER (} early - is caught. A
+     * comma always separates two keys, since {@link TableUtils#isValidColumnName} rejects one inside a name.
+     * {@code mode} names the policy in the error message ("KEEP LATEST", "KEEP HIGHEST", "KEEP LOWEST").
+     *
+     * @return true when the list held at least one column; the caller decides whether an empty list is legal
+     */
+    private boolean validateKeepPartitionByColumns(
+            RecordMetadata metadata,
+            CharSequence keysCsv,
+            String mode,
+            int position
+    ) throws SqlException {
+        final int n = keysCsv.length();
+        if (n == 0) {
+            return false;
+        }
+        int start = 0;
+        for (int i = 0; i <= n; i++) {
+            if (i == n || keysCsv.charAt(i) == ',') {
+                final CharSequence key = unquoteTrim(keysCsv, start, i);
+                if (key.length() == 0) {
+                    throw SqlException.$(position, "EXPIRE ROWS ").put(mode).put(" has an empty PARTITION BY column");
+                }
+                if (metadata.getColumnIndexQuiet(key) < 0) {
+                    throw SqlException.$(position, "invalid EXPIRE ROWS ").put(mode).put(" PARTITION BY column: ").put(key);
+                }
+                start = i + 1;
+            }
+        }
+        return true;
     }
 
     /**
@@ -6767,24 +6808,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST ON must name the designated timestamp '")
                     .put(metadata.getColumnName(tsIndex)).put("', not '").put(onTs).put('\'');
         }
-        final CharSequence keysCsv = RowExpiryUtil.keepLatestKeys(stored);
-        boolean any = false;
-        int start = 0;
-        final int n = keysCsv.length();
-        for (int i = 0; i <= n; i++) {
-            if (i == n || keysCsv.charAt(i) == ',') {
-                final CharSequence key = unquoteTrim(keysCsv, start, i);
-                if (key.length() == 0) {
-                    throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST has an empty PARTITION BY column");
-                }
-                if (metadata.getColumnIndexQuiet(key) < 0) {
-                    throw SqlException.$(position, "invalid EXPIRE ROWS KEEP LATEST column: ").put(key);
-                }
-                any = true;
-                start = i + 1;
-            }
-        }
-        if (!any) {
+        if (!validateKeepPartitionByColumns(metadata, RowExpiryUtil.keepLatestKeys(stored), "KEEP LATEST", position)) {
             throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
         }
     }

@@ -628,6 +628,61 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectedForUnknownPartitionByColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep highest v partition by nope",
+                    25,
+                    "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: nope"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep 2 lowest v partition by k, nope",
+                    25,
+                    "invalid EXPIRE ROWS KEEP LOWEST PARTITION BY column: nope"
+            );
+            execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY nope",
+                    46,
+                    "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: nope"
+            );
+        });
+    }
+
+    @Test
+    public void testRejectedForPartitionByTextThatIsNotAColumnList() throws Exception {
+        // The parser captures the PARTITION BY list as raw text and buildKeepByPredicate drops it into
+        // OVER (PARTITION BY <text>) verbatim, so text that parses as SQL but is not a column list would
+        // rewrite the generated window predicate: a ') AND (1=0' closes the OVER early and turns the keep
+        // filter into a constant, silently retaining every row (or, with ') OR (1=1', expiring every row).
+        // Resolving each key as a column is what rejects it, on CREATE and on ALTER alike.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String[] injections = {
+                    "k) AND (1=0",
+                    "k) OR (1=1",
+                    "k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW",
+            };
+            for (String injection : injections) {
+                assertExceptionNoLeakCheck(
+                        "create materialized view mvbad as (select * from base) expire rows keep highest v partition by " + injection,
+                        25,
+                        "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: " + injection
+                );
+                assertExceptionNoLeakCheck(
+                        "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY " + injection,
+                        46,
+                        "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: " + injection
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRejectedZeroRowCount() throws Exception {
         assertMemoryLeak(() -> {
             createBase();

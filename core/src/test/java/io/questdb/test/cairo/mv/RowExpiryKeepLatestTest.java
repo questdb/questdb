@@ -146,7 +146,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view mvbad as (select * from base) expire rows keep latest partition by nope",
                     25,
-                    "invalid EXPIRE ROWS KEEP LATEST column: nope"
+                    "invalid EXPIRE ROWS KEEP LATEST PARTITION BY column: nope"
             );
         });
     }
