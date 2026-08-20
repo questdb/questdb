@@ -98,16 +98,25 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * predicate's keep set explicitly without being re-wrapped. Structural KEEP and raw window policies skip
  * physical cleanup because later refreshes can make a physically deleted fallback visible again.
  * <p>
- * <b>Concurrency (reclamation never deletes a row a concurrent writer back-filled):</b> the only writers to a
- * policied view are this job and the materialized-view refresh job, and BOTH guard every view write with the
- * per-view {@link MatViewState#tryLock()}. {@link #cleanupTable} takes that same lock for the whole sweep, so
- * cleanup and refresh are mutually exclusive — no back-fill can land between the survivor scan and the
- * REPLACE_RANGE commit. If a refresh holds the lock, cleanup DEFERS to a later sweep (it is idempotent, and a
- * deferred sweep retries on the backoff instead of waiting a full CLEANUP EVERY). As defense-in-depth (and for the degenerate case where no view state exists,
- * e.g. materialized views disabled), each destructive commit ALSO gates on the SEQUENCER TRANSACTION: it
- * commits only when the table was fully applied at sweep start and the sequencer txn has not advanced beyond
- * the cleanup's own commits. The read filter stays authoritative for VISIBILITY regardless, so an expired row
- * is never shown even when reclamation is deferred.
+ * <b>Concurrency (reclamation never deletes a row a concurrent writer back-filled):</b> the SEQUENCER
+ * TRANSACTION gate on each destructive commit is what covers every writer. The sweep requires the table fully
+ * applied at sweep start (so the survivor scan sees the whole table) and baselines on the applied txn of its
+ * own reader snapshot; {@link WalWriter#commitWithParamsIfSeqTxn} then checks that baseline and allocates the
+ * transaction in a single sequencer decision, so the commit lands only while nothing but the cleanup's own
+ * commits has advanced the sequencer since the scan. Everything else that writes the view takes a txn from
+ * the same sequencer — a refresh back-fill, {@code ALTER MATERIALIZED VIEW ... ADD INDEX / SET TTL / SET
+ * EXPIRE / DROP EXPIRE}, a replicated transaction — so when any of them lands mid-sweep the sequencer refuses
+ * the pending commit and the sweep defers instead of deleting a row it never saw. A drop mid-sweep trips the
+ * sequencer's own dropped check, which ends the sweep with an error rather than a delete.
+ * <p>
+ * The per-view {@link MatViewState#tryLock()} that {@link #cleanupTable} holds for the whole sweep is
+ * narrower: it serialises this job against the materialized-view refresh job, which guards every view write
+ * with the same lock. That keeps the two jobs off each other rather than widening the guarantee above — the
+ * writers that reach the WAL writer without the lock answer to the sequencer gate alone, and so does a sweep
+ * of a view with no state at all (materialized views disabled). If a refresh holds the lock, cleanup DEFERS to
+ * a later sweep (it is idempotent, and a deferred sweep retries on the backoff instead of waiting a full
+ * CLEANUP EVERY). The read filter stays authoritative for VISIBILITY regardless, so an expired row is never
+ * shown even when reclamation is deferred.
  * <p>
  * A <i>bounds</i> wipe of a logical partition lying wholly below a designated-timestamp threshold ({@code ts <
  * T}) needs no survivor scan: every row there is expired.
@@ -197,12 +206,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         isLastCleanupDeferred = false;
         isLastCleanupFailed = false;
         // Serialize with the materialized-view refresh job. Both this job and refresh write the view through
-        // its WAL writer, and a refresh O3 back-fill into a non-active partition landing between our survivor
-        // scan and our REPLACE_RANGE commit could otherwise be deleted. Refresh guards EVERY view write with
-        // MatViewState#tryLock(); we take the SAME per-view lock for the whole sweep, so cleanup and refresh
-        // are mutually exclusive — no two writers sequence the view concurrently, which closes the otherwise
-        // best-effort commit-window race entirely. If a refresh holds the lock we DEFER to a later sweep
-        // (cleanup is idempotent, and runSerially retries a deferred sweep on the backoff).
+        // its WAL writer, and refresh guards EVERY view write with MatViewState#tryLock(); we take the SAME
+        // per-view lock for the whole sweep, so the two jobs never sequence the view concurrently. That keeps
+        // a refresh O3 back-fill out of the window between our survivor scan and our REPLACE_RANGE commit,
+        // which spares the sweep a scan whose commit the sequencer gate would refuse anyway. The lock reaches
+        // refresh and nothing else: ALTER ... ADD INDEX / SET TTL / SET EXPIRE / DROP EXPIRE, a drop and
+        // replicated transactions all reach the view without it, and the per-commit sequencer gate in
+        // commitWithFence is what makes reclamation safe against them. If a refresh holds the lock we DEFER to
+        // a later sweep (cleanup is idempotent, and runSerially retries a deferred sweep on the backoff).
         final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
         if (viewState != null) {
             if (viewState.isDropped() || viewState.isPendingInvalidation() || viewState.isInvalid()) {
@@ -224,8 +235,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 viewState.tryCloseIfClosed();
             }
         }
-        // No view state (materialized views disabled, so no policied views exist in practice): fall back to
-        // the per-commit sequencer-txn gate inside cleanupTable0 (still correct, best-effort).
+        // No view state (materialized views disabled, so no policied views exist in practice): there is no
+        // refresh job to serialise with, so the sweep runs on the per-commit sequencer-txn gate alone.
         return cleanupTable0(tableToken, predicate);
     }
 
