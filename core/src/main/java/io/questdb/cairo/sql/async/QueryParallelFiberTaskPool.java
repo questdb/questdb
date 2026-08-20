@@ -103,6 +103,7 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
         if (closed) {
             return null;
         }
+
         if (freeTasks != null) {
             final T task = freeTasks;
             @SuppressWarnings("unchecked") final T next = (T) task.nextFree;
