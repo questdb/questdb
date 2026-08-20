@@ -582,6 +582,7 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         volatile Runnable commitHook;
         volatile Runnable getTudHook;
         volatile Runnable maxRowsCommitHook;
+
         RaceTudCache(CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
             super(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
         }
