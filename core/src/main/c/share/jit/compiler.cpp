@@ -503,8 +503,21 @@ struct Function
 
         for (int i = 0; i < unroll_factor; ++i)
         {
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
+
+            if (values.is_empty())
+            {
+                // Fail closed, the way scalar_tail() guards its own pop. emit_code() abandoned
+                // code generation mid-stream and left no mask to scatter row ids with.
+                // ArenaVector::pop() asserts only in a debug build; a release build underflows
+                // _size to UINT32_MAX and reads out of bounds inside the JVM. Declining instead
+                // stops compileFunction() before it finalizes the function, and SqlCodeGenerator
+                // falls back to the Java filter. Every site that abandons also reports its own
+                // reason; this backstop covers the ones a later change adds.
+                questdb::avx2::decline_filter(c, "AVX2 code generation abandoned mid-stream");
+                break;
+            }
 
             auto mask = values.pop();
 
@@ -758,8 +771,18 @@ struct CountOnlyFunction
 
         for (int i = 0; i < unroll_factor; ++i)
         {
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm);
+
+            if (values.is_empty())
+            {
+                // Fail closed, exactly as Function::avx2_loop does. The count path compiles the
+                // same IR through its own emit_code() call, so it carries the same hazard and
+                // needs its own guard - a guard in the row loop alone leaves this one popping an
+                // empty ArenaVector.
+                questdb::avx2::decline_filter(c, "AVX2 count code generation abandoned mid-stream");
+                break;
+            }
 
             auto mask = values.pop();
 

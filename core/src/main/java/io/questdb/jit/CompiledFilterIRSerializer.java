@@ -1336,19 +1336,55 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Runs under {@code -ea} only, so it costs nothing in production.
      */
     private boolean areWideLaneWidthsHarmonised(int options) {
-        if (((options >> 4) & 3) != EXEC_HINT_WIDE_LANE) {
-            return true;
-        }
+        return ((options >> 4) & 3) != EXEC_HINT_WIDE_LANE || !hasUnharmonisedOperandWidths(true);
+    }
+
+    /**
+     * Walks the finished IR stream and reports whether any binary operator pairs two operands the
+     * vectorized backend will not harmonise for the loop named by {@code isWideLane}.
+     * <p>
+     * {@code avx2::emit_bin_op} types the instruction it emits from the LEFT operand alone, after
+     * {@code avx2::convert()} has had its chance to promote one side. Every conversion
+     * {@code convert()} performs that changes a lane width - {@code sx_i64}, {@code cvt_itod},
+     * {@code cvt_ftod}, {@code cvt_ltod} - produces exactly four results, so each is correct at
+     * four lanes and only at four lanes. {@code convert()} gates those arms on the loop's LANE
+     * COUNT, which {@code compiler.cpp} derives from the observed width, so a mixed-width pairing
+     * harmonises on an eight-byte lane and declines the filter on every narrower one.
+     * <p>
+     * The two callers ask different questions of the same walk:
+     * <ul>
+     * <li>{@code isWideLane} - the four-lane loop, where {@code convert()} does promote. Only a
+     * narrow-int-with-i64 pairing counts, and it counts because the FRONTEND owns which width the
+     * Java filter reads at; the backend's promotion is a backstop, not the answer. This half runs
+     * under an assert.</li>
+     * <li>otherwise - the single-size loop at a lane narrower than eight bytes, where the backend
+     * declines rather than promotes and the filter would fall back to the Java one. Any byte-width
+     * mismatch counts. {@link #getExecHint} demotes such a filter to {@link #EXEC_HINT_SCALAR}
+     * instead, whose {@code x86::convert()} carries the complete table, so the filter keeps a
+     * compiled backend. {@code getExecHint} skips this half for an eight-byte lane, where the
+     * backend now converts and the filter keeps its four rows per iteration.</li>
+     * </ul>
+     * A var-size header needs no exclusion here. {@code ensureOnlyVarSizeHeaderChecks} lets it
+     * reach a binary operator only as an {@code IS [NOT] NULL} check, {@code serializeNull} spells
+     * that sentinel as an I8 immediate for STRING, BINARY and VARCHAR alike, and every var-size
+     * header type observes as eight bytes, so the pairing is same-width on both halves of this
+     * walk and neither half reports it.
+     */
+    private boolean hasUnharmonisedOperandWidths(boolean isWideLane) {
         // Operator instructions pad their options field with zero, and I1_TYPE is zero, so the
         // stack has to carry widths derived from the opcode rather than the encoded field.
         // UNDEFINED_CODE marks a value whose width is not a lane width (a comparison mask, or a
         // type this check does not reason about); pairings involving one are skipped.
+        //
+        // The walk stops at the append offset rather than at the mapped size: getExecHint() asks
+        // this question from the short-circuit paths, which have not emitted their RET yet, and
+        // everything past the append offset is uninitialised.
         typeStack.clear();
-        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
+        for (long offset = 0, n = memory.getAppendOffset(); offset < n; offset += INSTRUCTION_SIZE) {
             final int opCode = memory.getInt(offset);
             switch (opCode) {
                 case RET:
-                    return true;
+                    return false;
                 case VAR:
                 case MEM:
                 case IMM:
@@ -1388,9 +1424,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case DIV: {
                     final int lhsType = typeStack.pop();
                     final int rhsType = typeStack.pop();
-                    if ((isNarrowIntTypeCode(lhsType) && rhsType == I8_TYPE)
-                            || (isNarrowIntTypeCode(rhsType) && lhsType == I8_TYPE)) {
-                        return false;
+                    if (isUnharmonisedPairing(lhsType, rhsType, isWideLane)) {
+                        return true;
                     }
                     final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
                             || opCode == LE || opCode == GT || opCode == GE;
@@ -1404,7 +1439,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     typeStack.clear();
             }
         }
-        return true;
+        return false;
+    }
+
+    /**
+     * Reports whether the vectorized loop named by {@code isWideLane} leaves this operand pairing
+     * unharmonised. See {@link #hasUnharmonisedOperandWidths} for what each loop promotes and why
+     * a var-size header pairs safely at either width.
+     */
+    private static boolean isUnharmonisedPairing(int lhsType, int rhsType, boolean isWideLane) {
+        if (isWideLane) {
+            return (isNarrowIntTypeCode(lhsType) && rhsType == I8_TYPE)
+                    || (isNarrowIntTypeCode(rhsType) && lhsType == I8_TYPE);
+        }
+        final int lhsSize = TypesObserver.typeSizeBytes(lhsType);
+        final int rhsSize = TypesObserver.typeSizeBytes(rhsType);
+        // A zero size is UNDEFINED_CODE - a comparison mask, or a value this walk stopped tracking.
+        return lhsSize != 0 && rhsSize != 0 && lhsSize != rhsSize;
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -1551,12 +1602,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             || (lhsType == rhsType && isVarSizeType(lhsType))) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
                     }
-                    // serializeNull() emits IMM with I8_TYPE / I4_TYPE for var-size
-                    // header NULL sentinels, so the rule above does not catch
-                    // <varsize> >= null and similar. Only IS [NOT] NULL, which
-                    // lowers to EQ/NE against the NULL header IMM, is meaningful
-                    // for var-size operands; every other operator must fall back
-                    // to the Java filter.
+                    // serializeNull() spells every var-size header NULL sentinel
+                    // as an I8_TYPE IMM - STRING, BINARY and VARCHAR alike - so
+                    // that IMM pushes a fixed-size type code and the rule above
+                    // does not catch <varsize> >= null and similar. Only
+                    // IS [NOT] NULL, which lowers to EQ/NE against the NULL header
+                    // IMM, is meaningful for var-size operands; every other
+                    // operator must fall back to the Java filter.
                     if ((isVarSizeType(lhsType) || isVarSizeType(rhsType))
                             && opCode != EQ && opCode != NE) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
@@ -1774,7 +1826,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // never count a widened immediate, so a filter holding one must stay off them. This is
             // the deferred half of visit()'s scalar force - see hasWidthChangingI64WidenConstant().
             if (!hasPendingWidthChangingI64Constant) {
-                return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
+                if (typesObserver.hasMixedSizes()) {
+                    return EXEC_HINT_MIXED_SIZE_TYPE;
+                }
+                // The single-size loop takes its lane count from the observed width:
+                // compiler.cpp computes step = 256 / (maxSize() * 8), so an eight-byte lane runs
+                // four lanes and avx2::convert() harmonises every mixed-width pairing there -
+                // sx_i64, cvt_itod, cvt_ftod and cvt_ltod all produce exactly four results. A
+                // narrower lane runs eight or more, where those conversions cannot reach past the
+                // low 128 bits, so convert() declines the filter and it falls back to the JAVA
+                // filter. Demoting to the JIT scalar backend first is the cheaper destination and
+                // the earlier decision, so ask the IR only for those widths.
+                //
+                // The observer counts columns and bind variables, so it reports a single size for
+                // a filter that also carries a NARROW arithmetic subtree - a pure-constant INT
+                // chain the width-aware fold declined, say - and the mismatch exists only in the
+                // emitted IR. See hasUnharmonisedOperandWidths().
+                if (typesObserver.maxSize() != 8 && hasUnharmonisedOperandWidths(false)) {
+                    return EXEC_HINT_SCALAR;
+                }
+                return EXEC_HINT_SINGLE_SIZE_TYPE;
             }
         }
         return EXEC_HINT_SCALAR;
@@ -3906,9 +3977,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperand(offset, IMM, typeCode, Numbers.LONG_NULL, Numbers.LONG_NULL);
                 break;
             case STRING_HEADER_TYPE:
-                putOperand(offset, IMM, I4_TYPE, TableUtils.NULL_LEN);
-                break;
             case BINARY_HEADER_TYPE:
+                // STRING and BINARY share the I8 sentinel because every backend hands the header
+                // length back as a 64-bit value: avx2::read_mem_varsize packs four i64 lanes, and
+                // the scalar x86/aarch64 twin sign-extends the four-byte STRING header into a
+                // 64-bit register. An I4 sentinel here would leave the STRING comparison a mixed
+                // (i64, i32) pairing, and avx2::convert() would then harmonise it with an sx_i64
+                // the four-lane loop re-runs on every iteration for a value that never changes.
                 putOperand(offset, IMM, I8_TYPE, TableUtils.NULL_LEN);
                 break;
             case VARCHAR_HEADER_TYPE: // varchar headers are stored in aux vector

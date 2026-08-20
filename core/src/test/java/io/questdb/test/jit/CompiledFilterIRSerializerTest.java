@@ -1915,20 +1915,56 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1L)(i64 along)(=)(!)(ret)");
     }
 
+    /**
+     * Pins the width of every var-size header NULL sentinel at I8.
+     * <p>
+     * Both backends hand a var-size header back as a 64-bit value: {@code avx2::read_mem_varsize}
+     * packs four i64 lanes, and the scalar {@code x86}/{@code aarch64} twin sign-extends the
+     * four-byte STRING header into a 64-bit register. An I4 sentinel for STRING would make its
+     * {@code IS [NOT] NULL} the only var-size comparison with mismatched operand widths, and
+     * {@code avx2::convert()} would harmonise it by emitting an {@code sx_i64} - two
+     * {@code vpmovsxdq}, a {@code vpcmpeqd} and a {@code vpblendvb} plus two constant-pool loads -
+     * INSIDE the four-lane loop, once per iteration, for a broadcast constant that never changes.
+     * That cost is invisible to a results assertion, so pin the widths instead: STRING, BINARY and
+     * VARCHAR must all spell the sentinel at the same width their column's lane is read at.
+     * <p>
+     * The sentinel VALUES differ on purpose - STRING and BINARY compare a length against
+     * {@code TableUtils.NULL_LEN}, VARCHAR compares an aux-vector header against
+     * {@code VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL} - so only the type codes are asserted
+     * alike here. {@link #testStringNullConstant}, {@link #testBinaryNullConstant} and
+     * {@link #testVarcharNullConstant} pin the values.
+     */
+    @Test
+    public void testVarSizeNullSentinelsShareTheI64Width() throws Exception {
+        final String[][] columns = {
+                {"astring", "string_header", "-1"},
+                {"abinary", "binary_header", "-1"},
+                {"avarchar", "varchar_header", "4"},
+        };
+        for (String[] col : columns) {
+            final String name = col[0];
+            final String operand = "(i64 " + col[2] + "L)(" + col[1] + " " + name + ")";
+            serialize(name + " is null");
+            assertIR(name + " is null", operand + "(=)(ret)");
+            serialize(name + " is not null");
+            assertIR(name + " is not null", operand + "(<>)(ret)");
+        }
+    }
+
     @Test
     public void testStringNullConstant() throws Exception {
         serialize("astring <> null");
-        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
+        assertIR("(i64 -1L)(string_header astring)(<>)(ret)");
         serialize("astring is not null");
-        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
+        assertIR("(i64 -1L)(string_header astring)(<>)(ret)");
         serialize("astring = null");
-        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
+        assertIR("(i64 -1L)(string_header astring)(=)(ret)");
         serialize("astring is null");
-        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
+        assertIR("(i64 -1L)(string_header astring)(=)(ret)");
         serialize("null <> astring");
-        assertIR("(string_header astring)(i32 -1L)(<>)(ret)");
+        assertIR("(string_header astring)(i64 -1L)(<>)(ret)");
         serialize("null = astring");
-        assertIR("(string_header astring)(i32 -1L)(=)(ret)");
+        assertIR("(string_header astring)(i64 -1L)(=)(ret)");
     }
 
     @Test

@@ -39,6 +39,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.jit.CompiledCountOnlyFilter;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -46,6 +48,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -70,6 +73,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     private static final int EXEC_HINT_WIDE_LANE = 3;
+    // Which mid-stream abandon writeAbandonProbeIr() plants in the stream it writes.
+    private static final int IR_ABANDON_INV = 1;
+    private static final int IR_ABANDON_NONE = 0;
+    private static final int IR_ABANDON_SHORT_CIRCUIT = 2;
+    // opcodes::Inv in core/src/main/c/share/jit/common.h. The serializer's own constant
+    // is package-private, so the value is repeated here.
+    private static final int IR_OPCODE_INV = -1;
+    // The eight-row LONG column writeAbandonProbeIr()'s "column > 0" stream runs against, plus the
+    // row ids and the match count a correctly compiled filter must answer with. A backend that
+    // abandoned code generation and then fell into scalar_tail's unconditional row store answers
+    // with EVERY row id instead - the failure a test that only asks "did it compile?" cannot see.
+    private static final long[] IR_PROBE_COLUMN = {-3, 0, 7, -1, 5, 0, 2, -9};
+    private static final int IR_PROBE_MATCH_COUNT = 3;
+    private static final String IR_PROBE_MATCHES = "2,4,6";
     private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
     private static final QueryModel queryModel = QueryModel.FACTORY.newInstance();
@@ -82,7 +99,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        // Disable the test suite on ARM64.
+        // JitUtil.isJitSupported() is true on x86-64 and aarch64 alike, so this gate skips the
+        // suite only where the JIT compiler has no backend at all. The class RUNS on ARM64, where
+        // Function::compile always selects the scalar loop.
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
         // compiler.setEnableJitNullChecks(true);
@@ -3417,7 +3436,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // the four-lane one (a BYTE or SHORT IN key is not wide-lane eligible), so this test is not
         // AVX2-gated. It still only DETECTS the regression on an AVX2 host - without AVX2
         // compiler.cpp falls back to the scalar loop, whose convert() has the complete int table -
-        // and the class as a whole is skipped on ARM64 by setUp()'s JitUtil.isJitSupported() gate.
+        // and ARM64, which setUp()'s JitUtil.isJitSupported() gate admits, runs that same scalar
+        // loop unconditionally.
         // The host-independent guarantee is the IR pin in CompiledFilterIRSerializerTest.
         assertMemoryLeak(() -> {
             execute("create table wln as (select timestamp_sequence(0, 1_000_000) k," +
@@ -5524,6 +5544,388 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Numbers.intToDouble(INT_NULL) does on the Java side.
             assertA2fRows("i + 1.0 = null", 3, 7);
         });
+    }
+
+    @Test
+    public void testNarrowConstArithVsEightByteLanePinsBoundaryRows() throws Exception {
+        // A pure-constant INT arithmetic subtree the width-aware fold declines keeps its
+        // per-operation IR at i32 - "(0 - 1000)" emits as (i32 1000L)(i32 0L)(-) - because the
+        // Java filter computes it at INT width and wraps there. The type observer counts columns
+        // and bind variables only, so a predicate whose other operand is a LONG or TIMESTAMP
+        // column still reports a single observed size of eight bytes and getExecHint() used to
+        // hand the filter to the single-size AVX2 loop.
+        //
+        // avx2::convert() promotes an (i32, f64) pairing only inside the four-lane WIDE_LANE loop
+        // - cvt_itod reads the low 128 bits of its operand, so it is correct at four lanes and
+        // only at four lanes - and falls THROUGH outside it. emit_bin_op then types the comparison
+        // from the left operand alone and compares an f64 register against one holding eight
+        // packed i32, which selects the wrong rows. Worse, the mask it leaves is built at 32-bit
+        // granularity while avx2::compress_register permutes the row-id register with vpermps: the
+        // two halves of the mask select the two halves of DIFFERENT row ids, and the spliced
+        // 64-bit result is an id no page frame holds. PageFrameMemoryRecord.getLong then
+        // dereferences it and the JVM takes a SIGSEGV.
+        //
+        // The last predicate below is the spelling that faults; it runs last so that a regression
+        // reddens the assertions above it before it takes the fork down.
+        assertMemoryLeak(() -> {
+            createA3wTable();
+            // -(2147483647 / 5) is -429_496_729 at INT width, so the comparison keeps every row
+            // whose l64 exceeds -858_993_458. NULL l64 makes the product NaN, which no ordering
+            // comparison accepts.
+            assertA3wRows("(-(2147483647 / 5)) < ((l64 + 0) * 0.5)", 3, 4, 5, 6, 7, 8, 9);
+            // 1.0E-30 / ts underflows towards zero for a realistic timestamp, so the right side is
+            // a tiny negative number and the left one is around -2.9E30: every row matches.
+            assertA3wRows("((2.0 - ts) * ts) <= ((1.0E-30 / ts) * (0 - 1000))",
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            // Correct answer is NO rows - -0.0 is never 500 - and the defect ADDED rows here, so
+            // the empty result is the oracle rather than an absence of coverage.
+            assertA3wRows("(-(0.0 * l64)) = (1000 / 2)");
+            assertA3wRows("not (0 > ((-3 * 0) / (0.5 * l64)))", 0, 1, 2, 3, 4, 5, 7, 8, 9);
+            assertA3wRows("l64 * 0.5 > (0 - 1000)", 5, 6, 7, 8, 9);
+            assertA3wRows("(0 - 1000) > (0.5 * l64)", 0, 1, 2, 3);
+        });
+    }
+
+    @Test
+    public void testNarrowConstArithVsEightByteLaneKeepsVectorizedLoop() throws Exception {
+        // Pins the loop itself, not just the rows. The rows above agree on all three modes
+        // whichever backend runs them, so a change that quietly dropped this shape onto the
+        // scalar loop - or onto the Java filter - would leave those assertions green while the
+        // vectorization the eight-byte lane earns silently went away.
+        //
+        // Eight-byte lanes step four rows per YMM iteration, which is exactly the lane count
+        // avx2::convert()'s width-changing arms are correct at, so these filters keep
+        // EXEC_HINT_SINGLE_SIZE_TYPE and the backend harmonises the (i32, f64) pairing.
+        assertMemoryLeak(() -> {
+            createA3wTable();
+            assertExecHint("a3w", "(-(2147483647 / 5)) < ((l64 + 0) * 0.5)", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "((2.0 - ts) * ts) <= ((1.0E-30 / ts) * (0 - 1000))", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "(-(0.0 * l64)) = (1000 / 2)", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "not (0 > ((-3 * 0) / (0.5 * l64)))", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "l64 * 0.5 > (0 - 1000)", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "(0 - 1000) > (0.5 * l64)", EXEC_HINT_SINGLE_SIZE_TYPE);
+            // Controls. A filter whose constant chain folds to one eight-byte immediate - or
+            // whose operands were eight bytes to begin with - never had a mixed-width pairing and
+            // keeps the same loop.
+            assertExecHint("a3w", "l64 > (0 - 1000)", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "(0 - 1000) < l64", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "d64 > (10 / 3)", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "l64 * 0.5 > d64", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("a3w", "l64 > 1000 * 1000", EXEC_HINT_SINGLE_SIZE_TYPE);
+        });
+    }
+
+    @Test
+    public void testNarrowConstArithVsEightByteLaneOverSimdBatch() throws Exception {
+        // The fixture the defect was reported on: rnd_* columns over a batch long enough to run
+        // the SIMD body and its scalar tail, partitioned so the filter crosses page frames. The
+        // pinned fixture above pins the rows a chosen eleven-row table produces; this one covers
+        // the batch length the rest of the class uses, adds the count() cross-check, and keeps
+        // the reported spellings running against values nobody picked for them.
+        final String ddl = "CREATE TABLE a3x AS (SELECT" +
+                " timestamp_sequence(400_000_000_000, 500_000_000) AS k," +
+                " rnd_float() f32," +
+                " rnd_int() i32," +
+                " rnd_long() l64," +
+                " rnd_double() d64," +
+                " timestamp_sequence(500_000_000_000, 700_000_000) ts," +
+                " rnd_float() f32b," +
+                " rnd_int() i32b" +
+                " FROM long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) TIMESTAMP(k) PARTITION BY DAY";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            assertQueryNotNullNoLeakCheck("a3x where (-(2147483647 / 5)) < ((l64 + 0) * 0.5)");
+            assertQueryNotNullNoLeakCheck("a3x where ((2.0 - ts) * ts) <= ((1.0E-30 / ts) * (0 - 1000))");
+            assertQueryEmptyNoLeakCheck("a3x where (-(0.0 * l64)) = (1000 / 2)");
+            assertQueryNotNullNoLeakCheck("a3x where not (0 > ((-3 * 0) / (0.5 * l64)))");
+            assertQueryNotNullNoLeakCheck("a3x where l64 * 0.5 > (0 - 1000)");
+            assertQueryNotNullNoLeakCheck("a3x where (0 - 1000) > (0.5 * l64)");
+        });
+    }
+
+    @Test
+    public void testAvx2BackendDeclinesWhenCodeGenerationAbandonsMidStream() throws Exception {
+        // avx2::emit_code() abandons code generation with a bare return for the opcodes it cannot
+        // vectorize - opcodes::Inv and the four short-circuit opcodes. Abandoning leaves the value
+        // stack unbalanced, and avx2_loop() then pops it: ArenaVector::pop() asserts only in a
+        // debug build, so the release build we ship underflows the size to UINT32_MAX and reads out
+        // of bounds inside the JVM.
+        //
+        // No SQL reaches either opcode today - backfillNode() overwrites every Inv placeholder or
+        // aborts JIT compilation, and serializePredicatesAndSc / serializePredicatesOrSc throw when
+        // the exec hint is a SIMD one - so this drives the backend directly with a hand-written IR
+        // stream. The control stream compiles, which is what proves the stream and the options are
+        // well-formed and that the two declines below come from the planted opcode rather than from
+        // the stream around it. assertJitBackendCompiles() RUNS that control filter over
+        // IR_PROBE_COLUMN and pins the row ids and the count it answers with, so a stream that
+        // compiled into the wrong code cannot pass itself off as a valid control.
+        // assertJitBackendDeclines() expects compile() to throw instead, and runs a filter only on
+        // the failure path, where compile() wrongly handed one back and the row ids name the damage.
+        Assume.assumeTrue("both avx2_loop variants sit behind an AVX2 check", Vect.getSupportedInstructionSet() >= 8);
+        assertMemoryLeak(() -> {
+            // An eight-byte lane (log2 3 in bits 1-3) plus EXEC_HINT_SINGLE_SIZE_TYPE in bits 4-5,
+            // which is what compiler.cpp turns into avx2_loop() at step 4.
+            final int options = (3 << 1) | (EXEC_HINT_SINGLE_SIZE_TYPE << 4);
+            try (MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT)) {
+                assertJitBackendCompiles(ir, options, "avx2_loop");
+                // A short-circuit opcode sits part-way through the stream, so emit_code() abandons
+                // with the comparison mask still on the value stack. avx2_loop()'s empty-stack
+                // guard cannot see that one - the And_Sc arm has to decline for itself.
+                assertJitBackendDeclines(ir, options, IR_ABANDON_SHORT_CIRCUIT, "short-circuit opcode in the SIMD path", "avx2_loop");
+                // opcodes::Inv at the head of the stream abandons with NOTHING on the value stack.
+                // That is what avx2_loop()'s values.is_empty() guard exists for. Three sites report
+                // for this one stream, in order: avx2::emit_code's Inv arm ("invalid opcode in the
+                // SIMD path"), the guard ("AVX2 code generation abandoned mid-stream"), and finally
+                // x86::emit_code's own Inv arm, because avx2_loop() finishes by emitting a
+                // scalar_tail() over the SAME stream. JitErrorHandler::handle_error assigns rather
+                // than latches, so the last reporter is the one that reaches the log - and that is
+                // the scalar tail's. The guard is still load-bearing: delete it and the compile
+                // SIGSEGVs in values.pop() long before the tail is emitted.
+                assertJitBackendDeclines(ir, options, IR_ABANDON_INV, "invalid opcode in the scalar path", "avx2_loop");
+            }
+        });
+    }
+
+    @Test
+    public void testScalarBackendDeclinesWhenCodeGenerationAbandonsMidStream() throws Exception {
+        // The scalar twin of the AVX2 test above, and the worse half of the same defect: x86 and
+        // aarch64 emit_code() abandon code generation with a bare return at opcodes::Inv, and
+        // scalar_tail() then FAILS OPEN. Its "if (!values.is_empty())" guard exists for the
+        // legitimate case where every predicate resolved through a short-circuit jump, so on an
+        // empty value stack it simply skips the final test/jz and falls straight into
+        // "bind(l_store_row); mov(rows[output_index], input_index); add(output_index, 1)" - an
+        // unconditional store that selects every row, and an unconditional increment that counts
+        // every row. Nothing signals it, which is why this test asserts the ROWS and not merely
+        // that compilation survived.
+        //
+        // As with the AVX2 twin, no SQL reaches opcodes::Inv: the serializer writes it only as the
+        // placeholder for a symbol bind variable and a constant stub, and backfillNode() either
+        // overwrites those 24 bytes or throws. So the stream is hand-written here.
+        //
+        // EXEC_HINT_SCALAR routes Function::compile and CountOnlyFunction::compile to scalar_loop
+        // on every CPU, so unlike the AVX2 twin this needs no instruction-set assumption - and on
+        // ARM64, where Function::compile is scalar_loop unconditionally, it covers the only JIT
+        // backend that architecture has.
+        assertMemoryLeak(() -> {
+            // An eight-byte lane (log2 3 in bits 1-3) plus EXEC_HINT_SCALAR in bits 4-5.
+            final int options = (3 << 1) | (EXEC_HINT_SCALAR << 4);
+            try (MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT)) {
+                assertJitBackendCompiles(ir, options, "scalar_tail");
+                assertJitBackendDeclines(ir, options, IR_ABANDON_INV, "invalid opcode in the scalar path", "scalar_tail");
+            }
+        });
+    }
+
+    // Writes "l64 > 0" over column 0 as a raw IR stream, optionally planting one of the two
+    // opcodes avx2::emit_code() abandons on.
+    private static void writeAbandonProbeIr(MemoryCARW ir, int abandon) {
+        ir.truncate();
+        if (abandon == IR_ABANDON_INV) {
+            putIrInstruction(ir, IR_OPCODE_INV, 0, 0);
+        }
+        // get_arguments() pops lhs first, so the stream pushes the right-hand operand first.
+        putIrInstruction(ir, CompiledFilterIRSerializer.IMM, CompiledFilterIRSerializer.I8_TYPE, 0);
+        putIrInstruction(ir, CompiledFilterIRSerializer.MEM, CompiledFilterIRSerializer.I8_TYPE, 0);
+        putIrInstruction(ir, CompiledFilterIRSerializer.GT, 0, 0);
+        if (abandon == IR_ABANDON_SHORT_CIRCUIT) {
+            // AND_SC against label 0 (next_row), exactly as serializePredicatesAndSc() writes it.
+            putIrInstruction(ir, CompiledFilterIRSerializer.AND_SC, 0, 0);
+        }
+        putIrInstruction(ir, CompiledFilterIRSerializer.RET, 0, 0);
+    }
+
+    // instruction_t in common.h: a 4-byte opcode, a 4-byte options field, then a 16-byte payload.
+    private static void putIrInstruction(MemoryCARW ir, int opcode, int typeCode, long payload) {
+        ir.putInt(opcode);
+        ir.putInt(typeCode);
+        ir.putLong(payload);
+        ir.putLong(0L);
+    }
+
+    private static void assertJitBackendCompiles(MemoryCARW ir, int options, String loopName) throws SqlException {
+        writeAbandonProbeIr(ir, IR_ABANDON_NONE);
+        try (CompiledFilter filter = new CompiledFilter()) {
+            filter.compile(ir, options);
+            // Running the control stream is what makes the declines below attributable: it pins
+            // that this IR and these options compile into a filter that selects the RIGHT rows, so
+            // a wrong row set later can only have come from the planted opcode.
+            Assert.assertEquals(
+                    "Function::" + loopName + " compiled the control stream into a filter that selects the wrong rows",
+                    IR_PROBE_MATCHES,
+                    callProbeFilter(filter)
+            );
+        }
+        try (CompiledCountOnlyFilter filter = new CompiledCountOnlyFilter()) {
+            filter.compile(ir, options);
+            Assert.assertEquals(
+                    "CountOnlyFunction::" + loopName + " compiled the control stream into a filter that counts the wrong rows",
+                    IR_PROBE_MATCH_COUNT,
+                    callProbeCountFilter(filter)
+            );
+        }
+    }
+
+    private static void assertJitBackendDeclines(MemoryCARW ir, int options, int abandon, String reason, String loopName) {
+        writeAbandonProbeIr(ir, abandon);
+        try (CompiledFilter filter = new CompiledFilter()) {
+            filter.compile(ir, options);
+            // compile() handed back a callable function pointer, so run it: the scalar backends
+            // fail OPEN at opcodes::Inv and the row ids name the damage.
+            Assert.fail("Function::" + loopName + " compiled a stream it must decline [reason=" + reason
+                    + ", selectedRows=" + callProbeFilter(filter) + ", expectedRows=" + IR_PROBE_MATCHES + ']');
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), reason);
+        }
+        try (CompiledCountOnlyFilter filter = new CompiledCountOnlyFilter()) {
+            filter.compile(ir, options);
+            Assert.fail("CountOnlyFunction::" + loopName + " compiled a stream it must decline [reason=" + reason
+                    + ", count=" + callProbeCountFilter(filter) + ", expectedCount=" + IR_PROBE_MATCH_COUNT + ']');
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), reason);
+        }
+    }
+
+    // Runs the compiled count-only probe filter over IR_PROBE_COLUMN and returns the number of
+    // rows it counted.
+    private static long callProbeCountFilter(CompiledCountOnlyFilter filter) {
+        final int rowCount = IR_PROBE_COLUMN.length;
+        final long columnSize = (long) rowCount * Long.BYTES;
+        // Allocate inside the try so a throw part-way through the sequence still frees whatever
+        // the earlier mallocs handed back; 0 marks an allocation that never happened.
+        long columnAddress = 0;
+        long dataAddress = 0;
+        long auxAddress = 0;
+        long varsAddress = 0;
+        try {
+            columnAddress = Unsafe.malloc(columnSize, MemoryTag.NATIVE_DEFAULT);
+            dataAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            auxAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            varsAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            writeProbeColumn(columnAddress, dataAddress, auxAddress, varsAddress);
+            return filter.call(dataAddress, 1, auxAddress, varsAddress, 0, rowCount);
+        } finally {
+            if (varsAddress != 0) {
+                Unsafe.free(varsAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (auxAddress != 0) {
+                Unsafe.free(auxAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (dataAddress != 0) {
+                Unsafe.free(dataAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (columnAddress != 0) {
+                Unsafe.free(columnAddress, columnSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    // Runs the compiled probe filter over IR_PROBE_COLUMN and returns the row ids it selected,
+    // comma separated. The stream spells "column > 0", so a correctly compiled filter answers
+    // IR_PROBE_MATCHES.
+    private static String callProbeFilter(CompiledFilter filter) {
+        final int rowCount = IR_PROBE_COLUMN.length;
+        final long columnSize = (long) rowCount * Long.BYTES;
+        // avx2_loop() scatters row ids a whole YMM register at a time, so the output buffer carries
+        // four longs of slack past the last row id it can legitimately write.
+        final long rowsSize = (long) (rowCount + 4) * Long.BYTES;
+        // Allocate inside the try so a throw part-way through the sequence still frees whatever
+        // the earlier mallocs handed back; 0 marks an allocation that never happened.
+        long columnAddress = 0;
+        long dataAddress = 0;
+        long auxAddress = 0;
+        long varsAddress = 0;
+        long rowsAddress = 0;
+        try {
+            columnAddress = Unsafe.malloc(columnSize, MemoryTag.NATIVE_DEFAULT);
+            dataAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            auxAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            varsAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            rowsAddress = Unsafe.malloc(rowsSize, MemoryTag.NATIVE_DEFAULT);
+            writeProbeColumn(columnAddress, dataAddress, auxAddress, varsAddress);
+            final long selected = filter.call(dataAddress, 1, auxAddress, varsAddress, 0, rowsAddress, rowCount);
+            final StringSink sink = new StringSink();
+            for (long i = 0; i < selected; i++) {
+                if (i > 0) {
+                    sink.putAscii(',');
+                }
+                sink.put(Unsafe.getUnsafe().getLong(rowsAddress + i * Long.BYTES));
+            }
+            return sink.toString();
+        } finally {
+            if (rowsAddress != 0) {
+                Unsafe.free(rowsAddress, rowsSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (varsAddress != 0) {
+                Unsafe.free(varsAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (auxAddress != 0) {
+                Unsafe.free(auxAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (dataAddress != 0) {
+                Unsafe.free(dataAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (columnAddress != 0) {
+                Unsafe.free(columnAddress, columnSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    // Lays out the argument block the compiled filter's C ABI expects: one column of LONGs, a
+    // one-entry column address array pointing at it, and empty aux and bind variable blocks.
+    private static void writeProbeColumn(long columnAddress, long dataAddress, long auxAddress, long varsAddress) {
+        for (int i = 0; i < IR_PROBE_COLUMN.length; i++) {
+            Unsafe.getUnsafe().putLong(columnAddress + (long) i * Long.BYTES, IR_PROBE_COLUMN[i]);
+        }
+        Unsafe.getUnsafe().putLong(dataAddress, columnAddress);
+        Unsafe.getUnsafe().putLong(auxAddress, 0L);
+        Unsafe.getUnsafe().putLong(varsAddress, 0L);
+    }
+
+    private void createA3wTable() throws SqlException {
+        // Only the eight-byte columns the predicates read matter: the type observer never sees a
+        // column the filter does not name, so the FLOAT and INT columns of the reported table
+        // would change nothing here.
+        execute("CREATE TABLE a3w (k TIMESTAMP, l64 LONG, d64 DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(k) PARTITION BY DAY");
+        execute("""
+                INSERT INTO a3w VALUES
+                    ('2024-01-01T00:00:00.000000Z', -9_223_372_036_854_775_807, -1.5, '2024-01-01T00:00:00.000000Z'),
+                    ('2024-01-01T01:00:00.000000Z', -858_993_459, -0.5, '2024-01-01T00:00:01.000000Z'),
+                    ('2024-01-01T02:00:00.000000Z', -858_993_458, 0.0, '2024-01-01T00:00:02.000000Z'),
+                    ('2024-01-01T03:00:00.000000Z', -2_001, 0.5, '2024-01-01T00:00:03.000000Z'),
+                    ('2024-01-01T04:00:00.000000Z', -2_000, 1.5, '2024-01-01T00:00:04.000000Z'),
+                    ('2024-01-01T05:00:00.000000Z', -1_999, 2.5, '2024-01-01T00:00:05.000000Z'),
+                    ('2024-01-01T06:00:00.000000Z', 0, 3.5, '2024-01-01T00:00:06.000000Z'),
+                    ('2024-01-02T07:00:00.000000Z', 1, 4.5, '2024-01-02T00:00:07.000000Z'),
+                    ('2024-01-02T08:00:00.000000Z', 1_000_000, 5.5, '2024-01-02T00:00:08.000000Z'),
+                    ('2024-01-02T09:00:00.000000Z', 9_223_372_036_854_775_807, 6.5, '2024-01-02T00:00:09.000000Z'),
+                    ('2024-01-02T10:00:00.000000Z', null, null, null)
+                """);
+    }
+
+    // Rows of the a3w fixture built by createA3wTable(), in insertion order, as
+    // CursorPrinter.println() renders "select k".
+    private static final String[] A3W_ROWS = {
+            "2024-01-01T00:00:00.000000Z\n",
+            "2024-01-01T01:00:00.000000Z\n",
+            "2024-01-01T02:00:00.000000Z\n",
+            "2024-01-01T03:00:00.000000Z\n",
+            "2024-01-01T04:00:00.000000Z\n",
+            "2024-01-01T05:00:00.000000Z\n",
+            "2024-01-01T06:00:00.000000Z\n",
+            "2024-01-02T07:00:00.000000Z\n",
+            "2024-01-02T08:00:00.000000Z\n",
+            "2024-01-02T09:00:00.000000Z\n",
+            "2024-01-02T10:00:00.000000Z\n",
+    };
+
+    private void assertA3wRows(String predicate, int... expectedRows) throws SqlException {
+        final StringSink expected = new StringSink();
+        expected.put("k\n");
+        for (int i = 0; i < expectedRows.length; i++) {
+            expected.put(A3W_ROWS[expectedRows[i]]);
+        }
+        assertJitScalarAndVectorMatchJava("select k from a3w where " + predicate, expected);
     }
 
     private void createA2fTable() throws SqlException {

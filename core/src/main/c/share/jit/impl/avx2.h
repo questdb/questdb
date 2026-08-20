@@ -776,8 +776,10 @@ namespace questdb::avx2 {
     }
 
     // i32 -> f64. Reads the FOUR i32 lanes in the low 128 bits, so it is correct at four lanes and
-    // only at four lanes - the same restriction cvt_ftod already carries. The four-lane (wide) loop
-    // is the only caller.
+    // only at four lanes - the same restriction cvt_ftod already carries. convert() gates the arms
+    // that call it on the loop's lane count, so every caller runs a four-lane loop: the WIDE_LANE
+    // loop, which compiler.cpp pins to step 4, and the SINGLE_SIZE loop over eight-byte columns,
+    // whose step is also 4.
     inline Vec cvt_itod(Compiler &c, const Vec &rhs, bool null_check) {
         Vec dst = c.new_ymm();
         c.vcvtdq2pd(dst, rhs.xmm());
