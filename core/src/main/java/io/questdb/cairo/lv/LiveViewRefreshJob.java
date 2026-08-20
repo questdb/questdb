@@ -47,6 +47,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -93,6 +94,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
@@ -193,6 +195,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // failure streak cannot shift past 63 and wrap.
     private static final int SEAL_COOLDOWN_MAX_DOUBLINGS = 16;
     private static final long SEAL_COOLDOWN_MAX_MICROS = 60 * Micros.MINUTE_MICROS;
+    // repairChangeSetSegments' verdicts. The closed segments were the whole change set
+    // and the watermark has advanced over it.
+    private static final int SEGMENT_REPAIR_COMPLETE = 2;
+    // A segment repair's replacement committed without applying, so the view is blocked on
+    // it and this turn must stop where it is. Handled exactly as COMPLETE: no residual
+    // repair, and the next turn re-drives the replacement before anything else.
+    private static final int SEGMENT_REPAIR_DEFERRED = 3;
+    // The change set stays on its union range: the caller plans it exactly as it did
+    // before the decomposition existed.
+    private static final int SEGMENT_REPAIR_NOT_TAKEN = 0;
+    // The closed segments are repaired; what is left is the residual, which the caller
+    // plans from the decomposition's own bounds.
+    private static final int SEGMENT_REPAIR_RESIDUAL = 1;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
@@ -286,12 +301,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // the same root off disk. Kept on the worker rather than the view because it
     // is not a production metric; a test reads it to prove which branch ran.
     private long runtimeAnchorReuseCount;
+    // Test-only observability for the per-segment repair. Counts the closed anchor
+    // segments this worker repaired over their own range instead of inside one union
+    // range. Kept on the worker rather than the view for the same reason
+    // runtimeAnchorReuseCount is: a test reads it to prove which branch ran.
+    private long segmentRepairCount;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
     private final LiveViewCheckpointScanCost scanCost = new LiveViewCheckpointScanCost();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
+    // One repair's change set decomposed into the closed anchor segments it touches, so
+    // each of them is repaired over its own range instead of over one union range running
+    // to the frontier. One instance per worker, refilled by classifyChangeSetSegments at
+    // the start of each repair that qualifies; repairs never nest.
+    private final LiveViewCheckpointSegmentChangeSet segmentChangeSet = new LiveViewCheckpointSegmentChangeSet();
+    // The projection classifyChangeSetSegments opens a base WAL segment through: the
+    // designated timestamp and nothing else. Worker-owned and rewritten per call, because
+    // WalSegmentPageFrameCursor.of copies both lists internally.
+    private final IntList segmentClassifyColumnIndexes = new IntList();
+    private final IntList segmentClassifyColumnSizeShifts = new IntList();
     // Test-only: when armed, the WAL-loss re-derive runs this action after its entry
     // broken-dependency check and before the replay, modelling the base apply that lands
     // mid-method - the window ApplyWal2TableJob opens between changing the base writer and
@@ -549,6 +579,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long runtimeAnchorReuseCountForTest() {
         return runtimeAnchorReuseCount;
+    }
+
+    /**
+     * Test-only: number of closed anchor segments this worker repaired over their own
+     * range rather than inside one union range running to the frontier. See
+     * {@link #repairChangeSetSegments}.
+     */
+    @TestOnly
+    public long segmentRepairCountForTest() {
+        return segmentRepairCount;
     }
 
     /**
@@ -1124,6 +1164,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(type)));
                 }
             }
+        }
+    }
+
+    /**
+     * The base table's writer index for {@code columnName}, or -1 when the metadata cache
+     * cannot name it. The same resolution {@link #buildColumnMappings} performs for a whole
+     * projection, for callers that need one column and must not disturb the shared mapping
+     * the drain built.
+     */
+    private int baseColumnWriterIndex(TableToken baseToken, CharSequence columnName) {
+        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
+            final CairoTable baseTable = metaRO.getTable(baseToken);
+            if (baseTable == null) {
+                return -1;
+            }
+            final CairoColumn column = baseTable.getColumnQuiet(columnName);
+            return column == null ? -1 : column.getWriterIndex();
         }
     }
 
@@ -1887,7 +1944,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The drain rolled back exactly the commits it walked, so its change
             // ceiling is this repair's: advanceTo is the offending seqTxn, the top of
             // the range the walk covered.
-            o3Replay(instance, windowFactory, o3LateRowTs, drainResult.o3ChangeMaxTs, drainResult.o3ChangeInsertOnly, baseToken, o3SeqTxn);
+            o3Replay(instance, windowFactory, o3LateRowTs, drainResult.o3ChangeMaxTs, drainResult.o3ChangeInsertOnly, baseToken, o3SeqTxn, drainResult.o3FromSeqTxn);
             return;
         }
 
@@ -2167,7 +2224,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the maximum it could report would not be an upper bound on what the
                 // range changed. The rebuild reads to the end of the base table, as it
                 // did before the bound existed.
-                o3Replay(instance, windowFactory, batchMinTs, Numbers.LONG_NULL, false, baseToken, effectiveSeqTxn);
+                o3Replay(instance, windowFactory, batchMinTs, Numbers.LONG_NULL, false, baseToken, effectiveSeqTxn, Numbers.LONG_NULL);
                 // Coupled invariant: keep refreshedUpTo == lastProcessed so a later
                 // ALTER DEDUP DISABLE flip back to the lead path resumes cleanly with
                 // no stale un-flushed lead.
@@ -2799,6 +2856,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         drainResult.o3ChangeInsertOnly = changeInsertOnly;
         drainResult.o3ChangeMaxTs = changeMaxTsKnown ? changeMaxTs : Numbers.LONG_NULL;
         drainResult.o3Detected = o3Detected;
+        drainResult.o3FromSeqTxn = fromSeqTxn;
         drainResult.o3LateRowTs = o3LateRowTs;
         drainResult.o3SeqTxn = o3SeqTxn;
         drainResult.stagingMaxTs = stagingMaxTs;
@@ -2937,7 +2995,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the tier from the rewritten disk as a pure subset. After it the
             // applied point covers the offending seqTxn, so resume the lead there.
             instance.setLeadRowCount(0);
-            o3Replay(instance, windowFactory, drainResult.o3LateRowTs, drainResult.o3ChangeMaxTs, drainResult.o3ChangeInsertOnly, baseToken, drainResult.o3SeqTxn);
+            o3Replay(instance, windowFactory, drainResult.o3LateRowTs, drainResult.o3ChangeMaxTs, drainResult.o3ChangeInsertOnly, baseToken, drainResult.o3SeqTxn, drainResult.o3FromSeqTxn);
             instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
             return;
         }
@@ -3719,6 +3777,344 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Decomposes one repair's change set into the anchor segments it touches, filling
+     * {@link #segmentChangeSet}.
+     * <p>
+     * The scalar {@code lateRowTs} / {@code changeMaxTs} pair the drain accumulates
+     * describes a change set's <b>span</b>, and a span is not the set: a deep commit
+     * carries rows at the head and rows in one old segment, and 162 of the 193 deep
+     * commits in the measured production window reach exactly one closed segment. Spanning
+     * from the head to a correction 88 days back and repairing everything in between is
+     * what makes a deep correction cost a month of rewritten output; the segments the rows
+     * actually land in cost two.
+     * <p>
+     * So this walks {@code (fromSeqTxn, toSeqTxn]} - the range the drain rolled back plus
+     * anything {@code ApplyWal2TableJob} raced past it, which is exactly what the repair
+     * re-materialises - and places each commit:
+     * <ul>
+     *     <li>a commit whose own minimum already sits at or above the active segment's
+     *     start joins the residual off its {@code tsMin}/{@code tsMax} alone. That is every
+     *     in-order commit and every shallow correction, so the common path reads no
+     *     row;</li>
+     *     <li>a commit reaching below it has its designated timestamp column mapped and
+     *     each row placed in its own segment. This is where the decomposition is won: the
+     *     commit's span crosses three months and its rows cross one segment.</li>
+     * </ul>
+     * Rows below the view's {@code START FROM} boundary are dropped here rather than
+     * clamped. They produce no output, so letting the deepest of them set the correction
+     * floor would land that floor on {@code S} and deny the localization outright - which
+     * is the denial the cost model attributes 75.5% of all replay to.
+     * <p>
+     * Declines - and keeps the union range - on anything a row walk cannot see: a
+     * compacted or structural sequencer entry, a non-DATA commit, a {@code REPLACE_RANGE}
+     * delete band reaching into the view, a segment with no representable end, more
+     * distinct segments than {@link LiveViewCheckpointSegmentChangeSet#MAX_CLOSED_SEGMENTS},
+     * or a base schema that drifted under the compiled projection. None of those is an
+     * error: the repair simply plans the way it always did.
+     *
+     * @return true when every row in the range landed in a segment or in the residual
+     */
+    private boolean classifyChangeSetSegments(
+            TableToken baseToken,
+            RecordMetadata baseMetadata,
+            int baseTimestampWriterIndex,
+            long fromSeqTxn,
+            long toSeqTxn,
+            long viewLowerBoundTimestamp,
+            @NotNull LiveViewCheckpointAnchorPlan anchorPlan,
+            long activeSegmentStart
+    ) {
+        segmentChangeSet.of(activeSegmentStart);
+        // The whole projection: the designated timestamp alone, named by its base-table
+        // WRITER index, which is what WalSegmentPageFrameCursor matches against the
+        // segment's own timestamp index. A scan-metadata position would name a different
+        // column on any view whose base scan reorders or omits one, and the cursor would
+        // then stride a symbol or an aux vector as though it were timestamps.
+        // WalSegmentPageFrameCursor extracts the segment's (timestamp, rowid) pairs into its
+        // own scratch for that column, so the shift below is the fixed-column fallback and
+        // is not read on that branch.
+        segmentClassifyColumnIndexes.clear();
+        segmentClassifyColumnIndexes.add(baseTimestampWriterIndex);
+        segmentClassifyColumnSizeShifts.clear();
+        segmentClassifyColumnSizeShifts.add(3);
+        try (
+                TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
+                // Every arm out of this walk closes the reader with the cursor - see the
+                // note on walEventReader - and the frame cursor drops its segment mappings
+                // on the way out for the same reason the drain does.
+                WalEventReader eventReader = walEventReader;
+                QuietCloseable segmentRelease = walFrameCursor::releaseSegment
+        ) {
+            while (txnCursor.hasNext()) {
+                final long txn = txnCursor.getTxn();
+                if (txn > toSeqTxn) {
+                    break;
+                }
+                final int walId = txnCursor.getWalId();
+                if (walId <= 0) {
+                    return false;
+                }
+                final int segmentId = txnCursor.getSegmentId();
+                final int segmentTxn = txnCursor.getSegmentTxn();
+                walPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(baseToken)
+                        .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, eventReader, segmentTxn, txn);
+                if (!WalTxnType.isDataType(eventCursor.getType())) {
+                    return false;
+                }
+                final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                if (effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp) != Numbers.LONG_NULL) {
+                    // The commit deletes a band the raw WAL does not carry, so the rows it
+                    // removed are in no segment this walk can name.
+                    return false;
+                }
+                final long txnMaxTs = dataInfo.getMaxTimestamp();
+                if (txnMaxTs < viewLowerBoundTimestamp) {
+                    // Wholly below the view's boundary: no output, and so no segment.
+                    continue;
+                }
+                final long txnMinTs = dataInfo.getMinTimestamp();
+                if (txnMinTs >= activeSegmentStart) {
+                    segmentChangeSet.addResidual(txnMinTs, txnMaxTs);
+                    continue;
+                }
+                final long startRow = dataInfo.getStartRowID();
+                final long endRow = dataInfo.getEndRowID();
+                if (endRow <= startRow) {
+                    continue;
+                }
+                walNameSink.clear();
+                walNameSink.put(WAL_NAME_BASE).put(walId);
+                // Throws TableReferenceOutOfDateException when the segment's schema drifted
+                // from the compiled projection, which the catch below turns into a declined
+                // decomposition rather than into a failed refresh: the union range needs no
+                // base column at all.
+                walFrameCursor.of(
+                        baseToken,
+                        walNameSink,
+                        segmentId,
+                        endRow,
+                        startRow,
+                        endRow,
+                        baseMetadata,
+                        segmentClassifyColumnIndexes,
+                        segmentClassifyColumnSizeShifts,
+                        null
+                );
+                final PageFrame frame = walFrameCursor.next(0);
+                if (frame == null) {
+                    continue;
+                }
+                final long address = frame.getPageAddress(0);
+                for (long row = 0, rowCount = endRow - startRow; row < rowCount; row++) {
+                    final long ts = Unsafe.getUnsafe().getLong(address + (row << 3));
+                    if (ts < viewLowerBoundTimestamp) {
+                        continue;
+                    }
+                    if (!segmentChangeSet.addRow(ts, anchorPlan)) {
+                        return false;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            LOG.info().$("live view O3 change set could not be decomposed into anchor segments [baseTable=")
+                    .$(baseToken.getTableName())
+                    .$(", fromSeqTxn=").$(fromSeqTxn)
+                    .$(", toSeqTxn=").$(toSeqTxn)
+                    .$(", error=").$(t).I$();
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Repairs each <b>closed</b> anchor segment the change set touches over its own range,
+     * ahead of the ordinary repair that handles what is left.
+     * <p>
+     * Today one repair takes one union range running from the anchor below the lowest
+     * correction to the frontier, and pays for it twice: the replay reads every base row in
+     * the range, and the apply rewrites every live-view partition it covers, whole. Neither
+     * is a property of the correction. Under a pure fixed-anchor plan the anchor resets
+     * every stateful function at the segment boundary, so a row in a closed segment reaches
+     * that segment's output and nothing else - which is exactly what
+     * {@link LiveViewBackfillEnvelope#deferralGate} proves, and why this path is gated on
+     * it rather than on a predicate of its own.
+     * <p>
+     * The segments run oldest first, because a later segment's cumulative row positions
+     * depend on how many rows the earlier ones added, and each publishes its own
+     * {@code REPLACE_RANGE} over its own segment. What is left - the residual, everything
+     * at or above the runtime's own segment - takes the ordinary plan, which Fix 2 already
+     * bounds to one checkpoint cadence.
+     * <p>
+     * <b>Watermarks.</b> Every segment repair but the last commits at the <i>pre-repair</i>
+     * watermark, so the change set stays unconsumed until the residual repair finishes it.
+     * That is what makes the sequence crash-safe without a marker of its own: a repair that
+     * recomputes a whole segment from the base and replaces it is idempotent, so a crash
+     * anywhere in the sequence leaves the same base range to be re-drained, re-decomposed
+     * and re-repaired to the same output. Advancing per segment instead would declare base
+     * transactions whose head rows the view does not hold.
+     * <p>
+     * Anything the decomposition or a segment's own plan declines falls back to the union
+     * range for the whole change set. Segments already repaired are not a problem for that
+     * fallback - the union range covers them and recomputes them identically.
+     *
+     * @return {@link #SEGMENT_REPAIR_COMPLETE} when the segments were the whole change set
+     * and the watermark has advanced over it, {@link #SEGMENT_REPAIR_DEFERRED} when a
+     * segment's replacement did not apply and the turn must stop,
+     * {@link #SEGMENT_REPAIR_RESIDUAL} when the caller must still repair the residual from
+     * {@link #segmentChangeSet}'s bounds, and {@link #SEGMENT_REPAIR_NOT_TAKEN} when the
+     * caller must plan the whole change set as one union range
+     */
+    private int repairChangeSetSegments(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableToken baseToken,
+            TableReader reader,
+            long lateRowTs,
+            long changeMaxTs,
+            boolean insertOnly,
+            long fromSeqTxn
+    ) throws SqlException {
+        if (!engine.getConfiguration().isLiveViewCheckpointRepairPerSegmentEnabled()) {
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        if (fromSeqTxn == Numbers.LONG_NULL
+                || lateRowTs == Numbers.LONG_NULL
+                || changeMaxTs == Numbers.LONG_NULL
+                || !insertOnly) {
+            // A caller that cannot name the range it rolled back, a non-DATA trigger, a
+            // change set with no ceiling, or one that may have removed a base row. The last
+            // two are the same walk's verdicts, and a row walk cannot recover either.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        final LiveViewCheckpointAnchorPlan anchorPlan = anchorWindow == null
+                ? null
+                : anchorWindow.getCheckpointAnchorPlan();
+        if (anchorPlan == null) {
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        if (LiveViewBackfillEnvelope.deferralGate(
+                windowFactory.getWindowFunctions(),
+                windowFactory.getCheckpointRangePlan() != null,
+                windowFactory.getCheckpointRowsPlan() != null,
+                true
+        ) != LiveViewBackfillEnvelope.GATE_AVAILABLE) {
+            // A bounded ROWS or RANGE function declared beside the anchored one keeps
+            // sliding across the segment boundary, so the segments are not independent and
+            // one of them cannot be repaired on its own.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final long runtimeFrontierTs = instance.isSnapshotCapability()
+                ? instance.getLatestSeenTs()
+                : Numbers.LONG_NULL;
+        if (runtimeFrontierTs == Numbers.LONG_NULL) {
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final long activeSegmentStart = anchorPlan.getSegmentStart(runtimeFrontierTs);
+        if (activeSegmentStart == Long.MIN_VALUE || lateRowTs >= activeSegmentStart) {
+            // The runtime's own segment is open below - every row under a non-zero
+            // alignment origin shares one - or the trigger reaches no further down than it.
+            // Either way there is no closed segment to scope, and the ordinary plan is
+            // already the bounded one.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final long durableOutputMaxTs = readDurableOutputMaxTs(instance);
+        if (durableOutputMaxTs == Numbers.LONG_NULL || durableOutputMaxTs < runtimeFrontierTs) {
+            // Output the runtime holds but has not made durable sits above every closed
+            // segment, and a replacement stopping below it would neither re-emit it nor
+            // leave it stored. The same guard the union plan applies, applied earlier.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final RecordMetadata baseMetadata = compiledPlan.getBaseScanMetadata();
+        // The base scan's own position for the designated timestamp is not the index the
+        // WAL segment names it by. Resolve the writer index the same way buildColumnMappings
+        // does, so the decomposition reads the column the segment actually holds.
+        final int baseTimestampWriterIndex = baseColumnWriterIndex(
+                baseToken, baseMetadata.getColumnName(baseMetadata.getTimestampIndex()));
+        if (baseTimestampWriterIndex < 0) {
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        final long pinnedSeqTxn = reader.getSeqTxn();
+        if (!classifyChangeSetSegments(
+                baseToken,
+                baseMetadata,
+                baseTimestampWriterIndex,
+                fromSeqTxn,
+                pinnedSeqTxn,
+                viewLowerBoundTimestamp,
+                anchorPlan,
+                activeSegmentStart
+        )) {
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        final int segmentCount = segmentChangeSet.getClosedSegmentCount();
+        final boolean isResidualEmpty = segmentChangeSet.getResidualMinTs() == Numbers.LONG_NULL;
+        if (segmentCount == 0) {
+            // Nothing below the runtime's own segment after the sub-floor rows were
+            // dropped. The residual bounds are still worth handing on: they carry the
+            // classified floor rather than the raw trigger, which is what keeps a
+            // correction reaching below the view's boundary from denying the repair.
+            return isResidualEmpty ? SEGMENT_REPAIR_NOT_TAKEN : SEGMENT_REPAIR_RESIDUAL;
+        }
+        final long preRepairSeqTxn = instance.getLastProcessedSeqTxn();
+        for (int i = 0; i < segmentCount; i++) {
+            // Only the final repair of the turn advances the watermark, and it is this one
+            // exactly when the change set holds nothing above the closed segments.
+            final boolean isFinalRepair = isResidualEmpty && i == segmentCount - 1;
+            if (!repairPlan.ofSegment(
+                    segmentChangeSet.getSegmentMinTs(i),
+                    segmentChangeSet.getSegmentMaxTs(i),
+                    viewLowerBoundTimestamp,
+                    pinnedSeqTxn,
+                    isFinalRepair ? pinnedSeqTxn : preRepairSeqTxn,
+                    anchorPlan,
+                    durableOutputMaxTs,
+                    runtimeFrontierTs
+            )) {
+                LOG.info().$("live view O3 per-segment repair declined, planning the union range [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", segment=").$(i)
+                        .$(", segments=").$(segmentCount)
+                        .$(", segmentStart=").$ts(segmentChangeSet.getSegmentStart(i))
+                        .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
+                        .I$();
+                return SEGMENT_REPAIR_NOT_TAKEN;
+            }
+            instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), repairPlan.getDenialReason());
+            LOG.info().$("live view O3 per-segment repair [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", segment=").$(i)
+                    .$(", segments=").$(segmentCount)
+                    .$(", replayLowTs=").$ts(repairPlan.getReplayLowTs())
+                    .$(", outputLowTs=").$ts(repairPlan.getOutputLowTs())
+                    .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
+                    .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
+                    .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
+            // mayYield is false: the loop owns the pinned reader across every segment, so a
+            // parked repair would have nothing to hand the remaining ones. One segment is a
+            // bounded replay either way, which is the property the union range did not have.
+            o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, false);
+            segmentRepairCount++;
+            if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL) {
+                // The segment's replacement is in the live view's WAL and not in its table.
+                // No later repair may read coordinates off a table that does not hold it,
+                // and the watermark has not moved, so the turn stops here and the whole
+                // change set is replanned once the block lands.
+                LOG.info().$("live view O3 per-segment repair deferred on an unapplied replacement [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", segment=").$(i)
+                        .$(", segments=").$(segmentCount).I$();
+                return SEGMENT_REPAIR_DEFERRED;
+            }
+        }
+        return isResidualEmpty ? SEGMENT_REPAIR_COMPLETE : SEGMENT_REPAIR_RESIDUAL;
+    }
+
+    /**
      * Out-of-order replay. Called from {@code incrementalRefresh}
      * after detection rolls back the in-WAL-order draft for the offending
      * cycle. Pins one applied base reader, plans the repair against that single
@@ -3763,6 +4159,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @param advanceTo     base seqTxn the replay must cover; also the value
      *                      passed to {@code commitLiveViewWithReplaceRange}
      *                      so the LV's lvConsumedSeqTxn advances after apply
+     * @param fromSeqTxn    the exclusive floor of the base range the caller rolled back,
+     *                      or {@link Numbers#LONG_NULL} when it cannot name one. The
+     *                      per-segment decomposition re-reads that range row by row to
+     *                      place each row in its own anchor segment; without it the
+     *                      repair keeps the union range
      */
     private void o3Replay(
             LiveViewInstance instance,
@@ -3771,7 +4172,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long changeMaxTs,
             boolean insertOnly,
             TableToken baseToken,
-            long advanceTo
+            long advanceTo,
+            long fromSeqTxn
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         // An intra-commit out-of-order FIRST commit can reach the replay path
@@ -3876,38 +4278,64 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // repair applies to a repair that has not finished.
         boolean suspended = false;
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, changeMaxTs, insertOnly, baseToken, advanceTo, reader);
-            LOG.info().$("live view O3 replay [view=").$(viewName)
-                    .$(", lateRowTs=").$(lateRowTs)
-                    .$(", advanceTo=").$(advanceTo)
-                    .$(", pinnedSeqTxn=").$(repairPlan.getPinnedSeqTxn())
-                    .$(", correctionTs=").$(repairPlan.getCorrectionTs())
-                    .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
-                    .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
-                    .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
-                    // Why this repair reads more than a localized rebuild would, as
-                    // live_views().checkpoint_repair_last_denial reports it. Absent for a
-                    // repair that read exactly its localized interval.
-                    .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(
-                            instance.getCheckpointRepairLastDenialReason()))
-                    .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
-                    .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
-                    // The two estimates the disposition above was chosen on, so a repair
-                    // that took the more expensive-looking route is diagnosable. Both are
-                    // LONG_NULL when no anchor competed and nothing needed pricing.
-                    .$(", resumeScanRows=").$(repairPlan.getResumeScanRows())
-                    .$(", rebuildScanRows=").$(repairPlan.getRebuildScanRows()).I$();
-            if (repairPlan.isResumeFromAnchor()) {
-                replayFromAnchor(instance, windowFactory, repairPlan, reader);
+            // Repair the closed anchor segments the change set touches over their own
+            // ranges first, and hand what is left - the residual, everything at or above
+            // the runtime's own segment - to the ordinary plan below. A change set the
+            // decomposition declines comes back NOT_TAKEN and takes the union range, which
+            // is what every repair took before this existed.
+            final int segmentRepair = repairChangeSetSegments(
+                    instance, windowFactory, baseToken, reader, lateRowTs, changeMaxTs, insertOnly, fromSeqTxn);
+            if (segmentRepair == SEGMENT_REPAIR_COMPLETE || segmentRepair == SEGMENT_REPAIR_DEFERRED) {
+                // The closed segments were the whole change set: the last of them committed
+                // at the pinned snapshot and advanced the watermarks over it, so there is
+                // no residual left to plan. The tier rebuild in the tail still runs, which
+                // is why this falls out of the try rather than returning from inside it -
+                // the finally below owns the pinned reader.
+                LOG.info().$("live view O3 replay completed per segment [view=").$(viewName)
+                        .$(", segments=").$(segmentChangeSet.getClosedSegmentCount())
+                        .$(", deferred=").$(segmentRepair == SEGMENT_REPAIR_DEFERRED)
+                        .$(", advanceTo=").$(advanceTo).I$();
             } else {
-                // Either no logical boundary sits below the change (the whole
-                // timeline is above it, the trigger carries no timestamp to search
-                // with, the timeline is unreadable, or apply raced ahead over an
-                // unclassifiable range), in which case this
-                // is the O(view age) rebuild from the view boundary; or one does and
-                // the plan priced its resume above the localized rebuild, in which
-                // case this reads only [L, H).
-                suspended = o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, true);
+                final boolean preclassified = segmentRepair == SEGMENT_REPAIR_RESIDUAL;
+                // The residual's own floor and ceiling, which the decomposition derived row by
+                // row over the whole range including anything apply raced past the trigger.
+                // Rows below the view's boundary are already out of them.
+                final long residualLateRowTs = preclassified ? segmentChangeSet.getResidualMinTs() : lateRowTs;
+                final long residualChangeMaxTs = preclassified ? segmentChangeSet.getResidualMaxTs() : changeMaxTs;
+                planO3Repair(instance, windowFactory, residualLateRowTs, residualChangeMaxTs, insertOnly, baseToken, advanceTo, reader, preclassified);
+                LOG.info().$("live view O3 replay [view=").$(viewName)
+                        .$(", lateRowTs=").$(residualLateRowTs)
+                        .$(", segmentsRepaired=").$(preclassified ? segmentChangeSet.getClosedSegmentCount() : 0)
+                        .$(", advanceTo=").$(advanceTo)
+                        .$(", pinnedSeqTxn=").$(repairPlan.getPinnedSeqTxn())
+                        .$(", correctionTs=").$(repairPlan.getCorrectionTs())
+                        .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
+                        .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
+                        .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
+                        // Why this repair reads more than a localized rebuild would, as
+                        // live_views().checkpoint_repair_last_denial reports it. Absent for a
+                        // repair that read exactly its localized interval.
+                        .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(
+                                instance.getCheckpointRepairLastDenialReason()))
+                        .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
+                        .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
+                        // The two estimates the disposition above was chosen on, so a repair
+                        // that took the more expensive-looking route is diagnosable. Both are
+                        // LONG_NULL when no anchor competed and nothing needed pricing.
+                        .$(", resumeScanRows=").$(repairPlan.getResumeScanRows())
+                        .$(", rebuildScanRows=").$(repairPlan.getRebuildScanRows()).I$();
+                if (repairPlan.isResumeFromAnchor()) {
+                    replayFromAnchor(instance, windowFactory, repairPlan, reader);
+                } else {
+                    // Either no logical boundary sits below the change (the whole
+                    // timeline is above it, the trigger carries no timestamp to search
+                    // with, the timeline is unreadable, or apply raced ahead over an
+                    // unclassifiable range), in which case this
+                    // is the O(view age) rebuild from the view boundary; or one does and
+                    // the plan priced its resume above the localized rebuild, in which
+                    // case this reads only [L, H).
+                    suspended = o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, true);
+                }
             }
         } finally {
             if (!suspended) {
@@ -4059,6 +4487,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * bounded ROWS function discovers its bounds even when the resume goes on to win,
      * because those bounds are the only thing that could answer the question. The
      * discovery's own scan budget bounds what that costs.
+     * <p>
+     * {@code preclassifiedChangeSet} says the caller has already walked the whole range
+     * {@code (fromSeqTxn, E]} row by row and is handing over the bounds of what is left
+     * after the closed anchor segments were repaired on their own. The ahead range's rows
+     * are then already inside those bounds, so re-deriving its scalar minimum here would
+     * drop the retire floor back to the deepest row in the whole change set and put the
+     * union range back.
      */
     private void planO3Repair(
             LiveViewInstance instance,
@@ -4068,15 +4503,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean insertOnly,
             TableToken baseToken,
             long advanceTo,
-            TableReader reader
+            TableReader reader,
+            boolean preclassifiedChangeSet
     ) throws SqlException {
         final long pinnedSeqTxn = reader.getSeqTxn();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         long applyAheadMinTs = Numbers.LONG_NULL;
         long effectiveChangeMaxTs = changeMaxTs;
         boolean effectiveInsertOnly = insertOnly;
-        if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, advanceTo, pinnedSeqTxn)) {
-            final long[] aheadBounds = computeApplyAheadBounds(baseToken, advanceTo, pinnedSeqTxn, viewLowerBoundTimestamp);
+        // A pre-classified change set has already had the ahead range walked row by row,
+        // and the bounds handed in are the residual's own. Quoting the trigger as the pin
+        // is what stops the plan re-deriving the ahead range's scalar minimum and widening
+        // the residual straight back to the deepest row in the whole change set - which is
+        // the union range the decomposition exists to avoid.
+        final long triggerSeqTxn = preclassifiedChangeSet ? pinnedSeqTxn : advanceTo;
+        if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, triggerSeqTxn, pinnedSeqTxn)) {
+            final long[] aheadBounds = computeApplyAheadBounds(baseToken, triggerSeqTxn, pinnedSeqTxn, viewLowerBoundTimestamp);
             applyAheadMinTs = aheadBounds[0];
             // An unclassifiable ahead range already denies every anchor through the
             // retire floor; deny the convergence boundary on the same terms, since
@@ -4157,7 +4599,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 timelineAnchors,
                 lateRowTs,
                 viewLowerBoundTimestamp,
-                advanceTo,
+                triggerSeqTxn,
                 pinnedSeqTxn,
                 applyAheadMinTs,
                 rangeFrameWidth,
@@ -4852,7 +5294,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, false, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, false, baseToken, advanceTo, reader, false);
             // These callers own the pinned reader for one call and close it below, so
             // the rebuild may not park a repair on it. It never would: a non-DATA
             // trigger denies localization, and only a localized rebuild yields.
@@ -7014,7 +7456,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // to the offending seqTxn, so it re-materialises commits above the
                 // ones this drain pass walked and the pass's ceiling would not bound
                 // them.
-                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, Numbers.LONG_NULL, false, baseToken, toSeqTxn);
+                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, Numbers.LONG_NULL, false, baseToken, toSeqTxn, Numbers.LONG_NULL);
                 return REPLAY_TO_APPLIED_O3;
             }
             replayedRows += drainResult.appendedRows;
@@ -10034,6 +10476,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     protected static final class DrainResult {
         // Highest base seqTxn processed this pass (-1 if none).
         public long advanceTo;
+        // The base seqTxn this pass resumed from - the exclusive floor of the range it
+        // walked. Meaningful when o3Detected: the repair's change set is that whole range,
+        // and the per-segment decomposition re-reads it row by row to place each row in the
+        // anchor segment it belongs to. LONG_NULL when the caller cannot name it, which
+        // keeps the repair on its union range.
+        public long o3FromSeqTxn;
         // Output rows emitted this pass (mirrored to the staging buffer when the
         // tier is populated; written to the LV WAL when a walWriter was supplied).
         public long appendedRows;
@@ -10071,6 +10519,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             advanceTo = -1;
             appendedRows = 0;
             batchMaxTs = Numbers.LONG_NULL;
+            o3FromSeqTxn = Numbers.LONG_NULL;
             o3ChangeInsertOnly = false;
             o3ChangeMaxTs = Numbers.LONG_NULL;
             o3Detected = false;

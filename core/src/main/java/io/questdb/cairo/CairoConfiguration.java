@@ -412,6 +412,18 @@ public interface CairoConfiguration {
     int getLiveViewCheckpointRepairMaxChainedBoundaries();
 
     /**
+     * Whether an out-of-order repair decomposes its change set into the anchor segments it
+     * touches and repairs each of them over its own range, instead of taking one union
+     * range running from the anchor below the deepest correction to the frontier.
+     * <p>
+     * The union range pays twice for the distance it reaches: the replay reads every base
+     * row in it, and the apply rewrites every live-view partition it covers, whole. False
+     * restores that range, which is what every repair took before the decomposition
+     * existed - an escape hatch, and the control column a measurement runs against.
+     */
+    boolean isLiveViewCheckpointRepairPerSegmentEnabled();
+
+    /**
      * Budget on the partition keys one localized out-of-order repair may plan
      * to re-emit. A timestamp-global replacement re-emits every key with a
      * qualifying row in the replacement interval, and the repair holds a

@@ -505,6 +505,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairPerSegmentEnabled();
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
     }

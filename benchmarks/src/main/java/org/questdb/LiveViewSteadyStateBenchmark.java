@@ -101,7 +101,10 @@ import java.util.Locale;
  * share of the rows repeat the row below them in both timestamp and key, which is the
  * {@code (timestamp, key)} group a physical row identity would have to number.
  * {@code --base-dedup} puts dedup keys on the base as the stand-in for what such an
- * identity would put on the live view's own table.
+ * identity would put on the live view's own table. {@code --repair-per-segment=false}
+ * restores the union range a repair took before the change set was decomposed into the
+ * anchor segments it touches, which is the control column that half of the write side is
+ * measured against.
  * <p>
  * Build and run:
  * <pre>
@@ -175,6 +178,7 @@ public class LiveViewSteadyStateBenchmark {
         // -1 = leave the configuration default alone. 0 declines the chain outright, which
         // is how a run reproduces what a repair cost before it kept its ladder.
         int repairMaxChainedBoundaries = -1;
+        boolean isRepairPerSegment = true;
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
@@ -232,6 +236,8 @@ public class LiveViewSteadyStateBenchmark {
                 tsStepMicros = Long.parseLong(arg.substring(13));
             } else if (arg.startsWith("--repair-max-chained-boundaries=")) {
                 repairMaxChainedBoundaries = Integer.parseInt(arg.substring(32));
+            } else if (arg.startsWith("--repair-per-segment=")) {
+                isRepairPerSegment = Boolean.parseBoolean(arg.substring(21));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -319,6 +325,7 @@ public class LiveViewSteadyStateBenchmark {
         final int finalCompactThreshold = compactThreshold;
         final int finalCompactStalePercent = compactStalePercent;
         final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
+        final boolean finalRepairPerSegment = isRepairPerSegment;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
                 @Override
@@ -356,6 +363,11 @@ public class LiveViewSteadyStateBenchmark {
                 public boolean isDevModeEnabled() {
                     return true;
                 }
+
+                @Override
+                public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+                    return finalRepairPerSegment;
+                }
             };
             System.out.printf(
                     Locale.ROOT,
@@ -364,7 +376,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
-                            + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d%n",
+                            + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -373,7 +385,8 @@ public class LiveViewSteadyStateBenchmark {
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
                     o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros, hotKeyEveryN, equalTsEveryN,
                     tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
-                    configuration.getLiveViewCheckpointRepairMaxChainedBoundaries()
+                    configuration.getLiveViewCheckpointRepairMaxChainedBoundaries(),
+                    configuration.isLiveViewCheckpointRepairPerSegmentEnabled()
             );
 
             engine = new CairoEngine(configuration);
