@@ -113,6 +113,7 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
             freeCount--;
             return task;
         }
+
         if (createdCount >= capacity) {
             return null;
         }
