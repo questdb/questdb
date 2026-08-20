@@ -103,7 +103,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // the build loop, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -130,7 +130,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // allocations and leaves the factory reusable.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -156,7 +156,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // lists are bound to the tracker on each open and must release every byte on close. Repeated
         // getCursor/close cycles, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -190,7 +190,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // the build loop, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -218,7 +218,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // no backing until then, so a never-opened close() leaves nothing behind. assertMemoryLeak
         // catches a regression of that property for both the general and the fast factory.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -250,7 +250,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Non-symbol variant of testKeyedWindowJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -274,7 +274,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testNotKeyedWindowJoinReleasesAllocations() throws Exception {
         // Non-symbol variant of testKeyedWindowJoinReleasesAllocations.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -302,7 +302,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // nothing per-query-tracked allocates at open); the slave data charged to it trips the limit.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -329,7 +329,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // list); both are bound on each open and must release every byte on close. Repeated
         // getCursor/close cycles, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

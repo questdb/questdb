@@ -86,7 +86,7 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",

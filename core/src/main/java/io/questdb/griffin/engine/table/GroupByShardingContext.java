@@ -406,19 +406,23 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
                     final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                        if (dispatcher == null && strategy.shouldSteal(mergedCount)) {
+                        if (!isOwnerParkable && strategy.shouldSteal(mergedCount)) {
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
                             mergedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
-                        if (dispatcher != null
-                                && !dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                        if (isOwnerParkable) {
+                            if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                Os.pause();
+                            }
+                        } else {
                             Os.pause();
                         }
                         mergedCount = postAggregationDoneLatch.getCount();
@@ -448,6 +452,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             } finally {
                 while (true) {
                     final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
@@ -455,7 +460,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         postAggregationCircuitBreaker.cancel();
                     }
 
-                    if (dispatcher == null && strategy.shouldSteal(mergedCount)) {
+                    if (!isOwnerParkable && strategy.shouldSteal(mergedCount)) {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByMergeShardTask task = queue.get(cursor);
@@ -464,7 +469,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         } else {
                             Os.pause();
                         }
-                    } else if (dispatcher != null) {
+                    } else if (isOwnerParkable) {
                         if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
                             Os.pause();
                         }

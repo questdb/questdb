@@ -407,7 +407,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
                 "  (rnd_double() * 200 - 100) y " +
                 "from long_sequence(1000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -452,7 +452,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
                 "  (rnd_double() * 200 - 100) y " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -484,7 +484,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
                 "  case when x % 7 = 0 then null else (rnd_double() * 200 - 100) end y " +
                 "from long_sequence(1000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

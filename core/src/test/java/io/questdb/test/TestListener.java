@@ -27,9 +27,7 @@ package io.questdb.test;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
@@ -86,7 +84,6 @@ public class TestListener extends RunListener {
                 .$("***** Test Failed ***** ")
                 .$safe(description.getClassName()).$('.')
                 .$safe(description.getMethodName())
-                .$(" worker_pool_mode=").$(TestUtils.getWorkerPoolMode().name())
                 .$(" duration_ms=").$(getTestDuration())
                 .$(" : ")
                 .$(failure.getException()).$();
@@ -94,36 +91,21 @@ public class TestListener extends RunListener {
 
     @Override
     public void testFinished(Description description) {
-        try {
-            LOG.infoW().$("<<<< ")
-                    .$safe(description.getClassName()).$('.')
-                    .$safe(description.getMethodName())
-                    .$(" duration_ms=").$(getTestDuration()).$();
-            System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
-        } finally {
-            TestUtils.clearWorkerPoolTestIdentity();
-        }
+        LOG.infoW().$("<<<< ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration()).$();
+        System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
     @Override
     public void testStarted(Description description) {
-        TestUtils.setWorkerPoolTestIdentity(description.getClassName() + '#' + description.getMethodName());
-        boolean isStartComplete = false;
-        try {
-            testStartMs = System.currentTimeMillis();
-            final WorkerPoolMode workerPoolMode = TestUtils.getWorkerPoolMode();
-            LOG.infoW().$(">>>> ")
-                    .$safe(description.getClassName()).$('.')
-                    .$safe(description.getMethodName())
-                    .$(" worker_pool_mode=").$(workerPoolMode.name())
-                    .$();
-            System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName() + " worker_pool_mode=" + workerPoolMode);
-            isStartComplete = true;
-        } finally {
-            if (!isStartComplete) {
-                TestUtils.clearWorkerPoolTestIdentity();
-            }
-        }
+        testStartMs = System.currentTimeMillis();
+        LOG.infoW().$(">>>> ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$();
+        System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
     private long getTestDuration() {

@@ -48,7 +48,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute(
                         "CREATE TABLE tab AS (" +
@@ -89,7 +89,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute(
                         "CREATE TABLE tab AS (" +

@@ -227,7 +227,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "abs(rnd_double()) + 0.001 value " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -265,7 +265,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "  cast(null as double) value " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -301,7 +301,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "  abs(rnd_double()) + 0.001 value " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -348,7 +348,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "  case when x % 1000 = 0 then -1.0 else abs(rnd_double()) + 0.001 end value " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -385,7 +385,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "  case when x % 2 = 0 then null else abs(rnd_double()) + 0.001 end value " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -415,7 +415,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "  abs(rnd_double()) + 0.001 value " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

@@ -1880,7 +1880,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     return 1000;
                 }
             };
-            WorkerPool pool = new TestWorkerPool(2);
+            WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
     }

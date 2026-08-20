@@ -35,6 +35,8 @@ import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -48,13 +50,14 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 
 public class HttpServerConfigurationBuilder {
+    private static final Log LOG = LogFactory.getLog(HttpServerConfigurationBuilder.class);
     private final int rerunProcessingQueueSize = 4096;
     private boolean allowDeflateBeforeSend;
     private String baseDir;
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
-    private boolean fiberEnabled = TestUtils.getWorkerPoolMode() == WorkerPoolMode.FIBER_HOST;
+    private boolean fiberEnabled = TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)) == WorkerPoolMode.FIBER_HOST;
     private int fiberMaxLiveCount;
     private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
     private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;

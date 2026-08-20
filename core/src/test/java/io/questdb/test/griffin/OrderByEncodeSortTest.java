@@ -1036,7 +1036,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
         // late materialization engaged on every frame. Only the encoded path declares
         // the used columns; the legacy path runs the same query for a correctness check.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

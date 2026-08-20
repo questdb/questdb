@@ -81,7 +81,7 @@ public class GroupByVectorizedRostiAccountingTest extends AbstractCairoTest {
         // balanced too.
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+            final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return "rostiAcct";

@@ -67,7 +67,7 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
     @Test
     public void testCoveredDecodeIsCappedByPerQueryLimit() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

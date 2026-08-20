@@ -276,11 +276,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 }
                 while (true) {
                     final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                        if (dispatcher == null && workStealingStrategy.shouldSteal(processedCount)) {
+                        if (!isOwnerParkable && workStealingStrategy.shouldSteal(processedCount)) {
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
@@ -289,8 +290,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             processedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
-                        if (dispatcher != null
-                                && !dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                        if (isOwnerParkable) {
+                            if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                Os.pause();
+                            }
+                        } else {
                             Os.pause();
                         }
                         processedCount = postAggregationDoneLatch.getCount();
@@ -323,6 +327,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             } finally {
                 while (true) {
                     final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
@@ -330,7 +335,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         postAggregationCircuitBreaker.cancel();
                     }
 
-                    if (dispatcher == null && workStealingStrategy.shouldSteal(processedCount)) {
+                    if (!isOwnerParkable && workStealingStrategy.shouldSteal(processedCount)) {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByLongTopKTask task = queue.get(cursor);
@@ -339,7 +344,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         } else {
                             Os.pause();
                         }
-                    } else if (dispatcher != null) {
+                    } else if (isOwnerParkable) {
                         if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
                             Os.pause();
                         }

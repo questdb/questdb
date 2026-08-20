@@ -109,7 +109,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -173,7 +173,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
 
         final int keyCount = 4;
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (key SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -274,7 +274,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                 + "FROM (SELECT key, twap(price, ts) AS t FROM tab) o "
                 + "JOIN LATERAL (SELECT rate FROM rates WHERE min_val <= o.t) sub";
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (key SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -373,7 +373,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -489,7 +489,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
         final double expected = (8L * blocks + 1) * 500.0; // 40500.0 for blocks=10
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",

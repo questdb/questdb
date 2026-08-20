@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -1296,11 +1297,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
 
         assertMemoryLeak(() -> {
-            final WorkerPool sharedPool = new TestWorkerPool("pool0", sharedPoolWorkerCount);
+            final WorkerPool sharedPool = new TestWorkerPool("pool0", sharedPoolWorkerCount, Metrics.DISABLED, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(sharedPool, engine);
             sharedPool.start();
 
-            try (final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount)) {
+            try (final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount, Metrics.DISABLED)) {
 
                 SOCountDownLatch doneLatch = new SOCountDownLatch(1);
 
@@ -1366,7 +1367,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         assertMemoryLeak(() -> {
-            final TestWorkerPool pool = new TestWorkerPool(workerCount);
+            final TestWorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             final ObjList<PageFrameReduceJob> pageFrameReduceJobs = pool.getPageFrameReduceJobs();
             pool.start();

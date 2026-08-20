@@ -846,7 +846,7 @@ public class FiberWorkerPoolTest {
     }
 
     @Test
-    public void testProductionConfigurationDefaultsToLegacy() {
+    public void testWorkerPoolConfigurationInterfaceDefaultsToLegacy() {
         final WorkerPoolConfiguration configuration = () -> 1;
         Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getWorkerPoolMode());
     }

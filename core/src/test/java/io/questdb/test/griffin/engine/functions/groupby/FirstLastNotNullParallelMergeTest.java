@@ -192,7 +192,7 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
         final String query = "SELECT " + counts + " FROM (SELECT g, " + aggregates + " FROM tab)";
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
                     // A type whose cast silently widens turns its case into a duplicate of another

@@ -183,7 +183,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testArrayFilter() throws Exception {
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -272,7 +272,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1
                 """;
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -302,7 +302,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testCastToSymbolInParallelFilter() throws Exception {
         // Cast-to-symbol functions maintain a mutable hash-map symbol cache, so they're thread-unsafe.
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -417,7 +417,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testEarlyCursorClose() throws Exception {
         // This scenario used to lead to an NPE on `circuitBreaker.cancelledFlag` access in PageFrameReduceJob.
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -461,7 +461,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new TestWorkerPool(workerCount);
+        WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -635,7 +635,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     public void testLong256FunctionsInParallelFilter() throws Exception {
         // AbstractCastToLong256Function and LongsToLong256Function each return
         // a shared Long256Impl, so they're thread-unsafe.
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -824,7 +824,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testReadParquet() throws Exception {
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -925,7 +925,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 }
             };
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -968,7 +968,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1007,7 +1007,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testCount(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1174,7 +1174,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testEqDecimal(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -1206,7 +1206,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testIn(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1247,7 +1247,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInAndInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1295,7 +1295,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -1338,7 +1338,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testParallelStressSymbol(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(workerCount);
+        WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -1393,7 +1393,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testParallelStressVarchar(String query, String expected, int threadCount, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
@@ -1448,7 +1448,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testStrBindVariable(String columnType, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new TestWorkerPool(4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {

@@ -6,6 +6,8 @@ import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleStartupException;
 import io.questdb.lifecycle.State;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -13,6 +15,7 @@ import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ObjList;
 import io.questdb.test.lifecycle.fakes.ProbeComponent;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -37,6 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * probes but cannot serve requests).
  */
 public class WorkerPoolBootFailureTest {
+    private static final Log LOG = LogFactory.getLog(WorkerPoolBootFailureTest.class);
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -125,7 +129,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testConcurrentHaltStopsStartFromSpawningAgainstFreedResources() throws Exception {
         final int workerCount = 4;
-        final WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -335,7 +339,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testStartLatchTimeoutHaltsWorkersAndRetainsResources() throws Exception {
         final int workerCount = 2;
-        final WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -441,7 +445,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testHaltDuringStartAddLoopIsHeldOffNotReadTorn() throws Exception {
         final int workerCount = 4;
-        final WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -625,7 +629,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testMetricsScrapeIsHeldOffNotReadTornDuringStartAddLoop() throws Exception {
         final int workerCount = 4;
-        final WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.ENABLED;
@@ -807,7 +811,7 @@ public class WorkerPoolBootFailureTest {
     }
 
     private static WorkerPool newDaemonWorkerPool(String poolName, int workerCount) {
-        return TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+        return TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;

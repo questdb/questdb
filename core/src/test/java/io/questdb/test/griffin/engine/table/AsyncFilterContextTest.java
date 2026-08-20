@@ -447,7 +447,7 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
         final long frameRows = 1_000_000;
         final long thresholdBytes = frameRows * Long.BYTES / 4; // a quarter of a grown frame list
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

@@ -77,7 +77,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelAllNull() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
@@ -109,7 +109,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelKeyedSparseNulls() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
@@ -141,7 +141,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelPerfectLine() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
@@ -178,7 +178,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     @Test
     public void testParallelSparseNulls() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,

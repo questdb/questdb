@@ -37,6 +37,8 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.Job;
@@ -48,6 +50,7 @@ import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.mp.TestWorkerPool;
@@ -64,6 +67,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 public class WorkerPoolManagerTest {
+    private static final Log LOG = LogFactory.getLog(WorkerPoolManagerTest.class);
 
     private static final String END_MESSAGE = "run is over";
 
@@ -93,7 +97,7 @@ public class WorkerPoolManagerTest {
         final AtomicBoolean release = new AtomicBoolean(false);
         final AtomicInteger closeOrder = new AtomicInteger();
         final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
-        final WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return "wedged";
@@ -575,6 +579,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static ServerConfiguration createServerConfig(int workerCount) {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         return new ServerConfiguration() {
             @Override
             public CairoConfiguration getCairoConfiguration() {
@@ -648,22 +653,22 @@ public class WorkerPoolManagerTest {
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-                return TestWorkerPool.withRandomMode(() -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
-                return TestWorkerPool.withRandomMode(() -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-                return TestWorkerPool.withRandomMode(() -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
             }
 
             @Override
             public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
-                return TestWorkerPool.withRandomMode(() -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
             }
 
             @Override
@@ -734,7 +739,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static WorkerPoolConfiguration workerPoolConfiguration(String poolName, int workerCount) {
-        return TestWorkerPool.withRandomMode(new WorkerPoolConfiguration() {
+        return TestWorkerPool.withRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return poolName;
@@ -748,7 +753,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static WorkerPoolConfiguration workerPoolConfiguration(String poolName, long sleepMillis) {
-        return TestWorkerPool.withRandomMode(new WorkerPoolConfiguration() {
+        return TestWorkerPool.withRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return poolName;

@@ -749,7 +749,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // filter rather than rewriting it into a designated-timestamp interval scan. The plan check
         // proves the async filter engaged; the cursor comparison proves the folded result matches the
         // literal-threshold reference, which folds at compile time.
-        final WorkerPool pool = new TestWorkerPool(4);
+        final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {

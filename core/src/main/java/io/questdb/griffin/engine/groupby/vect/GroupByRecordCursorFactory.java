@@ -326,6 +326,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         while (true) {
             final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
             if (doneLatch.done(queuedCount)) {
                 break;
             }
@@ -333,7 +334,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 sharedCB.cancel();
             }
 
-            if (dispatcher == null && workStealingStrategy.shouldSteal(mergedCount)) {
+            if (!isOwnerParkable && workStealingStrategy.shouldSteal(mergedCount)) {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
@@ -351,7 +352,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     Os.pause();
                 }
-            } else if (dispatcher != null) {
+            } else if (isOwnerParkable) {
                 if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
                     Os.pause();
                 }
@@ -637,11 +638,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 break dispatch;
                             }
                             final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                                if (dispatcher == null && workStealingStrategy.shouldSteal(mergedCount)) {
+                                if (!isOwnerParkable && workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
@@ -661,8 +663,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     mergedCount = doneLatch.getCount();
                                     break;
                                 }
-                                if (dispatcher != null
-                                        && !dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                if (isOwnerParkable) {
+                                    if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
+                                        Os.pause();
+                                    }
+                                } else {
                                     Os.pause();
                                 }
                                 mergedCount = doneLatch.getCount();

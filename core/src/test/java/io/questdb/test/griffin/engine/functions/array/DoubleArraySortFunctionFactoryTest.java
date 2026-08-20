@@ -138,7 +138,7 @@ public class DoubleArraySortFunctionFactoryTest extends AbstractCairoTest {
     public void testParallel() throws Exception {
         execute("CREATE TABLE tmp AS (SELECT rnd_symbol('a','b','v') sym, rnd_double_array(1, 0) book FROM long_sequence(10000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

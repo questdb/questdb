@@ -10212,7 +10212,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 execute("ALTER TABLE t_mt CONVERT PARTITION TO PARQUET LIST '2024-01-0" + d + "'");
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             try {
@@ -10500,7 +10500,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -10654,7 +10654,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long protectedExpected = hotPerDay;
@@ -10803,7 +10803,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -10950,7 +10950,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -11092,7 +11092,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 execute("ALTER TABLE t_cov_hold CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             try (
@@ -11252,7 +11252,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -11414,7 +11414,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -11605,7 +11605,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -11767,7 +11767,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             final long[] expectedRows = new long[K];
@@ -11963,7 +11963,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 readers[r].start();
             }
 
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             long expectedRows = initialRows;
@@ -12679,7 +12679,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             readers[r].start();
         }
 
-        final WorkerPool pool = new TestWorkerPool(4);
+        final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.setupWorkerPool(pool, engine);
         pool.start(LOG);
         long expectedRows = initialRows;

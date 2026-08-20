@@ -78,7 +78,7 @@ public class FirstLastUnderContentionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",

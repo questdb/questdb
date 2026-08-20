@@ -799,7 +799,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     }
                 };
 
-                WorkerPool pool = TestWorkerPool.createWithRandomMode(new WorkerPoolConfiguration() {
+                WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
                     @Override
                     public long getSleepTimeout() {
                         return 1;

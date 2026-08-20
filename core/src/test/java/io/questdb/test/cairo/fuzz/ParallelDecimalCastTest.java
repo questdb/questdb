@@ -292,7 +292,7 @@ public class ParallelDecimalCastTest extends AbstractCairoTest {
 
     private void assertDecimalCasting(String ddl, String sql, String expected) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
             TestUtils.execute(
                     pool,

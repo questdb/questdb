@@ -91,7 +91,7 @@ public class SkewnessParallelGroupByTest extends AbstractCairoTest {
 
     private void runWithPool(PoolRunnable body) throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) ->
                         body.run(compiler, sqlExecutionContext), configuration, LOG);
             }

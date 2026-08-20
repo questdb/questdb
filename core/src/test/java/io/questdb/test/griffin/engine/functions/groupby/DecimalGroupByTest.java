@@ -1118,7 +1118,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
     private void testParallelQuery(String ddl, String query, String expected) {
         try {
             assertMemoryLeak(() -> {
-                final WorkerPool pool = new TestWorkerPool(1);
+                final WorkerPool pool = new TestWorkerPool(1, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
                 TestUtils.execute(
                         pool,

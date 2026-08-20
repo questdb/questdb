@@ -151,7 +151,6 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -174,13 +173,9 @@ import static org.junit.Assert.assertNotNull;
 public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
-    public static final String WORKER_POOL_MODE_PROPERTY = "questdb.test.worker.pool.mode";
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final long THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS = 1_000;
     private static final long THREAD_JOIN_TIMEOUT_MILLIS = 20_000;
-    private static final @Nullable WorkerPoolMode WORKER_POOL_MODE_OVERRIDE = readWorkerPoolModeOverride();
-    private static final InheritableThreadLocal<AtomicReference<WorkerPoolMode>> WORKER_POOL_TEST_MODE =
-            new InheritableThreadLocal<>();
     private static final Object threadAllocationLock = new Object();
     private static final Object threadCpuTimeLock = new Object();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
@@ -1362,14 +1357,6 @@ public final class TestUtils {
         return cartesianProduct(values, 0);
     }
 
-    public static void clearWorkerPoolTestIdentity() {
-        final AtomicReference<WorkerPoolMode> modeReference = WORKER_POOL_TEST_MODE.get();
-        if (modeReference != null) {
-            modeReference.set(null);
-        }
-        WORKER_POOL_TEST_MODE.remove();
-    }
-
     public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         // clients may run out of ephemeral ports, that are still lingering
@@ -1914,35 +1901,8 @@ public final class TestUtils {
         return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
-    /**
-     * Returns the deterministic mode for the current listener-bound test identity.
-     * {@value #WORKER_POOL_MODE_PROPERTY} pins every pool when reproducing a failure.
-     * Calls outside an active test identity use {@link WorkerPoolMode#LEGACY}.
-     */
-    public static WorkerPoolMode getWorkerPoolMode() {
-        final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
-        if (override != null) {
-            return override;
-        }
-        final AtomicReference<WorkerPoolMode> modeReference = WORKER_POOL_TEST_MODE.get();
-        if (modeReference != null) {
-            final WorkerPoolMode mode = modeReference.get();
-            if (mode != null) {
-                return mode;
-            }
-            WORKER_POOL_TEST_MODE.remove();
-        }
-        return WorkerPoolMode.LEGACY;
-    }
-
     public static WorkerPoolMode getWorkerPoolMode(Rnd rnd) {
-        final WorkerPoolMode override = WORKER_POOL_MODE_OVERRIDE;
-        if (override != null) {
-            return override;
-        }
-        return (rnd.getSeed0() ^ rnd.getSeed1()) < 0
-                ? WorkerPoolMode.FIBER_HOST
-                : WorkerPoolMode.LEGACY;
+        return rnd.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
@@ -2476,11 +2436,6 @@ public final class TestUtils {
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
-    }
-
-    public static void setWorkerPoolTestIdentity(String identity) {
-        clearWorkerPoolTestIdentity();
-        WORKER_POOL_TEST_MODE.set(new AtomicReference<>(workerPoolModeForTestIdentity(identity)));
     }
 
     /**
@@ -3134,20 +3089,6 @@ public final class TestUtils {
         return increment;
     }
 
-    static @Nullable WorkerPoolMode parseWorkerPoolMode(@Nullable String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        final String name = value.trim().toUpperCase(Locale.ROOT);
-        try {
-            return WorkerPoolMode.valueOf(name);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(
-                    "invalid " + WORKER_POOL_MODE_PROPERTY + " value [value=" + value + ", expected=FIBER_HOST|LEGACY]"
-            );
-        }
-    }
-
     private static char readAsChar(RecordMetadata metaR, Record rr, int col) {
         switch (metaR.getColumnType(col)) {
             case ColumnType.CHAR:
@@ -3181,14 +3122,6 @@ public final class TestUtils {
             default ->
                     throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
         };
-    }
-
-    private static @Nullable WorkerPoolMode readWorkerPoolModeOverride() {
-        final WorkerPoolMode mode = parseWorkerPoolMode(System.getProperty(WORKER_POOL_MODE_PROPERTY));
-        if (mode != null) {
-            LOG.info().$("worker pool mode pinned [").$(WORKER_POOL_MODE_PROPERTY).$('=').$(mode.name()).I$();
-        }
-        return mode;
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {
@@ -3286,12 +3219,6 @@ public final class TestUtils {
         properties.setProperty("user", username);
         properties.setProperty("password", password);
         return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
-    }
-
-    static WorkerPoolMode workerPoolModeForTestIdentity(String identity) {
-        return (identity.hashCode() & 1) == 0
-                ? WorkerPoolMode.FIBER_HOST
-                : WorkerPoolMode.LEGACY;
     }
 
     public interface CheckedIntFunction {

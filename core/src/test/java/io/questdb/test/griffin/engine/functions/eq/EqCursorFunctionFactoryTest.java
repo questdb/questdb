@@ -468,7 +468,7 @@ public class EqCursorFunctionFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, ctx) -> {
                     execute(compiler, "create table src (ts timestamp)", ctx);
                     execute(compiler, "insert into src values (5000)", ctx);

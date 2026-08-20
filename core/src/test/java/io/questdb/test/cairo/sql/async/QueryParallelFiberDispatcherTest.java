@@ -155,7 +155,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         engine.execute(
                                 "create table latest_tab as (" +
                                         "select x id, ('k' || (x % 64))::symbol sym, " +
-                                        "timestamp_sequence(0, 1000000) ts from long_sequence(4096)" +
+                                        "timestamp_sequence(0, 1_000_000) ts from long_sequence(4096)" +
                                         "), index(sym) timestamp(ts) partition by day",
                                 executionContext
                         );
@@ -167,7 +167,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
 
                         engine.execute(
                                 "create table vector_tab as (" +
-                                        "select (x % 17)::int k, x v from long_sequence(262144)" +
+                                        "select (x % 17)::int k, x v from long_sequence(262_144)" +
                                         ")",
                                 executionContext
                         );
@@ -178,7 +178,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
 
                         engine.execute(
                                 "create table group_tab as (" +
-                                        "select timestamp_sequence(0, 1000000) ts, " +
+                                        "select timestamp_sequence(0, 1_000_000) ts, " +
                                         "'k' || (x % 64) key, x::double price, x quantity " +
                                         "from long_sequence(4096)" +
                                         ") timestamp(ts) partition by day",

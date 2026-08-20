@@ -1831,7 +1831,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
 
             final int workerCount = 4;
-            WorkerPool pool = new TestWorkerPool(workerCount);
+            WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

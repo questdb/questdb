@@ -31,33 +31,30 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 
 public class TestWorkerPool extends WorkerPool {
     private final ObjList<PageFrameReduceJob> pageFrameReduceJobs = new ObjList<>();
 
-    public static TestWorkerPool createWithRandomMode(WorkerPoolConfiguration configuration) {
-        return new TestWorkerPool(withRandomMode(configuration));
+    public static TestWorkerPool createWithRandomMode(Rnd rnd, WorkerPoolConfiguration configuration) {
+        return new TestWorkerPool(withRandomMode(rnd, configuration));
     }
 
-    public static WorkerPoolConfiguration withRandomMode(WorkerPoolConfiguration configuration) {
-        return new ModeOverrideWorkerPoolConfiguration(configuration, TestUtils.getWorkerPoolMode());
+    public static WorkerPoolConfiguration withRandomMode(Rnd rnd, WorkerPoolConfiguration configuration) {
+        return new ModeOverrideWorkerPoolConfiguration(configuration, TestUtils.getWorkerPoolMode(rnd));
     }
 
     public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.DISABLED, TestUtils.getWorkerPoolMode());
-    }
-
-    public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.DISABLED, TestUtils.getWorkerPoolMode());
+        this("testing", workerCount, Metrics.DISABLED, WorkerPoolMode.LEGACY);
     }
 
     public TestWorkerPool(int workerCount, Metrics metrics) {
-        this("testing", workerCount, metrics, TestUtils.getWorkerPoolMode());
+        this("testing", workerCount, metrics, WorkerPoolMode.LEGACY);
     }
 
     public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        this(poolName, workerCount, metrics, TestUtils.getWorkerPoolMode());
+        this(poolName, workerCount, metrics, WorkerPoolMode.LEGACY);
     }
 
     public TestWorkerPool(int workerCount, WorkerPoolMode workerPoolMode) {

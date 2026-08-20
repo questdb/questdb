@@ -8723,7 +8723,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
+            final WorkerPool workerPool = new TestWorkerPool("testing", 4, conf.getMetrics(), conf.getWorkerPoolMode());
             try (final PGServer server = createPGWireServer(
                     conf,
                     engine,
@@ -13215,7 +13215,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
+        WorkerPool workerPool = new TestWorkerPool("testing", 2, conf.getMetrics(), conf.getWorkerPoolMode());
         DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(

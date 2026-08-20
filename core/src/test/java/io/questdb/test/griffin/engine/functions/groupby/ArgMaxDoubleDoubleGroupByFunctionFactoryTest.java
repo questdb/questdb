@@ -87,7 +87,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                 "rnd_double() key " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -130,7 +130,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                 "  cast(null as double) key " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -169,7 +169,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                 "  rnd_double() key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -220,7 +220,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                 "  case when x <= 1000000 then null else rnd_double() end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -252,7 +252,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                 "  case when x % 2 = 0 then null else rnd_double() end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -283,7 +283,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                 "  rnd_double() key " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

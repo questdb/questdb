@@ -2695,6 +2695,37 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLineTcpRequiresWorkersForSharedPoolsWithDedicatedHttpAndPg() throws Exception {
+        final Properties networkProperties = new Properties();
+        networkProperties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        networkProperties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "4");
+        networkProperties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "4");
+        assertInvalidConfiguration(networkProperties, PropertyKey.SHARED_NETWORK_WORKER_COUNT);
+        networkProperties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "2");
+        Assert.assertEquals(
+                2,
+                newPropServerConfiguration(networkProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getNetworkWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+
+        final Properties writeProperties = new Properties();
+        writeProperties.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        writeProperties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "4");
+        writeProperties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "4");
+        assertInvalidConfiguration(writeProperties, PropertyKey.SHARED_WRITE_WORKER_COUNT);
+        writeProperties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath(), "2");
+        Assert.assertEquals(
+                2,
+                newPropServerConfiguration(writeProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getWriterWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+    }
+
+    @Test
     public void testLineTcpWorkerCheckSkippedWhenLineTcpCannotRun() throws Exception {
         final Properties disabled = new Properties();
         disabled.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");

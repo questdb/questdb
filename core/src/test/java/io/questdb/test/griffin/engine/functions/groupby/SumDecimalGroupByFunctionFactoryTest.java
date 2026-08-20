@@ -82,7 +82,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal128AllOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(2);
+            final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select " +
@@ -126,7 +126,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal128SomeOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select case " +
@@ -173,7 +173,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal64AllOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(2);
+            final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select " +
@@ -202,7 +202,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal64SomeOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select case " +

@@ -411,7 +411,7 @@ public class AbstractO3Test extends AbstractTest {
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
-                WorkerPool pool = new TestWorkerPool(workerCount);
+                WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
                 TestUtils.execute(
                         pool,
                         (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampType.getTypeName()),

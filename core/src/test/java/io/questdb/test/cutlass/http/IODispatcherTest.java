@@ -4882,7 +4882,7 @@ public class IODispatcherTest extends AbstractTest {
             };
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder().withNetwork(nf).withBaseDir(baseDir).withSendBufferSize(256).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withServerKeepAlive(true).withHttpProtocolVersion("HTTP/1.1 ").build(cairoConfiguration);
 
-            WorkerPool workerPool = new TestWorkerPool(1);
+            WorkerPool workerPool = new TestWorkerPool(1, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
             try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));

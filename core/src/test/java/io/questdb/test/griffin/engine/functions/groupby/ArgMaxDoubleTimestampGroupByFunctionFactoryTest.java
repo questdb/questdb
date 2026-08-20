@@ -86,7 +86,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "timestamp_sequence(0, 1000000) key " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -126,7 +126,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  cast(null as timestamp) key " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -163,7 +163,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  timestamp_sequence(0, 1000) key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -192,7 +192,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  case when x <= 1000000 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -221,7 +221,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  case when x % 2 = 0 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new TestWorkerPool(4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

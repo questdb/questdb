@@ -142,7 +142,7 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
         // column and tripping the "typeTag of encodedType is not ARRAY" assert.
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = new TestWorkerPool(workerCount);
+            final WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             try (

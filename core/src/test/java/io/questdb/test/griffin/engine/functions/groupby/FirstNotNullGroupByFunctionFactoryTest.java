@@ -170,7 +170,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
         //   - Merge B into A: srcRowId > destRowId and destRowId != LONG_NULL,
         //     so merge() incorrectly discards the non-null value.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

@@ -432,6 +432,14 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         return vectorAggregateTaskPool.getCreatedCount();
     }
 
+    public boolean isOwnerParkable() {
+        return !closed
+                && quiesceState.get() == QUIESCE_OPEN
+                && Fiber.isMounted()
+                && SuspensionScope.isFiberMode()
+                && Fiber.current() != null;
+    }
+
     @Override
     public boolean isQuiesced() {
         return quiesceState.get() == QUIESCE_DRAINED;

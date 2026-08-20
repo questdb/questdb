@@ -17839,7 +17839,7 @@ public class SampleByTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 2;
 
-        try (WorkerPool pool = new TestWorkerPool(workerCount)) {
+        try (WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

@@ -93,7 +93,7 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
     @Test
     public void testBatchedPathEvaluatesLosingRows() throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, "CREATE TABLE tab (k SYMBOL, a DOUBLE[][], d INT)", ctx);
                     execute(
@@ -151,7 +151,7 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
         final String filteredQuery = countsOf(" WHERE g >= 0");
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
                     // Without the parallel factory there is no batched reduce left to guard.
@@ -214,7 +214,7 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                 " FROM (" + keyedQuery + ")";
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new TestWorkerPool(4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
                     assertQuery(keyedQuery)
