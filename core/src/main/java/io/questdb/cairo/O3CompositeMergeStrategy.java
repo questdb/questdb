@@ -53,6 +53,11 @@ import io.questdb.std.ObjList;
  *     two, or above the last. It is written at the shared files' tail as a new piece under its own
  *     {@code tsLo}. One action type covers all three, which is why the design deletes both
  *     a batch below the first piece and a batch above the last are the same action.</li>
+ *     <li>{@link ActionType#APPEND} - the batch slice falls above the last piece, and that piece already
+ *     owns the tail of the files and claims no O3 row of its own. Rather than found a new piece next to
+ *     it, the batch is written right after it and the piece's own {@code tsHi} and {@code rowCount} grow
+ *     to cover it - the two pieces were always going to be one contiguous run, so nothing distinguished
+ *     them to begin with. At most one per plan, since only the last piece can own the tail.</li>
  * </ul>
  */
 public class O3CompositeMergeStrategy {
@@ -137,19 +142,29 @@ public class O3CompositeMergeStrategy {
      * @param srcOooHi             last O3 row, inclusive
      * @param smallPieceThreshold  a piece with fewer rows than this absorbs adjacent gap data instead of
      *                             letting it found a new piece
-     * @param actions              output, reused across calls; entries past the returned count are stale
-     * @return the number of actions written
+     * @param physicalRows         the partition's physical extent BEFORE this commit writes anything, used
+     *                             only to test whether the last piece owns the shared files' tail; pass a
+     *                             value no piece can reach (e.g. {@link Long#MAX_VALUE}) to disable
+     *                             {@link ActionType#APPEND} entirely
+     * @param plan                 output, reused across calls: {@code plan.actions} is reset and
+     *                             repopulated so its {@code size()} IS the action count, and
+     *                             {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND}
+     *                             action's position, or -1 when none was emitted
+     * @return {@code plan}, for a fluent call at the use site
      */
-    public static int computeActions(
+    public static Plan computeActions(
             LongList bounds,
             long sortedTimestampsAddr,
             long srcOooLo,
             long srcOooHi,
             long smallPieceThreshold,
-            ObjList<Action> actions
+            long physicalRows,
+            Plan plan
     ) {
         final int pieceCount = bounds.size() / LONGS_PER_BOUND;
         assert pieceCount > 0;
+        plan.actions.setPos(0);
+        plan.appendActionIndex = -1;
         int actionCount = 0;
         long o3 = srcOooLo;
 
@@ -164,7 +179,7 @@ public class O3CompositeMergeStrategy {
                 if (absorb) {
                     // fold into this piece's merge below
                 } else {
-                    actionAt(actions, actionCount++).setNewPiece(o3, gapHi);
+                    actionAt(plan.actions, actionCount++).setNewPiece(o3, gapHi);
                     o3 = gapHi + 1;
                 }
             }
@@ -174,10 +189,21 @@ public class O3CompositeMergeStrategy {
                     ? (p + 1 < pieceCount ? findLastBelow(sortedTimestampsAddr, o3, srcOooHi, getTsLo(bounds, p + 1)) : srcOooHi)
                     : lastAtOrBelow(sortedTimestampsAddr, o3, srcOooHi, tsHi);
             if (claimHi >= o3) {
-                actionAt(actions, actionCount++).setMerge(p, o3, claimHi);
+                actionAt(plan.actions, actionCount++).setMerge(p, o3, claimHi);
                 o3 = claimHi + 1;
+            } else if (p == pieceCount - 1
+                    && o3 <= srcOooHi
+                    && getRowOffset(bounds, p) + getRowCount(bounds, p) == physicalRows) {
+                // This piece claims none of the batch itself - tsHi's use of lastAtOrBelow already
+                // guarantees every remaining O3 row sits strictly above it, which is also what keeps this
+                // safe under DEDUP: duplicates need equal timestamps, and there are none - and it owns the
+                // shared files' tail, so everything left in the batch extends it in place instead of
+                // founding a new piece next to it.
+                plan.appendActionIndex = actionCount;
+                actionAt(plan.actions, actionCount++).setAppend(p, o3, srcOooHi);
+                o3 = srcOooHi + 1;
             } else {
-                actionAt(actions, actionCount++).setKeep(p);
+                actionAt(plan.actions, actionCount++).setKeep(p);
             }
         }
 
@@ -186,9 +212,9 @@ public class O3CompositeMergeStrategy {
         // caller drops the geometry rather than record a boundary that says nothing - see isComposite in
         // O3PartitionJob. Nothing has to be decided here.
         if (o3 <= srcOooHi) {
-            actionAt(actions, actionCount++).setNewPiece(o3, srcOooHi);
+            actionAt(plan.actions, actionCount++).setNewPiece(o3, srcOooHi);
         }
-        return actionCount;
+        return plan;
     }
 
     /**
@@ -343,8 +369,14 @@ public class O3CompositeMergeStrategy {
     }
 
     private static Action actionAt(ObjList<Action> actions, int index) {
-        while (actions.size() <= index) {
-            actions.add(new Action());
+        if (index >= actions.size()) {
+            // extendPos grows pos without touching the buffer, so an Action a longer PRIOR call left at
+            // this slot survives a shorter call's plan.actions.setPos(0) and is reused here rather than
+            // reallocated - only a slot no call has ever reached is genuinely null.
+            actions.extendPos(index + 1);
+            if (actions.getQuick(index) == null) {
+                actions.setQuick(index, new Action());
+            }
         }
         return actions.getQuick(index);
     }
@@ -363,6 +395,14 @@ public class O3CompositeMergeStrategy {
          */
         NEW_PIECE,
         /**
+         * The batch slice falls above the last piece, which already owns the shared files' tail and
+         * claims none of it. The batch is written right after it, exactly as {@link #NEW_PIECE} would, but
+         * the piece's own {@code tsHi} and {@code rowCount} grow to cover it instead of a new piece being
+         * founded - {@link O3PartitionJob}'s executor must write this action BEFORE any other, or a
+         * {@link #NEW_PIECE} emitted earlier in timestamp order takes the tail first.
+         */
+        APPEND,
+        /**
          * The piece falls entirely inside a replace-range commit's declared range and carries no O3 rows
          * of its own: it is excluded from the new geometry rather than kept. Its bytes stay on disk as
          * dead space - a drop moves nothing, exactly as a KEEP writes nothing - but the piece is gone from
@@ -380,6 +420,13 @@ public class O3CompositeMergeStrategy {
 
         public long getO3RowCount() {
             return o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
+        }
+
+        public void setAppend(int pieceIndex, long o3Lo, long o3Hi) {
+            this.type = ActionType.APPEND;
+            this.pieceIndex = pieceIndex;
+            this.o3Lo = o3Lo;
+            this.o3Hi = o3Hi;
         }
 
         public void setDrop(int pieceIndex) {
@@ -413,11 +460,26 @@ public class O3CompositeMergeStrategy {
         @Override
         public String toString() {
             return switch (type) {
+                case APPEND -> "APPEND(p=" + pieceIndex + ", o3=[" + o3Lo + "," + o3Hi + "])";
                 case KEEP -> "KEEP(p=" + pieceIndex + ")";
                 case MERGE -> "MERGE(p=" + pieceIndex + ", o3=[" + o3Lo + "," + o3Hi + "])";
                 case NEW_PIECE -> "NEW_PIECE(o3=[" + o3Lo + "," + o3Hi + "])";
                 case DROP -> "DROP(p=" + pieceIndex + ")";
             };
         }
+    }
+
+    /**
+     * The output of {@link #computeActions}: an action list plus the position of its
+     * {@link ActionType#APPEND} action, if any. Kept as one reused holder, pooled per {@code O3PartitionJob}
+     * worker thread, so planning a commit allocates nothing.
+     */
+    public static class Plan {
+        public final ObjList<Action> actions = new ObjList<>();
+        /**
+         * Position in {@link #actions} of the {@link ActionType#APPEND} action, or -1 when none was
+         * emitted. The executor must write this action before any other in the plan.
+         */
+        public int appendActionIndex = -1;
     }
 }

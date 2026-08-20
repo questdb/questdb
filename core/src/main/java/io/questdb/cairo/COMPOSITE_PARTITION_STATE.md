@@ -431,6 +431,10 @@ as soon as an entry that WAS the pre-commit last partition turns out composite. 
   smaller `cairo.o3.partition.split.min.size` than a wide one before any cut is proposed. A var-size column
   counts as 28 bytes there whatever it actually holds, which is why the test had to raise its setting from
   1K to 8K as columns were added.
+- **A raw (non-`WorkerPool`) thread that WAL-applies a composite commit leaks its per-thread `_geometry`
+  scratch buffer.** See section 29 - fixed in `MatViewFuzzTest`, but the same `new Thread(...)` +
+  `drainWalQueue()` pattern is untouched in ~50 other test files and can trip the identical
+  `assertMemoryLeak` failure.
 
 ## Working notes
 

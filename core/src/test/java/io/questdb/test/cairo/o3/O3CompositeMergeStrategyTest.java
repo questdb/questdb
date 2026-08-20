@@ -28,7 +28,6 @@ import io.questdb.cairo.O3CompositeMergeStrategy;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,6 +37,13 @@ import org.junit.Test;
  * table, no writer and no files. Every case here is a shape the composite dispatch has to get right.
  */
 public class O3CompositeMergeStrategyTest {
+
+    /**
+     * A physical extent no piece built in these fixtures can ever reach, which disables
+     * {@link O3CompositeMergeStrategy.ActionType#APPEND} for every test that predates it and is not about
+     * it: none of their pieces' {@code rowOffset + rowCount} can equal it by accident.
+     */
+    private static final long NO_APPEND = Long.MAX_VALUE;
 
     @Test
     public void testApplyCutDeclinesWhereItWouldSaveNothing() {
@@ -82,6 +88,71 @@ public class O3CompositeMergeStrategyTest {
     }
 
     @Test
+    public void testAppendDoesNotFireWhenTailPieceAlsoMerges() {
+        // The batch straddles the last piece's own tsHi: some of it falls inside the piece's data range, so
+        // the piece MERGEs rather than KEEPs. APPEND only ever replaces a would-be KEEP, so the rows above
+        // tsHi still found a plain NEW_PIECE.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        withTimestamps(new long[]{150, 250}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0, 50);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("MERGE(p=0, o3=[0,0])", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("NEW_PIECE(o3=[1,1])", plan.actions.getQuick(1).toString());
+        });
+    }
+
+    @Test
+    public void testAppendDoesNotFireWhenTailPieceIsNotAtThePhysicalTail() {
+        // A hole above the last piece - say, a prior commit relocated some OTHER piece to the files' tail -
+        // means this piece does not own it, so extending it in place would overwrite bytes that belong to
+        // whatever actually sits there. physicalRows one above the piece's own reach models that hole.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        withTimestamps(new long[]{500}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 0, 0, 51);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("NEW_PIECE(o3=[0,0])", plan.actions.getQuick(1).toString());
+        });
+    }
+
+    @Test
+    public void testAppendExtendsTheTailPieceAroundAHeadGapToo() {
+        // The worked example: a batch with rows both below the floor and above the tail in the SAME commit.
+        // The head rows still found their own piece - APPEND only ever concerns the tail - while the tail
+        // rows extend the existing piece instead of founding a second new one.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 1100, 1400, 0, 50);
+        withTimestamps(new long[]{900, 1000, 1500, 1600}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 3, 0, 50);
+            Assert.assertEquals(1, plan.appendActionIndex);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("NEW_PIECE(o3=[0,1])", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("APPEND(p=0, o3=[2,3])", plan.actions.getQuick(1).toString());
+        });
+    }
+
+    @Test
+    public void testAppendExtendsTheTailPieceInsteadOfFoundingANewOne() {
+        // Same shape as testChronologicalAppendTouchesNoExistingPiece, but with a physicalRows that matches
+        // reality: the last piece genuinely owns the files' tail, so the batch above it extends that piece
+        // in place instead of founding a third one.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 0, 60);
+        withTimestamps(new long[]{500, 501, 502}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 2, 0, 60);
+            Assert.assertEquals(1, plan.appendActionIndex);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("APPEND(p=1, o3=[0,2])", plan.actions.getQuick(1).toString());
+        });
+    }
+
+    @Test
     public void testClusteringCutsThenBatchCutsThenDecisions() {
         // The whole decision pipeline on one partition that arrives as a SINGLE piece covering a day.
         //
@@ -116,14 +187,13 @@ public class O3CompositeMergeStrategyTest {
                     formatBounds(bounds)
             );
 
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
-            Assert.assertEquals(5, n);
-            Assert.assertEquals("KEEP(p=0)", actions.getQuick(0).toString());
-            Assert.assertEquals("MERGE(p=1, o3=[0,1])", actions.getQuick(1).toString());
-            Assert.assertEquals("KEEP(p=2)", actions.getQuick(2).toString());
-            Assert.assertEquals("KEEP(p=3)", actions.getQuick(3).toString());
-            Assert.assertEquals("KEEP(p=4)", actions.getQuick(4).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0);
+            Assert.assertEquals(5, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("MERGE(p=1, o3=[0,1])", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=2)", plan.actions.getQuick(2).toString());
+            Assert.assertEquals("KEEP(p=3)", plan.actions.getQuick(3).toString());
+            Assert.assertEquals("KEEP(p=4)", plan.actions.getQuick(4).toString());
         });
     }
 
@@ -134,11 +204,10 @@ public class O3CompositeMergeStrategyTest {
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
         withTimestamps(new long[]{10, 20, 30}, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 2, 0, actions);
-            Assert.assertEquals(2, n);
-            Assert.assertEquals("NEW_PIECE(o3=[0,2])", actions.getQuick(0).toString());
-            Assert.assertEquals("KEEP(p=0)", actions.getQuick(1).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 2, 0);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("NEW_PIECE(o3=[0,2])", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(1).toString());
         });
     }
 
@@ -148,12 +217,11 @@ public class O3CompositeMergeStrategyTest {
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
         O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 50);
         withTimestamps(new long[]{250, 260}, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
-            Assert.assertEquals(3, n);
-            Assert.assertEquals("KEEP(p=0)", actions.getQuick(0).toString());
-            Assert.assertEquals("NEW_PIECE(o3=[0,1])", actions.getQuick(1).toString());
-            Assert.assertEquals("KEEP(p=1)", actions.getQuick(2).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0);
+            Assert.assertEquals(3, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("NEW_PIECE(o3=[0,1])", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=1)", plan.actions.getQuick(2).toString());
         });
     }
 
@@ -165,12 +233,11 @@ public class O3CompositeMergeStrategyTest {
         O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 0, 60);
         O3CompositeMergeStrategy.addPieceBounds(bounds, 300, 399, 0, 70);
         withTimestamps(new long[]{250, 251}, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
-            Assert.assertEquals(3, n);
-            Assert.assertEquals("KEEP(p=0)", actions.getQuick(0).toString());
-            Assert.assertEquals("MERGE(p=1, o3=[0,1])", actions.getQuick(1).toString());
-            Assert.assertEquals("KEEP(p=2)", actions.getQuick(2).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0);
+            Assert.assertEquals(3, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("MERGE(p=1, o3=[0,1])", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=2)", plan.actions.getQuick(2).toString());
         });
     }
 
@@ -228,12 +295,11 @@ public class O3CompositeMergeStrategyTest {
                     "P0(tsLo=0,tsHi=499,rows=500) P1(tsLo=500,tsHi=510,rows=11) P2(tsLo=511,tsHi=999,rows=489)",
                     formatBounds(bounds)
             );
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
-            Assert.assertEquals(3, n);
-            Assert.assertEquals("KEEP(p=0)", actions.getQuick(0).toString());
-            Assert.assertEquals("MERGE(p=1, o3=[0,1])", actions.getQuick(1).toString());
-            Assert.assertEquals("KEEP(p=2)", actions.getQuick(2).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0);
+            Assert.assertEquals(3, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("MERGE(p=1, o3=[0,1])", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=2)", plan.actions.getQuick(2).toString());
         });
     }
 
@@ -251,17 +317,19 @@ public class O3CompositeMergeStrategyTest {
     @Test
     public void testChronologicalAppendTouchesNoExistingPiece() {
         // The common workload. Every existing piece is KEPT and the batch becomes one new piece, so the
-        // commit writes only the rows it brought - no amplification at all.
+        // commit writes only the rows it brought - no amplification at all. NO_APPEND keeps this test about
+        // that invariant rather than the tail-extension optimisation - see
+        // testAppendExtendsTheTailPieceInsteadOfFoundingANewOne for the shape where it fires instead.
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
         O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 0, 60);
         withTimestamps(new long[]{500, 501, 502}, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 2, 0, actions);
-            Assert.assertEquals(3, n);
-            Assert.assertEquals("KEEP(p=0)", actions.getQuick(0).toString());
-            Assert.assertEquals("KEEP(p=1)", actions.getQuick(1).toString());
-            Assert.assertEquals("NEW_PIECE(o3=[0,2])", actions.getQuick(2).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 2, 0);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(3, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("KEEP(p=1)", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("NEW_PIECE(o3=[0,2])", plan.actions.getQuick(2).toString());
         });
     }
 
@@ -275,12 +343,11 @@ public class O3CompositeMergeStrategyTest {
         O3CompositeMergeStrategy.addPieceBounds(bounds, 500, 599, 0, 50);
         final long[] ts = {10, 150, 151, 250, 350, 450, 550, 900};
         withTimestamps(ts, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, ts.length - 1, 0, actions);
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, ts.length - 1, 0);
             long claimed = 0;
             long expectedNext = 0;
-            for (int i = 0; i < n; i++) {
-                final O3CompositeMergeStrategy.Action a = actions.getQuick(i);
+            for (int i = 0, n = plan.actions.size(); i < n; i++) {
+                final O3CompositeMergeStrategy.Action a = plan.actions.getQuick(i);
                 if (a.getO3RowCount() > 0) {
                     Assert.assertEquals("actions must claim the batch in order", expectedNext, a.o3Lo);
                     expectedNext = a.o3Hi + 1;
@@ -297,10 +364,9 @@ public class O3CompositeMergeStrategyTest {
         final LongList bounds = new LongList();
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 5);
         withTimestamps(new long[]{10, 20}, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 1000, actions);
-            Assert.assertEquals(1, n);
-            Assert.assertEquals("MERGE(p=0, o3=[0,1])", actions.getQuick(0).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 1000);
+            Assert.assertEquals(1, plan.actions.size());
+            Assert.assertEquals("MERGE(p=0, o3=[0,1])", plan.actions.getQuick(0).toString());
         });
     }
 
@@ -313,11 +379,10 @@ public class O3CompositeMergeStrategyTest {
         O3CompositeMergeStrategy.addPieceBounds(bounds, 100, Numbers.LONG_NULL, 0, 50);
         O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 50);
         withTimestamps(new long[]{250, 260}, addr -> {
-            final ObjList<O3CompositeMergeStrategy.Action> actions = new ObjList<>();
-            final int n = O3CompositeMergeStrategy.computeActions(bounds, addr, 0, 1, 0, actions);
-            Assert.assertEquals(2, n);
-            Assert.assertEquals("MERGE(p=0, o3=[0,1])", actions.getQuick(0).toString());
-            Assert.assertEquals("KEEP(p=1)", actions.getQuick(1).toString());
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("MERGE(p=0, o3=[0,1])", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("KEEP(p=1)", plan.actions.getQuick(1).toString());
         });
     }
 
@@ -344,6 +409,30 @@ public class O3CompositeMergeStrategyTest {
     private static boolean applyCutAt(LongList bounds, long cutTs) {
         final int piece = O3CompositeMergeStrategy.findPieceContaining(bounds, cutTs);
         return piece > -1 && applyCut(bounds, piece, cutTs);
+    }
+
+    /**
+     * {@link O3CompositeMergeStrategy#computeActions}, with {@link #NO_APPEND} disabling the tail-extension
+     * optimisation for tests not about it.
+     */
+    private static O3CompositeMergeStrategy.Plan computeActions(
+            LongList bounds, long sortedTimestampsAddr, long srcOooLo, long srcOooHi, long smallPieceThreshold
+    ) {
+        return computeActions(bounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallPieceThreshold, NO_APPEND);
+    }
+
+    private static O3CompositeMergeStrategy.Plan computeActions(
+            LongList bounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long smallPieceThreshold,
+            long physicalRows
+    ) {
+        return O3CompositeMergeStrategy.computeActions(
+                bounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallPieceThreshold, physicalRows,
+                new O3CompositeMergeStrategy.Plan()
+        );
     }
 
     private static String formatBounds(LongList bounds) {
