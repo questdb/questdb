@@ -566,9 +566,12 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(walPurgeJob);
                             sharedPoolWrite.freeOnExit(walPurgeJob);
 
-                            // best-effort background row-expiry cleanup for EXPIRE ROWS tables/mat-views
-                            // (WAL-only; assigned to the shared WRITE pool => primary-only. Overridable so
-                            // Enterprise can keep restricting it to the primary, like mat-view jobs)
+                            // best-effort background row-expiry cleanup for EXPIRE ROWS mat-views (WAL-only).
+                            // Registered at boot regardless of role: the job answers to isReadOnlyMode() on
+                            // every sweep and fences every destructive commit against a role flip, so it
+                            // no-ops on a replica and starts reclaiming on a promote without a restart. Boot
+                            // role must not decide registration - a role flip starts and stops no worker
+                            // threads, so a boot-time skip would leave a promoted ex-replica never reclaiming.
                             setupRowExpiryCleanupJob(sharedPoolWrite, engine);
 
                             // wal apply job in the shared pool when there is no dedicated pool

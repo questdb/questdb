@@ -57,12 +57,18 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * Primary-only background job that reclaims storage for materialized views carrying an {@code EXPIRE ROWS}
- * policy (EXPIRE ROWS is materialized-view-only). The read-time filter (see {@code SqlParser}) already hides
+ * Background job that reclaims storage for materialized views carrying an {@code EXPIRE ROWS}
+ * policy (EXPIRE ROWS is materialized-view-only). It is primary-only by role, not by registration: every
+ * sweep answers to {@code isReadOnlyMode()} at its {@link #runSerially} entry and every destructive commit
+ * answers again inside the role-switch fence (see {@link #commitWithFence}), so an in-place demote stops it
+ * from the next tick and a promote starts it without a restart.
+ * <p>
+ * The read-time filter (see {@code SqlParser}) already hides
  * expired rows from every query, so this job is <b>best-effort</b>: correctness never depends on it, it only
  * frees disk space. For each policied view it processes non-active <b>logical</b> partitions and reclaims via
  * a sequencer-fenced {@link WalWriter#commitWithParamsIfSeqTxn} with {@code WAL_DEDUP_MODE_REPLACE_RANGE}:
@@ -620,6 +626,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
+        // A read-only node reclaims nothing: its views are replicated state that the primary's own cleanup
+        // reclaims and ships. Checking here (not only at pool assignment) means an in-place demote stops the
+        // sweep from the next tick, and it makes the job safe to register regardless of boot role, so a
+        // promoted node starts reclaiming without a restart.
+        if (engine.isReadOnlyMode()) {
+            return false;
+        }
         final long nowMicros = clock.getTicks();
         final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
         if (expiryPolicyVersion == lastExpiryPolicyVersion
@@ -835,6 +848,29 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         bind.setTimestampWithType(1, timestampType, nextFloorTs);
     }
 
+    /**
+     * Externalizes one REPLACE_RANGE reclamation under two independent gates.
+     * <p>
+     * <b>Demote gate.</b> This job acquires the view's WalWriter as PRIMARY, then runs the survivor count and
+     * the survivor copy before it commits, so the role can flip inside that window: the eager read-only check
+     * {@code getWalWriter} performs is not enough. A REPLACE_RANGE on a mat view replicates as an ordinary WAL
+     * transaction, so one that commits after the flip mints a local-only seqTxn the closing uploader never
+     * ships - a destructive delete the rest of the cluster never sees. Hold the role-switch READ lock across an
+     * in-lock {@code isReadOnlyMode()} re-check and the commit, so the mint is atomic against the flip: either
+     * the flip ran first (refuse, nothing minted) or the commit lands fully as PRIMARY while the flip's WRITE
+     * acquire waits behind this read hold. Same seam as {@code MatViewRefreshJob.fencedMatViewCommit} and
+     * {@code EntCairoEngine.fencedReplicatedWrite}. A strict no-op for non-replicating deployments: the read
+     * lock is uncontended and the read-only flag is static.
+     * <p>
+     * A refusal returns false rather than throwing, so the caller treats it as an ordinary deferral (nothing is
+     * minted, the sweep stops, the next tick re-baselines) instead of logging it as a failure - a demote is a
+     * normal state transition, not an error.
+     * <p>
+     * <b>Sequencer gate.</b> Inside the fence, the sequencer atomically checks that no external transaction
+     * followed the survivor-scan baseline and allocates this transaction in the same ordering decision.
+     *
+     * @return true when the commit was externalized, false when either gate refused it
+     */
     private boolean commitWithFence(
             WalWriter walWriter,
             long floorTs,
@@ -842,16 +878,29 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             SeqTxnTracker txnTracker,
             long expectedSeqTxn
     ) {
-        if (txnTracker == null) {
-            walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
-            return true;
+        if (engine.isReadOnlyMode()) {
+            return refuseCommitOnReadOnly(walWriter, floorTs);
         }
-        return walWriter.commitWithParamsIfSeqTxn(
-                expectedSeqTxn,
-                floorTs,
-                nextFloorTs,
-                WAL_DEDUP_MODE_REPLACE_RANGE
-        );
+        final Lock roleSwitchReadLock = engine.getRoleSwitchReadLock();
+        roleSwitchReadLock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                return refuseCommitOnReadOnly(walWriter, floorTs);
+            }
+            engine.fireRoleSwitchMintObserver();
+            if (txnTracker == null) {
+                walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+                return true;
+            }
+            return walWriter.commitWithParamsIfSeqTxn(
+                    expectedSeqTxn,
+                    floorTs,
+                    nextFloorTs,
+                    WAL_DEDUP_MODE_REPLACE_RANGE
+            );
+        } finally {
+            roleSwitchReadLock.unlock();
+        }
     }
 
     private long countSurvivors(RecordCursorFactory countFactory, int timestampType, long floorTs, long nextFloorTs) throws SqlException {
@@ -879,6 +928,19 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private static long mixPartitionGeneration(long seed, long nameTxn, long rowCount) {
         long generation = seed * 31 + nameTxn;
         return generation * 31 + rowCount;
+    }
+
+    /**
+     * Discards the prepared-but-unsequenced reclamation when the demote gate refuses it. The survivor rows a
+     * REPLACE sweep appended sit in the writer's current segment and were never sequenced, so rolling the
+     * writer back leaves no trace; a bounds/count wipe has appended nothing and the rollback is a no-op.
+     */
+    private boolean refuseCommitOnReadOnly(WalWriter walWriter, long floorTs) {
+        walWriter.rollback();
+        LOG.info().$("skipped expired-rows reclamation; node is read-only [table=")
+                .$safe(walWriter.getTableToken().getTableName())
+                .$(", partitionTs=").$ts(floorTs).I$();
+        return false;
     }
 
     private void rememberScalarPartitionGeneration(TableToken tableToken, String predicate, int partitionIndex) {
