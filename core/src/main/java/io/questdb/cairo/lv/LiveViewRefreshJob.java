@@ -31,6 +31,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -52,6 +54,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -78,6 +81,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -368,6 +372,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LiveViewCheckpointKeyedScanCost keyedScanCost = new LiveViewCheckpointKeyedScanCost();
     // The keys of the segment being priced, in the pinned reader's own symbol space.
     private final IntList keyedScanKeys = new IntList();
+    // Segment starts whose keyed scan the cost model priced below the whole-segment one,
+    // filled by priceKeyedSegmentScans and read by armKeyedReplay. Refilled per change-set
+    // classification, so it describes the loop currently being driven and no other.
+    private final LongList keyedScanCheaperSegments = new LongList();
+    // The keyed replay of one closed segment: the key domain its indexed scan follows, and
+    // the merge that supplies every other key's row from the view's own stored output.
+    // Worker-owned scratch, armed per segment and disarmed the moment the repair that took
+    // it returns, for the same reason segmentChangeSet is worker-owned: one view is latched
+    // at a time and repairs never nest.
+    private final LiveViewCheckpointKeyedReplay keyedReplay = new LiveViewCheckpointKeyedReplay();
+    // How many closed segments this worker repaired by key rather than whole, and how many
+    // rows those repairs copied forward from the view's own output instead of recomputing.
+    private long keyedReplayMergedRows;
+    private long keyedReplaySegmentCount;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
@@ -569,6 +587,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
+        Misc.free(keyedReplay);
         // A repair this worker parked between turns can only be continued by this
         // worker, so a closing worker abandons it rather than leaving its pinned
         // reader, uncommitted replacement and staged segment for nobody.
@@ -676,6 +695,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long isolatedReplayTurnCountForTest() {
         return isolatedReplayTurnCount;
+    }
+
+    /**
+     * Test-only: rows a keyed repair copied forward from the view's own stored output
+     * instead of recomputing them from the base, summed over every segment this worker
+     * repaired by key. See {@link LiveViewCheckpointKeyedReplay}.
+     */
+    @TestOnly
+    public long keyedReplayMergedRowsForTest() {
+        return keyedReplayMergedRows;
+    }
+
+    /**
+     * Test-only: number of closed anchor segments this worker repaired by following the
+     * keys their correction touched, rather than by reading the segment whole.
+     */
+    @TestOnly
+    public long keyedReplaySegmentCountForTest() {
+        return keyedReplaySegmentCount;
     }
 
     /**
@@ -1448,7 +1486,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     pending.getMinTs(0),
                     pending.getMaxTs(0),
                     pinnedSeqTxn,
-                    loop.getHoldSeqTxn()
+                    loop.getHoldSeqTxn(),
+                    // A pass drains the durable pending set, which carries no key domain,
+                    // so every segment it repairs reads whole. Carrying Q into the set is
+                    // a format bump the pass does not yet own.
+                    false
             );
             if (step == SEGMENT_STEP_SUSPENDED) {
                 return true;
@@ -1564,7 +1606,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lowTsInclusive,
             long highTsExclusive,
             boolean chained,
-            boolean armPublication
+            boolean armPublication,
+            @Nullable LiveViewCheckpointOutputKeyDomain keyedOutputKeys
     ) {
         final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = session.getBoundaries();
         final LiveViewCheckpointRepairState repairState = session.getDescriptor();
@@ -1592,7 +1635,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // one and silently drop the whole repair back onto the truncate.
             capture = checkpointTimelineStoreWriter.beginRepair(
                     checkpointsDir,
-                    chained || plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain(),
+                    // A keyed replay's own Q wins over both: its state describes the keys
+                    // the correction touched and no others, whatever the plan derived for
+                    // the whole-segment read it replaced.
+                    keyedOutputKeys != null
+                            ? keyedOutputKeys
+                            : chained || plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain(),
                     instance.getMemoryTracker(),
                     chained
             );
@@ -4520,6 +4568,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableReader reader,
             int segmentCount
     ) {
+        keyedScanCheaperSegments.clear();
         if (segmentCount == 0) {
             return;
         }
@@ -4575,6 +4624,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 keyedScanWholeRangeRows += wholeRangeRows;
                 if (cheaper) {
                     keyedScanCheaperCount++;
+                    keyedScanCheaperSegments.add(segmentStart);
                 }
                 LOG.info().$("live view segment keyed scan priced [view=").$(viewName)
                         .$(", segmentStart=").$ts(segmentStart)
@@ -5053,7 +5103,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     segmentChangeSet.getSegmentMaxTs(i)
             );
         }
-        switch (driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, segmentLoopScratch)) {
+        switch (driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, segmentLoopScratch, true)) {
             case SEGMENT_STEP_SUSPENDED:
                 return SEGMENT_REPAIR_SUSPENDED;
             case SEGMENT_STEP_DECLINED:
@@ -5083,7 +5133,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *                     off it, which is what a resuming turn continues from
      * @param segmentStart the segment's own inclusive start, for the log and - for a pass -
      *                     the pending entry the caller clears once the replacement applies
-     * @param commitSeqTxn the base {@code seqTxn} this segment's replacement commits at
+     * @param commitSeqTxn  the base {@code seqTxn} this segment's replacement commits at
+     * @param keyDomainLive whether {@link #segmentChangeSet} still describes this loop, so
+     *                      the keyed route can read this segment's key domain out of it
      */
     private int repairOneSegment(
             LiveViewInstance instance,
@@ -5095,7 +5147,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long segmentMinTs,
             long segmentMaxTs,
             long pinnedSeqTxn,
-            long commitSeqTxn
+            long commitSeqTxn,
+            boolean keyDomainLive
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         final boolean pass = loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS;
@@ -5128,20 +5181,283 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
                 .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
                 .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
-        if (o3HeadMissReplay(
-                instance,
-                windowFactory,
-                repairPlan,
-                reader,
-                false,
-                null,
-                engine.getConfiguration().isLiveViewCheckpointRepairSegmentYieldEnabled()
-        )) {
-            segmentYieldCount++;
-            parkSegmentLoop(instance, loop);
-            return SEGMENT_STEP_SUSPENDED;
+        final boolean keyed = keyDomainLive && armKeyedReplay(instance, reader, segmentStart);
+        try {
+            if (o3HeadMissReplay(
+                    instance,
+                    windowFactory,
+                    repairPlan,
+                    reader,
+                    false,
+                    null,
+                    // A keyed replay may not park. Its merge reads the view's own stored
+                    // output through a cursor the turn owns, and the loop position carries
+                    // no key domain to re-arm it from, so a parked keyed replay would
+                    // resume as a whole-segment one over a range it has half re-emitted.
+                    // It is also the route that needs the yield least: it reads the keys
+                    // the correction touched rather than the segment.
+                    !keyed && engine.getConfiguration().isLiveViewCheckpointRepairSegmentYieldEnabled()
+            )) {
+                segmentYieldCount++;
+                parkSegmentLoop(instance, loop);
+                return SEGMENT_STEP_SUSPENDED;
+            }
+        } finally {
+            keyedReplay.clear();
         }
         return settleRepairedSegment(instance, loop, segmentStart);
+    }
+
+    /**
+     * Arms the keyed replay for one closed segment, or leaves it disarmed so the segment
+     * reads whole.
+     * <p>
+     * Four things have to hold, and the first two are already decided by the time this
+     * runs: the view admits a keyed replay at all - one indexed SYMBOL partition column,
+     * projected into the view's own schema, which {@link #keyedScanColumnIndex} reports -
+     * and {@link LiveViewCheckpointKeyedScanCost} priced this segment's keyed read below
+     * its whole-segment one. What is left is that the correction's key domain was
+     * collected in full rather than cut short by its budget, and that every key in it
+     * resolves against the pinned reader's own symbol map.
+     * <p>
+     * Nothing here is a denial. A segment this leaves disarmed reads and publishes exactly
+     * as it did before the keyed route existed.
+     *
+     * @return true when the segment's replay may follow its keys
+     */
+    private boolean armKeyedReplay(LiveViewInstance instance, TableReader reader, long segmentStart) {
+        keyedReplay.clear();
+        if (!engine.getConfiguration().isLiveViewCheckpointRepairKeyedReplayEnabled()) {
+            return false;
+        }
+        if (keyedScanCheaperSegments.indexOf(segmentStart) < 0) {
+            // Either the segment was not priced - no key domain, no index, a key the
+            // reader does not hold - or the whole-segment read is the cheaper of the two.
+            return false;
+        }
+        final int segmentIndex = indexOfChangeSetSegment(segmentStart);
+        if (segmentIndex < 0 || !segmentChangeSet.isSegmentKeyDomainComplete(segmentIndex)) {
+            return false;
+        }
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final int scanColumnIndex = keyedScanColumnIndex(instance, compiledPlan);
+        if (scanColumnIndex < 0) {
+            return false;
+        }
+        final LiveViewCheckpointKeyProjector projector = compiledPlan.getWindowFactory().getCheckpointKeyProjector();
+        if (projector == null) {
+            return false;
+        }
+        final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
+        try {
+            return keyedReplay.arm(
+                    scanColumnIndex,
+                    reader.getSymbolMapReader(readerColumnIndex),
+                    projector.getCheckpointKeyColumnTypes(),
+                    segmentChangeSet.getSegmentKeys(segmentIndex),
+                    segmentChangeSet.hasSegmentNullKey(segmentIndex)
+            );
+        } catch (Throwable t) {
+            // Arming is not repairing: whatever went wrong here costs the localization and
+            // nothing else, and the whole-segment route below is still correct.
+            LOG.info().$("live view segment keyed replay could not be armed [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", error=").$(t).I$();
+            keyedReplay.clear();
+            return false;
+        }
+    }
+
+    /**
+     * Opens the view's own stored rows over one repair's replacement range, ascending, and
+     * resolves the merge's key domain against the view's symbol map.
+     * <p>
+     * These are the rows a keyed replay publishes for every key its correction did not
+     * touch. They exist only until the replacement commits - it deletes the range
+     * wholesale - so the cursor is opened before the repair writes anything and held for
+     * as long as it is emitting.
+     * <p>
+     * Deliberately NOT the view's SQL scan: {@code SELECT} over a live view routes through
+     * {@code LiveViewRecordCursorFactory}, which merges the un-flushed in-memory tier, and
+     * what a repair copies forward has to be exactly what the replacement deletes - the
+     * durable table and nothing else.
+     *
+     * @return the cursor, or null when the view's own scan is unavailable, which leaves
+     * the caller reading the segment whole
+     */
+    private @Nullable RecordCursor openStoredRowCursor(
+            LiveViewInstance instance,
+            long lowTsInclusive,
+            long highTsExclusive
+    ) {
+        if (highTsExclusive == Long.MAX_VALUE || highTsExclusive <= lowTsInclusive) {
+            // An unbounded replacement has no segment to merge inside. Only a converging
+            // repair takes the keyed route, so this is a guard rather than a case.
+            return null;
+        }
+        RecordCursor cursor = null;
+        try {
+            final PageFrameRecordCursorFactory factory = storedRowScanFactory(instance);
+            if (factory == null) {
+                return declineStoredRows(instance, "no scan of the view's own table");
+            }
+            final RecordMetadata storedMetadata = factory.getMetadata();
+            final int storedKeyIndex = storedRowKeyColumnIndex(instance, storedMetadata);
+            if (storedKeyIndex < 0) {
+                return declineStoredRows(instance, "the view's own schema does not carry the key as a SYMBOL");
+            }
+            cursor = factory.getCursorInTimestampRange(executionContext, lowTsInclusive, highTsExclusive - 1);
+            if (!keyedReplay.bindStoredRows(cursor, storedMetadata.getTimestampIndex(), storedKeyIndex)) {
+                Misc.free(cursor);
+                return declineStoredRows(instance, "the view's key column resolves through no symbol map");
+            }
+            return cursor;
+        } catch (Throwable t) {
+            // A scan of the view's own table that cannot be opened costs the localization
+            // and nothing else. Drop the cached factory, which is what owns the cursor
+            // above and closes it: the likeliest cause is the view's own metadata moving
+            // under a factory built against the old one.
+            instance.setStoredRowScanFactory(null);
+            LOG.info().$("live view could not open its own stored rows for a keyed repair [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return null;
+        }
+    }
+
+    /**
+     * Reports why a segment reads whole after its keyed replay was armed, and returns the
+     * null the caller reads as "read it whole".
+     * <p>
+     * Every arm of {@link #openStoredRowCursor} that gives up is a segment the pricing said
+     * to follow by key and that does not, which is exactly the shape a measurement reads as
+     * "the route never fires" with nothing to say why.
+     */
+    private @Nullable RecordCursor declineStoredRows(LiveViewInstance instance, String reason) {
+        LOG.info().$("live view segment keyed replay declined [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", reason=").$(reason).I$();
+        return null;
+    }
+
+    /**
+     * The compiled ascending full scan of the view's own table, built on first use and
+     * kept beside the view's other compiled artifacts.
+     * <p>
+     * Built rather than compiled, for the reason {@link #openStoredRowCursor} gives: the
+     * SQL path over a live view is the routed one, and a repair reads the durable table.
+     */
+    private @Nullable PageFrameRecordCursorFactory storedRowScanFactory(LiveViewInstance instance) {
+        if (instance.getStoredRowScanFactory() instanceof PageFrameRecordCursorFactory cached) {
+            return cached;
+        }
+        final PageFrameRecordCursorFactory factory;
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            final TableReaderMetadata metadata = lvReader.getMetadata();
+            if (metadata.getTimestampIndex() < 0) {
+                return null;
+            }
+            final IntList columnIndexes = new IntList();
+            final IntList columnSizeShifts = new IntList();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnIndexes.add(i);
+                columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
+            }
+            factory = new PageFrameRecordCursorFactory(
+                    engine.getConfiguration(),
+                    GenericRecordMetadata.copyOfNew(metadata),
+                    new FullPartitionFrameCursorFactory(
+                            instance.getLiveViewToken(),
+                            metadata.getMetadataVersion(),
+                            GenericRecordMetadata.copyOfNew(metadata),
+                            PartitionFrameCursorFactory.ORDER_ASC,
+                            null,
+                            0,
+                            false
+                    ),
+                    new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
+                    false,
+                    null,
+                    true,
+                    columnIndexes,
+                    columnSizeShifts,
+                    true,
+                    false
+            );
+        }
+        instance.setStoredRowScanFactory(factory);
+        return factory;
+    }
+
+    /**
+     * The partition key's index in the view's OWN schema, which is what a stored row
+     * carries it under.
+     * <p>
+     * {@code LiveViewBackfillEnvelope.keyedScanGate} has already proved the key survives
+     * the projection, so this resolves rather than decides; -1 is a schema that has moved
+     * under the compiled plan, and reads the segment whole.
+     */
+    private int storedRowKeyColumnIndex(LiveViewInstance instance, RecordMetadata storedMetadata) {
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final int scanColumnIndex = keyedScanColumnIndex(instance, compiledPlan);
+        if (scanColumnIndex < 0) {
+            return -1;
+        }
+        final RecordMetadata outputMetadata = compiledPlan.getOutputMetadata();
+        for (int i = 0, n = outputMetadata.getColumnCount(); i < n; i++) {
+            if (compiledPlan.traceOutputColumnToBaseScan(i) != scanColumnIndex) {
+                continue;
+            }
+            final int storedIndex = storedMetadata.getColumnIndexQuiet(outputMetadata.getColumnName(i));
+            if (storedIndex >= 0 && ColumnType.isSymbol(storedMetadata.getColumnType(storedIndex))) {
+                return storedIndex;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The copier a keyed repair puts one of the view's own stored rows back through.
+     * <p>
+     * Source and target are the same table, so this is a straight column-for-column copy -
+     * and a SYMBOL travels as its resolved string rather than as an integer, which is what
+     * makes it correct across the reader's symbol map and the writer's.
+     */
+    private RecordToRowCopier storedRowCopier(
+            LiveViewInstance instance,
+            WalWriter walWriter,
+            RecordMetadata storedMetadata
+    ) throws SqlException {
+        final long metadataVersion = walWriter.getMetadata().getMetadataVersion();
+        RecordToRowCopier copier = instance.getStoredRowCopier();
+        if (copier == null || instance.getStoredRowCopierMetadataVersion() != metadataVersion) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                columnFilter.of(storedMetadata.getColumnCount());
+                copier = RecordToRowCopierUtils.generateCopier(
+                        compiler.getAsm(),
+                        storedMetadata,
+                        walWriter.getMetadata(),
+                        columnFilter,
+                        engine.getConfiguration()
+                );
+                instance.setStoredRowCopier(copier, metadataVersion);
+            }
+        }
+        return copier;
+    }
+
+    /**
+     * @return the change set's index for one closed segment, or -1 when the set does not
+     * describe it
+     */
+    private int indexOfChangeSetSegment(long segmentStart) {
+        for (int i = 0, n = segmentChangeSet.getClosedSegmentCount(); i < n; i++) {
+            if (segmentChangeSet.getSegmentStart(i) == segmentStart) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -5250,7 +5566,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             TableReader reader,
             LiveViewCheckpointAnchorPlan anchorPlan,
-            LiveViewCheckpointSegmentLoop loop
+            LiveViewCheckpointSegmentLoop loop,
+            boolean keyDomainLive
     ) throws SqlException {
         final long pinnedSeqTxn = reader.getSeqTxn();
         while (loop.size() > 0) {
@@ -5275,7 +5592,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     segmentMinTs,
                     segmentMaxTs,
                     pinnedSeqTxn,
-                    isFinalRepair ? loop.getFinalSeqTxn() : loop.getHoldSeqTxn()
+                    isFinalRepair ? loop.getFinalSeqTxn() : loop.getHoldSeqTxn(),
+                    keyDomainLive
             );
             if (step != SEGMENT_STEP_DONE) {
                 return step;
@@ -5383,7 +5701,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS) {
             return drainPendingRepairs(instance, windowFactory, reader, anchorPlan, loop);
         }
-        final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop);
+        // The change set the keyed route reads its key domain out of belonged to the turn
+        // that parked this loop, and that turn is over: segmentChangeSet has since been
+        // refilled by whatever else this worker classified. The segments behind the parked
+        // one therefore read whole, which is what every repair did before the keyed route
+        // existed.
+        final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop, false);
         if (step == SEGMENT_STEP_SUSPENDED) {
             return true;
         }
@@ -6180,7 +6503,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     plan.getOutputLowTs(),
                     Long.MAX_VALUE,
                     true,
-                    false
+                    false,
+                    null
             );
             final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = session.getBoundaries();
             final int maxChainedBoundaries =
@@ -6874,6 +7198,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // scan-cost counter is sourced from it when no filter is present to count
         // base rows itself.
         long scannedRows = 0;
+        // Whether this replay follows the keys its correction touched instead of reading
+        // the segment whole, and the view's own rows it publishes for every other key. The
+        // caller armed the key domain for one closed segment; what is decided here is
+        // whether this repair is a shape that route can serve, which needs the bounded
+        // interval a converging repair has and the merge below to have opened.
+        //
+        // Ahead of the capture rather than beside the cursor, because the capture carries
+        // Q: a keyed replay's frozen roots describe its own keys and leave every other
+        // key's entry exactly as the old root wrote it, and a capture opened without Q
+        // would instead take the replay's narrower state for the whole truth.
+        boolean keyedRoute = keyedReplay.isArmed()
+                && !resuming
+                && !fullRebuild
+                && localized
+                && finiteHighBound;
+        RecordCursor storedRowCursor = null;
+        if (keyedRoute) {
+            storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
+            if (storedRowCursor == null) {
+                keyedRoute = false;
+            }
+        }
         // The timeline range splice this repair publishes instead of retiring
         // the whole timeline. Taken only by a repair that stopped at a finite
         // H whose replay reconstructs every key: that is the case with a converged
@@ -6896,7 +7242,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     plan.getRetireLowTs(),
                     plan.getHighTsExclusive(),
                     false,
-                    true
+                    true,
+                    keyedRoute ? keyedReplay.getOutputKeys() : null
             );
         }
         if (session != null) {
@@ -7151,11 +7498,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 boolean walWriterRetained = false;
                 try {
                     RecordToRowCopier copier = ensureCopier(instance, walWriter);
-                    try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
-                            executionContext,
-                            turnLowTs,
-                            scanHighTs
-                    )) {
+                    if (keyedRoute) {
+                        final PageFrameRecordCursorFactory storedRowFactory = storedRowScanFactory(instance);
+                        if (storedRowFactory != null
+                                && storedRowFactory.getMetadata().getColumnCount() == walWriter.getMetadata().getColumnCount()
+                                && pageFrameFactory.isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
+                            keyedReplay.bindOutput(
+                                    storedRowCopier(instance, walWriter, storedRowFactory.getMetadata()),
+                                    walWriter,
+                                    executionContext,
+                                    instance
+                            );
+                            keyedReplaySegmentCount++;
+                            LOG.info().$("live view segment repaired by key [view=").$(viewName)
+                                    .$(", keys=").$(keyedReplay.getBaseSymbolKeys().size())
+                                    .$(", outputLowTs=").$ts(emitLowTs)
+                                    .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
+                        } else {
+                            // The replay's own factory does not admit the index substitution,
+                            // or the view's schema has moved out from under the scan built
+                            // against it. Read the segment whole, which needs none of it.
+                            declineStoredRows(instance, storedRowFactory == null
+                                    ? "no scan of the view's own table"
+                                    : "the replay's base scan does not admit an indexed substitution");
+                            keyedRoute = false;
+                        }
+                    }
+                    try (RecordCursor pageCursor = keyedRoute
+                            // The keys the correction touched, followed through the base's
+                            // posting index, rather than every row of the range they landed
+                            // in. The merge above supplies the rest of the segment.
+                            ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
+                                    executionContext,
+                                    turnLowTs,
+                                    scanHighTs,
+                                    keyedReplay.getBaseKeyColumnIndex(),
+                                    keyedReplay.getBaseSymbolKeys()
+                            )
+                            : pageFrameFactory.getCursorInTimestampRange(
+                                    executionContext,
+                                    turnLowTs,
+                                    scanHighTs
+                            )) {
                         RecordCursor source = pageCursor;
                         if (filter != null) {
                             filteringCursor.of(source, filter, executionContext);
@@ -7177,6 +7561,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     pageFrameFactory.getMetadata().getTimestampIndex()
                             );
                             boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
+                            if (keyedRoute) {
+                                // A keyed replay's cursor yields only the affected keys'
+                                // rows, so the boundary about to be frozen has to count
+                                // the merged rows below it as well. Draining here rather
+                                // than only in the row loop is what makes the position it
+                                // records the count of every row at or below it.
+                                boundaryFreezingCursor.setRowDrain(keyedReplay::drainUpTo);
+                            }
                             source = boundaryFreezingCursor;
                         }
                         source = compiledPlan.wrapWindowInput(source, executionContext);
@@ -7241,6 +7633,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // not reach it, so emitting it would duplicate a row the LV
                                 // table still holds.
                                 if (ts >= emitLowTs) {
+                                    if (keyedRoute) {
+                                        // Every unaffected key's stored row at or below
+                                        // this one, so the block's rows come out in
+                                        // timestamp order and the position stamped below
+                                        // counts them.
+                                        keyedReplay.drainUpTo(ts);
+                                    }
                                     if (replayMinTs == Numbers.LONG_NULL) {
                                         // First (= lowest) output row of the replay.
                                         replayMinTs = ts;
@@ -7261,7 +7660,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         // Keep the freeze cursor's row position in step:
                                         // the next boundary it freezes sits below the row
                                         // after this one, so it carries this row's position.
-                                        boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
+                                        boundaryFreezingCursor.setRowPosition(
+                                                durableRowsBelowFloor + appendedRows + keyedReplay.getMergedRows());
                                     }
                                 }
                                 if (mayYield && session != null && isRepairReplayBudgetSpent(scannedRows)) {
@@ -7274,6 +7674,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     resumeFromTs = ts;
                                     resumeSkipRows = groupFoldedRows;
                                     break;
+                                }
+                            }
+                            if (keyedRoute && !yielded) {
+                                // The stored rows above the last key the replay followed.
+                                // They sit inside the range the replacement deletes, so a
+                                // repair that stopped emitting at its own last row would
+                                // drop them. Ahead of the freeze below, which is what
+                                // makes the boundaries above the replay's last row carry
+                                // the whole segment's positions.
+                                keyedReplay.drainRemaining();
+                                if (keyedReplay.getMergedRows() > 0) {
+                                    // The block's extremes are the two routes' together: a
+                                    // merged row can sit below the first key the replay
+                                    // followed and above the last.
+                                    final long mergedMinTs = keyedReplay.getMergedMinTs();
+                                    final long mergedMaxTs = keyedReplay.getMergedMaxTs();
+                                    if (replayMinTs == Numbers.LONG_NULL || mergedMinTs < replayMinTs) {
+                                        replayMinTs = mergedMinTs;
+                                    }
+                                    if (replayMaxTs == Numbers.LONG_NULL || mergedMaxTs > replayMaxTs) {
+                                        replayMaxTs = mergedMaxTs;
+                                    }
+                                }
+                                if (timelineCapture != null) {
+                                    boundaryFreezingCursor.setRowPosition(
+                                            durableRowsBelowFloor + appendedRows + keyedReplay.getMergedRows());
                                 }
                             }
                             // Boundaries above the last row the replay saw. No qualifying
@@ -7426,6 +7852,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // handed the freeze cursor. Its freeze counter is already read back
             // into capturedBoundaries, and a resumed turn re-arms it from there.
             boundaryFreezingCursor.clear();
+            // The view's own rows the merge read, and the writer it appended them
+            // through. The counts survive - the publication above reads them - and the
+            // caller disarms the key domain once the repair it armed returns.
+            keyedReplayMergedRows += keyedReplay.getMergedRows();
+            keyedReplay.releaseMergeState();
+            Misc.free(storedRowCursor);
             if (isolated && !yielded) {
                 // The repair is over - published, empty or unwinding - so the keys its
                 // replay folded into the isolated runtime describe nothing any more.
@@ -7536,12 +7968,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // later restart can detect, only fail on.
                 final long durableRowsAfterRepair = instance.getLvRowsTotal();
                 final long suffixRowDelta = durableRowsAfterRepair - durableRowsBeforeRepair;
-                if (durableRowsBeforeRepair - durableRowsReplaced + appendedRows != durableRowsAfterRepair) {
+                // Both routes' rows: a keyed replay emitted its own keys and copied every
+                // other key's stored row forward, and the block carries the two together.
+                // Zero on every whole-segment repair, which merges nothing.
+                final long emittedRows = appendedRows + keyedReplay.getMergedRows();
+                if (durableRowsBeforeRepair - durableRowsReplaced + emittedRows != durableRowsAfterRepair) {
                     LOG.critical().$("live view replacement row count does not match the repair plan [view=")
                             .$(viewName)
                             .$(", rowsBefore=").$(durableRowsBeforeRepair)
                             .$(", rowsReplaced=").$(durableRowsReplaced)
-                            .$(", rowsEmitted=").$(appendedRows)
+                            .$(", rowsEmitted=").$(emittedRows)
                             .$(", rowsAfter=").$(durableRowsAfterRepair).I$();
                 } else {
                     timelineSplice = publishCheckpointTimelineRepair(

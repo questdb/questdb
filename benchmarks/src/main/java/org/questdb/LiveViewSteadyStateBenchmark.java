@@ -122,6 +122,13 @@ import java.util.Locale;
  * {@code refresh_ms}, and the two budgets that cut it are
  * {@code cairo.live.view.checkpoint.repair.replay.max.rows} and
  * {@code cairo.live.view.refresh.turn.max.duration.micros}.
+ * {@code --repair-keyed-replay=true} lets a corrected closed segment follow the keys its
+ * correction touched through the base's posting index, publishing the rest of the segment
+ * from the view's own stored output. It is off by default because a copied-forward row is
+ * no longer recomputed from the base. It changes the READ, not the write: {@code o3_scan_rows}
+ * falls and {@code lv_phys_rows} does not move, because the block carries the segment's
+ * whole row set either way. The base column MUST be indexed ({@code --index=true}) or no
+ * segment is priced and none takes the route.
  * <p>
  * Build and run:
  * <pre>
@@ -197,6 +204,7 @@ public class LiveViewSteadyStateBenchmark {
         int repairMaxChainedBoundaries = -1;
         boolean isRepairIsolatedRuntime = true;
         boolean isRepairSegmentYield = true;
+        boolean isRepairKeyedReplay = false;
         boolean isRepairPerSegment = true;
         boolean isBackfillDeferral = false;
         long backfillIntervalMicros = -1;
@@ -263,6 +271,8 @@ public class LiveViewSteadyStateBenchmark {
                 isRepairIsolatedRuntime = Boolean.parseBoolean(arg.substring(26));
             } else if (arg.startsWith("--repair-segment-yield=")) {
                 isRepairSegmentYield = Boolean.parseBoolean(arg.substring(23));
+            } else if (arg.startsWith("--repair-keyed-replay=")) {
+                isRepairKeyedReplay = Boolean.parseBoolean(arg.substring(22));
             } else if (arg.startsWith("--backfill-deferral=")) {
                 isBackfillDeferral = Boolean.parseBoolean(arg.substring(20));
             } else if (arg.startsWith("--backfill-interval-us=")) {
@@ -357,6 +367,7 @@ public class LiveViewSteadyStateBenchmark {
         final boolean finalRepairIsolatedRuntime = isRepairIsolatedRuntime;
         final boolean finalRepairPerSegment = isRepairPerSegment;
         final boolean finalRepairSegmentYield = isRepairSegmentYield;
+        final boolean finalRepairKeyedReplay = isRepairKeyedReplay;
         final boolean finalBackfillDeferral = isBackfillDeferral;
         final long finalBackfillInterval = backfillIntervalMicros;
         try {
@@ -423,6 +434,11 @@ public class LiveViewSteadyStateBenchmark {
                 public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
                     return finalRepairSegmentYield;
                 }
+
+                @Override
+                public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+                    return finalRepairKeyedReplay;
+                }
             };
             System.out.printf(
                     Locale.ROOT,
@@ -432,8 +448,8 @@ public class LiveViewSteadyStateBenchmark {
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
-                            + "repairIsolatedRuntime=%s repairSegmentYield=%s backfillDeferral=%s "
-                            + "backfillIntervalUs=%d%n",
+                            + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
+                            + "backfillDeferral=%s backfillIntervalUs=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -446,6 +462,7 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
                     configuration.isLiveViewCheckpointRepairIsolatedRuntimeEnabled(),
                     configuration.isLiveViewCheckpointRepairSegmentYieldEnabled(),
+                    configuration.isLiveViewCheckpointRepairKeyedReplayEnabled(),
                     configuration.isLiveViewCheckpointBackfillDeferralEnabled(),
                     configuration.getLiveViewCheckpointBackfillInterval()
             );
@@ -706,21 +723,30 @@ public class LiveViewSteadyStateBenchmark {
                             instance.getPendingRepairsRows()
                     );
                     // What a keyed replay of each corrected closed segment would have read,
-                    // beside what the whole-segment replay this run actually performed did.
-                    // Nothing in the run takes the keyed route - its publication does not
-                    // exist - so posting_rows is a counterfactual and whole_rows is the
-                    // measurement it is counterfactual to. cheaper counts the segments where
-                    // the keyed side wins once the merge and the per-key-per-frame setup are
-                    // priced in; unpriced counts the ones with no usable key domain, which
-                    // read whole either way.
+                    // beside what the segment replays this run actually performed did.
+                    // cheaper counts the segments where the keyed side wins once the merge
+                    // and the per-key-per-frame setup are priced in; unpriced counts the
+                    // ones with no usable key domain, which read whole either way.
+                    //
+                    // With --repair-keyed-replay=false - the default, and the control
+                    // column - nothing takes the route, so posting_rows is a
+                    // counterfactual and whole_rows is the measurement it is
+                    // counterfactual to. With it on, keyed_segments counts the segments
+                    // that took it and merged_rows the rows they copied forward from the
+                    // view's own output instead of recomputing; the block still carries
+                    // the segment's whole row set, so merged_rows is a read saving rather
+                    // than a write one.
                     System.out.printf(
                             Locale.ROOT,
-                            "# keyed priced=%d cheaper=%d posting_rows=%d whole_rows=%d unpriced=%d%n",
+                            "# keyed priced=%d cheaper=%d posting_rows=%d whole_rows=%d unpriced=%d "
+                                    + "keyed_segments=%d merged_rows=%d%n",
                             job.keyedScanPricedCountForTest(),
                             job.keyedScanCheaperCountForTest(),
                             job.keyedScanPostingRowsForTest(),
                             job.keyedScanWholeRangeRowsForTest(),
-                            job.keyedScanUnpricedCountForTest()
+                            job.keyedScanUnpricedCountForTest(),
+                            job.keyedReplaySegmentCountForTest(),
+                            job.keyedReplayMergedRowsForTest()
                     );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly

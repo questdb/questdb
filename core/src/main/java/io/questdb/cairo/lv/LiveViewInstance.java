@@ -128,6 +128,15 @@ public class LiveViewInstance implements QuietCloseable {
     // out-of-order repair replays into so the primary's is never wiped. Built on the first
     // repair that can use it and freed with the primary factory, whose shape it mirrors.
     private LiveViewRepairRuntime repairRuntime;
+    // Compiled full scan of the view's OWN table, and the copier that puts one of its rows
+    // back into the view's WAL. A keyed repair publishes the segment's unaffected keys
+    // from the view's stored output rather than from the base, and this is what reads it;
+    // null until the first such repair compiles it. Freed with the view's other compiled
+    // artifacts, because the copier's cache key is the view's WAL metadata version and a
+    // recompile that changes the view's own schema moves it.
+    private RecordCursorFactory storedRowScanFactory;
+    private RecordToRowCopier storedRowCopier;
+    private long storedRowCopierMetadataVersion = -1;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -1412,6 +1421,22 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the compiled full scan of the view's own table a keyed repair reads its
+     * unaffected keys' rows through, or null before one compiled it
+     */
+    public RecordCursorFactory getStoredRowScanFactory() {
+        return storedRowScanFactory;
+    }
+
+    public RecordToRowCopier getStoredRowCopier() {
+        return storedRowCopier;
+    }
+
+    public long getStoredRowCopierMetadataVersion() {
+        return storedRowCopierMetadataVersion;
+    }
+
+    /**
      * @return the designated timestamp of the newest seed boundary, or
      * {@link Numbers#LONG_NULL} when the sweep has sealed none. See
      * {@link #seedCheckpointMaxTs}.
@@ -1730,6 +1755,8 @@ public class LiveViewInstance implements QuietCloseable {
         // through the old factory's column layout.
         recordToRowCopier = null;
         recordRowCopierMetadataVersion = -1;
+        storedRowCopier = null;
+        storedRowCopierMetadataVersion = -1;
     }
 
     /**
@@ -2275,6 +2302,22 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Adopts the compiled scan of the view's own table, freeing whatever this view held
+     * before. Called under the refresh latch, by the worker that built it.
+     */
+    public void setStoredRowScanFactory(@Nullable RecordCursorFactory storedRowScanFactory) {
+        if (this.storedRowScanFactory != storedRowScanFactory) {
+            Misc.free(this.storedRowScanFactory);
+            this.storedRowScanFactory = storedRowScanFactory;
+        }
+    }
+
+    public void setStoredRowCopier(RecordToRowCopier copier, long metadataVersion) {
+        this.storedRowCopier = copier;
+        this.storedRowCopierMetadataVersion = metadataVersion;
+    }
+
     public void setSeedDataOffset(long seedDataOffset) {
         this.seedDataOffset = seedDataOffset;
     }
@@ -2607,6 +2650,9 @@ public class LiveViewInstance implements QuietCloseable {
         // stage roots the rebuilt view cannot read. The parked-repair guard in the refresh
         // job turns that into a discarded candidate rather than a continued replay.
         repairRuntime = Misc.free(repairRuntime);
+        // The scan of the view's own table names its columns by the schema the compiled
+        // SELECT produced, so it dies with that SELECT for the same reason.
+        storedRowScanFactory = Misc.free(storedRowScanFactory);
         // The head's root was frozen from the window state those artifacts own, and
         // that state dies with them. A head still claiming a root over state nothing
         // holds must not outlive them: whoever rebuilds re-seals, and only that seal

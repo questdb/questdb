@@ -512,6 +512,29 @@ public interface CairoConfiguration {
     boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
 
     /**
+     * Whether a per-segment out-of-order repair may follow only the keys a correction
+     * touched through the base's posting index, instead of reading every row of the
+     * segment it landed in.
+     * <p>
+     * The rows such a repair publishes are the same rows a whole-segment replay
+     * publishes: it recomputes the affected keys' output from the base and copies every
+     * other key's row forward from the view's own stored segment, so the
+     * {@code REPLACE_RANGE} it commits still carries the segment's full row set. What it
+     * saves is the window evaluation and the base column reads for the keys the
+     * correction did not touch; what it costs is one sequential read of the view's own
+     * output for that segment, and one property: a row copied forward is no longer
+     * recomputed from the base, so a divergence below it is preserved rather than
+     * corrected. That is why this defaults to false.
+     * <p>
+     * A segment takes the keyed route only where every gate
+     * {@code LiveViewBackfillEnvelope.keyedScanGate} reports holds, the correction's key
+     * domain was collected in full, and {@code LiveViewCheckpointKeyedScanCost} prices
+     * the keyed read below the whole-segment one. Everything else reads whole, which is
+     * what every repair did before this existed.
+     */
+    boolean isLiveViewCheckpointRepairKeyedReplayEnabled();
+
+    /**
      * What one index open costs a keyed repair scan, in base rows, so the two halves of
      * its price are comparable.
      * <p>

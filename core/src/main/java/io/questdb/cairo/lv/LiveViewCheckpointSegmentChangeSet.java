@@ -84,8 +84,8 @@ public final class LiveViewCheckpointSegmentChangeSet {
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
     // segmentStart, segmentEndExclusive, minTs, maxTs, rowCount, keySetIndex,
-    // isKeyDomainOverflowed per entry, ordered by segmentStart ascending.
-    private static final int STRIDE = 7;
+    // isKeyDomainOverflowed, hasNullKey per entry, ordered by segmentStart ascending.
+    private static final int STRIDE = 8;
     // The affected keys of each segment, in the order the segments were opened rather than
     // in segment order: an entry names its set by index, so a segment inserted ahead of
     // another does not have to move anyone's keys. Retained across repairs and cleared
@@ -235,9 +235,9 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * posting index. Empty when the caller collected none, and meaningless unless
      * {@link #isSegmentKeyDomainComplete(int)} holds.
      * <p>
-     * The set does not carry the null symbol, which
-     * {@link #hasSegmentNullKey(int)} reports separately - it is a partition key like any
-     * other and the set keeps it apart from its list.
+     * The set carries no null, which {@link #hasSegmentNullKey(int)} reports separately -
+     * it is a partition key like any other, and holding it beside the set rather than in
+     * it is what lets a caller walk the set by index without testing for one.
      */
     public @NotNull CharSequenceHashSet getSegmentKeys(int index) {
         return keySets.getQuick((int) segments.getQuick(index * STRIDE + 5));
@@ -248,7 +248,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * null partition key
      */
     public boolean hasSegmentNullKey(int index) {
-        return getSegmentKeys(index).contains(null);
+        return segments.getQuick(index * STRIDE + 7) != 0;
     }
 
     /**
@@ -339,12 +339,15 @@ public final class LiveViewCheckpointSegmentChangeSet {
         if (maxKeysPerSegment < 1) {
             return;
         }
-        final CharSequenceHashSet keys = keySets.getQuick((int) segments.getQuick(base + 5));
         if (key == null) {
-            // Kept apart from the set's list, so it costs no budget and no slot.
-            keys.addNull();
+            // Recorded beside the segment rather than in the set, so it costs no budget
+            // and no slot - and, more to the point, so a caller walking the set by index
+            // never has to test its entries for null. A duplicate null in a keyed scan's
+            // key list yields the null key's rows twice.
+            segments.setQuick(base + 7, 1);
             return;
         }
+        final CharSequenceHashSet keys = keySets.getQuick((int) segments.getQuick(base + 5));
         final int keyIndex = keys.keyIndex(key);
         if (keyIndex < 0) {
             return;
@@ -370,8 +373,9 @@ public final class LiveViewCheckpointSegmentChangeSet {
         }
         // Inserted in reverse so each add() lands ahead of the ones before it, leaving
         // (segmentStart, segmentEndExclusive, minTs, maxTs, rowCount, keySetIndex,
-        // isKeyDomainOverflowed) in order at the entry's own base offset.
+        // isKeyDomainOverflowed, hasNullKey) in order at the entry's own base offset.
         final int base = index * STRIDE;
+        segments.add(base, 0);
         segments.add(base, 0);
         segments.add(base, keySetIndex);
         segments.add(base, 1);
