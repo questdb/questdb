@@ -782,6 +782,29 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Converts the {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#REPAIR_BASELINE_GENERATION
+     * provisional repair stamp} this function carries into the real generation the
+     * repair's splice has just published, keeping the dirty keys.
+     * <p>
+     * A repair freezes a chain of boundaries out of the running state, resetting the
+     * dirty set at each one, and publishes the lot as a single generation once its
+     * replacement is durable. What the runtime holds at the end is the newest of those
+     * roots plus the keys the replay touched above it - so the stamp has to move to the
+     * published generation while that dirty set stays exactly where it is. That is the
+     * one thing {@link #onCheckpointPersisted(long, long)} cannot do: it clears the set,
+     * which here would be the keys the post-repair head seal is about to freeze.
+     * <p>
+     * Only a function still carrying the provisional stamp moves. Anything else - a
+     * function the repair never froze, one a restore has since rewound, one a
+     * concurrent cadence seal re-baselined - keeps what it has, so a stray call cannot
+     * hand a real generation to state that never stood at that root.
+     *
+     * @param generation the generation the splice published
+     */
+    default void onCheckpointRepairBaselinePublished(long generation) {
+    }
+
+    /**
      * Resets this function's per-partition state to empty before the live-view
      * snapshot framework rehydrates partitions via
      * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}. Partitioned

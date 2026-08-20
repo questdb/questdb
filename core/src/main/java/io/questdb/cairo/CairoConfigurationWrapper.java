@@ -500,6 +500,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
+        return getDelegate().getLiveViewCheckpointRepairMaxChainedBoundaries();
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
     }

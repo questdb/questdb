@@ -234,6 +234,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL("cairo.live.view.checkpoint.compaction.interval"),
     CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS("cairo.live.view.checkpoint.max.duration.micros"),
     CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL("cairo.live.view.checkpoint.purge.interval"),
+    CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES("cairo.live.view.checkpoint.repair.max.chained.boundaries"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS("cairo.live.view.checkpoint.repair.replay.max.rows"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS("cairo.live.view.checkpoint.repair.scan.max.keys"),
     CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS("cairo.live.view.checkpoint.repair.scan.max.rows"),

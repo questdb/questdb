@@ -133,6 +133,9 @@ public class LiveViewSteadyStateBenchmark {
         double o3Percent = 0; // 0 = strictly forward, every row above the last
         String o3Lag = "1m";
         int o3FromBatch = 0; // batches below this one stay strictly forward
+        // -1 = leave the configuration default alone. 0 declines the chain outright, which
+        // is how a run reproduces what a repair cost before it kept its ladder.
+        int repairMaxChainedBoundaries = -1;
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
@@ -178,6 +181,8 @@ public class LiveViewSteadyStateBenchmark {
                 o3Lag = arg.substring(9);
             } else if (arg.startsWith("--o3-from-batch=")) {
                 o3FromBatch = Integer.parseInt(arg.substring(16));
+            } else if (arg.startsWith("--repair-max-chained-boundaries=")) {
+                repairMaxChainedBoundaries = Integer.parseInt(arg.substring(32));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -230,11 +235,19 @@ public class LiveViewSteadyStateBenchmark {
         final long finalCheckpointDuration = checkpointDurationMicros;
         final int finalCompactThreshold = compactThreshold;
         final int finalCompactStalePercent = compactStalePercent;
+        final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
                 @Override
                 public long getLiveViewCheckpointMaxDurationMicros() {
                     return finalCheckpointDuration;
+                }
+
+                @Override
+                public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
+                    return finalRepairMaxChainedBoundaries >= 0
+                            ? finalRepairMaxChainedBoundaries
+                            : super.getLiveViewCheckpointRepairMaxChainedBoundaries();
                 }
 
                 @Override
@@ -266,14 +279,15 @@ public class LiveViewSteadyStateBenchmark {
                     "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
-                            + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d%n",
+                            + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
+                            + "repairMaxChainedBoundaries=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),
                     selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / TS_STEP_MICROS,
-                    o3FromBatch
+                    o3FromBatch, configuration.getLiveViewCheckpointRepairMaxChainedBoundaries()
             );
 
             engine = new CairoEngine(configuration);

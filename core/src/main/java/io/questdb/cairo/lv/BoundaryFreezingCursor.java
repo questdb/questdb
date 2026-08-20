@@ -64,6 +64,9 @@ final class BoundaryFreezingCursor implements RecordCursor {
     private LiveViewCheckpointTimelineStoreWriter.RepairCapture capture;
     private int captured;
     private ObjList<WindowFunction> functions;
+    // The view whose batch-minimum window each freeze restarts, or null when the
+    // caller does not keep one. See of().
+    private LiveViewInstance instance;
     // Per-boundary row positions, one per entry in boundaries; null when the
     // caller derives the position from its own running row count instead.
     private LongList positions;
@@ -92,6 +95,7 @@ final class BoundaryFreezingCursor implements RecordCursor {
         anchorWindow = null;
         session = null;
         positions = null;
+        instance = null;
     }
 
     /**
@@ -172,6 +176,38 @@ final class BoundaryFreezingCursor implements RecordCursor {
             int captured,
             int timestampIndex
     ) {
+        of(base, capture, boundaries, positions, functions, anchorWindow, session, captured, timestampIndex, null);
+    }
+
+    /**
+     * As above, with {@code instance} naming the view whose batch-minimum window each
+     * freeze restarts.
+     * <p>
+     * A boundary this cursor freezes is one the repair intends to publish, so the next
+     * freeze above it - the chain's, or the cadence seal that closes the repair - stands
+     * on it and measures its own batch from it. {@code minSeenTsSinceCheckpoint} is what
+     * that seal proves strict forwardness with, and nothing else restarts it here: a
+     * cadence seal gets the restart from {@code setHeadCheckpoint}, and a repair that
+     * truncates gets it from the head it clears. A repair that keeps its ladder clears
+     * no head, so without this the seal above the chain would read the whole replay's
+     * minimum, find it below the boundary it is sealing on, and freeze the live domain
+     * complete.
+     * <p>
+     * Null for a repair whose boundaries no seal will stand on - the localized rebuild
+     * puts the pre-repair runtime back and seals nothing above its own splice.
+     */
+    public void of(
+            RecordCursor base,
+            LiveViewCheckpointTimelineStoreWriter.RepairCapture capture,
+            ObjList<LiveViewCheckpointTimelineEntry> boundaries,
+            @Nullable LongList positions,
+            ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable LiveViewCheckpointRepairSession session,
+            int captured,
+            int timestampIndex,
+            @Nullable LiveViewInstance instance
+    ) {
         this.base = base;
         this.capture = capture;
         this.boundaries = boundaries;
@@ -181,6 +217,7 @@ final class BoundaryFreezingCursor implements RecordCursor {
         this.session = session;
         this.captured = captured;
         this.timestampIndex = timestampIndex;
+        this.instance = instance;
         this.rowPosition = 0;
     }
 
@@ -226,6 +263,11 @@ final class BoundaryFreezingCursor implements RecordCursor {
                 positions != null ? positions.getQuick(captured) : rowPosition
         );
         captured++;
+        if (instance != null) {
+            // Ordered with the freeze, and before the next row is folded: the boundary
+            // just frozen is where the batch the next seal measures begins.
+            instance.resetMinSeenTsSinceCheckpoint();
+        }
         if (session != null) {
             session.recordProgress(captured);
         }

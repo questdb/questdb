@@ -1239,7 +1239,188 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
-    public void testResumeFromAnchorSealsOnlyTheKeysItsReplayTouched() throws Exception {
+    public void testRepeatedCorrectionsReplayABoundedRangeRatherThanAGrowingOne() throws Exception {
+        // One boundary per commit, so the ladder below is dense enough for a correction
+        // to land within a cadence of a boundary - if the repair before it left the
+        // boundaries standing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 1.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 1.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                // A ladder deep enough to hold a boundary under every correction below.
+                for (int second = 10; second < 30; second++) {
+                    commit(row("acct-1", second), job);
+                }
+
+                // Then a run of corrections at a fixed lateness - ten seconds under the
+                // head, which is what makes this the case it is. Each late row sits below
+                // the frontier the repair before it reached, so the only boundary that can
+                // anchor it is one that repair had to decide the fate of.
+                //
+                // That decision is the whole point. A repair used to truncate every
+                // boundary above its floor and seal exactly one new one, at the frontier -
+                // which the next late row, being below the frontier by definition, could
+                // not use. The newest usable anchor stayed pinned where the ladder ended
+                // before the first correction, and the replayed range grew by one commit
+                // per correction, without bound and regardless of how late the rows were.
+                final LongList replayed = new LongList();
+                long previous = viewInstance().getO3ResumeReplayRows();
+                for (int i = 0; i < 6; i++) {
+                    final int head = 30 + i * 2;
+                    commit(row("acct-1", head), job);
+                    commit(row("acct-2", head - 10), job);
+                    final long now = viewInstance().getO3ResumeReplayRows();
+                    Assert.assertTrue("correction " + i + " must repair through a resume", now > previous);
+                    replayed.add(now - previous);
+                    previous = now;
+                }
+
+                // Bounded, not growing. Every correction resumes from a boundary the
+                // repair before it re-versioned in place, so what it replays is its own
+                // depth plus a cadence rather than everything the view has emitted since
+                // the ladder was last intact. The run drifts downwards here because the
+                // corrections climb out of the dense ladder into the sparse head commits
+                // above it; what it must never do is climb.
+                final long first = replayed.getQuick(0);
+                for (int i = 1, n = replayed.size(); i < n; i++) {
+                    Assert.assertTrue(
+                            "repair " + i + " must not replay more than the first did"
+                                    + " [replayed=" + replayed + ']',
+                            replayed.getQuick(i) <= first
+                    );
+                }
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // The ladder those repairs kept is only worth keeping if it restores, so the
+            // restart reads every root they re-versioned rather than the runtime's memory.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testTheSealAboveASplicedLadderStaysIncremental() throws Exception {
+        // One boundary per commit, so the repair below crosses two of them and still has
+        // a frontier above the newest to seal.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0), "
+                            + "('2026-01-01T11:00:04.000000Z', 'acct-5', 50.0), "
+                            + "('2026-01-01T11:00:05.000000Z', 'acct-6', 60.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row("acct-1", 10), job);
+                commit(row("acct-2", 11), job);
+
+                // One commit carrying both a late row and a forward one, so the replay
+                // runs past the newest boundary it re-versions and the repair owes a seal
+                // above the ladder it just spliced.
+                commit(row("acct-1", 6) + ", " + row("acct-3", 20), job);
+
+                // That seal stands on the newest spliced boundary and images only what
+                // the replay moved above it - acct-3's single row - rather than the six
+                // keys the domain holds.
+                //
+                // It is the batch-minimum window that decides which of those two it does.
+                // A seal shares its predecessor's chunks only against a batch it can prove
+                // sits strictly above that predecessor, and the replay's own minimum sits
+                // well below it: the freeze cursor restarts the window at every boundary
+                // it publishes, which is what a cadence seal gets from setHeadCheckpoint
+                // and a truncating repair from the head it clears. Without the restart
+                // this reads six.
+                Assert.assertEquals(
+                        "the seal above a spliced ladder must image only what the replay moved above it",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertHeadRootPartitionCount(6);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                commit(row("acct-5", 30) + ", " + row("acct-6", 31), job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testResumeDeclinedTheChainFallsBackToTheTruncate() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // Zero declines the chain for every repair, whatever its depth. It is what a
+        // correction reaching further back than the budget takes in the field, and the
+        // case exists because that fallback still has to produce a correct view: the
+        // repair truncates the ladder above its floor and seals one fresh head, which is
+        // what every out-of-order repair did before the chain.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit("('2026-01-01T11:00:10.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-01T11:00:11.000000Z', 'acct-2', 2.0)", job);
+                final LongList idsBefore = logicalCheckpointIds();
+
+                final long resumeBefore = viewInstance().getO3ResumeReplayRows();
+                commit("('2026-01-01T11:00:06.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertTrue(
+                        "a late row with a boundary below it must repair through a resume",
+                        viewInstance().getO3ResumeReplayRows() > resumeBefore
+                );
+
+                // The discriminator: a truncate drops the logical entries above its floor
+                // where the chain would have re-versioned them in place.
+                final LongList ids = logicalCheckpointIds();
+                Assert.assertTrue(
+                        "the declined chain must truncate rather than splice [before=" + idsBefore
+                                + ", after=" + ids + ']',
+                        ids.size() < idsBefore.size()
+                );
+                assertHeadRootPartitionCount(3);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                commit("('2026-01-01T11:00:20.000000Z', 'acct-3', 3.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testResumeFromAnchorImagesOnlyTheKeysItsReplayTouched() throws Exception {
         // One boundary per commit, so the late row below has an anchor strictly under it
         // and the seal that closes the repair has a predecessor root to build on.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -1264,6 +1445,8 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 assertViewMatchesRecompute(NOON_ANCHOR);
 
                 final long resumeBefore = viewInstance().getO3ResumeReplayRows();
+                final long imagedBefore = anchorWindow().getCheckpointFreezeKeyCountTotal();
+                final LongList idsBefore = logicalCheckpointIds();
                 // A late row above the seed's boundary and below both commits. The repair
                 // resumes from that boundary, so its replay reads the three rows above it -
                 // which move acct-1 and acct-2 and no other account.
@@ -1273,15 +1456,36 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                         viewInstance().getO3ResumeReplayRows() > resumeBefore
                 );
 
-                // The seal that closes the repair images those two keys. Restoring the
-                // anchor before the truncate published it left the runtime with no
-                // baseline, and every repair seal then re-imaged the whole live domain -
-                // six keys here, twenty million in the workload this is written for.
+                // The repair re-versions the two boundaries its replay crosses rather than
+                // dropping them, and freezes each against the one below it: the first
+                // images acct-1, whose two rows sit at or below it, and the second images
+                // acct-2. Two key images for the whole repair.
+                //
+                // What this is written against is the freeze that walks the live domain
+                // instead. Restoring the anchor without a baseline made every repair seal
+                // do that once; re-versioning a ladder without chaining would make it do
+                // that once per boundary. Either reads as six here, and as twenty million
+                // per boundary in the workload this is written for.
                 Assert.assertEquals(
-                        "the repair seal must image the keys its replay touched, not the live domain",
+                        "the repair must image the keys its replay touched, once, not the live domain",
                         2,
+                        anchorWindow().getCheckpointFreezeKeyCountTotal() - imagedBefore
+                );
+                Assert.assertEquals(
+                        "no boundary of the chain may fall back to a complete freeze",
+                        1,
                         anchorWindow().getCheckpointLastFreezeKeyCount()
                 );
+
+                // The ladder survives the repair, in place: the next late row below the
+                // frontier then resumes from a boundary within one cadence of itself
+                // instead of from wherever the last in-order commit left one.
+                final LongList ids = logicalCheckpointIds();
+                Assert.assertEquals("the repair must drop no logical entry", idsBefore.size(), ids.size());
+                for (int i = 0, n = ids.size(); i < n; i++) {
+                    Assert.assertEquals("the ladder keeps its ids in place", idsBefore.getQuick(i), ids.getQuick(i));
+                }
+
                 // The other four accounts keep the entries the anchor root already holds,
                 // so the root the repair published must still name all six.
                 assertHeadRootPartitionCount(6);
@@ -2391,6 +2595,41 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 + "count(cod_acct_no) over w as cumulative_count "
                 + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
                 + anchorTime + "')");
+    }
+
+    /**
+     * One row of {@code account} at {@code second} past 11:00, as an INSERT tuple. The
+     * cases that drive a run of corrections read as a sequence of timestamps rather than
+     * as string concatenation this way.
+     */
+    private String row(String account, int second) {
+        return "('2026-01-01T11:00:" + String.format("%02d", second) + ".000000Z', '" + account + "', 1.0)";
+    }
+
+    /**
+     * The checkpoint ids the published timeline holds, oldest first. What it reports on
+     * is which publication a repair took: a splice re-versions a boundary's payload and
+     * keeps its logical coordinate, so the list comes back unchanged, while a truncate
+     * drops every entry above the repair floor.
+     */
+    private LongList logicalCheckpointIds() {
+        final LongList ids = new LongList();
+        final LiveViewInstance instance = viewInstance();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the view must have published a generation", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration)
+            ) {
+                timeline.of(dir);
+                timeline.iterateAll(pin.getTimelineRootRef(), entry -> ids.add(entry.checkpointId));
+            }
+        }
+        return ids;
     }
 
     private long publishedGeneration() {

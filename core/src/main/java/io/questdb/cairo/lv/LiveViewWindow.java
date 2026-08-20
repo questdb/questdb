@@ -229,6 +229,9 @@ public class LiveViewWindow implements QuietCloseable {
     // walk, not per key or per row, so a test can hold the seal to a walk count that does
     // not grow with the number of runtime-only members sharing it.
     private long checkpointFreezeScanCount;
+    // Keys imaged over every freeze this window has made, so a test can price a whole
+    // chain of them rather than only the one that happened to end it.
+    private long checkpointFreezeKeyCountTotal;
     private long checkpointLastFreezeKeyCount;
     private long checkpointLogicalStateBytes;
     // The plan this window has adopted, or null when it holds none - because the factory
@@ -1071,6 +1074,7 @@ public class LiveViewWindow implements QuietCloseable {
             }
         }
         checkpointLastFreezeKeyCount = keysOut.size() + removedKeysOut.size();
+        checkpointFreezeKeyCountTotal += checkpointLastFreezeKeyCount;
     }
 
     /**
@@ -1137,6 +1141,19 @@ public class LiveViewWindow implements QuietCloseable {
     @TestOnly
     public long getCheckpointDirtyMarkCount() {
         return checkpointDirtyMarkCount;
+    }
+
+    /**
+     * @return how many keys every freeze this window has made imaged, added up. A repair
+     * that keeps the checkpoint ladder freezes a boundary per logical position its
+     * replay crosses, and the property that matters across the chain is not what any one
+     * of them cost but what all of them cost together: the keys the replay touched, once,
+     * rather than the live domain once per boundary. Only a difference between two
+     * readings means anything, so a case takes one before the correction and one after.
+     */
+    @TestOnly
+    public long getCheckpointFreezeKeyCountTotal() {
+        return checkpointFreezeKeyCountTotal;
     }
 
     /**
@@ -1325,6 +1342,32 @@ public class LiveViewWindow implements QuietCloseable {
         checkpointLogicalStateBytes = logicalStateBytes;
         isCheckpointFullScanRequired = false;
         clearCheckpointDirtyAnchorMap();
+    }
+
+    /**
+     * Converts the {@link LiveViewCheckpointContracts#REPAIR_BASELINE_GENERATION
+     * provisional repair stamp} this window carries into the real generation the
+     * repair's splice has just published, keeping the dirty keys.
+     * <p>
+     * A repair freezes a chain of boundaries out of the running state, resetting the
+     * dirty set at each one, and publishes the lot as a single generation once its
+     * replacement is durable. What the window holds at the end is the newest of those
+     * roots plus the keys the replay touched above it, so the stamp has to move while
+     * that set stays where it is - which is the one thing
+     * {@link #onCheckpointPersisted(long, long)} cannot do, because it clears the set
+     * the post-repair head seal is about to freeze.
+     * <p>
+     * Only a window still carrying the provisional stamp moves; anything else keeps
+     * what it has. The same is handed to every checkpoint-capable function - see
+     * {@link WindowFunction#onCheckpointRepairBaselinePublished(long)} - because a
+     * residual function keeps a dirty set and a baseline of its own.
+     *
+     * @param generation the generation the splice published
+     */
+    public void onCheckpointRepairBaselinePublished(long generation) {
+        if (checkpointBaselineGeneration == LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION) {
+            checkpointBaselineGeneration = generation;
+        }
     }
 
     /**

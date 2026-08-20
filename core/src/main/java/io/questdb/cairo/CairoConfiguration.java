@@ -390,6 +390,28 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointRepairReplayMaxRows();
 
     /**
+     * Budget on the logical boundaries one out-of-order repair may re-version as a
+     * chain instead of dropping.
+     * <p>
+     * A repair that keeps the checkpoint ladder freezes a fresh root version at every
+     * boundary its replay crosses, so the count is the correction's depth measured in
+     * checkpoint cadences. For the corrections a healthy ladder is meant to serve -
+     * the ones within a cadence or two of the head - it is one or two, and each costs
+     * only the keys the replay touched since the boundary below. A correction hours or
+     * days back crosses one per cadence for the whole distance, and the metadata those
+     * roots write stops being worth what the ladder buys: such a repair is bounded by
+     * the rows it has to replay long before it is bounded by its roots.
+     * <p>
+     * Past this count the repair truncates the ladder above its floor and seals a
+     * single fresh head instead, which is what every out-of-order repair did before
+     * the chain existed. The fallback is logged, never silent.
+     * <p>
+     * A value {@code <= 0} disables the chain outright, leaving every repair on that
+     * truncate.
+     */
+    int getLiveViewCheckpointRepairMaxChainedBoundaries();
+
+    /**
      * Budget on the partition keys one localized out-of-order repair may plan
      * to re-emit. A timestamp-global replacement re-emits every key with a
      * qualifying row in the replacement interval, and the repair holds a

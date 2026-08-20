@@ -124,6 +124,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     private static final int PREVIOUS_DATA_READER_CACHE_SIZE = 8;
     /**
+     * Marks a key a chaining repair capture has taken out of the tree it is building.
+     * A one-element array holding null, so a probe tells "the chain removed it" from
+     * "no boundary of the chain named it" with the map lookup it already does - and
+     * the difference matters: only the second may fall through to the published root.
+     */
+    private static final FrozenPartition[] REMOVED_PARTITION = new FrozenPartition[1];
+    /**
      * Capacity ceiling of the reusable freeze scratch buffers: 2^19 pages of
      * 4 KiB, exactly 2 GiB. A state image's page length is int-typed, so no
      * valid image needs more; an encode that tries to grow past this fails at
@@ -324,12 +331,32 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                      totals only. {@link RepairCapture#close()} frees the
      *                      scratch and detaches the tracker on the publish and
      *                      the discard path alike
+     * @param chained       true to freeze and publish the boundaries as a chain: each
+     *                      one imaging only the keys the replay touched since the one
+     *                      below it, and each one's root seeded from that one's new
+     *                      root rather than from its own pre-repair root. It is what
+     *                      makes a K-boundary repair cost the keys its replay touched
+     *                      once instead of K complete walks of the live domain, and the
+     *                      caller owes two things for it: a replay that reconstructs
+     *                      every key (so {@code outputKeys} must be null), and a
+     *                      runtime standing at the predecessor root when the first
+     *                      boundary is captured, so the keys it has marked dirty since
+     *                      are exactly the ones that moved
      */
     public RepairCapture beginRepair(
             @Transient @NotNull Path checkpointsDir,
             @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
-            @Nullable MemoryTracker memoryTracker
+            @Nullable MemoryTracker memoryTracker,
+            boolean chained
     ) {
+        if (chained && outputKeys != null) {
+            // A key-domain repair leaves every key outside Q to the old root, which is
+            // the one thing a chain cannot do: its boundaries are seeded from each
+            // other rather than from the roots they replace, so an unimaged key would
+            // take the predecessor's entry instead of its own boundary's.
+            throw CairoException.critical(0)
+                    .put("live view checkpoint repair cannot chain over a partial key domain");
+        }
         ensureDirectories(checkpointsDir);
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
             metaStore.of(checkpointsDir);
@@ -344,7 +371,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
                     superblock.generation,
                     superblock.timelineRootRef,
-                    outputKeys
+                    outputKeys,
+                    chained
             );
         }
     }
@@ -620,6 +648,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointRowPositionDeltaReader deltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
                 LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
                 LiveViewCheckpointFunctionDirectory oldFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
+                LiveViewCheckpointRoot seedCheckpointRoot = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointFunctionDirectory seedFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
                 LiveViewCheckpointSegmentDirectoryWriter directoryWriter = new LiveViewCheckpointSegmentDirectoryWriter(configuration);
                 RootBuilders roots = new RootBuilders();
                 LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration);
@@ -683,6 +713,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef oldAnchorRootRef = new LiveViewCheckpointPageRef();
             final LiveViewCheckpointPageRef oldFunctionDirectoryRef = new LiveViewCheckpointPageRef();
             final LiveViewCheckpointPageRef newRootRef = new LiveViewCheckpointPageRef();
+            // The root each boundary's builders start from. For a capture that does not
+            // chain it is the boundary's own pre-repair root, read inside the loop. For
+            // one that does it is the previous link: the published predecessor for
+            // boundary 0, and the root this loop built for boundary i - 1 after that.
+            // The freeze imaged only the keys the replay touched between those two, so
+            // the tree its puts go into has to be the one holding the rest - the chain's,
+            // not the stale one this boundary replaces.
+            final LiveViewCheckpointPageRef seedRootRef = new LiveViewCheckpointPageRef();
+            if (capture.isChained() && capture.hasPredecessor) {
+                copy(capture.predecessorEntry.rootRef, seedRootRef);
+            }
             // Roots that actually name the capture's segment. A boundary whose
             // rings all carried the previous boundary's chunks forward names
             // nothing in it, and counting it would leave the segment referenced
@@ -702,13 +743,30 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             .put("live view checkpoint repair root identity mismatch [checkpointId=")
                             .put(oldEntry.checkpointId).put(']');
                 }
-                oldCheckpointRoot.getAnchorRootRef(oldAnchorRootRef);
-                oldCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
-                oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
+                final LiveViewCheckpointFunctionDirectory seedDirectory;
+                if (!capture.isChained()) {
+                    oldCheckpointRoot.getAnchorRootRef(oldAnchorRootRef);
+                    oldCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
+                    oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
+                    seedDirectory = oldFunctionDirectory;
+                } else if (seedRootRef.isNull()) {
+                    // Nothing under the chain: the repaired interval starts below every
+                    // boundary the timeline held. The freeze knew it - it had no
+                    // incremental base either, and froze this boundary complete - so the
+                    // builders start from empty.
+                    oldAnchorRootRef.clear();
+                    seedDirectory = null;
+                } else {
+                    seedCheckpointRoot.of(checkpointsDir, seedRootRef);
+                    seedCheckpointRoot.getAnchorRootRef(oldAnchorRootRef);
+                    seedCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
+                    seedFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
+                    seedDirectory = seedFunctionDirectory;
+                }
                 roots.buildRoot(
                         boundary,
                         oldAnchorRootRef,
-                        oldFunctionDirectory,
+                        seedDirectory,
                         capture.outputKeys,
                         oldEntry.checkpointId,
                         oldEntry.maxTimestamp,
@@ -716,6 +774,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         newRootRef,
                         addedSegmentIds
                 );
+                if (capture.isChained()) {
+                    // The next boundary builds on this one. Copied after buildRoot, which
+                    // is what wrote the root the reference names.
+                    copy(newRootRef, seedRootRef);
+                }
                 // The old root released every data segment it referenced and the
                 // new one takes its own; a segment no current root names any more
                 // retires at this generation and the purge job unlinks it once no
@@ -1355,28 +1418,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(oldDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
-            if (boundary.anchor != null) {
-                boundary.anchor.window.onCheckpointPersisted(boundary.anchor.logicalStateBytes, generation);
-            }
-            if (boundary.windowState != null) {
-                final FrozenWindowState windowState = boundary.windowState;
-                windowState.window.onCheckpointPersisted(windowState.logicalStateBytes, generation);
-                // A durable projection charges nothing of its own - the fused entry's
-                // whole width is the window's - but it still has to be told the seal
-                // happened, or its dirty set would grow for the life of the view and its
-                // baseline would never reach the generation the next seal builds on. A
-                // runtime-only member is told below instead, with the figure its own root
-                // charges, which is the one its next incremental freeze builds on.
-                for (int i = 0, n = windowState.plan.getProjectionCount(); i < n; i++) {
-                    if (windowState.plan.isDurableProjection(i)) {
-                        windowState.plan.getProjectionFunction(i).onCheckpointPersisted(0, generation);
-                    }
-                }
-            }
-            for (int i = 0, n = boundary.functions.size(); i < n; i++) {
-                final FrozenFunction frozen = boundary.functions.getQuick(i);
-                frozen.function.onCheckpointPersisted(frozen.logicalStateBytes, generation);
-            }
+            adoptBoundaryBaseline(boundary, generation);
 
             LiveViewCheckpointLifecycle.purgeFinalOrphans(
                     configuration,
@@ -1684,6 +1726,48 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return rawStatePageRef(entry.getStatePageRef(0));
     }
 
+    /**
+     * Hands every runtime target this boundary was frozen from the root it now stands
+     * on, so its next freeze may image only the keys touched from here.
+     * <p>
+     * Two callers, and the only difference between them is which generation they name.
+     * The cadence seal passes the generation it has just durably published, which is
+     * the ordinary contract {@code onCheckpointPersisted} documents. A chaining repair
+     * capture passes {@link LiveViewCheckpointContracts#REPAIR_BASELINE_GENERATION}
+     * instead - it has published nothing, and will not until its whole chain of
+     * boundaries splices - so what the runtime carries between capture points is a
+     * stamp no real generation can match. Either way the dirty sets reset here, which
+     * is what makes the next freeze name the keys touched since this boundary rather
+     * than since the last publication.
+     *
+     * @param generation the generation the roots this boundary produced belong to, or
+     *                   the provisional repair stamp
+     */
+    private void adoptBoundaryBaseline(FrozenBoundary boundary, long generation) {
+        if (boundary.anchor != null) {
+            boundary.anchor.window.onCheckpointPersisted(boundary.anchor.logicalStateBytes, generation);
+        }
+        if (boundary.windowState != null) {
+            final FrozenWindowState windowState = boundary.windowState;
+            windowState.window.onCheckpointPersisted(windowState.logicalStateBytes, generation);
+            // A durable projection charges nothing of its own - the fused entry's
+            // whole width is the window's - but it still has to be told the seal
+            // happened, or its dirty set would grow for the life of the view and its
+            // baseline would never reach the generation the next seal builds on. A
+            // runtime-only member is told below instead, with the figure its own root
+            // charges, which is the one its next incremental freeze builds on.
+            for (int i = 0, n = windowState.plan.getProjectionCount(); i < n; i++) {
+                if (windowState.plan.isDurableProjection(i)) {
+                    windowState.plan.getProjectionFunction(i).onCheckpointPersisted(0, generation);
+                }
+            }
+        }
+        for (int i = 0, n = boundary.functions.size(); i < n; i++) {
+            final FrozenFunction frozen = boundary.functions.getQuick(i);
+            frozen.function.onCheckpointPersisted(frozen.logicalStateBytes, generation);
+        }
+    }
+
     private void bindScratchBuffers(@Nullable MemoryTracker memoryTracker) {
         // The post-splice frontier seal begins while the repair capture that
         // produced the splice is still open, so the scratch may still hold
@@ -1755,13 +1839,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                           outside it is not imaged at all: the root it is being
      *                           frozen for keeps the entry the old root already holds
      * @param baselineGeneration the generation of the root this freeze sits on top of,
-     *                           or {@link Numbers#LONG_NULL} when the freeze is not a
-     *                           cadence seal. An incremental freeze is valid only against
-     *                           the root the runtime's own last publication produced, and
-     *                           this is what the runtime compares its baseline to: a
-     *                           repair, truncate or compaction publishing in between
-     *                           moves the generation on and demotes the freeze to a full
-     *                           scan
+     *                           or {@link Numbers#LONG_NULL} when nothing names that
+     *                           root. An incremental freeze is valid only against the
+     *                           root the runtime's own last freeze produced, and this is
+     *                           what the runtime compares its baseline to: a repair,
+     *                           truncate or compaction publishing in between moves the
+     *                           generation on and demotes the freeze to a full scan. A
+     *                           chaining repair capture passes
+     *                           {@link LiveViewCheckpointContracts#REPAIR_BASELINE_GENERATION}
+     *                           here, because the root it builds on is one of its own
+     *                           and no generation names it yet
      */
     private FrozenBoundary freezeBoundary(
             LiveViewCheckpointDataSegmentWriter dataWriter,
@@ -1797,7 +1884,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     anchorWindow.getAnchorValueType(),
                     LiveViewCheckpointMetadata.encodeKeySchema(anchorWindow.getPartitionKeyTypes())
             );
-            anchor.isIncremental = previousBoundary instanceof RootPreviousBoundary
+            anchor.isIncremental = previousBoundary != null
+                    && previousBoundary.isIncrementalBase()
                     && previousBoundary.hasAnchorRoot()
                     && anchorWindow.canFreezeCheckpointIncrementally(baselineGeneration);
             anchor.logicalStateBytes = anchorWindow.freezeCheckpointEntries(
@@ -1840,7 +1928,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // parked here and frozen together below rather than each walking that map.
             final int memberProjectionIndex = plan == null ? -1 : plan.indexOfProjectionFunction(function);
             if (memberProjectionIndex >= 0) {
-                frozen.isIncremental = previousBoundary instanceof RootPreviousBoundary
+                frozen.isIncremental = previousBoundary != null
+                        && previousBoundary.isIncrementalBase()
                         && !function.isCheckpointFullScanRequired()
                         && function.getCheckpointBaselineGeneration() == baselineGeneration
                         && anchorWindow.canFreezeCheckpointIncrementally(baselineGeneration)
@@ -1935,7 +2024,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // for it - a function whose state the previous boundary fused into the window
         // root has a current baseline and no root of its own, and putting only the
         // touched keys into a tree built from empty would drop the rest.
-        final Map dirtyMap = previousBoundary instanceof RootPreviousBoundary
+        final Map dirtyMap = previousBoundary != null
+                && previousBoundary.isIncrementalBase()
                 && !isRingShaped
                 && !function.isCheckpointFullScanRequired()
                 && function.getCheckpointBaselineGeneration() == baselineGeneration
@@ -2049,7 +2139,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     // zero-reference test is what keeps the short-circuit honest: skipping
                     // the put leaves the predecessor's whole entry standing, and an entry
                     // carrying a page beside these bytes is not the one this freeze means.
-                    final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary
+                    final boolean isUnchanged = previousBoundary != null
+                            && previousBoundary.isIncrementalBase()
                             && previous != null
                             && previous.getStatePageCount() == 0
                             && Arrays.equals(previous.getScalarState(), scalarState);
@@ -2064,7 +2155,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             previousBoundary,
                             previousRef
                     );
-                    final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary && previousRef != null
+                    final boolean isUnchanged = previousBoundary != null
+                            && previousBoundary.isIncrementalBase()
+                            && previousRef != null
                             && previousRef.getSegmentId() == stateRef.getSegmentId()
                             && previousRef.getOffset() == stateRef.getOffset();
                     frozen.addPartition(key, stateRef, isUnchanged);
@@ -2165,7 +2258,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
                             ? null
                             : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
-                    final boolean isUnchanged = previousBoundary instanceof RootPreviousBoundary
+                    final boolean isUnchanged = previousBoundary != null
+                            && previousBoundary.isIncrementalBase()
                             && previous != null
                             && previous.getStatePageCount() == 0
                             && Arrays.equals(previous.getScalarState(), image);
@@ -2234,7 +2328,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 frozen.manifest
         );
         frozen.isIncremental = hasCompatiblePredecessor
-                && previousBoundary instanceof RootPreviousBoundary
+                && previousBoundary.isIncrementalBase()
                 && window.canFreezeCheckpointIncrementally(baselineGeneration);
         // One walk of one map produces the keys, the anchor values and the whole fused
         // payloads together: the window owns the group's runtime state, so a component's
@@ -2647,6 +2741,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         boolean isCompatibleWindowRoot(byte[] windowIdentity, int anchorValueType, byte[] keySchema, byte[] manifest);
 
         /**
+         * Whether the tree this freeze will be built on top of is the one this previous
+         * boundary describes, whole. Every incremental affordance rests on it - freezing
+         * only the touched keys, and eliding a key whose image the predecessor already
+         * holds - because both leave every other key to whatever tree the root builder
+         * was seeded with.
+         * <p>
+         * True for the published root immediately below a cadence seal, and for a
+         * capture that chains: its boundary {@code i} is seeded from boundary
+         * {@code i - 1}'s new root, so the two agree. False for a capture that does not,
+         * which re-versions each boundary out of its own pre-repair root while sharing
+         * pages against the one the replay froze before it - two different trees, so a
+         * key left unimaged there would keep the stale entry rather than the fresh one.
+         */
+        boolean isIncrementalBase();
+
+        /**
          * Compares the {@code length} freshly encoded bytes at {@code address}
          * with the payload {@code ref} names. Answers false rather than raising
          * when that payload cannot be read: a previous boundary with nothing to
@@ -2741,6 +2851,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 byte[] keySchema,
                 byte[] manifest
         ) {
+            return false;
+        }
+
+        /**
+         * False. A non-chaining capture seeds boundary {@code i}'s root builders from
+         * that boundary's own pre-repair root, while this object describes the boundary
+         * the replay froze before it - so what an incremental freeze would leave unimaged
+         * is not what the tree would then hold.
+         */
+        @Override
+        public boolean isIncrementalBase() {
             return false;
         }
 
@@ -3291,8 +3412,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointDataSegmentWriter(configuration);
         private final long dataSegmentId;
         private final long generation;
+        private final boolean isChained;
         private final LiveViewCheckpointOutputKeyDomain outputKeys;
+        // The entry immediately below the repaired interval, for a chaining capture:
+        // the root its first boundary is seeded from and frozen against. Resolved by
+        // collectBoundaries, which is already reading the pinned timeline.
+        private final LiveViewCheckpointTimelineEntry predecessorEntry =
+                new LiveViewCheckpointTimelineEntry();
         private final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
+        // The merged view of everything below the boundary being frozen - published
+        // predecessor plus the boundaries this capture has already staged over it -
+        // held open across the whole chain. Null for a capture that does not chain.
+        private ChainedPreviousBoundary chain;
+        private boolean hasPredecessor;
         private boolean isDataOpen;
         private boolean isDataPublished;
 
@@ -3301,11 +3433,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long dataSegmentId,
                 long generation,
                 LiveViewCheckpointPageRef timelineRootRef,
-                @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
+                @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+                boolean chained
         ) {
             this.checkpointsDir.of(checkpointsDir);
             this.dataSegmentId = dataSegmentId;
             this.generation = generation;
+            this.isChained = chained;
             copy(timelineRootRef, this.timelineRootRef);
             if (outputKeys != null) {
                 this.outputKeys = new LiveViewCheckpointOutputKeyDomain();
@@ -3368,32 +3502,56 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // ahead of the previous one sits strictly above the previous one's
             // maxTimestamp - the same proof the cadence seal needs from its
             // caller, here by construction.
-            final PreviousBoundary previousBoundary = size == 0
-                    ? null
-                    : new CapturedPreviousBoundary(
-                    boundaries.getQuick(size - 1),
-                    boundaries.getQuick(size - 1).oldEntry.maxTimestamp,
-                    dataWriter
-            );
-            // A capture never freezes incrementally: it hands a
-            // CapturedPreviousBoundary rather than a RootPreviousBoundary, and it
-            // re-versions boundaries a whole replay produced rather than appending
-            // above the runtime's own last publication. LONG_NULL states that.
+            final PreviousBoundary previousBoundary;
+            final long baselineGeneration;
+            if (isChained) {
+                // Everything below this boundary in the repaired chain, published
+                // predecessor included, as one tree - which is exactly the tree
+                // publishRepair will seed this boundary's builders from. That agreement
+                // is the whole licence for imaging only the keys the replay touched
+                // since the boundary below.
+                previousBoundary = chain;
+                baselineGeneration = LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION;
+            } else {
+                // A non-chaining capture never freezes incrementally: it hands a
+                // CapturedPreviousBoundary, which is not an incremental base, and it
+                // re-versions boundaries a whole replay produced rather than appending
+                // above the runtime's own last publication. LONG_NULL states that.
+                previousBoundary = size == 0
+                        ? null
+                        : new CapturedPreviousBoundary(
+                        boundaries.getQuick(size - 1),
+                        boundaries.getQuick(size - 1).oldEntry.maxTimestamp,
+                        dataWriter
+                );
+                baselineGeneration = Numbers.LONG_NULL;
+            }
             final FrozenBoundary boundary = freezeBoundary(
                     dataWriter,
                     functions,
                     anchorWindow,
                     previousBoundary,
                     outputKeys,
-                    Numbers.LONG_NULL
+                    baselineGeneration
             );
             boundary.oldEntry.copyFrom(entry);
             boundary.effectiveLvRowPosition = effectiveLvRowPosition;
             boundaries.add(boundary);
+            if (isChained) {
+                // Both ordered after the add, and both before the replay folds another
+                // row: the chain has to describe the tree through this boundary before
+                // the next freeze reads it, and the runtime has to name this boundary
+                // rather than the one below it before another key is marked dirty. The
+                // pair is what makes the next boundary cost only the keys the replay
+                // touches from here.
+                chain.absorb(boundary);
+                adoptBoundaryBaseline(boundary, LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION);
+            }
         }
 
         @Override
         public void close() {
+            chain = Misc.free(chain);
             Misc.free(dataWriter);
             if (isDataOpen && !isDataPublished) {
                 try (Path path = new Path()) {
@@ -3429,6 +3587,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 @NotNull ObjList<LiveViewCheckpointTimelineEntry> out
         ) {
             out.clear();
+            hasPredecessor = false;
+            chain = Misc.free(chain);
             if (timelineRootRef.isNull()) {
                 return;
             }
@@ -3440,7 +3600,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         highTsExclusive,
                         entry -> out.add(new LiveViewCheckpointTimelineEntry().copyFrom(entry))
                 );
+                if (isChained) {
+                    // The root below the whole repaired interval: the one boundary 0 is
+                    // seeded from and frozen against, and the one every later boundary
+                    // reaches through the chain for a key none of them imaged. The
+                    // splice re-versions nothing below its low bound, so it stays where
+                    // it is and its pages stay there to share against.
+                    //
+                    // A repair with no predecessor is not a fault - the interval simply
+                    // starts below every boundary the timeline holds. The chain then has
+                    // no incremental base, boundary 0 freezes complete, and the
+                    // boundaries above it chain off that.
+                    hasPredecessor = reader.predecessor(timelineRootRef, lowTsInclusive, predecessorEntry);
+                }
             }
+            openChain();
         }
 
         /**
@@ -3457,6 +3631,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          */
         public long getGeneration() {
             return generation;
+        }
+
+        /**
+         * @return whether this capture chains: every boundary frozen against - and
+         * published on top of - the one below it in the repaired interval, rather than
+         * each re-versioned out of its own pre-repair root. See
+         * {@link #beginRepair} for what a caller has to guarantee to ask for it
+         */
+        public boolean isChained() {
+            return isChained;
         }
 
         public int size() {
@@ -3480,6 +3664,23 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return bytes;
         }
 
+        /**
+         * Opens the merged view a chaining capture freezes against, over the
+         * predecessor {@link #collectBoundaries} just resolved. A capture that does not
+         * chain opens none, and one whose interval starts below every boundary opens one
+         * with no published base - which answers "the tree holds nothing" to every probe,
+         * so its first boundary freezes complete.
+         */
+        private void openChain() {
+            if (!isChained) {
+                return;
+            }
+            chain = new ChainedPreviousBoundary(
+                    hasPredecessor ? predecessorEntry : null,
+                    dataWriter
+            );
+        }
+
         private void validateAgainst(long highTsExclusive) {
             for (int i = 0, n = boundaries.size(); i < n; i++) {
                 final LiveViewCheckpointTimelineEntry entry = boundaries.getQuick(i).oldEntry;
@@ -3489,6 +3690,281 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             .put(" [boundary=").put(entry.maxTimestamp)
                             .put(", highTsExclusive=").put(highTsExclusive).put(']');
                 }
+            }
+        }
+
+        /**
+         * The tree a chaining capture's next boundary is built on: the published root
+         * immediately below the repaired interval, with every put and removal the
+         * boundaries frozen so far have staged over it.
+         * <p>
+         * It exists because a chained freeze images only the keys the replay touched
+         * since the boundary below, so the two questions it asks about every other key -
+         * does the tree hold this key, and does it hold these exact bytes - are about a
+         * tree that is part published and part staged in this capture's own unpublished
+         * segment. Answering them by walking the frozen boundaries would cost
+         * {@code O(boundaries)} per key; keeping the merged view current as each
+         * boundary lands answers them in one probe.
+         * <p>
+         * A removal is recorded rather than erased. A key the frontier sweep dropped
+         * mid-repair is absent from the staged half while the published root still holds
+         * it, and reading that as "not staged, ask the published root" would re-admit the
+         * entry the repair has just taken out.
+         * <p>
+         * Shape questions - is the state root a legacy anchor, is it a window root this
+         * seal's layout may build on, does the tree hold a root for this function - go to
+         * the newest frozen boundary when there is one, because that is what
+         * {@code publishRepair} will have written by the time the next boundary is built
+         * on it, and to the published root otherwise.
+         */
+        private final class ChainedPreviousBoundary implements PreviousBoundary, Closeable {
+            private final LiveViewCheckpointDataSegmentWriter dataWriter;
+            private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+            private final HashMap<ByteBuffer, FrozenPartition[]> partitions = new HashMap<>();
+            // A flyweight of its own, as the published boundary keeps: the fused entry
+            // and a function's entry are asked for by different halves of one freeze, and
+            // sharing one would have the second overwrite what the first handed back.
+            private final LiveViewCheckpointPartitionMapEntry windowEntry =
+                    new LiveViewCheckpointPartitionMapEntry();
+            // Null when the repaired interval starts below every boundary the timeline
+            // holds, in which case nothing published sits under the chain at all.
+            private final RootPreviousBoundary published;
+            // Owned here rather than by the boundary, which takes the cadence seal's
+            // directory by reference and does not free it.
+            private final LiveViewCheckpointFunctionDirectory publishedFunctionDirectory;
+            private final HashMap<ByteBuffer, byte[]> windowPayloads = new HashMap<>();
+            // The identity the partition map above is keyed for. One function's keys are
+            // frozen in one run, so the map is rebuilt per function rather than nested.
+            private FrozenBoundary newest;
+
+            private ChainedPreviousBoundary(
+                    @Nullable LiveViewCheckpointTimelineEntry predecessor,
+                    LiveViewCheckpointDataSegmentWriter dataWriter
+            ) {
+                this.dataWriter = dataWriter;
+                this.publishedFunctionDirectory = predecessor == null
+                        ? null
+                        : new LiveViewCheckpointFunctionDirectory(configuration);
+                this.published = predecessor == null ? null : openPublished(predecessor);
+            }
+
+            @Override
+            public void close() {
+                Misc.free(published);
+                Misc.free(publishedFunctionDirectory);
+                partitions.clear();
+                windowPayloads.clear();
+                newest = null;
+            }
+
+            @Override
+            public @Nullable LiveViewCheckpointPartitionMapEntry find(
+                    byte[] functionIdentity,
+                    int stateFormatVersion,
+                    byte[] key
+            ) {
+                final FrozenPartition[] staged = partitions.get(partitionKey(functionIdentity, stateFormatVersion, key));
+                if (staged != null) {
+                    if (staged[0] == null) {
+                        // The chain removed it. The published root may still hold an
+                        // entry, and it is exactly the one that must not be seen.
+                        return null;
+                    }
+                    staged[0].copyTo(entry);
+                    return entry;
+                }
+                return published == null ? null : published.find(functionIdentity, stateFormatVersion, key);
+            }
+
+            @Override
+            public @Nullable LiveViewCheckpointStatePageRef findScalarStatePage(
+                    byte[] functionIdentity,
+                    int stateFormatVersion
+            ) {
+                final FrozenFunction frozen = findNewestFunction(functionIdentity, stateFormatVersion);
+                if (frozen != null && frozen.scalarStateRef != null) {
+                    return frozen.scalarStateRef;
+                }
+                return published == null
+                        ? null
+                        : published.findScalarStatePage(functionIdentity, stateFormatVersion);
+            }
+
+            @Override
+            public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key) {
+                final ByteBuffer wrapped = ByteBuffer.wrap(key);
+                if (windowPayloads.containsKey(wrapped)) {
+                    final byte[] payload = windowPayloads.get(wrapped);
+                    if (payload == null) {
+                        return null;
+                    }
+                    windowEntry.of(key, payload, NO_STATE_PAGES);
+                    return windowEntry;
+                }
+                return published == null ? null : published.findWindowState(key);
+            }
+
+            @Override
+            public long getMaxTimestamp() {
+                if (newest != null) {
+                    return newest.oldEntry.maxTimestamp;
+                }
+                return published == null ? Numbers.LONG_NULL : published.getMaxTimestamp();
+            }
+
+            @Override
+            public boolean hasAnchorRoot() {
+                if (newest != null) {
+                    return newest.anchor != null;
+                }
+                return published != null && published.hasAnchorRoot();
+            }
+
+            @Override
+            public boolean hasFunctionRoot(byte[] functionIdentity, int stateFormatVersion) {
+                if (newest != null) {
+                    return findNewestFunction(functionIdentity, stateFormatVersion) != null;
+                }
+                return published != null && published.hasFunctionRoot(functionIdentity, stateFormatVersion);
+            }
+
+            @Override
+            public boolean isCompatibleWindowRoot(
+                    byte[] windowIdentity,
+                    int anchorValueType,
+                    byte[] keySchema,
+                    byte[] manifest
+            ) {
+                // Asked of the published root whatever the answer is taken from, because
+                // asking is also what resolves its window map - and findWindowState falls
+                // through to that map for every key no boundary of this chain has staged.
+                // It memoises on the first call, so the chain pays one root read for the
+                // whole of it.
+                final boolean isPublishedCompatible = published != null
+                        && published.isCompatibleWindowRoot(windowIdentity, anchorValueType, keySchema, manifest);
+                if (newest == null) {
+                    return isPublishedCompatible;
+                }
+                final FrozenWindowState state = newest.windowState;
+                return state != null
+                        && Arrays.equals(windowIdentity, state.windowIdentity)
+                        && Arrays.equals(keySchema, state.keySchema)
+                        && anchorValueType == state.anchorValueType
+                        && Arrays.equals(manifest, state.manifest);
+            }
+
+            @Override
+            public boolean isIncrementalBase() {
+                return true;
+            }
+
+            @Override
+            public boolean isStatePageEqual(LiveViewCheckpointStatePageRef ref, long address, int length) {
+                if (ref.getSegmentId() == dataWriter.getSegmentId()) {
+                    // Staged by an earlier boundary of this same capture, so the bytes
+                    // are in the segment this writer still holds open.
+                    return Vect.memeq(dataWriter.addressOfPage(ref.getOffset(), length), address, length);
+                }
+                return published != null && published.isStatePageEqual(ref, address, length);
+            }
+
+            /**
+             * Folds one just-frozen boundary into the merged view, in the order the root
+             * builder will apply it: removals first, then puts. An unchanged put is
+             * absorbed like any other - the tree keeps the entry below and this carries
+             * the same bytes, so the two agree either way.
+             */
+            private void absorb(FrozenBoundary boundary) {
+                final FrozenWindowState windowState = boundary.windowState;
+                if (windowState != null) {
+                    for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
+                        windowPayloads.put(ByteBuffer.wrap(windowState.removedKeys.getQuick(i)), null);
+                    }
+                    for (int i = 0, n = windowState.keys.size(); i < n; i++) {
+                        final byte[] payload = windowState.payloads.getQuick(i);
+                        if (payload != null) {
+                            // A null payload is a key the repair's domain excluded, whose
+                            // entry the tree keeps untouched - so it is not staged either.
+                            windowPayloads.put(ByteBuffer.wrap(windowState.keys.getQuick(i)), payload);
+                        }
+                    }
+                }
+                for (int f = 0, m = boundary.functions.size(); f < m; f++) {
+                    final FrozenFunction frozen = boundary.functions.getQuick(f);
+                    for (int i = 0, n = frozen.removedPartitions.size(); i < n; i++) {
+                        partitions.put(
+                                partitionKey(frozen.identity, frozen.stateFormatVersion, frozen.removedPartitions.getQuick(i)),
+                                REMOVED_PARTITION
+                        );
+                    }
+                    for (int i = 0, n = frozen.partitions.size(); i < n; i++) {
+                        final FrozenPartition partition = frozen.partitions.getQuick(i);
+                        partitions.put(
+                                partitionKey(frozen.identity, frozen.stateFormatVersion, partition.key),
+                                new FrozenPartition[]{partition}
+                        );
+                    }
+                }
+                newest = boundary;
+            }
+
+            private @Nullable FrozenFunction findNewestFunction(byte[] functionIdentity, int stateFormatVersion) {
+                if (newest == null) {
+                    return null;
+                }
+                for (int i = 0, n = newest.functions.size(); i < n; i++) {
+                    final FrozenFunction frozen = newest.functions.getQuick(i);
+                    if (frozen.stateFormatVersion == stateFormatVersion
+                            && Arrays.equals(frozen.identity, functionIdentity)) {
+                        return frozen;
+                    }
+                }
+                return null;
+            }
+
+            private RootPreviousBoundary openPublished(LiveViewCheckpointTimelineEntry predecessor) {
+                try (
+                        LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                        LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+                ) {
+                    metaStore.of(checkpointsDir);
+                    if (!metaStore.isValid()) {
+                        throw CairoException.critical(0)
+                                .put("live view checkpoint repair chain has no valid generation to build on");
+                    }
+                    root.of(checkpointsDir, predecessor.rootRef);
+                    final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+                    final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+                    root.getAnchorRootRef(stateRootRef);
+                    root.getFunctionDirectoryRef(functionDirectoryRef);
+                    publishedFunctionDirectory.of(checkpointsDir, functionDirectoryRef);
+                    return new RootPreviousBoundary(
+                            checkpointsDir,
+                            publishedFunctionDirectory,
+                            metaStore.getSuperblock().segmentDirectoryRootRef,
+                            stateRootRef,
+                            predecessor.maxTimestamp
+                    );
+                }
+            }
+
+            /**
+             * One map key covering the function and the partition together, so the merged
+             * view is one flat map rather than a map of maps. The identity is already a
+             * byte array and the version is a small int, so the two are joined into a
+             * fresh buffer per probe - a chained freeze does one of these per touched key,
+             * which is the same order as the key encode it already pays.
+             */
+            private ByteBuffer partitionKey(byte[] functionIdentity, int stateFormatVersion, byte[] key) {
+                final byte[] joined = new byte[functionIdentity.length + 4 + key.length];
+                System.arraycopy(functionIdentity, 0, joined, 0, functionIdentity.length);
+                int at = functionIdentity.length;
+                joined[at] = (byte) stateFormatVersion;
+                joined[at + 1] = (byte) (stateFormatVersion >> 8);
+                joined[at + 2] = (byte) (stateFormatVersion >> 16);
+                joined[at + 3] = (byte) (stateFormatVersion >> 24);
+                System.arraycopy(key, 0, joined, at + 4, key.length);
+                return ByteBuffer.wrap(joined);
             }
         }
     }
@@ -3638,6 +4114,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 windowRoot.getPartitionMapRootRef(windowMapRootRef);
             }
             return isWindowRootCompatible;
+        }
+
+        /**
+         * True: a cadence seal builds its root on exactly the published root this
+         * describes, so a key the freeze leaves unimaged keeps that root's entry.
+         */
+        @Override
+        public boolean isIncrementalBase() {
+            return true;
         }
 
         @Override

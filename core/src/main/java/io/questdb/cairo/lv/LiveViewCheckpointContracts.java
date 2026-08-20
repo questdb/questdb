@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.std.Numbers;
+
 /**
  * Frozen contracts for the versioned checkpoint timeline and localized
  * out-of-order repair.
@@ -190,6 +192,32 @@ public final class LiveViewCheckpointContracts {
      * leaf of RANGE ring entries already holds.
      */
     public static final int MAX_INLINE_LEAF_STATE_BYTES = 256;
+
+    /**
+     * The generation stamp a runtime carries while an out-of-order repair is freezing
+     * a chain of boundaries out of it, in place of the real generation an ordinary
+     * cadence baseline names.
+     * <p>
+     * A repair's replay restores a root that is not the timeline head - the anchor it
+     * resumes from - and then freezes a boundary at every logical position it crosses,
+     * each against the one below it. Every one of those freezes wants the incremental
+     * path, and the incremental path is gated on the runtime's baseline naming exactly
+     * the generation being sealed on top of. There is no such generation yet: nothing
+     * is published until the whole repair splices, and the roots being built on are the
+     * capture's own unpublished ones.
+     * <p>
+     * So the repair stamps this instead. It is not a generation any superblock can hold
+     * - generations start at 1 and only ascend - which is precisely what makes the
+     * stamp fail-safe: a cadence seal that slips in against a real generation finds no
+     * match and full-scans, and a repair abandoned anywhere leaves the stamp behind
+     * with the same effect. Only
+     * {@link io.questdb.griffin.engine.window.WindowFunction#onCheckpointRepairBaselinePublished(long)}
+     * turns it into a real generation, and only once the splice that published those
+     * roots has committed.
+     *
+     * @see io.questdb.griffin.engine.window.WindowFunction#getCheckpointBaselineGeneration()
+     */
+    public static final long REPAIR_BASELINE_GENERATION = Numbers.LONG_NULL + 1;
 
     private LiveViewCheckpointContracts() {
     }

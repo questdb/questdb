@@ -205,6 +205,35 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow
     ) {
+        return restore(maxTimestamp, checkpointId, expectedDefinitionTxn, functions, anchorWindow, false);
+    }
+
+    /**
+     * As above, with {@code asRepairBaseline} asking for the restored root to be
+     * adopted as the runtime's incremental baseline even though it is not the
+     * generation's head.
+     * <p>
+     * A chaining repair needs exactly that. It restores the anchor - a root deliberately
+     * below the head - and then freezes a boundary at every logical position its replay
+     * crosses, each against the one below it, starting from this one. Every one of those
+     * freezes wants the touched keys alone, and the runtime only offers them once it has
+     * a baseline to name. The head rule the ordinary restore applies is the right rule
+     * for a cadence seal and the wrong one here: what the next freeze builds on is the
+     * root just read, not whatever sits at the top of the timeline.
+     * <p>
+     * The stamp is {@link LiveViewCheckpointContracts#REPAIR_BASELINE_GENERATION} rather
+     * than the pinned generation, which is what keeps the licence confined to the repair
+     * that asked for it: a cadence seal that runs before the repair publishes compares
+     * against a real generation, finds no match, and full-scans.
+     */
+    public Result restore(
+            long maxTimestamp,
+            long checkpointId,
+            long expectedDefinitionTxn,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            boolean asRepairBaseline
+    ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             return restorePinned(
@@ -214,7 +243,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                     expectedDefinitionTxn,
                     functions,
                     anchorWindow,
-                    Numbers.LONG_NULL
+                    Numbers.LONG_NULL,
+                    asRepairBaseline
             );
         }
     }
@@ -254,7 +284,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                     expectedDefinitionTxn,
                     functions,
                     anchorWindow,
-                    Numbers.LONG_NULL
+                    Numbers.LONG_NULL,
+                    false
             );
         }
     }
@@ -334,7 +365,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                                 expectedDefinitionTxn,
                                 functions,
                                 anchorWindow,
-                                corruptCeilingMaxTs
+                                corruptCeilingMaxTs,
+                                false
                         );
                     } catch (CairoException e) {
                         if (e.getErrno() != CairoException.LV_CHECKPOINT_TIMELINE_INVALID) {
@@ -497,7 +529,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
-            long corruptCeilingMaxTs
+            long corruptCeilingMaxTs,
+            boolean asRepairBaseline
     ) {
         final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
         if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
@@ -515,12 +548,21 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         // moves the timeline, and a publication also moves the generation, so a head
         // established here stays the head for exactly as long as the generation the
         // baseline is stamped with survives.
+        //
+        // A chaining repair asks for the exception, and gets a stamp of its own rather
+        // than the pinned generation: the root it is restoring is the one its own next
+        // freeze builds on, and nothing else may read that as a licence.
         final LiveViewCheckpointTimelineEntry headEntry = new LiveViewCheckpointTimelineEntry();
-        final long baselineGeneration = timelineReader.last(pin.getTimelineRootRef(), headEntry)
-                && headEntry.maxTimestamp == maxTimestamp
-                && headEntry.checkpointId == checkpointId
-                ? pin.getGeneration()
-                : Numbers.LONG_NULL;
+        final long baselineGeneration;
+        if (asRepairBaseline) {
+            baselineGeneration = LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION;
+        } else {
+            baselineGeneration = timelineReader.last(pin.getTimelineRootRef(), headEntry)
+                    && headEntry.maxTimestamp == maxTimestamp
+                    && headEntry.checkpointId == checkpointId
+                    ? pin.getGeneration()
+                    : Numbers.LONG_NULL;
+        }
         root.of(checkpointsDir, entry.rootRef);
         if (root.getCheckpointId() != checkpointId
                 || root.getMaxTimestamp() != maxTimestamp

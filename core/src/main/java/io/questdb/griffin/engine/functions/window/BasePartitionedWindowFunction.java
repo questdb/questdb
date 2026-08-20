@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -305,6 +306,18 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         checkpointLogicalStateBytes = logicalStateBytes;
         isCheckpointFullScanRequired = false;
         clearCheckpointDirtyPartitions();
+    }
+
+    /**
+     * Moves the provisional repair stamp onto the generation the splice published,
+     * leaving the dirty set - the keys the replay touched above the newest root the
+     * splice holds - for the head seal that follows to freeze.
+     */
+    @Override
+    public void onCheckpointRepairBaselinePublished(long generation) {
+        if (checkpointBaselineGeneration == LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION) {
+            checkpointBaselineGeneration = generation;
+        }
     }
 
     /**
