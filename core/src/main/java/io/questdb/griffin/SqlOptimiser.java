@@ -2464,9 +2464,9 @@ public class SqlOptimiser implements Mutable {
                     && !hasDottedLiteral(tableWhere)
                     && isHoistValid(model.getNestedModel(), table, onTs, model.getLatestBy(), executionContext)) {
                 // Move the table read into this model and drop the pass-through SELECT * layer(s) in
-                // between: LATEST ON now reads the table directly and reaches the indexed path, with the
-                // same output columns in the same order. The table's WHERE, if any, is ANDed with this
-                // model's WHERE.
+                // between: LATEST ON now reads the table directly, keeping the table's designated
+                // timestamp, with the same output columns in the same order. The table's WHERE, if any,
+                // is ANDed with this model's WHERE.
                 model.setTableNameExpr(table.getTableNameExpr());
                 model.setTableId(table.getTableId());
                 model.setMetadataVersion(table.getMetadataVersion());
