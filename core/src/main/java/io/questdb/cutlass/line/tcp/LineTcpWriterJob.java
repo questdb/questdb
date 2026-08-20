@@ -124,8 +124,9 @@ class LineTcpWriterJob implements Job, Closeable {
     }
 
     private boolean drainQueue() {
+        final int drainBudget = queue.getCycle();
         boolean isBusy = false;
-        while (true) {
+        for (int drained = 0; drained < drainBudget; drained++) {
             long cursor;
             while ((cursor = sequence.next()) < 0) {
                 if (cursor == -1) {
@@ -181,6 +182,7 @@ class LineTcpWriterJob implements Job, Closeable {
                 sequence.done(cursor);
             }
         }
+        return isBusy;
     }
 
     private void tickWriters() {

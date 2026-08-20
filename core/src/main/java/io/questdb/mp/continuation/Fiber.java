@@ -566,21 +566,21 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return pool.getRuntime() != runtime;
     }
 
-    boolean isReserved() {
-        if (executionState(executionState) != EXECUTION_RESERVED) {
-            return false;
-        }
-        final int state = notificationState;
-        return state == NOTIFICATION_IDLE || state == NOTIFICATION_PROCESSING;
-    }
-
-    boolean isReserved(long reservationEpoch) {
+    boolean isReservationStale(long reservationEpoch) {
         final long state = executionState;
         if (state != packExecutionState(reservationEpoch, EXECUTION_RESERVED)) {
             return true;
         }
         final int notification = notificationState;
         return notification != NOTIFICATION_IDLE && notification != NOTIFICATION_PROCESSING;
+    }
+
+    boolean isReserved() {
+        if (executionState(executionState) != EXECUTION_RESERVED) {
+            return false;
+        }
+        final int state = notificationState;
+        return state == NOTIFICATION_IDLE || state == NOTIFICATION_PROCESSING;
     }
 
     void markRetired() {

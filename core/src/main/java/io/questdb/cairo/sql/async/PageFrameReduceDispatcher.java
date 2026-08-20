@@ -61,10 +61,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
-    private volatile int batchLimit = DEFAULT_BATCH_LIMIT;
-    private volatile long batchRowBudget;
     private final long configuredBatchRowBudget;
-    private volatile boolean isClosed;
     private final MessageBus messageBus;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
@@ -76,6 +73,9 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
+    private volatile int batchLimit = DEFAULT_BATCH_LIMIT;
+    private volatile long batchRowBudget;
+    private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
         // Stop each batch after it reaches one configured-max-frame's row count.

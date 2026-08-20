@@ -66,7 +66,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
-    private volatile boolean closed;
+    private final QueryParallelFiberTaskPool<LatestByFiberTask> latestByTaskPool;
     private final QueryParallelFiberTaskPool<GroupByLongTopKFiberTask> longTopKTaskPool;
     private final QueryParallelFiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
     private final MessageBus messageBus;
@@ -78,8 +78,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
-    private final QueryParallelFiberTaskPool<LatestByFiberTask> latestByTaskPool;
     private final QueryParallelFiberTaskPool<VectorAggregateFiberTask> vectorAggregateTaskPool;
+    private volatile boolean isClosed;
 
     public QueryParallelFiberDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
         this.messageBus = messageBus;
@@ -135,7 +135,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration
     ) {
-        if (closed || quiesceState.get() != QUIESCE_OPEN) {
+        if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
             return FiberWaitCoordinator.REASON_SHUTDOWN;
         }
         if (!Fiber.isMounted() || !SuspensionScope.isFiberMode()) {
@@ -161,7 +161,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
-            if (closed || quiesceState.get() != QUIESCE_OPEN) {
+            if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
             if (progressVersion.get() != observedVersion) {
@@ -224,13 +224,13 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
 
     @Override
     public void close() {
-        if (closed) {
+        if (isClosed) {
             return;
         }
         beginQuiesce();
         progressQuiesce();
         final boolean drained = isQuiesced();
-        closed = true;
+        isClosed = true;
         Throwable failure = drained
                 ? null
                 : new IllegalStateException("query parallel fiber dispatcher has active publications");
@@ -433,7 +433,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     public boolean isOwnerParkable() {
-        return !closed
+        return !isClosed
                 && quiesceState.get() == QUIESCE_OPEN
                 && Fiber.isMounted()
                 && SuspensionScope.isFiberMode()

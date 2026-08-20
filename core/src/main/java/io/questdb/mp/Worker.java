@@ -49,7 +49,6 @@ public class Worker extends Thread {
     private final FiberRuntime fiberRuntime;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
-    private int jobStartIndex;
     private final AtomicLong jobStartMicros = new AtomicLong();
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
@@ -63,6 +62,7 @@ public class Worker extends Thread {
     private final Job.WorkerContext workerContext;
     private final int workerId;
     private final long yieldThreshold;
+    private int jobStartIndex;
 
     public Worker(
             String poolName,

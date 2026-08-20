@@ -261,10 +261,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
                         while (true) {
                             final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
                             if (seq < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                                if (dispatcher != null && publicationPermit) {
+                                if (publicationPermit && isOwnerParkable) {
                                     if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
                                         Os.pause();
                                     }
@@ -321,11 +322,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
                 while (true) {
                     final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     if (doneLatch.done(queuedCount)) {
                         break;
                     }
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                    if (dispatcher != null) {
+                    if (isOwnerParkable) {
                         if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
                             Os.pause();
                         }
@@ -383,13 +385,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
         while (true) {
             final long observedProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
             if (doneLatch.done(queuedCount)) {
                 break;
             }
             if (circuitBreaker.checkIfTripped()) {
                 sharedCircuitBreaker.cancel();
             }
-            if (dispatcher != null) {
+            if (isOwnerParkable) {
                 if (!dispatcher.awaitProgress(observedProgress, circuitBreaker)) {
                     Os.pause();
                 }

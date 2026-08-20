@@ -35,15 +35,15 @@ import io.questdb.std.str.StringSink;
 
 public final class AsyncQueryErrorState {
     private static final String DEFAULT_UNEXPECTED_ERROR_MESSAGE = "unexpected async query error";
+    private final StringSink errorMessage = new StringSink();
+    private final String unexpectedErrorMessage;
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
-    private final StringSink errorMessage = new StringSink();
     private int errorMessagePosition;
     private volatile boolean hasError;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     private boolean isOutOfMemory;
     private Throwable retainedError;
-    private final String unexpectedErrorMessage;
 
     public AsyncQueryErrorState() {
         this(DEFAULT_UNEXPECTED_ERROR_MESSAGE);

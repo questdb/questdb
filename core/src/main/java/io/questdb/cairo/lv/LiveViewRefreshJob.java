@@ -82,6 +82,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -512,10 +513,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        // workerId is the fixed per-worker identity captured at assign(int, job)
-        // time. The continuation framework may remount this job on a peer carrier,
-        // so workerContext.carrierId() is not asserted against it here.
-        return processNotifications();
+        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
+        try {
+            return processNotifications();
+        } finally {
+            SuspensionScope.restoreMode(suspensionScope, previousMode);
+        }
     }
 
     /**
