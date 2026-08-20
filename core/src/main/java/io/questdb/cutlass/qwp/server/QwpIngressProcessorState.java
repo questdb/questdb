@@ -569,6 +569,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * @see #markRowlessDeferredSequence(long) for why a rowless deferred frame
      * needs more than withholding its own ack
      */
+    @TestOnly
     public boolean hasAppendedRowsInMessage() {
         return messageAppendedRows;
     }
@@ -812,7 +813,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * traffic, so trimming such a frame orphans nothing.
      * <p>
      * A rowless deferred frame is the case with no such re-derivation. The
-     * full-dictionary chunks of {@code publishDictionaryChunks} carry symbol
+     * full-dictionary chunks of the client's dictionary-chunk publisher carry symbol
      * state that the data frames after them reference, and that mode
      * deliberately sends no catch-up. Its own contract says so -- the chunks
      * "cannot be trimmed away ahead of the data frames that depend on them".

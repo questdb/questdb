@@ -482,12 +482,33 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals("frames before the rowless one must still be covered",
                         0, state.getHighestProcessedSequence());
 
+                // A second rowless frame further along must not relax the first.
+                // The client emits a LOOP of dictionary chunks, so several
+                // rowless sequences are live at once, and keeping the latest
+                // instead of the earliest would let an ack cover the earlier
+                // ones.
+                // markRowlessDeferredSequence directly: withholdDeferredFrame
+                // would no-op here, because the frame just driven appended rows.
+                state.markRowlessDeferredSequence(3);
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("the EARLIEST rowless frame is the one that binds",
+                        0, state.getHighestProcessedSequence());
+
                 // The group-closing commit covers both, so the block lifts.
                 state.commit();
                 Assert.assertTrue(state.getErrorText(), state.isOk());
-                state.setHighestProcessedSequence(2);
-                Assert.assertEquals("commitAll covers the rowless frame too",
-                        2, state.getHighestProcessedSequence());
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals("commitAll covers the rowless frames too",
+                        3, state.getHighestProcessedSequence());
+
+                // The state outlives a connection, so a marker left behind would
+                // pin the NEXT connection's watermark below it for good.
+                state.markRowlessDeferredSequence(0);
+                state.onDisconnected();
+                state.of(2, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(4);
+                Assert.assertEquals("a fresh connection must not inherit the marker",
+                        4, state.getHighestProcessedSequence());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -507,7 +528,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setHighestProcessedSequence(2);
 
                 // A bare QWP header: tableCount = 0, FLAG_DEFER_COMMIT.
                 addNativeData(state, wrapQwpPayload(new byte[0], QwpConstants.FLAG_DEFER_COMMIT, (short) 0));
