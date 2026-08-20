@@ -614,6 +614,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         final int valueColumnIndex = vaf.getColumnIndex();
 
                         if (dispatcher != null && !publicationPermit) {
+                            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                             VectorAggregateEntry.aggregateUnsafe(
                                     workerId,
                                     oomCounter,
@@ -738,6 +739,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             if (aggregateError.hasError()) {
                 aggregateError.throwError();
+            }
+
+            if (sharedCircuitBreaker.checkIfTripped()) {
+                // A tripped shared breaker with no recorded error means the dispatcher aborted
+                // queued entries (quiesce); the rostis were reset above, so the query must fail
+                // rather than return a partial aggregate.
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                throw CairoException.queryCancelled();
             }
 
             // merge maps only when cursor was fetched successfully

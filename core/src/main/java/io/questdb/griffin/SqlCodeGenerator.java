@@ -6439,6 +6439,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slaveToFree.supportsTimeFrameCursor()) {
+                                    // The serial factories adopt the functions inside their constructors and
+                                    // free them on a constructor throw, so hand ownership over before the call.
+                                    final ObjList<GroupByFunction> ownedGroupByFunctions = groupByFunctions;
+                                    groupByFunctions = null;
                                     if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
@@ -6451,15 +6455,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 context.isIncludePrevailing(),
                                                 lo,
                                                 hi,
-                                                groupByFunctions,
+                                                ownedGroupByFunctions,
                                                 valueTypes,
                                                 rightSymbolIndex,
                                                 leftSymbolIndex,
                                                 joinFilter,
                                                 allVectorized
                                         );
-                                        // Factory now owns these functions.
-                                        groupByFunctions = null;
                                     } else {
                                         master = new WindowJoinRecordCursorFactory(
                                                 asm,
@@ -6479,14 +6481,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 loTimeUnit,
                                                 hiTimeUnit,
                                                 isDynamicWindow ? timestampDriver : null,
-                                                groupByFunctions,
+                                                ownedGroupByFunctions,
                                                 valueTypes,
                                                 joinFilter
                                         );
                                         // Factory now owns these functions.
                                         windowLoFunc = null;
                                         windowHiFunc = null;
-                                        groupByFunctions = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {

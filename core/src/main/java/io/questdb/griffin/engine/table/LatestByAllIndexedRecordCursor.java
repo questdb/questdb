@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -362,6 +363,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
                 argumentsAddress = 0;
             }
+        }
+
+        if (sharedCircuitBreaker.checkIfTripped()) {
+            // A tripped shared breaker on the non-throw path means the dispatcher aborted queued
+            // tasks (quiesce); the row set is incomplete, so the query must fail rather than
+            // return partial rows.
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            throw CairoException.queryCancelled();
         }
 
         long rowCount = 0;

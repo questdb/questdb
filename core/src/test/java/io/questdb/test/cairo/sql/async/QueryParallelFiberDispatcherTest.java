@@ -27,10 +27,12 @@ package io.questdb.test.cairo.sql.async;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -664,6 +666,59 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testQuiesceDrainFailsParkedLatestByOwner() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                engine.execute(
+                        "create table latest_tab as (" +
+                                "select x id, ('k' || (x % 64))::symbol sym, " +
+                                "timestamp_sequence(0, 1_000_000) ts from long_sequence(4096)" +
+                                "), index(sym) timestamp(ts) partition by day",
+                        executionContext
+                );
+                assertOwnerCancelledByQuiesceDrain(
+                        engine,
+                        compiler,
+                        executionContext,
+                        "owner-latest-by-quiesce",
+                        "select * from latest_tab latest on ts partition by sym",
+                        LatestByAllIndexedRecordCursorFactory.class
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testQuiesceDrainFailsParkedVectorAggregateOwner() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                engine.execute(
+                        "create table vector_tab as (select (x % 17)::int k, x v from long_sequence(65_536))",
+                        executionContext
+                );
+                assertOwnerCancelledByQuiesceDrain(
+                        engine,
+                        compiler,
+                        executionContext,
+                        "owner-vector-quiesce",
+                        "select k, sum(v) from vector_tab",
+                        io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory.class
+                );
+            }
+        });
+    }
+
+    @Test
     public void testQuiesceDrainsPublishedTaskWithActivePublisher() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
@@ -844,6 +899,119 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
             throw new AssertionError(error.get());
         }
         Assert.assertEquals(createdTaskCount, dispatcher.getVectorAggregateCreatedTaskCount());
+    }
+
+    // The owner runs as a fiber of its own runtime, so it parks on the dispatcher instead of
+    // stealing. With no consumers, its published tasks sit in the queue until the quiesce drain
+    // aborts them; the owner must then fail the query instead of returning a partial result.
+    private static void assertOwnerCancelledByQuiesceDrain(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext,
+            String poolName,
+            String sql,
+            Class<?> expectedFactoryClass
+    ) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+            TestUtils.assertFactoryInTree(factory, expectedFactoryClass);
+        }
+        final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
+        final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                engine,
+                engine.getMessageBus(),
+                dispatcherRuntime
+        );
+        try {
+            engine.getMessageBus().setQueryParallelFiberDispatcher(dispatcher);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final CountDownLatch finished = new CountDownLatch(1);
+            final AtomicBoolean launched = new AtomicBoolean();
+            final AtomicBoolean isWorkerGated = new AtomicBoolean();
+            final CountDownLatch ownerParked = new CountDownLatch(1);
+            final CountDownLatch drainComplete = new CountDownLatch(1);
+            try (TestWorkerPool ownerPool = new TestWorkerPool(
+                    poolName,
+                    1,
+                    Metrics.DISABLED,
+                    WorkerPoolMode.FIBER_HOST
+            )) {
+                final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                final FiberTask task = new FiberTask() {
+                    @Override
+                    protected void onDone() {
+                        finished.countDown();
+                    }
+
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.compareAndSet(null, th);
+                        finished.countDown();
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        SuspensionScope.enterTimerShards(engine.getTimerShards());
+                        try {
+                            drain(compiler, executionContext, sql);
+                        } catch (RuntimeException | Error e) {
+                            throw e;
+                        } catch (Exception e) {
+                            throw new AssertionError(e);
+                        }
+                        return true;
+                    }
+                };
+                // The single worker both launches the owner and, once the owner has published and
+                // parked, blocks in this job so nothing can mount the owner while the test thread
+                // drains the dispatcher. The owner resumes only after the drain aborted its tasks.
+                ownerPool.assign(_ -> {
+                    if (launched.compareAndSet(false, true)) {
+                        final LaunchResult result = ownerRuntime.launch(task);
+                        if (result != LaunchResult.LAUNCHED) {
+                            failure.set(new AssertionError("owner fiber launch failed [result=" + result + ']'));
+                            finished.countDown();
+                        }
+                        return true;
+                    }
+                    if (isWorkerGated.compareAndSet(false, ownerRuntime.getParkedFiberCount() == 1)) {
+                        return false;
+                    }
+                    ownerParked.countDown();
+                    try {
+                        if (!drainComplete.await(10, TimeUnit.SECONDS)) {
+                            failure.compareAndSet(null, new AssertionError("dispatcher drain timed out"));
+                            finished.countDown();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return true;
+                });
+                ownerPool.start(LOG);
+                Assert.assertTrue("owner fiber did not park", ownerParked.await(10, TimeUnit.SECONDS));
+
+                dispatcher.beginQuiesce();
+                dispatcher.progressQuiesce();
+                drainComplete.countDown();
+
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (!finished.await(10, TimeUnit.MILLISECONDS)) {
+                    Assert.assertTrue("owner did not finish after quiesce drain", System.nanoTime() < deadline);
+                    dispatcher.progressQuiesce();
+                }
+                ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            }
+
+            final Throwable th = failure.get();
+            Assert.assertNotNull("query with aborted tasks must fail, not return a partial result", th);
+            Assert.assertTrue(String.valueOf(th), th instanceof CairoException);
+            final CairoException e = (CairoException) th;
+            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+        } finally {
+            closeRuntime(dispatcherRuntime);
+            Misc.free(dispatcher);
+        }
     }
 
     private static void closeRuntime(FiberRuntime runtime) {
