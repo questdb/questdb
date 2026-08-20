@@ -13708,7 +13708,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampLo,
                     partitionTimestamp,
                     srcDataMax,
-                    false, // last -- composite dispatch never uses the append fast path, see class docs
+                    // last: ALWAYS false for a composite dispatch -- see class docs. Tried passing the
+                    // true value for dedup commits on 2026-08-20 and the WAL apply HUNG (60s timeout):
+                    // with last=true, O3PartitionJob reads tableWriter.columns, which a routed composite
+                    // table does not maintain. The unconditional false is load-bearing, not incidental.
+                    false,
                     srcNameTxn,
                     o3Basket,
                     newPartitionSize,

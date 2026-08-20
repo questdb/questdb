@@ -47,19 +47,20 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. Path question ANSWERED 2026-08-20"
-            + " by instrumenting the dispatch predicate, and it CORRECTS an earlier claim that the"
-            + " composite O3 path was never reached -- it IS reached:"
-            + "   processO3Block [dims=1, dormant=false, composite=true]"
-            + "   o3 composite range [partitionTs=2023-01-01, last=true, srcOooLo=0, srcOooHi=0,"
-            + "                       multiCell=FALSE]"
-            + " So this takes the SINGLE-CELL composite dispatch, not the multi-cell scratch path."
-            + " That is where to look: single-cell O3 range dispatch under dedup, one row, last"
-            + " partition. SYMPTOM: cell E0.1 has correctly-sized files (8/4/8) with uninitialised"
-            + " content; ts reads back correct, exch and px do not."
-            + " ELIMINATED by measurement, do not re-check: identical-check bounds; phantom-dir removal;"
-            + " openROFromMemoryColumns; partition nameTxn; the open-column job's path builds; the"
-            + " identical-check's column source; and 'the O3 path is not reached'.")
+    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. Single-cell composite O3 dispatch"
+            + " (measured: composite=true, multiCell=false, last=true, srcOooLo=srcOooHi=0)."
+            + " EIGHT suspects now eliminated BY MEASUREMENT -- do not re-check any of them:"
+            + " identical-check bounds; phantom-dir removal; openROFromMemoryColumns; partition nameTxn;"
+            + " the open-column job's path builds; the identical-check's column source; 'the O3 path is"
+            + " not reached' (it IS); and passing the true `last` for dedup commits -- that one HANGS"
+            + " WAL apply, because O3PartitionJob reads tableWriter.columns when last=true and a routed"
+            + " composite table does not maintain them. dispatchCompositeCellRange's unconditional"
+            + " last=false is load-bearing."
+            + " Everything on the dispatch side is cell-correct: srcDataMax via"
+            + " findAttachedPartitionRawIndexBy(ts,cellKey), o3Columns with original O3 indices,"
+            + " cell-aware paths. SYMPTOM unchanged: cell E0.1 files sized 8/4/8 with uninitialised"
+            + " content; ts correct, exch and px not. NEXT: instrument O3CopyJob for THIS shape"
+            + " (srcDataMax>=1, last=false, dedup) and find which column tasks actually run.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
