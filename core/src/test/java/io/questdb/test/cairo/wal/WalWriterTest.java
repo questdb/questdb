@@ -2326,6 +2326,9 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testMaxLagTxnCount() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         configOverrideWalMaxLagTxnCount();
+        // Merge-append refuses WAL lag for the whole table, which defeats this test's premise of
+        // rows sitting invisible in the writer's lag buffer.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
