@@ -43,6 +43,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -358,6 +359,41 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         // guessing, so a hand-built (or corrupt) policy still reads back verbatim rather than losing a char.
         final String handBuilt = sep + "N0" + sep + "H" + sep + "a" + esc + "b" + sep + "k";
         assertEquals("KEEP HIGHEST \"a" + esc + "b\" PARTITION BY k", RowExpiryUtil.displayPredicate(handBuilt));
+    }
+
+    @Test
+    public void testKeepByPolicyDecoding() {
+        // Every reader of a KEEP [N] HIGHEST/LOWEST policy - SHOW CREATE / the catalogue functions
+        // (displayPredicate), the read-filter rewrite (windowPredicate) and DDL validation - goes through
+        // RowExpiryUtil.KeepBy, so they agree field for field, including on a string no encoder emits.
+        final String sep = String.valueOf((char) 0x1F);
+
+        final String topN = RowExpiryUtil.encodeKeepBy(3, false, "v", "k");
+        final RowExpiryUtil.KeepBy decoded = new RowExpiryUtil.KeepBy(topN);
+        assertEquals(3, decoded.n);
+        assertFalse(decoded.isHighest);
+        assertEquals("v", decoded.col);
+        assertEquals("k", decoded.keys);
+        assertEquals("KEEP 3 LOWEST v PARTITION BY k", RowExpiryUtil.displayPredicate(topN));
+        assertEquals(
+                "row_number() OVER (PARTITION BY k ORDER BY \"v\" ASC, \"ts\" DESC) > 3",
+                RowExpiryUtil.windowPredicate(topN, "ts")
+        );
+
+        // An unparseable N reads as 0: the bare KEEP HIGHEST/LOWEST form, which carries the stricter
+        // validation rules.
+        final String badCount = sep + "N" + "x7" + sep + "H" + sep + "v" + sep + "k";
+        assertEquals(0, new RowExpiryUtil.KeepBy(badCount).n);
+        assertEquals("KEEP HIGHEST v PARTITION BY k", RowExpiryUtil.displayPredicate(badCount));
+        assertEquals("\"v\" < max(\"v\") OVER (PARTITION BY k)", RowExpiryUtil.windowPredicate(badCount, "ts"));
+
+        // Truncated right after the mode char: every field is missing, so each one reads empty.
+        final String truncated = sep + "N";
+        final RowExpiryUtil.KeepBy empty = new RowExpiryUtil.KeepBy(truncated);
+        assertEquals(0, empty.n);
+        assertEquals("", empty.col);
+        assertEquals("", empty.keys);
+        assertEquals("KEEP LOWEST \"\"", RowExpiryUtil.displayPredicate(truncated));
     }
 
     @Test

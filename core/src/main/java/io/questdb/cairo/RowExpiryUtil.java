@@ -222,7 +222,7 @@ public final class RowExpiryUtil {
 
     /**
      * True when the group extreme of {@code columnType} is well-defined, i.e. the bare
-     * {@code KEEP HIGHEST|LOWEST <col>} form ({@link #keepByCount} == 0) may desugar to
+     * {@code KEEP HIGHEST|LOWEST <col>} form ({@link KeepBy#n} == 0) may desugar to
      * {@code <col> < max(<col>) OVER (...)} on it. The window {@code max}/{@code min} overloads take LONG,
      * DOUBLE, DATE, TIMESTAMP or DECIMAL, and only the types listed here reach one of them through a
      * widening cast that preserves order. A text-ish column reaches them through an implicit parsing cast
@@ -274,27 +274,6 @@ public final class RowExpiryUtil {
      */
     public static boolean isWindow(CharSequence stored) {
         return hasMode(stored, MODE_WINDOW);
-    }
-
-    /**
-     * The keep column of an encoded KEEP [N] HIGHEST/LOWEST policy (check {@link #isKeepBy}).
-     */
-    public static CharSequence keepByColumn(CharSequence stored) {
-        final int s2 = sentinelIndex(stored, sentinelIndex(stored, 2) + 1);
-        return unescapeField(stored, s2 + 1, sentinelIndex(stored, s2 + 1));
-    }
-
-    /**
-     * The row count {@code N} of an encoded KEEP [N] HIGHEST/LOWEST policy (check {@link #isKeepBy}), or 0
-     * for the bare KEEP HIGHEST/LOWEST form that keeps every row tied at the group extreme. Unparseable text
-     * also reads as 0, which is the form under the stricter validation rules.
-     */
-    public static int keepByCount(CharSequence stored) {
-        try {
-            return Numbers.parseInt(stored, 2, sentinelIndex(stored, 2));
-        } catch (NumericException e) {
-            return 0;
-        }
     }
 
     /**
@@ -512,23 +491,47 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}).
+     * Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}), used
+     * by SHOW CREATE, the catalogue functions, the read-filter rewrite and DDL validation. Construct it for a
+     * policy {@link #isKeepBy} accepts.
+     * <p>
+     * Every field tolerates a truncated or otherwise malformed policy string: a missing separator reads as an
+     * empty field and an unparseable {@code n} reads as 0. Such a string means a damaged {@code _meta} -
+     * {@link #encodeKeepBy} never produces one - and it decodes as the bare KEEP HIGHEST/LOWEST form, the
+     * shape under the stricter validation rules, so SHOW CREATE, the catalogue functions and the read filter
+     * all have an answer for it.
      */
-    private static final class KeepBy {
-        final String col;
-        final boolean isHighest;
-        final String keys;
-        final int n;
+    public static final class KeepBy {
+        /**
+         * The keep column, unquoted.
+         */
+        public final String col;
+        public final boolean isHighest;
+        /**
+         * The raw PARTITION BY column-list text, empty when the policy has no keys.
+         */
+        public final String keys;
+        /**
+         * The row count {@code N}, or 0 for the bare KEEP HIGHEST/LOWEST form that keeps every row tied at
+         * the group extreme.
+         */
+        public final int n;
 
-        KeepBy(CharSequence stored) {
-            final String body = stored.subSequence(2, stored.length()).toString();
-            final int s1 = body.indexOf(POLICY_SENTINEL);
-            final int s2 = body.indexOf(POLICY_SENTINEL, s1 + 1);
-            final int s3 = body.indexOf(POLICY_SENTINEL, s2 + 1);
-            this.n = Integer.parseInt(body.substring(0, s1));
-            this.isHighest = body.charAt(s1 + 1) == DIR_HIGHEST;
-            this.col = unescapeField(body, s2 + 1, s3).toString();
-            this.keys = unescapeField(body, s3 + 1, body.length()).toString();
+        public KeepBy(CharSequence stored) {
+            final int len = stored.length();
+            final int s1 = sentinelIndex(stored, 2);
+            final int s2 = sentinelIndex(stored, s1 + 1);
+            final int s3 = sentinelIndex(stored, s2 + 1);
+            int n;
+            try {
+                n = Numbers.parseInt(stored, 2, s1);
+            } catch (NumericException e) {
+                n = 0;
+            }
+            this.n = n;
+            this.isHighest = s1 + 1 < len && stored.charAt(s1 + 1) == DIR_HIGHEST;
+            this.col = unescapeField(stored, Math.min(s2 + 1, len), s3).toString();
+            this.keys = unescapeField(stored, Math.min(s3 + 1, len), len).toString();
         }
     }
 }

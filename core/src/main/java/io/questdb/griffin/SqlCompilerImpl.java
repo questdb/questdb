@@ -6731,13 +6731,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * ranking rows by the low 64 bits. {@code stored} is the encoded policy.
      */
     private void validateKeepByColumn(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
-        final CharSequence col = RowExpiryUtil.keepByColumn(stored);
+        final RowExpiryUtil.KeepBy keepBy = new RowExpiryUtil.KeepBy(stored);
+        final CharSequence col = keepBy.col;
         final int index = metadata.getColumnIndexQuiet(col);
         if (index < 0) {
             throw SqlException.$(position, "invalid EXPIRE ROWS KEEP column: ").put(col);
         }
         final int type = metadata.getColumnType(index);
-        if (RowExpiryUtil.keepByCount(stored) > 0) {
+        if (keepBy.n > 0) {
             if (!ColumnType.isComparable(type)) {
                 throw SqlException.$(position, "EXPIRE ROWS KEEP <N> HIGHEST/LOWEST requires an orderable column, but '")
                         .put(col).put("' is ").put(ColumnType.nameOf(type));
