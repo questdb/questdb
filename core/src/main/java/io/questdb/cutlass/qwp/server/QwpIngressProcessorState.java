@@ -236,6 +236,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // server never wrote. Enforced in setHighestProcessedSequence.
     private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
+    // True when the message currently being processed appended at least one row.
+    // Reset at the top of every processMessage(), so it describes THIS frame and
+    // not the connection. A frame that registers symbols and nothing else -- the
+    // client's dictionary-chunk frames, which carry tableCount=0 and
+    // FLAG_DEFER_COMMIT -- leaves it false.
+    private boolean messageAppendedRows;
     // True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
     // uncommitted. Recomputed from the TUD cache after every deferred frame
     // (refreshUncommittedDeferredRows), cleared when commitAll() succeeds (the
@@ -556,6 +562,21 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * decide whether an outgoing ack closes a run of withheld deferred frames
      * and so must flush eagerly rather than wait for the batch threshold.
      */
+    /**
+     * Whether the message just processed appended at least one row.
+     * <p>
+     * A deferred frame may only be ack-covered when THIS frame's own rows are
+     * durable. "Nothing is uncommitted on the connection" is not the same claim:
+     * it is vacuously true for a frame that appended nothing, and acking such a
+     * frame would let a store-and-forward client trim it away from the frames
+     * that follow it. The client relies on that not happening -- its
+     * dictionary-chunk frames carry {@code tableCount=0} and FLAG_DEFER_COMMIT,
+     * and the data frames encoded after them reference the ids they register.
+     */
+    public boolean hasAppendedRowsInMessage() {
+        return messageAppendedRows;
+    }
+
     public boolean hasUncommittedDeferredRows() {
         return uncommittedDeferredRows;
     }
@@ -769,12 +790,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Records that WAL rows are buffered without a covering commit, where that
-     * is known outright rather than by asking the TUD cache. Cleared by
-     * {@link #commit()} (successful commitAll) or {@link #clear()} (rollback).
-     * The deferred-frame path uses {@link #refreshUncommittedDeferredRows()}
-     * instead.
+     * Arms the deferred-rows clamp outright, without asking the TUD cache.
+     * <p>
+     * No production caller remains: the deferred-frame path derives the clamp
+     * through {@link #refreshUncommittedDeferredRows()}. Kept so tests can put
+     * the clamp into a known state without standing up a cache that holds
+     * uncommitted rows. Cleared by {@link #commit()} (successful commitAll) or
+     * {@link #clear()} (rollback).
      */
+    @TestOnly
     public void markUncommittedDeferredRows() {
         uncommittedDeferredRows = true;
     }
@@ -802,6 +826,35 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public boolean refreshUncommittedDeferredRows() {
         uncommittedDeferredRows = tudCache.hasUncommittedRows();
         return uncommittedDeferredRows;
+    }
+
+    /**
+     * Recomputes the clamp and answers whether a cumulative OK ack may cover the
+     * FLAG_DEFER_COMMIT frame just processed. This is the whole ack decision for
+     * the deferred path; {@code QwpIngressUpgradeProcessor.handleBinaryMessage}
+     * only wires it up.
+     * <p>
+     * Both terms are load-bearing, and each guards a different failure:
+     * <ul>
+     * <li>Nothing uncommitted -- otherwise an ack would let a store-and-forward
+     * client trim rows the server can still roll back (#7144).</li>
+     * <li>This frame appended rows -- "nothing uncommitted" is vacuously true
+     * for a frame that appended none, and the client emits exactly such frames:
+     * its dictionary chunks carry {@code tableCount=0} with FLAG_DEFER_COMMIT,
+     * and the data frames after them reference the ids those chunks register.
+     * Acking a chunk would let the client trim it away from the frames that
+     * depend on it, and a reconnect would then replay symbol ids nothing
+     * registered.</li>
+     * </ul>
+     * The refresh runs unconditionally: the clamp describes the connection, so
+     * it must be recomputed even for a frame that appended nothing, or it would
+     * stay stale from an earlier frame.
+     *
+     * @return {@code true} if the ack may cover this frame
+     */
+    public boolean refreshDeferredAckCoverage() {
+        final boolean nothingUncommitted = !refreshUncommittedDeferredRows();
+        return nothingUncommitted && messageAppendedRows;
     }
 
     public long nextMessageSequence() {
@@ -1153,6 +1206,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             return;
         }
 
+        messageAppendedRows = false;
         try {
             // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
             // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
@@ -1237,7 +1291,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     return;
                 }
 
+                // Read BEFORE the append: the cursor is consumed by it, and a
+                // metadata-change retry resets row iteration.
+                final boolean blockHasRows = tableBlock.getRowCount() > 0;
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                messageAppendedRows |= blockHasRows;
             }
 
         } catch (QwpParseException e) {

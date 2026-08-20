@@ -1454,14 +1454,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     // The force-commit above fires per-table at the
                     // max-uncommitted-rows cap, so it may have covered
                     // everything, something, or nothing. Ask what is actually
-                    // uncommitted instead of assuming the worst: while anything
-                    // is still uncommitted the cumulative-ack watermark must not
-                    // move past this frame -- an OK ack would let the client trim
-                    // rows the server can still roll back (#7144's replay
-                    // contract). Once nothing is uncommitted, every row this
-                    // connection has appended is in the WAL, so the frame is as
-                    // durable as a committed one and the ack may cover it.
-                    deferredFrameFullyCommitted = !state.refreshUncommittedDeferredRows();
+                    // uncommitted instead of assuming the worst -- and require
+                    // that THIS frame's own rows are what became durable. Both
+                    // terms are load-bearing; see refreshDeferredAckCoverage.
+                    deferredFrameFullyCommitted = state.refreshDeferredAckCoverage();
                 }
             }
             // Read AFTER the commit calls: processMessage's read-only gate AND the

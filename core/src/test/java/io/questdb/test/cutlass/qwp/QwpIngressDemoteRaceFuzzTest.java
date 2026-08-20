@@ -281,6 +281,10 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                                 break;
                             default:
                                 tudCache.maxRowsCommitHook = demoteRefuseThenRevert;
+                                // Arm the clamp for this iteration: a deferred frame
+                                // that leaves rows uncommitted is the state the
+                                // demote has to be contained against.
+                                tudCache.uncommittedRows = true;
                                 message = zeroTableMessage(QwpConstants.FLAG_DEFER_COMMIT);
                                 where = "revert vs deferred commit";
                                 break;
@@ -328,10 +332,11 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Drives one message through the state, mirroring the exact call ordering of
+     * Drives one message through the state in the commit-path ordering of
      * {@code QwpIngressUpgradeProcessor.handleBinaryMessage}: addData →
      * isDeferCommit → processMessage → commit/commitIfMaxUncommittedRowsReached →
-     * read isRoleChangeClosePending AFTER the commit calls.
+     * read isRoleChangeClosePending AFTER the commit calls. It does not model the
+     * processor's ack section, so it says nothing about which frames get acked.
      *
      * @return the roleChangeClose flag as the upgrade processor would observe it
      */
@@ -350,7 +355,7 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                 // while any of its rows are still uncommitted, and the
                 // processor derives that from the TUD cache rather than
                 // assuming it.
-                state.refreshUncommittedDeferredRows();
+                state.refreshDeferredAckCoverage();
             }
         }
         // Read AFTER the commit calls — the ordering the containment fix
@@ -581,6 +586,17 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         volatile Runnable commitHook;
         volatile Runnable getTudHook;
         volatile Runnable maxRowsCommitHook;
+        // This cache never populates tableUpdateDetails, so the inherited
+        // hasUncommittedRows() would always answer false and every deferred
+        // iteration would run with the clamp released. The fuzz exists to race a
+        // demote against a deferred commit, and the armed clamp is half of that
+        // state, so let the driver choose the answer.
+        volatile boolean uncommittedRows;
+
+        @Override
+        public boolean hasUncommittedRows() {
+            return uncommittedRows;
+        }
 
         RaceTudCache(CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
             super(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);

@@ -70,9 +70,10 @@ import org.junit.Test;
  *       regardless of any future promote, so the terminal NACK is the
  *       truthful signal.</li>
  * </ul>
- * The batch driver mirrors {@code QwpIngressUpgradeProcessor.handleBinaryMessage}
- * exactly (addData → isDeferCommit → processMessage → commit calls → read
- * {@code isRoleChangeClosePending()} AFTER the commits). The static test uses
+ * The batch driver mirrors the commit path of
+ * {@code QwpIngressUpgradeProcessor.handleBinaryMessage} (addData → isDeferCommit
+ * → processMessage → commit calls → read {@code isRoleChangeClosePending()}
+ * AFTER the commits); the ack section is not modelled. The static test uses
  * a fresh state per attempt, modelling the client's reconnect: on a static
  * node every fresh connection meets the identical refusal, which is why the
  * wrong refusal shape loops forever rather than self-correcting.
@@ -228,9 +229,10 @@ public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
     }
 
     /**
-     * Mirrors {@code QwpIngressUpgradeProcessor.handleBinaryMessage} exactly,
+     * Mirrors the commit path of {@code QwpIngressUpgradeProcessor.handleBinaryMessage},
      * including reading {@code isRoleChangeClosePending()} AFTER the commit
-     * calls (same driver contract as {@link QwpIngressDemoteRaceFuzzTest}).
+     * calls (same driver contract as {@link QwpIngressDemoteRaceFuzzTest}). The
+     * ack section is not modelled.
      *
      * @return the roleChangeClose flag as the upgrade processor would observe it
      */
@@ -249,7 +251,7 @@ public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
                 // while any of its rows are still uncommitted, and the
                 // processor derives that from the TUD cache rather than
                 // assuming it.
-                state.refreshUncommittedDeferredRows();
+                state.refreshDeferredAckCoverage();
             }
         }
         return state.isRoleChangeClosePending();

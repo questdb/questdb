@@ -86,6 +86,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     private static final long EXPECTED_SEQ_TXN = 1;
     private static final int PROBE_LEN = 6;
     private static final int RELAY_PROBE_TIMEOUT_MS = 30_000;
+    private static final int DEFERRED_FRAME_COUNT = 20;
     private static final int ROW_COUNT = 200;
 
     @Before
@@ -178,6 +179,125 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
         // QwpWalAppender force-commits the table block once it crosses
         // qwp.max.uncommitted.rows, draining the writer before QwpTudCache runs.
         assertMemoryLeak(() -> assertAckReportsSeqTxn("10", "ack_cov_over"));
+    }
+
+    /**
+     * The ack decision this pins lives in the private
+     * {@code QwpIngressUpgradeProcessor.handleBinaryMessage}. Driving the real
+     * client through a real server is the only seam that reaches it: the
+     * state-level tests can exercise the predicate but not the decision.
+     * <p>
+     * In transactional mode the client sends every auto-flush with
+     * FLAG_DEFER_COMMIT and commits only on an explicit {@code flush()}. With the
+     * connection cap low enough that the appender's force-commit fires, those
+     * deferred frames become durable before the commit frame arrives, so the
+     * server may ack them. Before this behaviour existed no ack could appear
+     * until the commit frame, and a mid-group reconnect replayed rows the server
+     * had already written.
+     */
+    @Test
+    public void testDeferredFrameIsAckedOnceItsRowsAreForceCommitted() throws Exception {
+        assertMemoryLeak(() -> assertDeferredFramesAcked("1", "ack_defer_forced", true));
+    }
+
+    /**
+     * Complement of the above: with no force-commit, a deferred frame's rows are
+     * still rollback-able, so nothing may be acked before the commit frame.
+     * Without this arm the test above passes against a server that acks every
+     * deferred frame unconditionally -- the data-loss direction.
+     */
+    @Test
+    public void testDeferredFrameIsNotAckedWhileItsRowsAreUncommitted() throws Exception {
+        assertMemoryLeak(() -> assertDeferredFramesAcked("1000000", "ack_defer_buffered", false));
+    }
+
+    private void assertDeferredFramesAcked(
+            String maxUncommittedRows,
+            String table,
+            boolean expectAckBeforeCommit
+    ) throws Exception {
+        try (TestServerMain serverMain = startWithEnvVariables(
+                PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getEnvVarName(), maxUncommittedRows
+        )) {
+            serverMain.execute("CREATE TABLE " + table + " (val LONG, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            final List<byte[]> serverFrames;
+            try (AckTee tee = new AckTee(HTTP_PORT)) {
+                try (Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
+                        .address("localhost:" + tee.localPort())
+                        // Transactional mode is what makes auto-flush emit
+                        // FLAG_DEFER_COMMIT; without it no deferred frame exists
+                        // and the test would be vacuous in both arms.
+                        .transactional(true)
+                        // One row per frame, so every auto-flush is its own
+                        // deferred frame and the sequence numbering is legible.
+                        .autoFlushRows(1)
+                        .autoFlushBytes(0)
+                        .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
+                        .build()) {
+                    for (int i = 0; i < DEFERRED_FRAME_COUNT; i++) {
+                        sender.table(table)
+                                .longColumn("val", i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    // Deliberately NOT flushed here: close() sends the single
+                    // commit frame that closes the group, so any ack at a LOWER
+                    // sequence than the last one covered a deferred frame while
+                    // the group was still open. That is the property under test.
+                }
+                tee.close();
+                serverFrames = tee.serverBinaryFrames();
+            }
+
+            TestUtils.assertEventually(() -> serverMain.assertSql(
+                    "SELECT count() FROM " + table, "count\n" + DEFERRED_FRAME_COUNT + "\n"));
+
+            int okAckCount = 0;
+            long minAckSeq = Long.MAX_VALUE;
+            long maxAckSeq = Long.MIN_VALUE;
+            final StringBuilder observed = new StringBuilder();
+            final WebSocketResponse response = new WebSocketResponse();
+            for (int f = 0, n = serverFrames.size(); f < n; f++) {
+                final byte[] payload = serverFrames.get(f);
+                final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < payload.length; i++) {
+                        Unsafe.putByte(ptr + i, payload[i]);
+                    }
+                    if (response.readFrom(ptr, payload.length) && response.isSuccess()) {
+                        okAckCount++;
+                        minAckSeq = Math.min(minAckSeq, response.getSequence());
+                        maxAckSeq = Math.max(maxAckSeq, response.getSequence());
+                        observed.append("[seq=").append(response.getSequence()).append(']');
+                    }
+                } finally {
+                    Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+
+            // Both arms require the group-closing ack, so its presence never
+            // discriminates. What discriminates is whether anything was acked
+            // BEFORE it -- comparing sequences rather than counting frames keeps
+            // this independent of the ack batch threshold and of how many
+            // sequences the handshake consumes.
+            Assert.assertTrue("the server sent no OK ack at all; acks seen: " + observed, okAckCount > 0);
+            if (expectAckBeforeCommit) {
+                Assert.assertTrue(
+                        "the force-commit made each deferred frame's rows durable, so an ack must "
+                                + "cover one before the group-closing frame; acks seen: " + observed,
+                        minAckSeq < maxAckSeq
+                );
+            } else {
+                Assert.assertEquals(
+                        "no force-commit fired, so every deferred frame's rows are still "
+                                + "rollback-able and only the group-closing frame may be acked; "
+                                + "acks seen: " + observed,
+                        maxAckSeq,
+                        minAckSeq
+                );
+            }
+        }
     }
 
     private static void readFully(InputStream in, byte[] dst) throws IOException {
