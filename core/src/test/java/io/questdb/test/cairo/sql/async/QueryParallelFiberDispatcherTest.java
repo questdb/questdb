@@ -171,10 +171,10 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                                         "), index(sym) timestamp(ts) partition by day",
                                 executionContext
                         );
-                        Assert.assertEquals(
+                        runAsFiberOwner(engine, "query-owner-latest-by-test", () -> Assert.assertEquals(
                                 64,
                                 drain(compiler, executionContext, "select * from latest_tab latest on ts partition by sym")
-                        );
+                        ));
                         Assert.assertTrue(dispatcher.getLatestByCreatedTaskCount() > 0);
 
                         engine.execute(
@@ -183,7 +183,10 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                                         ")",
                                 executionContext
                         );
-                        Assert.assertEquals(17, drain(compiler, executionContext, "select k, sum(v) from vector_tab"));
+                        runAsFiberOwner(engine, "query-owner-vector-test", () -> Assert.assertEquals(
+                                17,
+                                drain(compiler, executionContext, "select k, sum(v) from vector_tab")
+                        ));
                         Assert.assertTrue(dispatcher.getVectorAggregateCreatedTaskCount() > 0);
                         assertFiberOwnerParks(engine, compiler, executionContext);
                         assertSameRuntimeOwnerRunsLocally(pool, engine, compiler, executionContext, dispatcher);
@@ -196,14 +199,14 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                                         ") timestamp(ts) partition by day",
                                 executionContext
                         );
-                        Assert.assertEquals(
+                        runAsFiberOwner(engine, "query-owner-group-test", () -> Assert.assertEquals(
                                 10,
                                 drain(
                                         compiler,
                                         executionContext,
                                         "select quantity, max(price) from group_tab order by quantity asc limit 10"
                                 )
-                        );
+                        ));
                         Assert.assertTrue(dispatcher.getMergeShardCreatedTaskCount() > 0);
                         Assert.assertTrue(dispatcher.getLongTopKCreatedTaskCount() > 0);
                     },
@@ -217,6 +220,11 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     public void testLatestByOwnerHelpsWithoutConsumers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getLatestByQueueCapacity() {
+                    return 1;
+                }
+
                 @Override
                 public int getSqlPageFrameMaxRows() {
                     return 128;
@@ -708,11 +716,27 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws Exception {
+        final FiberRuntime runtime = runAsFiberOwner(
+                engine,
+                "query-owner-fiber-test",
+                () -> Assert.assertEquals(17, drain(compiler, executionContext, "select k, sum(v) from vector_tab"))
+        );
+        Assert.assertTrue(runtime.getMountCount() > 1);
+    }
+
+    // A fiber owner parks on the dispatcher instead of stealing, so every published task is left
+    // for the query pool to consume. An ordinary owner helps out and can drain the queue itself,
+    // which makes the dispatcher task counters racy.
+    private static FiberRuntime runAsFiberOwner(
+            CairoEngine engine,
+            String poolName,
+            FiberOwnerBody body
+    ) throws Exception {
         final AtomicReference<Throwable> error = new AtomicReference<>();
         final CountDownLatch finished = new CountDownLatch(1);
         final AtomicBoolean launched = new AtomicBoolean();
         try (TestWorkerPool ownerPool = new TestWorkerPool(
-                "query-owner-fiber-test",
+                poolName,
                 1,
                 Metrics.DISABLED,
                 WorkerPoolMode.FIBER_HOST
@@ -727,13 +751,14 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 @Override
                 protected void onError(Throwable th) {
                     error.compareAndSet(null, th);
+                    finished.countDown();
                 }
 
                 @Override
                 protected boolean runStep() {
                     SuspensionScope.enterTimerShards(engine.getTimerShards());
                     try {
-                        Assert.assertEquals(17, drain(compiler, executionContext, "select k, sum(v) from vector_tab"));
+                        body.run();
                     } catch (Exception e) {
                         throw new AssertionError(e);
                     }
@@ -757,8 +782,13 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
             if (error.get() != null) {
                 throw new AssertionError(error.get());
             }
-            Assert.assertTrue(runtime.getMountCount() > 1);
+            return runtime;
         }
+    }
+
+    @FunctionalInterface
+    private interface FiberOwnerBody {
+        void run() throws Exception;
     }
 
     private static long drain(
