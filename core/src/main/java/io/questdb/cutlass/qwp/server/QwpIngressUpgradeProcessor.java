@@ -488,7 +488,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         state.setHandshakeFlushPending(true);
     }
 
-    /** Writes the browser-only ingress SERVER_INFO WebSocket frame. */
+    /**
+     * Writes the browser-only ingress SERVER_INFO WebSocket frame.
+     */
     public static int writeBrowserServerInfoFrame(long bufferAddress, int maxBatchSizeBytes) {
         int headerSize = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddress, 5);
         long payloadAddress = bufferAddress + headerSize;

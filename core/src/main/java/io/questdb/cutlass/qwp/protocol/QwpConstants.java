@@ -188,7 +188,9 @@ public final class QwpConstants {
      * Status: Batch accepted successfully.
      */
     public static final byte STATUS_OK = 0x00;
-    /** Browser-requested ingress handshake carrying the server batch cap. */
+    /**
+     * Browser-requested ingress handshake carrying the server batch cap.
+     */
     public static final byte STATUS_SERVER_INFO = 0x01;
     /**
      * Status: Malformed message.

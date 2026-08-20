@@ -51,7 +51,9 @@ public final class QwpEgressMsgKind {
      * the trailer only when this bit is set.
      */
     public static final int CAP_QUERY_FLAGS = 0x00000002;
-    /** SERVER_INFO ends with compression_codec:u8, compression_level:u8. */
+    /**
+     * SERVER_INFO ends with compression_codec:u8, compression_level:u8.
+     */
     public static final int CAP_COMPRESSION = 0x00000004;
     /**
      * {@code SERVER_INFO.capabilities} bit advertising that the frame ends with
