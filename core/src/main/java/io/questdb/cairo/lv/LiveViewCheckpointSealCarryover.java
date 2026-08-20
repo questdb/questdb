@@ -67,6 +67,17 @@ import org.jetbrains.annotations.Nullable;
  * {@code minSeenTsSinceCheckpoint} - and before the wipe reaches the runtime.
  * {@link #restore} runs in the repair's single runtime exchange, after the overlay has
  * put the state back and before the post-repair head seal reads any of it.
+ *
+ * <h2>An isolated replay needs it too, and for one reason rather than two</h2>
+ * A repair that replays through {@link LiveViewRepairRuntime} wipes nothing, so the
+ * bookkeeping is never destroyed and there is no state for it to travel beside. What
+ * still moves under it is the generation: the repair's retire deletes the roots the
+ * baseline names, and its splice re-versions the ones it keeps. So the carry is what
+ * re-stamps the baseline against the generation the splice published - or, when there is
+ * none to name, drops the bookkeeping and leaves every target on the complete freeze that
+ * is the safe direction. {@code minSeenTsSinceCheckpoint} travels for the same reason it
+ * always did: the replay lowers it to the bottom of the range it reads, whichever runtime
+ * folds the rows.
  * <p>
  * One instance per repair session, reused across repairs.
  */

@@ -82,6 +82,15 @@ import org.jetbrains.annotations.Nullable;
  * and a repair that converges below the runtime frontier is rare enough that
  * holding that much native memory for the worker's life costs more than the
  * allocation it saves.
+ * <p>
+ * <b>This is now the fallback route rather than the ordinary one.</b> A converging
+ * repair replays through {@link LiveViewRepairRuntime} - a second compiled runtime of
+ * the view's own SELECT - and so takes nothing aside at all; the copy here is what it
+ * falls back to when
+ * {@code cairo.live.view.checkpoint.repair.isolated.runtime.enabled} declines the second
+ * runtime, or when compiling it fails. The size is why: this copy is proportional to the
+ * view's whole key domain, while the isolated runtime holds only the keys of the range
+ * being repaired.
  */
 public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
     private static final long PAGE_SIZE = 64 * 1024;

@@ -124,6 +124,10 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // The view's SELECT compiled a second time, holding the window state a converging
+    // out-of-order repair replays into so the primary's is never wiped. Built on the first
+    // repair that can use it and freed with the primary factory, whose shape it mirrors.
+    private LiveViewRepairRuntime repairRuntime;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -1400,6 +1404,14 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the isolated runtime a converging out-of-order repair replays through, or
+     * null before the first such repair built one. See {@link LiveViewRepairRuntime}.
+     */
+    public LiveViewRepairRuntime getRepairRuntime() {
+        return repairRuntime;
+    }
+
+    /**
      * @return the designated timestamp of the newest seed boundary, or
      * {@link Numbers#LONG_NULL} when the sweep has sealed none. See
      * {@link #seedCheckpointMaxTs}.
@@ -2252,6 +2264,17 @@ public class LiveViewInstance implements QuietCloseable {
         this.seedBaseReader = seedBaseReader;
     }
 
+    /**
+     * Adopts the isolated repair runtime, freeing whatever this view held before. Called
+     * under the refresh latch, by the worker that built it.
+     */
+    public void setRepairRuntime(@Nullable LiveViewRepairRuntime repairRuntime) {
+        if (this.repairRuntime != repairRuntime) {
+            Misc.free(this.repairRuntime);
+            this.repairRuntime = repairRuntime;
+        }
+    }
+
     public void setSeedDataOffset(long seedDataOffset) {
         this.seedDataOffset = seedDataOffset;
     }
@@ -2579,6 +2602,11 @@ public class LiveViewInstance implements QuietCloseable {
         compiledPlan = null;
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
+        // The isolated repair runtime mirrors the primary's shape, so it dies with it: a
+        // repair replaying through functions compiled against the old base metadata would
+        // stage roots the rebuilt view cannot read. The parked-repair guard in the refresh
+        // job turns that into a discarded candidate rather than a continued replay.
+        repairRuntime = Misc.free(repairRuntime);
         // The head's root was frozen from the window state those artifacts own, and
         // that state dies with them. A head still claiming a root over state nothing
         // holds must not outlive them: whoever rebuilds re-seals, and only that seal

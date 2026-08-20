@@ -363,9 +363,11 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
-     * @return the compiled factory the replay is standing part-way through. A turn that
-     * finds the view holding a different one is looking at a runtime rebuilt since the
-     * capture, and must abandon the candidate rather than continue in it.
+     * @return the compiled factory the replay is standing part-way through - the isolated
+     * repair runtime's for a converging repair, the primary one for a repair that replays
+     * through it. A turn that would replay through a different one is looking at a runtime
+     * rebuilt since the capture, or at an operator who declined the isolated runtime
+     * mid-repair, and must abandon the candidate rather than continue in it.
      */
     public WindowRecordCursorFactory getWindowFactory() {
         return windowFactory;

@@ -110,6 +110,11 @@ import java.util.Locale;
  * that decides how many corrections share one segment repair. The pair is the control for
  * the other half: a run with deferral off pays every correction inside its own refresh
  * turn, a run with it on pays one repair per segment per interval.
+ * {@code --repair-isolated-runtime=false} puts a converging repair's replay back through the
+ * primary runtime, which means copying the whole window state aside before it and back after
+ * it. That copy is as large as the state itself, so the control column it restores is the one
+ * that shows what a repair paid for the view's key domain rather than for its own range - and
+ * it grows with {@code --account-window}, not with the correction.
  * <p>
  * Build and run:
  * <pre>
@@ -183,6 +188,7 @@ public class LiveViewSteadyStateBenchmark {
         // -1 = leave the configuration default alone. 0 declines the chain outright, which
         // is how a run reproduces what a repair cost before it kept its ladder.
         int repairMaxChainedBoundaries = -1;
+        boolean isRepairIsolatedRuntime = true;
         boolean isRepairPerSegment = true;
         boolean isBackfillDeferral = false;
         long backfillIntervalMicros = -1;
@@ -245,6 +251,8 @@ public class LiveViewSteadyStateBenchmark {
                 repairMaxChainedBoundaries = Integer.parseInt(arg.substring(32));
             } else if (arg.startsWith("--repair-per-segment=")) {
                 isRepairPerSegment = Boolean.parseBoolean(arg.substring(21));
+            } else if (arg.startsWith("--repair-isolated-runtime=")) {
+                isRepairIsolatedRuntime = Boolean.parseBoolean(arg.substring(26));
             } else if (arg.startsWith("--backfill-deferral=")) {
                 isBackfillDeferral = Boolean.parseBoolean(arg.substring(20));
             } else if (arg.startsWith("--backfill-interval-us=")) {
@@ -336,6 +344,7 @@ public class LiveViewSteadyStateBenchmark {
         final int finalCompactThreshold = compactThreshold;
         final int finalCompactStalePercent = compactStalePercent;
         final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
+        final boolean finalRepairIsolatedRuntime = isRepairIsolatedRuntime;
         final boolean finalRepairPerSegment = isRepairPerSegment;
         final boolean finalBackfillDeferral = isBackfillDeferral;
         final long finalBackfillInterval = backfillIntervalMicros;
@@ -390,6 +399,11 @@ public class LiveViewSteadyStateBenchmark {
                 }
 
                 @Override
+                public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+                    return finalRepairIsolatedRuntime;
+                }
+
+                @Override
                 public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
                     return finalRepairPerSegment;
                 }
@@ -402,7 +416,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
-                            + "backfillDeferral=%s backfillIntervalUs=%d%n",
+                            + "repairIsolatedRuntime=%s backfillDeferral=%s backfillIntervalUs=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -413,6 +427,7 @@ public class LiveViewSteadyStateBenchmark {
                     tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
                     configuration.getLiveViewCheckpointRepairMaxChainedBoundaries(),
                     configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
+                    configuration.isLiveViewCheckpointRepairIsolatedRuntimeEnabled(),
                     configuration.isLiveViewCheckpointBackfillDeferralEnabled(),
                     configuration.getLiveViewCheckpointBackfillInterval()
             );
@@ -654,8 +669,8 @@ public class LiveViewSteadyStateBenchmark {
                     System.out.printf(
                             Locale.ROOT,
                             "# o3 ingested=%d scan_rows=%d amplification=%.1fx resume_rows=%d boundary_rows=%d "
-                                    + "rejected=%d repair=%s deferred_segments=%d passed_segments=%d "
-                                    + "pending_segments=%d pending_rows=%d%n",
+                                    + "rejected=%d repair=%s isolated_replays=%d deferred_segments=%d "
+                                    + "passed_segments=%d pending_segments=%d pending_rows=%d%n",
                             ingested,
                             o3ScanRowsTotal,
                             (double) o3ScanRowsTotal / ingested,
@@ -663,6 +678,7 @@ public class LiveViewSteadyStateBenchmark {
                             instance.getO3BoundaryReplayRows() - o3BoundaryRowsAtStart,
                             instance.getO3RejectedCount(),
                             repairName(instance),
+                            job.isolatedReplayTurnCountForTest(),
                             job.deferredSegmentCountForTest(),
                             job.backfillPassSegmentCountForTest(),
                             instance.getPendingRepairsSegments(),

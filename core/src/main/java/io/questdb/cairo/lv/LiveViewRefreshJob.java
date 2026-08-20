@@ -326,6 +326,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Test-only observability for deferral. Counts the closed anchor segments this worker
     // recorded in a pending-repair set instead of repairing inside the turn.
     private long deferredSegmentCount;
+    // Test-only observability for the isolated repair runtime. Counts the replay turns this
+    // worker ran beside the primary runtime rather than through it, so a test can prove
+    // which runtime carried a repair without inferring it from the state that did not move.
+    private long isolatedReplayTurnCount;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
@@ -620,6 +624,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long deferredSegmentCountForTest() {
         return deferredSegmentCount;
+    }
+
+    /**
+     * Test-only: number of replay turns this worker ran on the isolated repair runtime
+     * rather than through the primary one. See {@link LiveViewRepairRuntime}.
+     */
+    @TestOnly
+    public long isolatedReplayTurnCountForTest() {
+        return isolatedReplayTurnCount;
     }
 
     /**
@@ -1624,21 +1637,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordCursorFactory factory = instance.getCompiledFactory();
         if (factory == null) {
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
-            boolean ownReader = !executionContext.hasReader();
-            TableReader localReader = ownReader ? engine.getReader(baseToken) : null;
+            TableReader localReader = acquireCompileReader(baseToken);
             boolean committed = false;
             try {
-                if (ownReader) {
-                    engine.detachReader(localReader);
-                    executionContext.of(localReader);
-                }
-                executionContext.setLiveViewCompile(true);
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
-                    factory = cq.getRecordCursorFactory();
-                } finally {
-                    executionContext.setLiveViewCompile(false);
-                }
+                factory = compileViewSelect(instance);
                 // Decompose once, here, and hand the same plan to everything below: the
                 // anchor build, the repair planner and every refresh cycle read the
                 // window factory, the two projections and the base scan off it rather
@@ -1689,14 +1691,62 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (!committed) {
                     factory = Misc.free(factory);
                 }
-                if (ownReader) {
-                    executionContext.clearReader();
-                    engine.attachReader(localReader);
-                    localReader.close();
-                }
+                releaseCompileReader(localReader);
             }
         }
         return factory;
+    }
+
+    /**
+     * Attaches a base-table reader to the shared execution context for the duration of a
+     * compile, unless the context already holds one - the refresh worker's own cycle does,
+     * and a compile inside it borrows that reader rather than opening a second.
+     * <p>
+     * The returned reader is the caller's to hand back through
+     * {@link #releaseCompileReader}, from a finally; null means the context supplied the
+     * reader and the caller detaches nothing.
+     */
+    private @Nullable TableReader acquireCompileReader(TableToken baseToken) {
+        if (executionContext.hasReader()) {
+            return null;
+        }
+        final TableReader localReader = engine.getReader(baseToken);
+        try {
+            engine.detachReader(localReader);
+            executionContext.of(localReader);
+        } catch (Throwable t) {
+            localReader.close();
+            throw t;
+        }
+        return localReader;
+    }
+
+    /**
+     * Compiles the view's own SELECT into a fresh factory tree. The caller owns what comes
+     * back and has to have a reader on the execution context - see
+     * {@link #acquireCompileReader} - because the compile resolves against the base table's
+     * live metadata.
+     */
+    private RecordCursorFactory compileViewSelect(LiveViewInstance instance) throws SqlException {
+        executionContext.setLiveViewCompile(true);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
+            return cq.getRecordCursorFactory();
+        } finally {
+            executionContext.setLiveViewCompile(false);
+        }
+    }
+
+    /**
+     * Hands back the reader {@link #acquireCompileReader} attached, and does nothing for the
+     * null it returns when the context already had one.
+     */
+    private void releaseCompileReader(@Nullable TableReader localReader) {
+        if (localReader != null) {
+            executionContext.clearReader();
+            engine.attachReader(localReader);
+            localReader.close();
+        }
     }
 
     /**
@@ -1710,9 +1760,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.getAnchorFunction() != null) {
             return;
         }
+        final LiveViewWindow window = buildAnchorWindow(instance, plan);
+        if (window == null) {
+            return;
+        }
+        // Commit the anchor Function and window together, only after the full machinery
+        // builds. A failure before this point must not leave a half-built anchor
+        // (function set, window null): the per-row reset would never dispatch and the
+        // view would silently produce wrong results. Propagating instead leaves the
+        // compiled factory uncached (see ensureCompiledFactory) so the next refresh
+        // retries; a persistent failure invalidates via the flush-retry budget.
+        instance.setAnchorFunction(window.getAnchorExpression());
+        instance.setAnchorWindow(window);
+    }
+
+    /**
+     * Builds the anchor machinery of one compiled runtime - the anchor {@link Function}
+     * and the {@link LiveViewWindow} that dispatches on it - against {@code plan}, or
+     * returns null for a view with no ANCHOR at all.
+     * <p>
+     * The window is returned whole or not at all: every failure frees what it had built
+     * and propagates, so no caller can adopt a window whose anchor function never
+     * compiled. The function itself travels back inside the window
+     * ({@link LiveViewWindow#getAnchorExpression()}), which is what lets both the primary
+     * runtime and {@link LiveViewRepairRuntime} adopt the pair the same way while each
+     * owns its own copy.
+     */
+    private @Nullable LiveViewWindow buildAnchorWindow(LiveViewInstance instance, LiveViewCompiledPlan plan) throws SqlException {
         LiveViewDefinition.LvAnchorSpec spec = instance.getDefinition().getAnchorSpec();
         if (spec == null || spec.anchorExpressionSql == null) {
-            return;
+            return null;
         }
         Function fn = null;
         LiveViewWindow window = null;
@@ -1791,21 +1868,96 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // grouped function a read-only projection of it; a declined plan leaves every
             // function on the private map and the legacy root it has outside a group.
             window.bindCheckpointWindowStatePlan(wf.getCheckpointWindowStatePlan());
-            // Commit the anchor Function and window together, only after the full
-            // machinery builds. A failure before this point must not leave a
-            // half-built anchor (function set, window null): the per-row reset
-            // would never dispatch and the view would silently produce wrong
-            // results. Propagating instead leaves the compiled factory uncached
-            // (see ensureCompiledFactory) so the next refresh retries; a
-            // persistent failure invalidates via the flush-retry budget.
-            instance.setAnchorFunction(fn);
-            instance.setAnchorWindow(window);
             committed = true;
+            return window;
         } finally {
             if (!committed) {
                 Misc.free(window);
                 Misc.free(fn);
             }
+        }
+    }
+
+    /**
+     * The isolated runtime a converging out-of-order repair replays through, or null when
+     * this repair replays through the primary one.
+     * <p>
+     * Only a repair that stops at a finite convergence boundary is offered it: such a
+     * repair rebuilds the state of {@code [L, H)} and leaves the state above {@code H}
+     * alone, so the primary runtime it would otherwise wipe is already correct and there
+     * is no reason to take it aside. Everything else - an unlocalized rebuild, a localized
+     * repair whose influence reaches the frontier - replaces the runtime with its own
+     * replay state and must therefore run in it.
+     * <p>
+     * A second compile that fails does not fail the repair. The copy-aside path is still
+     * there and still correct, so the failure is logged and the repair takes it; a view
+     * that can compile its SELECT once and not twice is short of memory, not short of a
+     * runtime.
+     */
+    private @Nullable LiveViewRepairRuntime isolatedRepairRuntime(LiveViewInstance instance, boolean finiteHighBound) {
+        if (!finiteHighBound || !engine.getConfiguration().isLiveViewCheckpointRepairIsolatedRuntimeEnabled()) {
+            return null;
+        }
+        LiveViewRepairRuntime runtime = instance.getRepairRuntime();
+        if (runtime == null) {
+            try {
+                runtime = buildRepairRuntime(instance);
+            } catch (Throwable t) {
+                LOG.error().$("live view could not build an isolated repair runtime, repairing through the primary one [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", error=").$(t).I$();
+                return null;
+            }
+            instance.setRepairRuntime(runtime);
+        }
+        if ((runtime.getAnchorWindow() != null) != (instance.getAnchorWindow() != null)) {
+            // Both runtimes compile the same SELECT, so they agree on whether the view is
+            // anchored. A disagreement is a build that went wrong rather than a shape to
+            // replay through: drop it and take the copy-aside path, which reads the
+            // primary's own anchor window.
+            LOG.error().$("live view isolated repair runtime does not match the primary anchor shape [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            instance.setRepairRuntime(null);
+            return null;
+        }
+        return runtime;
+    }
+
+    /**
+     * Compiles the view's SELECT a second time and builds its own anchor machinery beside
+     * it, which together are the runtime a converging repair replays into. Nothing here is
+     * shared with the primary runtime, which is the whole point: the two hold separate
+     * window state over the same shape.
+     */
+    private LiveViewRepairRuntime buildRepairRuntime(LiveViewInstance instance) throws SqlException {
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        final TableReader localReader = acquireCompileReader(baseToken);
+        RecordCursorFactory factory = null;
+        LiveViewWindow anchorWindow = null;
+        boolean committed = false;
+        try {
+            factory = compileViewSelect(instance);
+            final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0);
+            anchorWindow = buildAnchorWindow(instance, plan);
+            final LiveViewRepairRuntime runtime = new LiveViewRepairRuntime(
+                    factory,
+                    plan,
+                    anchorWindow,
+                    anchorWindow == null ? null : anchorWindow.getAnchorExpression()
+            );
+            committed = true;
+            LOG.info().$("live view built an isolated repair runtime [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return runtime;
+        } finally {
+            if (!committed) {
+                if (anchorWindow != null) {
+                    Misc.free(anchorWindow.getAnchorExpression());
+                    Misc.free(anchorWindow);
+                }
+                Misc.free(factory);
+            }
+            releaseCompileReader(localReader);
         }
     }
 
@@ -4881,8 +5033,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Runs one more turn of a localized repair a prior turn parked on its turn
      * budget. The session hands back the pinned snapshot {@code E} the repair was
      * planned against, the live-view writer holding the replacement rows emitted so
-     * far and the staged root versions; the compiled factory still holds the window
-     * state the replay had reached. So the turn is the same replay continuing, not
+     * far and the staged root versions; the runtime the replay ran in - the isolated
+     * repair runtime for a converging repair, the primary one otherwise - still holds
+     * the window state it had reached. So the turn is the same replay continuing, not
      * a new repair: nothing is re-planned, nothing durable has moved, and the
      * bounds stay the ones derived against {@code E}.
      * <p>
@@ -4894,10 +5047,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * What it will not do is continue in a runtime that drifted. The whole premise is
      * that the compiled factory still stands where the last turn left it, so a factory
-     * rebuilt since the capture - a base-metadata recompile is the one path that does
-     * that - takes the candidate away rather than the replay: its bounds and its staged
-     * roots describe a state those functions no longer hold, and its overlay holds
-     * bytes that belong to functions now freed. Discarding is bounded and cheap, and
+     * rebuilt since the capture - a base-metadata recompile frees the primary and the
+     * isolated runtime together - takes the candidate away rather than the replay: its
+     * bounds and its staged roots describe a state those functions no longer hold, and its
+     * overlay holds bytes that belong to functions now freed. An operator who declines the
+     * isolated runtime mid-repair drifts it the other way, moving the replay onto a primary
+     * holding the forward drain's state rather than the parked replay's, and the same check
+     * catches it. Discarding is bounded and cheap, and
      * the change that triggered the repair is still unconsumed in the base, so the next
      * tick replans it at a freshly pinned snapshot. {@code prepareForBaseSchemaRecompile}
      * discards on that path already; this is the guard that keeps a future one honest.
@@ -4906,7 +5062,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             throws SqlException {
         final RecordCursorFactory compiledFactory = instance.getCompiledFactory();
         final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
-        if (compiledFactory == null || compiledPlan == null || compiledPlan.getWindowFactory() != session.getWindowFactory()) {
+        // The runtime this turn would replay through, which is the one the parked repair
+        // has to still be standing in. It covers both ways it can drift: a base-metadata
+        // recompile frees the primary and the isolated runtime together, and an operator
+        // who declines the isolated runtime mid-repair moves the replay back onto a
+        // primary that holds the forward drain's state rather than the parked replay's.
+        final LiveViewRepairRuntime repairRuntime = instance.getRepairRuntime();
+        final WindowRecordCursorFactory replayWindowFactory =
+                repairRuntime != null && engine.getConfiguration().isLiveViewCheckpointRepairIsolatedRuntimeEnabled()
+                        ? repairRuntime.getWindowFactory()
+                        : compiledPlan == null ? null : compiledPlan.getWindowFactory();
+        if (compiledFactory == null || compiledPlan == null || replayWindowFactory != session.getWindowFactory()) {
             LOG.info().$("live view runtime changed under a parked O3 repair, discarding the candidate [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", turns=").$(session.getTurns())
@@ -5966,6 +6132,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // describe it.
         repairPublication.clear();
         repairPublication.plan();
+        // The runtime this replay folds its rows into. A converging repair gets its own,
+        // holding only the keys of [L, H): the primary runtime is then neither wiped nor
+        // copied aside, and the state above H it was already correct in stays where it is.
+        // Null puts the replay back through the primary runtime, which is what an
+        // unlocalized rebuild wants - its replay state IS the new runtime - and what a
+        // converging repair falls back to when the second compile is unavailable.
+        final LiveViewRepairRuntime repairRuntime = isolatedRepairRuntime(instance, finiteHighBound);
+        final boolean isolated = repairRuntime != null;
+        if (isolated) {
+            isolatedReplayTurnCount++;
+        }
+        final WindowRecordCursorFactory replayWindowFactory = isolated ? repairRuntime.getWindowFactory() : windowFactory;
+        final LiveViewWindow replayAnchorWindow = isolated ? repairRuntime.getAnchorWindow() : anchorWindow;
         // Everything one localized repair carries across the turns it may take. A
         // repair that never yields uses it as plain scratch and disposes of it on
         // the way out; only a repair that parks leaves it on the instance. The
@@ -5974,11 +6153,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean resuming = resumed != null;
         final LiveViewCheckpointRepairSession session = resuming
                 ? resumed
-                : finiteHighBound ? openRepairSession(plan, windowFactory) : null;
+                : finiteHighBound ? openRepairSession(plan, replayWindowFactory) : null;
         boolean readerAttached = false;
-        // The scratch overlay is captured once, by the first turn, before the wipe
-        // reaches the published state.
-        boolean overlayCaptured = session != null && session.getOverlay().isCaptured();
+        // Whether the primary runtime comes out of this repair holding the state it went
+        // in with. True both for a replay that ran beside it and for one that copied it
+        // aside and puts it back; false for one whose own replay state becomes the
+        // runtime. The empty-range branch below is the one place it is retracted.
+        //
+        // A resumed turn recovers it rather than being told: the isolation is decided by
+        // the same plan the prior turn read, and a copy-aside repair left the scratch
+        // overlay captured, once, by its first turn.
+        boolean primaryKept = isolated || (session != null && session.getOverlay().isCaptured());
         // Cumulative across every turn of this repair; a resumed turn continues the
         // counts the prior ones left.
         long appendedRows = resuming ? resumed.getAppendedRows() : 0;
@@ -6076,11 +6261,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean yielded = false;
         long resumeFromTs = Numbers.LONG_NULL;
         long resumeSkipRows = 0;
-        if (resuming) {
+        if (resuming && !isolated) {
             // The accumulators already lead the last durable commit - the prior turns
             // put them there - so a fault anywhere in this turn has to rebuild them from
             // the applied base rather than let the next cycle drain over a half-replayed
             // runtime. handleRefreshFailure reads this flag to decide that.
+            //
+            // An isolated replay leads nothing: the accumulators the prior turns advanced
+            // are the isolated runtime's, and the primary's still stand exactly where the
+            // forward drain left them. A fault there costs the candidate, not the view.
             windowStateDirty = true;
         }
         try {
@@ -6095,9 +6284,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // between this point and the wipe feeds a row, so what it takes is exactly what
             // the wipe would have destroyed.
             //
-            // Only a repair holding a splice capture takes it: without one the timeline is
-            // retired outright and no generation is left for a baseline to name.
-            if (!resuming && timelineCapture != null) {
+            // A repair replaying through the primary runtime takes it only when it holds a
+            // splice capture: without one the timeline is retired outright, no generation is
+            // left for a baseline to name, and the wipe below leaves every target owing the
+            // complete freeze anyway. An isolated replay takes it either way, because it
+            // wipes nothing: its targets would otherwise keep a baseline naming a generation
+            // the retire is about to delete, and the restore below is what re-stamps that
+            // baseline against the splice or drops it.
+            if (!resuming && (timelineCapture != null || isolated)) {
                 session.getSealCarryover().capture(
                         windowFactory.getWindowFunctions(),
                         anchorWindow,
@@ -6135,7 +6329,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerAttached = true;
 
-            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+            // The replay's own decomposition: its base scan, filter, projections and window
+            // factory. An isolated replay reads every node off its own runtime, so no cursor
+            // it opens advances a memoizer or a function the forward drain reads.
+            final LiveViewCompiledPlan compiledPlan = isolated ? repairRuntime.getPlan() : instance.getCompiledPlan();
             final Function filter = compiledPlan.getFilter();
             final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
             RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
@@ -6193,32 +6390,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             if (hasReplayRow) {
                 if (!resuming) {
-                    if (finiteHighBound) {
-                        // Copy the published runtime state aside before the wipe below
-                        // reaches it. The replay has to run through these same function
-                        // instances - the compiled cursor stack owns them and there is only
-                        // one of it - so the overlay is what keeps the repair from
-                        // overwriting state it has already proved correct.
-                        session.captureRuntime(
-                                windowFactory.getWindowFunctions(),
-                                anchorWindow,
-                                instance.getMemoryTracker()
-                        );
-                        overlayCaptured = true;
+                    if (isolated) {
+                        // Nothing of the primary's moves. The replay folds into the
+                        // isolated runtime's own accumulators, so what needs rewinding to
+                        // identity is those - the segment the last repair replayed left its
+                        // keys in them - and the primary's stay exactly as the forward drain
+                        // left them, which is what makes this repair invisible to the seal
+                        // that follows it.
+                        repairRuntime.reset();
+                    } else {
+                        if (finiteHighBound) {
+                            // Copy the published runtime state aside before the wipe below
+                            // reaches it. The replay has to run through these same function
+                            // instances - the compiled cursor stack owns them and there is only
+                            // one of it - so the overlay is what keeps the repair from
+                            // overwriting state it has already proved correct.
+                            session.captureRuntime(
+                                    windowFactory.getWindowFunctions(),
+                                    anchorWindow,
+                                    instance.getMemoryTracker()
+                            );
+                            primaryKept = true;
+                        }
+                        // Reset per-function accumulator state and the anchor map to
+                        // identity. The compiled factory's WindowFunction instances
+                        // stay live so the cursor chain below can reuse them; only
+                        // their accumulated state resets. clearWindowState rewinds via
+                        // toTop(), not a bare partition-map clear, so no-partition
+                        // ranking like row_number() OVER () - whose counter lives in a
+                        // scalar field with no map - also rewinds; otherwise it would
+                        // accumulate across head-miss replays.
+                        //
+                        // A resumed turn skips both: the state it continues from is the one
+                        // the prior turn built, and the overlay already holds what the repair
+                        // took aside.
+                        clearWindowState(windowFactory, anchorWindow);
                     }
-                    // Reset per-function accumulator state and the anchor map to
-                    // identity. The compiled factory's WindowFunction instances
-                    // stay live so the cursor chain below can reuse them; only
-                    // their accumulated state resets. clearWindowState rewinds via
-                    // toTop(), not a bare partition-map clear, so no-partition
-                    // ranking like row_number() OVER () - whose counter lives in a
-                    // scalar field with no map - also rewinds; otherwise it would
-                    // accumulate across head-miss replays.
-                    //
-                    // A resumed turn skips both: the state it continues from is the one
-                    // the prior turn built, and the overlay already holds what the repair
-                    // took aside.
-                    clearWindowState(windowFactory, anchorWindow);
                     if (!finiteHighBound) {
                         // The runtime is now identity while the durable tier still holds
                         // the full history, and everything that rebuilds it can throw.
@@ -6226,11 +6433,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // knowing it must rebuild before a later turn drains over these
                         // accumulators.
                         //
-                        // The predicate is "no overlay was captured", which finiteHighBound
-                        // decides: the capture just above runs under it, so when it holds
-                        // the session's close() puts the pre-repair runtime back as the
-                        // turn unwinds and marking here would escalate a recoverable fault
-                        // into a full recompute that also discards the checkpoint timeline.
+                        // The predicate is "the primary runtime was not taken over", which
+                        // finiteHighBound decides: an isolated replay never touches it, and
+                        // a copy-aside one has the session's close() put the pre-repair
+                        // state back as the turn unwinds. Marking under either would
+                        // escalate a recoverable fault into a full recompute that also
+                        // discards the checkpoint timeline.
                         // It is NOT the same as "unlocalized" - a localized repair whose
                         // plan keeps an EOF high bound has finiteHighBound false, captures
                         // nothing, and does need the mark. A restore that itself fails
@@ -6265,8 +6473,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     timelineCapture,
                                     repairBoundaries,
                                     null,
-                                    windowFactory.getWindowFunctions(),
-                                    anchorWindow,
+                                    replayWindowFactory.getWindowFunctions(),
+                                    replayAnchorWindow,
                                     session,
                                     capturedBoundaries,
                                     pageFrameFactory.getMetadata().getTimestampIndex()
@@ -6275,11 +6483,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             source = boundaryFreezingCursor;
                         }
                         source = compiledPlan.wrapWindowInput(source, executionContext);
-                        if (anchorWindow != null) {
-                            anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                        if (replayAnchorWindow != null) {
+                            anchorDispatchingCursor.of(source, replayAnchorWindow, executionContext);
                             source = anchorDispatchingCursor;
                         }
-                        try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                        try (RecordCursor windowCursor = replayWindowFactory.getIncrementalCursor(source, executionContext)) {
                             RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
                             Record outRecord = outCursor.getRecord();
                             // Designated timestamp of the group the replay is inside, and
@@ -6414,7 +6622,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             walWriterRetained = true;
                             timelineCapture = null;
                         } else {
-                            repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
+                            repairPublication.candidateReady(runtimeDisposition(primaryKept));
                         }
                         if (!yielded && (appendedRows > 0 || localized)) {
                             // REPLACE_RANGE low boundary. replayMinTs alone freezes the
@@ -6489,7 +6697,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
                 clearWindowState(windowFactory, anchorWindow);
                 markWindowStateDirty(instance);
-                repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
+                // The primary runtime IS the identity state now, whatever the replay was
+                // going to run in. A localized repair never reaches here - it skips the
+                // probe and always has a replay row - so this retracts nothing an isolated
+                // replay established; it is stated rather than assumed.
+                primaryKept = false;
+                repairPublication.candidateReady(runtimeDisposition(primaryKept));
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
                             effectiveSeqTxn,
@@ -6508,7 +6721,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the trigger authorised no deletion, so the empty candidate set is
                 // still this repair's candidate set and the runtime still has to be
                 // settled below.
-                repairPublication.candidateReady(runtimeDisposition(overlayCaptured));
+                repairPublication.candidateReady(runtimeDisposition(primaryKept));
             }
             replayCompleted = true;
         } finally {
@@ -6516,6 +6729,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // handed the freeze cursor. Its freeze counter is already read back
             // into capturedBoundaries, and a resumed turn re-arms it from there.
             boundaryFreezingCursor.clear();
+            if (isolated && !yielded) {
+                // The repair is over - published, empty or unwinding - so the keys its
+                // replay folded into the isolated runtime describe nothing any more.
+                // Rewinding here rather than only before the next replay is what keeps an
+                // idle view from holding a repaired segment's key domain indefinitely; a
+                // parked repair is the one case that keeps it, because its next turn
+                // continues in exactly that state.
+                repairRuntime.reset();
+            }
             if (readerAttached) {
                 executionContext.clearReader();
                 engine.attachReader(reader);
@@ -6870,14 +7092,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Which state the compiled factory ends the repair holding. A repair that
-     * captured the scratch overlay proved its convergence boundary lands at or
-     * below the runtime frontier, so the state it took aside is still correct and
-     * goes back; one that did not replaced through the frontier, so the state its
-     * replay produced <i>is</i> the runtime.
+     * Which state the compiled factory ends the repair holding. A repair that kept the
+     * primary runtime proved its convergence boundary lands at or below the runtime
+     * frontier, so the state above it was correct all along - whether the replay ran on
+     * the isolated runtime and left it alone, or copied it aside and puts it back. One
+     * that did not replayed through the frontier, so the state its replay produced
+     * <i>is</i> the runtime.
      */
-    private static LiveViewCheckpointRepairPublication.RuntimeDisposition runtimeDisposition(boolean overlayCaptured) {
-        return overlayCaptured
+    private static LiveViewCheckpointRepairPublication.RuntimeDisposition runtimeDisposition(boolean primaryKept) {
+        return primaryKept
                 ? LiveViewCheckpointRepairPublication.RuntimeDisposition.KEEP_PRIMARY
                 : LiveViewCheckpointRepairPublication.RuntimeDisposition.PROMOTE_REPLAY;
     }
@@ -6970,11 +7193,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean keepPrimary = repairPublication.isKeepPrimaryRuntime();
         repairPublication.runtimePromoted();
         if (keepPrimary) {
-            try {
-                session.getOverlay().restore(windowFactory.getWindowFunctions(), anchorWindow);
-            } catch (Throwable t) {
-                markWindowStateDirty(instance);
-                throw t;
+            // Only a repair that replayed through the primary runtime has state to put
+            // back. One that ran on the isolated runtime kept the primary standing the
+            // whole way, so there is nothing to restore and nothing that can fail here -
+            // and the bookkeeping below is the entire exchange it owes.
+            if (session.getOverlay().isCaptured()) {
+                try {
+                    session.getOverlay().restore(windowFactory.getWindowFunctions(), anchorWindow);
+                } catch (Throwable t) {
+                    markWindowStateDirty(instance);
+                    throw t;
+                }
             }
             // The bookkeeping follows the state it describes, in the same exchange and
             // straight after it: the state is back, so the dirty sets naming the keys that

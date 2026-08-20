@@ -434,16 +434,6 @@ public interface CairoConfiguration {
     int getLiveViewCheckpointRepairMaxChainedBoundaries();
 
     /**
-     * Whether an out-of-order repair decomposes its change set into the anchor segments it
-     * touches and repairs each of them over its own range, instead of taking one union
-     * range running from the anchor below the deepest correction to the frontier.
-     * <p>
-     * The union range pays twice for the distance it reaches: the replay reads every base
-     * row in it, and the apply rewrites every live-view partition it covers, whole. False
-     * restores that range, which is what every repair took before the decomposition
-     * existed - an escape hatch, and the control column a measurement runs against.
-     */
-    /**
      * Whether a correction landing in a <b>closed</b> anchor segment is recorded in the
      * durable pending-repair set and repaired by a later backfill pass, rather than
      * repaired inside the refresh turn that consumed it.
@@ -464,6 +454,36 @@ public interface CairoConfiguration {
      */
     boolean isLiveViewCheckpointBackfillDeferralEnabled();
 
+    /**
+     * Whether an out-of-order repair that converges below the runtime frontier replays
+     * through a second compiled runtime of the view's own SELECT, instead of through the
+     * primary one the forward drain stands in.
+     * <p>
+     * Such a repair reconstructs the state of the range it repairs, and proves by
+     * converging that the state above that range was already correct. Replaying through
+     * the primary runtime therefore means taking the whole window state aside first and
+     * putting it back afterwards - a copy as large as the state itself, paid twice per
+     * repair, and at 20M keys per anchor day the largest allocation on the path. The
+     * isolated runtime holds only the keys of the range being repaired, so the primary's
+     * state, dirty sets and checkpoint baseline are never read, written or wiped.
+     * <p>
+     * False restores that exchange, which is what every converging repair took before the
+     * isolated runtime existed - an escape hatch, and the control column a measurement
+     * runs against. It costs one extra compiled factory per view that ever takes a
+     * converging repair, which is why an operator can decline it.
+     */
+    boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
+
+    /**
+     * Whether an out-of-order repair decomposes its change set into the anchor segments it
+     * touches and repairs each of them over its own range, instead of taking one union
+     * range running from the anchor below the deepest correction to the frontier.
+     * <p>
+     * The union range pays twice for the distance it reaches: the replay reads every base
+     * row in it, and the apply rewrites every live-view partition it covers, whole. False
+     * restores that range, which is what every repair took before the decomposition
+     * existed - an escape hatch, and the control column a measurement runs against.
+     */
     boolean isLiveViewCheckpointRepairPerSegmentEnabled();
 
     /**

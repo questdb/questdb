@@ -1139,6 +1139,16 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * @return the compiled ANCHOR expression this window dispatches on. Owned upstream -
+     * the window neither initialises nor frees it - and handed back so a caller that
+     * builds a window can adopt the function beside it rather than carrying the pair
+     * through its own out-parameter
+     */
+    public Function getAnchorExpression() {
+        return anchorExpression;
+    }
+
+    /**
      * @return the {@link Map} implementation the window's one partition map landed on.
      * {@code MapFactory} selects on {@code keySize + valueSize} against
      * {@code cairo.sql.unordered.map.max.entry.size}, so fusing the components into the

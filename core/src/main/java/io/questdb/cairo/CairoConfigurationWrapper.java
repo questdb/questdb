@@ -520,6 +520,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
+    }
+
+    @Override
     public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
         return getDelegate().isLiveViewCheckpointRepairPerSegmentEnabled();
     }
