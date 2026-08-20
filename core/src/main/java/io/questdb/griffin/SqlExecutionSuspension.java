@@ -31,11 +31,7 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SqlExecutionSuspension {
     public static @Nullable Fiber currentFiber() {
-        final SuspensionScope.Mode mode = SuspensionScope.getMode();
-        if (mode == SuspensionScope.Mode.FORBIDDEN) {
-            throw CairoException.nonCritical().put("SQL suspension is forbidden in this execution context");
-        }
-        if (mode != SuspensionScope.Mode.FIBER) {
+        if (SuspensionScope.getMode() != SuspensionScope.Mode.FIBER) {
             return null;
         }
         final Fiber fiber = Fiber.current();

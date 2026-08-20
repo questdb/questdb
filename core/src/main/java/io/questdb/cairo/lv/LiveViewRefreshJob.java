@@ -82,7 +82,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -513,13 +512,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            return processNotifications();
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        return processNotifications();
     }
 
     /**

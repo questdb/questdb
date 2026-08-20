@@ -36,7 +36,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
@@ -135,13 +134,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final GroupByLongTopKTask task = queue.get(cursor);
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            run(workerContext.carrierId(), task, subSeq, cursor, null);
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        run(workerContext.carrierId(), task, subSeq, cursor, null);
         return true;
     }
 }

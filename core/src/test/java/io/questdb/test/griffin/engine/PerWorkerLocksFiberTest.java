@@ -326,12 +326,12 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         pubSeq.done(cursor);
 
         final GroupByVectorAggregateJob job = new GroupByVectorAggregateJob(messageBus);
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN);
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         try {
             Assert.assertTrue(job.run());
             Assert.assertTrue(entry.hasRun);
             Assert.assertEquals(SuspensionScope.Mode.BLOCKING, entry.observedMode);
-            Assert.assertEquals(SuspensionScope.Mode.FORBIDDEN, SuspensionScope.getMode());
+            Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
         } finally {
             SuspensionScope.restore(previousMode);
         }

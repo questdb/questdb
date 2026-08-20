@@ -90,19 +90,6 @@ public class SqlExecutionSuspensionTest {
     }
 
     @Test
-    public void testForbiddenModeThrows() {
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN);
-        try {
-            SqlExecutionSuspension.currentFiber();
-            Assert.fail();
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "SQL suspension is forbidden");
-        } finally {
-            SuspensionScope.restore(previousMode);
-        }
-    }
-
-    @Test
     public void testNullModeReturnsNull() {
         final SuspensionScope.Mode previousMode = SuspensionScope.enter(null);
         try {

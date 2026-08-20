@@ -59,14 +59,6 @@ public final class SuspensionScope {
                 : CancellationBinding.NO_GENERATION;
     }
 
-    // Same shared-handle rule as enterBlocking(): FORBIDDEN admits no suspension at all, so the
-    // carrier cannot change between enter and restore.
-    public static @Nullable Mode enterForbidden(CarrierScope scope) {
-        final Mode previous = scope.mode;
-        scope.mode = Mode.FORBIDDEN;
-        return previous;
-    }
-
     public static void enterRoleSwitchReadLock(CarrierScope scope, Lock lock) {
         final RoleSwitchReadLockState state = getRoleSwitchReadLockState(scope);
         final boolean isFirstLock = !state.hasAny();
@@ -223,8 +215,7 @@ public final class SuspensionScope {
 
     public enum Mode {
         BLOCKING,
-        FIBER,
-        FORBIDDEN
+        FIBER
     }
 
     // Opaque outside this package: the fields stay package-private.

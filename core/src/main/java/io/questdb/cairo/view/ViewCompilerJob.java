@@ -40,7 +40,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -93,8 +92,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             SqlExecutionContext executionContext,
             ObjList<TableToken> tempSink
     ) {
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
             engine.getTableTokens(tableTokens, false);
@@ -112,11 +109,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
         } finally {
-            try {
-                Path.clearThreadLocals();
-            } finally {
-                SuspensionScope.restoreMode(suspensionScope, previousMode);
-            }
+            Path.clearThreadLocals();
         }
     }
 
@@ -138,13 +131,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            return processNotifications();
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        return processNotifications();
     }
 
     private static void compileView(

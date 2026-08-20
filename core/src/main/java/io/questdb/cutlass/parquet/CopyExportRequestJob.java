@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
@@ -208,16 +207,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     private void processRequest(int carrierId) {
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            processRequestBlocking(carrierId);
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
-    }
-
-    private void processRequestBlocking(int carrierId) {
         final CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         final SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;

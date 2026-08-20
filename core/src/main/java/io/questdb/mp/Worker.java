@@ -243,7 +243,7 @@ public class Worker extends Thread {
                 ? SuspensionScope.scope()
                 : null;
         final SuspensionScope.Mode previousMode = suspensionScope != null
-                ? SuspensionScope.enterForbidden(suspensionScope)
+                ? SuspensionScope.enterBlocking(suspensionScope)
                 : null;
         jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
         try {

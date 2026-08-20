@@ -724,11 +724,11 @@ public class FiberWorkerPoolTest {
             ));
             final AtomicBoolean hasRunPlainJob = new AtomicBoolean();
             final AtomicBoolean isPlainJobFrame = new AtomicBoolean();
-            final AtomicBoolean isPlainJobSuspensionForbidden = new AtomicBoolean();
+            final AtomicBoolean isPlainJobSuspensionBlocking = new AtomicBoolean();
             pool.assign(workerContext -> {
                 isPlainJobFrame.set(Fiber.current() == null);
-                isPlainJobSuspensionForbidden.set(
-                        SuspensionScope.getMode() == SuspensionScope.Mode.FORBIDDEN
+                isPlainJobSuspensionBlocking.set(
+                        SuspensionScope.getMode() == SuspensionScope.Mode.BLOCKING
                 );
                 hasRunPlainJob.set(true);
                 return false;
@@ -742,7 +742,7 @@ public class FiberWorkerPoolTest {
                 Assert.assertEquals(FiberTask.STATE_OWNED, waiting.getScheduleState());
                 Assert.assertTrue(hasRunPlainJob.get());
                 Assert.assertTrue(isPlainJobFrame.get());
-                Assert.assertTrue(isPlainJobSuspensionForbidden.get());
+                Assert.assertTrue(isPlainJobSuspensionBlocking.get());
 
                 waiting.fire();
                 TestUtils.assertEventually(() -> Assert.assertTrue(waiting.isDone()));

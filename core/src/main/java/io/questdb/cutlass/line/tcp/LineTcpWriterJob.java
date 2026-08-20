@@ -30,7 +30,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -83,18 +82,12 @@ class LineTcpWriterJob implements Job, Closeable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            final boolean isBusy = drainQueue();
-            if (!isBusy) {
-                commitTables();
-                tickWriters();
-            }
-            return isBusy;
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
+        final boolean isBusy = drainQueue();
+        if (!isBusy) {
+            commitTables();
+            tickWriters();
         }
+        return isBusy;
     }
 
     private void commitTables() {

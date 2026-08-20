@@ -52,7 +52,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -1114,15 +1113,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * pool worker never races the LV's own refresh worker.
      */
     public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
-        // Mirrors doRun(): WAL apply must never fiber-suspend, or an applied UPDATE that
-        // waits on WAL progress would park the apply it depends on.
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            applyWal(tableToken, engine, operationExecutor, runStatus);
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        // WAL apply must never fiber-suspend, or an applied UPDATE that waits on WAL progress
+        // would park the apply it depends on; generateUpdate rejects such statements at compile
+        // time, and no caller reaches applyWal from a mounted fiber.
+        applyWal(tableToken, engine, operationExecutor, runStatus);
     }
 
     /**
@@ -1245,13 +1239,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return true;
         }
 
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            applyWal(tableToken, engine, operationExecutor, workerContext);
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        applyWal(tableToken, engine, operationExecutor, workerContext);
         return true;
     }
 

@@ -57,7 +57,6 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -189,16 +188,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        if (fiberRuntime != null) {
-            return processNotifications();
-        }
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            return processNotifications();
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        return processNotifications();
     }
 
     private static long approxStepDuration(long step, long approxBucketSize) {

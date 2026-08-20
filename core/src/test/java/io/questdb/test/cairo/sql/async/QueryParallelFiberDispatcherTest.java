@@ -390,6 +390,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
             }
         });
     }
+
     @Test
     public void testMergeShardOwnerHelpsWithoutConsumers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -788,6 +789,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
             }
         });
     }
+
     @Test
     public void testQuiesceDrainFailsParkedLatestByOwner() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

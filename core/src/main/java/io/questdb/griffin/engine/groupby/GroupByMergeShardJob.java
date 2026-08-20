@@ -33,7 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -112,13 +111,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final GroupByMergeShardTask task = queue.get(cursor);
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-        try {
-            run(workerContext.carrierId(), task, subSeq, cursor, null);
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
-        }
+        run(workerContext.carrierId(), task, subSeq, cursor, null);
         return true;
     }
 }

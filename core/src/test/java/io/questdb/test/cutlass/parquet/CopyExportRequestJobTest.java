@@ -113,7 +113,7 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRestoresSuspensionModeAfterRequestFailure() throws Exception {
+    public void testRequestFailureLeavesSuspensionModeUntouched() throws Exception {
         assertMemoryLeak(() -> {
             publishCopy("COPY (SELECT 1 AS x) TO 'failed' WITH FORMAT parquet");
             try (CopyExportRequestJob job = new CopyExportRequestJob(
@@ -123,10 +123,10 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
                         throw new IllegalStateException("expected callback failure");
                     }
             )) {
-                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN);
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
                 try {
                     Assert.assertTrue(job.run());
-                    Assert.assertEquals(SuspensionScope.Mode.FORBIDDEN, SuspensionScope.getMode());
+                    Assert.assertEquals(SuspensionScope.Mode.BLOCKING, SuspensionScope.getMode());
                 } finally {
                     SuspensionScope.restore(previousMode);
                 }

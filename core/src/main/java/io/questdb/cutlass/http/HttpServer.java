@@ -46,7 +46,6 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeConfigurationListener;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
@@ -661,16 +660,10 @@ public class HttpServer implements Closeable {
                 useful |= rescheduleContext.launchReruns(runtime, launcher);
                 return useful;
             }
-            final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-            final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
-            try {
-                selectorFactory.populateMissing(selector);
-                boolean useful = dispatcher.processIOQueue(processor);
-                useful |= rescheduleContext.runReruns(selector);
-                return useful;
-            } finally {
-                SuspensionScope.restoreMode(suspensionScope, previousMode);
-            }
+            selectorFactory.populateMissing(selector);
+            boolean useful = dispatcher.processIOQueue(processor);
+            useful |= rescheduleContext.runReruns(selector);
+            return useful;
         }
 
         private boolean handleLaunchResult(HttpConnectionContext context, LaunchResult result) {

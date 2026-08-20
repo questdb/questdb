@@ -290,25 +290,6 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testContentionIsForbiddenWithoutScope() {
-        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
-        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FORBIDDEN);
-        try {
-            try {
-                locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "reducer slot wait is forbidden");
-            }
-        } finally {
-            SuspensionScope.restore(previousMode);
-            locks.releaseSlot(heldSlot);
-        }
-        Assert.assertEquals(0, locks.getAcquiredSlotCount());
-    }
-
-    @Test
     public void testContentionSpinsOnNullScope() {
         // A thread that never entered a suspension scope (an embedded caller) falls back to the
         // legacy spin loop instead of failing the query.

@@ -39,7 +39,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -138,8 +137,6 @@ public class PGServer implements Closeable {
                 }
             } else {
                 final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
-                    final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-                    final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -167,8 +164,6 @@ public class PGServer implements Closeable {
                         // This is a critical error, so we treat it as an unhandled one.
                         metrics.healthMetrics().incrementUnhandledErrors();
                         dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
-                    } finally {
-                        SuspensionScope.restoreMode(suspensionScope, previousMode);
                     }
                     return false;
                 };

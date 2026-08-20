@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -53,14 +52,10 @@ public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAg
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final VectorAggregateEntry entry = queue.get(cursor).entry;
-        final SuspensionScope.CarrierScope suspensionScope = SuspensionScope.scope();
-        final SuspensionScope.Mode previousMode = SuspensionScope.enterBlocking(suspensionScope);
         try {
             entry.run(workerContext.carrierId(), subSeq, cursor);
         } catch (Throwable th) {
             LOG.error().$("vectorized reduce error [ex=").$(th).I$();
-        } finally {
-            SuspensionScope.restoreMode(suspensionScope, previousMode);
         }
         return true;
     }

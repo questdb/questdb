@@ -215,9 +215,6 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             }
             throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }
-        if (mode == SuspensionScope.Mode.FORBIDDEN) {
-            throw CairoException.nonCritical().put("reducer slot wait is forbidden in this execution scope");
-        }
         while (true) {
             checkCircuitBreaker(circuitBreaker, statefulCircuitBreaker);
             Os.pause();
