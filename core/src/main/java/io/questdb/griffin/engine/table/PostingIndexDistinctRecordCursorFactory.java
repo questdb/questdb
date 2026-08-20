@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
@@ -48,6 +49,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
+    private final CompositeAwarePartitionFrameCursor compositeFrameCursor = new CompositeAwarePartitionFrameCursor();
 
     private final DistinctCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
@@ -69,15 +71,19 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     @Override
     public void close() {
         Misc.free(dfcFactory);
+        Misc.free(compositeFrameCursor);
         Misc.free(cursor);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                false
         );
         try {
             cursor.of(frameCursor, executionContext.getCircuitBreaker());
@@ -241,7 +247,13 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 );
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi();
-                boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
+                // collectDistinctKeys() (no range) scans the WHOLE persisted index chain, including any
+                // dead-space bytes a composite partition's pieces do not cover -- so a full-looking frame
+                // (rowLo == 0, rowHi == live row count) only licenses the unbounded scan when the partition
+                // is genuinely not composite. A composite partition always falls back to the ranged scan,
+                // which CompositeAwarePartitionFrameCursor has already bounded to physical piece rows.
+                boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex)
+                        && !tableReader.getTxFile().isPartitionComposite(partitionIndex);
                 foundCount += fullPartition
                         ? indexReader.collectDistinctKeys(foundKeys)
                         : indexReader.collectDistinctKeysInRange(foundKeys, rowLo, rowHi - 1);
