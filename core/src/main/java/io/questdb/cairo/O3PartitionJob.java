@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.FrameColumn;
@@ -417,6 +418,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dedupColSinkAddr,
                     ctx.bounds,
                     plan,
+                    ctx,
                     partitionUpdateSinkAddr,
                     oldPartitionSize,
                     o3TimestampLo
@@ -438,8 +440,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         final int columnCount = tableWriter.getMetadata().getColumnCount();
-        final long[] columnTopAfter = new long[columnCount];
-        Arrays.fill(columnTopAfter, -1L);
+        ctx.resetColumnTopAfter(columnCount);
+        ctx.sinkPartitionTimestamp = partitionTimestamp;
         // readFrom() clears ctx.transientVersions itself, so no separate reset is needed - see
         // TransientColumnVersions and executeCompositePlan's own comment.
         ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
@@ -457,7 +459,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 plan,
                 ctx.pieces,
                 ctx.transientVersions,
-                columnTopAfter
+                ctx
         );
 
         // Does this partition END UP composite AT ALL? Pieces that TILE [0, physicalRows) with no holes are
@@ -560,10 +562,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, geometryRef);
-        // Publishes columnTopAfter (see executeCompositePlan) through the sink TableWriter.updateO3ColumnTops
-        // applies from; -1 means no change.
+        // Publishes ctx.columnTopAfter (see executeCompositePlan) through the sink
+        // TableWriter.updateO3ColumnTops applies from; -1 means no change.
         for (int i = 0; i < columnCount; i++) {
-            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, columnTopAfter[i]);
+            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
         }
     }
 
@@ -606,7 +608,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3CompositeMergeStrategy.Plan plan,
             LongList piecesOut,
             TransientColumnVersions transientVersions,
-            long[] columnTopAfter
+            ColumnTopSink columnTopSink
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
@@ -630,10 +632,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long appendTsHi = 0;
         long appendRowCount = 0;
         try (
-                Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, (columnIndex, columnTop) -> {
-                    transientVersions.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
-                    columnTopAfter[columnIndex] = transientVersions.getColumnTop(partitionTimestamp, columnIndex);
-                }, partitionE);
+                Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, columnTopSink, partitionE);
                 Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
         ) {
             if (plan.appendActionIndex > -1) {
@@ -909,6 +908,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dedupColSinkAddr,
             LongList bounds,
             O3CompositeMergeStrategy.Plan plan,
+            O3CompositeContext ctx,
             long partitionUpdateSinkAddr,
             long oldPartitionSize,
             long o3TimestampLo
@@ -934,10 +934,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // -1 until some action reports a column-top change through target's sink; read by
         // TableWriter.updateO3ColumnTops via the partition-update sink once every action below has run.
         final int columnCount = metadata.getColumnCount();
-        final long[] columnTopAfter = new long[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            columnTopAfter[i] = -1L;
-        }
+        ctx.resetColumnTopAfter(columnCount);
+        ctx.sinkPartitionTimestamp = partitionTimestamp;
         try (Path dstPath = new Path()) {
             dstPath.of(pathToTable);
             TableUtils.setPathForNativePartition(
@@ -946,22 +944,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             createDirsOrFail(tableWriter.getFilesFacade(), dstPath, tableWriter.getConfiguration().getMkDirMode());
 
             // Neither frame below may read or write through the live tableWriter.getColumnVersionWriter()
-            // directly (worker threads share it - see ColumnTopSink). srcColumnVersions is a frozen,
-            // read-only snapshot for the OLD directory's KEEP/MERGE source opens. targetVersions is a
-            // SEPARATE, writable one for the fresh directory: target's own clamp needs to see an earlier
-            // action's write to the same column within this same call, which a frozen snapshot can't give
-            // it. columnTopAfter (published below) is set directly from whatever targetVersions converges
-            // to, action by action.
-            final ColumnVersionReader srcColumnVersions = new ColumnVersionReader();
-            srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
-            final TransientColumnVersions targetVersions = new TransientColumnVersions();
-            targetVersions.readFrom(tableWriter.getColumnVersionWriter());
+            // directly (worker threads share it - see ColumnTopSink). ctx.srcColumnVersions is a frozen,
+            // read-only snapshot for the OLD directory's KEEP/MERGE/APPEND source opens.
+            // ctx.transientVersions is a SEPARATE, writable one for the fresh directory: target's own
+            // clamp needs to see an earlier action's write to the same column within this same call,
+            // which a frozen snapshot can't give it. ctx.columnTopAfter (published below) is set directly
+            // from whatever ctx.transientVersions converges to, action by action.
+            ctx.srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
+            ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
             try (
-                    Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, targetVersions,
-                            (columnIndex, columnTop) -> {
-                                targetVersions.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
-                                columnTopAfter[columnIndex] = targetVersions.getColumnTop(partitionTimestamp, columnIndex);
-                            }, 0);
+                    Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
                     Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
             ) {
                 final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
@@ -983,7 +975,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                             try (
                                     Frame source = frameFactory.openRO(
-                                            srcPath, partitionTimestamp, metadata, srcColumnVersions, pieceHi
+                                            srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, pieceHi
                                     )
                             ) {
                                 FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
@@ -1011,7 +1003,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // commit's own rows touch.
                             try (
                                     Frame source = frameFactory.openRO(
-                                            srcPath, partitionTimestamp, metadata, srcColumnVersions, pieceHi
+                                            srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, pieceHi
                                     )
                             ) {
                                 FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
@@ -1041,7 +1033,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             try {
                                 try (
                                         Frame source = frameFactory.openRO(
-                                                srcPath, partitionTimestamp, metadata, srcColumnVersions, pieceHi
+                                                srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, pieceHi
                                         )
                                 ) {
                                     try (FrameColumn timestampColumn = source.createColumn(metadata.getTimestampIndex())) {
@@ -1126,10 +1118,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, TableWriter.NO_GEOMETRY_REF);
-        // Publishes columnTopAfter; -1 means no change. TableWriter.updateO3ColumnTops reads this sink
-        // region and upserts it.
+        // Publishes ctx.columnTopAfter; -1 means no change. TableWriter.updateO3ColumnTops reads this
+        // sink region and upserts it.
         for (int i = 0; i < columnCount; i++) {
-            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, columnTopAfter[i]);
+            Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
         }
     }
 
@@ -5193,9 +5185,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     /**
      * The composite plan's scratch, reused across partitions on one worker.
      */
-    private static class O3CompositeContext implements Mutable, Closeable {
+    private static class O3CompositeContext implements ColumnTopSink, Mutable, Closeable {
         private final LongList bounds = new LongList();
         private final WalTxnClusterer clusterer = new WalTxnClusterer();
+        // Pooled scratch for setColumnTop() below; grows to the widest table seen, never shrinks.
+        private long[] columnTopAfter = new long[0];
         private final LongList cuts = new LongList();
         // One instance, reused across every partition and every table this worker ever plans. Never
         // shared with another carrier thread - CarrierLocal already guarantees that, the same way it
@@ -5211,6 +5205,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // computeActions resets plan.actions itself (setPos(0), not clear()) so its pooled Action objects
         // survive a shorter plan; nothing here needs to touch it.
         private final O3CompositeMergeStrategy.Plan plan = new O3CompositeMergeStrategy.Plan();
+        // Partition setColumnTop() upserts into - set before every use, like transientVersions itself.
+        private long sinkPartitionTimestamp;
+        // Frozen source snapshot for assembleFreshPartitionVersion's piece copies.
+        private final ColumnVersionReader srcColumnVersions = new ColumnVersionReader();
         // executeCompositePlan's own private, in-memory column-version view - see TransientColumnVersions.
         private final TransientColumnVersions transientVersions = new TransientColumnVersions();
 
@@ -5224,7 +5222,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         @Override
         public void close() {
             geometry.close();
+            srcColumnVersions.close();
             transientVersions.close();
+        }
+
+        @Override
+        public void setColumnTop(int columnIndex, long columnTop) {
+            transientVersions.upsertColumnTop(sinkPartitionTimestamp, columnIndex, columnTop);
+            columnTopAfter[columnIndex] = transientVersions.getColumnTop(sinkPartitionTimestamp, columnIndex);
+        }
+
+        private void resetColumnTopAfter(int columnCount) {
+            if (columnTopAfter.length < columnCount) {
+                columnTopAfter = new long[columnCount];
+            }
+            Arrays.fill(columnTopAfter, 0, columnCount, -1L);
         }
     }
 }
