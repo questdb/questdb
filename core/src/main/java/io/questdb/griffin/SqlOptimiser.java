@@ -576,6 +576,15 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private static boolean hasNestedUnionAll(IQueryModel model) {
+        for (IQueryModel u = model.getNestedModel(); u != null; u = u.getNestedModel()) {
+            if (u.getUnionModel() != null && u.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Returns true when rewriteSampleBy moved a non-NONE FILL list onto
      * baseModel.fillValues. Callers use this to detect SAMPLE BY FILL in the
@@ -999,6 +1008,29 @@ public class SqlOptimiser implements Mutable {
                 || hasFillFastPathTz)
                 && sampleByOffset != null
                 && sampleByOffset != SqlParser.ZERO_OFFSET;
+    }
+
+    // If every window column shares one identical OVER (ORDER BY <col> <dir>), returns the first such
+    // window column (the caller reads the order column and direction from it); otherwise null.
+    private static WindowExpression uniformWindowOrderColumn(IQueryModel model) {
+        WindowExpression first = null;
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                final WindowExpression ac = (WindowExpression) qc;
+                if (ac.getOrderBy().size() != 1) {
+                    return null;
+                }
+                if (first == null) {
+                    first = ac;
+                } else if (!Chars.equalsIgnoreCase(ac.getOrderBy().getQuick(0).token, first.getOrderBy().getQuick(0).token)
+                        || ac.getOrderByDirection().getQuick(0) != first.getOrderByDirection().getQuick(0)) {
+                    return null;
+                }
+            }
+        }
+        return first;
     }
 
     private static void unlinkDependencies(IQueryModel model, int parent, int child) {
@@ -5424,6 +5456,19 @@ public class SqlOptimiser implements Mutable {
         return isTimestampLiteral(timestampArg, timestampColumn);
     }
 
+    // True when this model is a UNION ALL branch (has siblings via getUnionModel()) whose single-column
+    // order-by advice resolves to the union's designated timestamp - the precondition for pushing that
+    // timestamp order uniformly into every branch.
+    private boolean isDesignatedTimestampUnionAllBranch(IQueryModel model, ObjList<ExpressionNode> orderByAdvice) {
+        if (orderByAdvice.size() != 1
+                || model.getUnionModel() == null
+                || model.getSetOperationType() != IQueryModel.SET_OPERATION_UNION_ALL) {
+            return false;
+        }
+        final CharSequence ts = findTimestamp(model);
+        return ts != null && Chars.equalsIgnoreCase(orderByAdvice.getQuick(0).token, ts);
+    }
+
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -6842,6 +6887,10 @@ public class SqlOptimiser implements Mutable {
 
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
     private void optimiseOrderBy(IQueryModel model, int topLevelOrderByMnemonic) {
+        optimiseOrderBy(model, topLevelOrderByMnemonic, -1);
+    }
+
+    private void optimiseOrderBy(IQueryModel model, int topLevelOrderByMnemonic, int coveredUnionSuffixOrderDirection) {
         if (!model.isOptimisable()) {
             return;
         }
@@ -6915,8 +6964,30 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
-        final IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
+        ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
+        IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
+
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW
+                && orderByAdvice.size() == 0
+                && model.getOrderBy().size() == 0
+                && hasNestedUnionAll(model)) {
+            final WindowExpression over = uniformWindowOrderColumn(model);
+            if (over != null) {
+                orderByAdvice.clear();
+                orderByAdvice.add(over.getOrderBy().getQuick(0));
+                final IntList overDirs = new IntList();
+                overDirs.add(over.getOrderByDirection().getQuick(0));
+                orderByDirectionAdvice = overDirs;
+                orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+            }
+        }
+
+        final boolean isTsOrderPushEligible = orderByDirectionAdvice.size() == 1
+                && isDesignatedTimestampUnionAllBranch(model, orderByAdvice);
+        final int tsOrderDirection = isTsOrderPushEligible ? orderByDirectionAdvice.getQuick(0) : -1;
+        final boolean isTsOrderPushed = isTsOrderPushEligible
+                && (coveredUnionSuffixOrderDirection == tsOrderDirection
+                || pushTimestampOrderIntoUnionBranches(model.getUnionModel(), tsOrderDirection));
 
         if (
                 model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW
@@ -6952,7 +7023,14 @@ public class SqlOptimiser implements Mutable {
             union.copyOrderByAdvice(orderByAdvice);
             union.copyOrderByDirectionAdvice(orderByDirectionAdvice);
             union.setOrderByAdviceMnemonic(orderByMnemonic);
-            optimiseOrderBy(union, orderByMnemonic);
+            final int coveredDirectionForSibling = isTsOrderPushed
+                    ? tsOrderDirection
+                    : coveredUnionSuffixOrderDirection;
+            optimiseOrderBy(
+                    union,
+                    isTsOrderPushed ? OrderByMnemonic.ORDER_BY_REQUIRED : orderByMnemonic,
+                    coveredDirectionForSibling
+            );
         }
     }
 
@@ -7821,6 +7899,30 @@ public class SqlOptimiser implements Mutable {
                 model.getNestedModel().setWhereClause(whereClause);
             }
         }
+    }
+
+    // Pushes a designated-timestamp ORDER BY in the given direction into each subsequent union branch, so
+    // the whole union scans uniformly. Validates all branches first (all-or-nothing): every branch must
+    // have a designated timestamp and must not be shared - mutating a shared model would leak the injected
+    // order into its other reference. The validation loop stashes each branch's timestamp so the apply
+    // loop does not recompute the recursive findTimestamp walk.
+    private boolean pushTimestampOrderIntoUnionBranches(IQueryModel firstSibling, int direction) {
+        final ObjList<CharSequence> branchTimestamps = new ObjList<>();
+        for (IQueryModel b = firstSibling; b != null; b = b.getUnionModel()) {
+            final CharSequence ts = findTimestamp(b);
+            if (ts == null || b.hasSharedRefs()) {
+                return false;
+            }
+            branchTimestamps.add(ts);
+        }
+        int i = 0;
+        for (IQueryModel b = firstSibling; b != null; b = b.getUnionModel()) {
+            if (b.getOrderBy().size() == 0) {
+                b.addOrderBy(nextLiteral(branchTimestamps.getQuick(i)), direction);
+            }
+            i++;
+        }
+        return true;
     }
 
     /**
