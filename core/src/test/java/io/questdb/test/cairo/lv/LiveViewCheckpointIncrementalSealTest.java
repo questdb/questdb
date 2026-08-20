@@ -1239,6 +1239,75 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testResumeFromAnchorSealsOnlyTheKeysItsReplayTouched() throws Exception {
+        // One boundary per commit, so the late row below has an anchor strictly under it
+        // and the seal that closes the repair has a predecessor root to build on.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0), "
+                            + "('2026-01-01T11:00:04.000000Z', 'acct-5', 50.0), "
+                            + "('2026-01-01T11:00:05.000000Z', 'acct-6', 60.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertHeadRootPartitionCount(6);
+
+                // Two forward commits, so the timeline carries boundaries above the seed's
+                // and the repair below has one to drop as well as one to keep.
+                commit("('2026-01-01T11:00:10.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-01T11:00:11.000000Z', 'acct-2', 2.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                final long resumeBefore = viewInstance().getO3ResumeReplayRows();
+                // A late row above the seed's boundary and below both commits. The repair
+                // resumes from that boundary, so its replay reads the three rows above it -
+                // which move acct-1 and acct-2 and no other account.
+                commit("('2026-01-01T11:00:06.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertTrue(
+                        "a late row with a boundary below it must repair through a resume",
+                        viewInstance().getO3ResumeReplayRows() > resumeBefore
+                );
+
+                // The seal that closes the repair images those two keys. Restoring the
+                // anchor before the truncate published it left the runtime with no
+                // baseline, and every repair seal then re-imaged the whole live domain -
+                // six keys here, twenty million in the workload this is written for.
+                Assert.assertEquals(
+                        "the repair seal must image the keys its replay touched, not the live domain",
+                        2,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                // The other four accounts keep the entries the anchor root already holds,
+                // so the root the repair published must still name all six.
+                assertHeadRootPartitionCount(6);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // An incremental seal that dropped or staled an untouched key is invisible
+            // while the runtime serves from memory; the restart is what reads the root.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                // Rows for accounts the repair seal left alone. A root that lost their
+                // accumulators shows up here as a cumulative sum restarting from this row
+                // rather than as a missing key.
+                commit("('2026-01-01T11:00:20.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:21.000000Z', 'acct-6', 6.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
     public void testRestoreFromANonHeadRootDoesNotAdoptAnIncrementalBaseline() throws Exception {
         // One boundary per commit, so the timeline below holds several of them and the
         // head has a predecessor to restore instead.

@@ -394,6 +394,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final StringSink walNameSink = new StringSink();
     private final Path walPath = new Path();
     private final WalSegmentRecordCursor walRecordCursor;
+    // What the last truncateOrRetireTimelineOnO3 published, or LONG_NULL when it
+    // retired instead: the generation it committed and the boundary it left as that
+    // generation's head. Worker-owned and rewritten by every truncate; read once,
+    // immediately, by the resume replay deciding whether the runtime it holds may
+    // adopt that head as its incremental checkpoint baseline.
+    private long truncatedHeadCheckpointId = Numbers.LONG_NULL;
+    private long truncatedHeadGeneration = Numbers.LONG_NULL;
+    private long truncatedHeadMaxTs = Numbers.LONG_NULL;
     // True once the drain feeds a row to the incremental cursor; cleared on turn
     // entry and on every durable commit (fencedLiveViewCommit). If set at failure
     // time, the accumulators lead the last durable commit -> handleRefreshFailure
@@ -3257,6 +3265,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private boolean truncateOrRetireTimelineOnO3(LiveViewInstance instance, long floorTs) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        truncatedHeadGeneration = Numbers.LONG_NULL;
+        truncatedHeadMaxTs = Numbers.LONG_NULL;
+        truncatedHeadCheckpointId = Numbers.LONG_NULL;
         try {
             path.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -3306,6 +3317,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (preserved) {
                     instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
                     instance.recordCheckpointTimelineStats(result.getStats());
+                    truncatedHeadGeneration = result.getGeneration();
+                    truncatedHeadMaxTs = result.getHeadMaxTimestamp();
+                    truncatedHeadCheckpointId = result.getHeadCheckpointId();
                 } else {
                     // No prefix survived after all - drop the marker before retiring.
                     LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), path);
@@ -4186,18 +4200,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = anchorDispatchingCursor;
                     }
                     try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                        final long anchorLvRowPosition;
-                        if (canReuseRuntimeAnchor(instance, windowFactory, plan)) {
-                            // The selected anchor is the root the current head
-                            // mirrors, this runtime is the one that froze it, and no
-                            // row has entered the window pipeline since. The live
-                            // maps and arenas therefore already are the anchor's
-                            // state, and the lifetime row counter is still the
-                            // position the root recorded. Avoid decoding the same
-                            // immutable pages to write that state back over itself.
-                            anchorLvRowPosition = instance.getLvRowsTotal();
-                            runtimeAnchorReuseCount++;
-                        } else {
+                        // Read before the truncate below clears the head, which is half
+                        // of what identifies the runtime as the anchor's own state.
+                        final boolean isRuntimeAnchorReused = canReuseRuntimeAnchor(instance, windowFactory, plan);
+                        if (!isRuntimeAnchorReused) {
                             // Drop pre-O3 drift before restoring the anchor root:
                             // clear each function's partition map so accumulator
                             // state that outran the root's snapshot moment is
@@ -4215,10 +4221,45 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     m.clear();
                                 }
                             }
-                            // Wiped, and restoreAnchorRoot below can fail or come back
-                            // empty, so the runtime is inconsistent until the replay
-                            // commits.
+                            // Wiped, and the restore below can fail or come back empty, so
+                            // the runtime is inconsistent until the replay commits.
                             markWindowStateDirty(instance);
+                        }
+                        // Preserve the roots below the output floor (the anchor among
+                        // them) instead of retiring the whole timeline for one
+                        // predecessor-resume repair; the marker this writes forces a
+                        // mid-repair crash to rebuild from the applied base.
+                        //
+                        // Ordered BEFORE the restore, which is what lets the seal that
+                        // closes this repair freeze incrementally. The truncate leaves the
+                        // anchor as the head of the generation it publishes, so the restore
+                        // that follows is a restore from the head and adopts that root as
+                        // the runtime's incremental baseline - every key the replay then
+                        // touches is marked dirty, and the seal freezes those keys alone
+                        // rather than the whole live domain. Restoring first left the
+                        // baseline unset (the anchor was not the head yet) and every repair
+                        // seal a complete scan.
+                        //
+                        // The failure direction is unchanged: a restore that cannot read
+                        // the root retires the whole timeline either way, and the truncate
+                        // only ever drops roots this replay is about to rewrite.
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
+                        final long anchorLvRowPosition;
+                        if (isRuntimeAnchorReused) {
+                            // The selected anchor is the root the current head
+                            // mirrors, this runtime is the one that froze it, and no
+                            // row has entered the window pipeline since. The live
+                            // maps and arenas therefore already are the anchor's
+                            // state, and the lifetime row counter is still the
+                            // position the root recorded. Avoid decoding the same
+                            // immutable pages to write that state back over itself.
+                            anchorLvRowPosition = instance.getLvRowsTotal();
+                            runtimeAnchorReuseCount++;
+                            // No restore ran, so nothing re-stamped the baseline the
+                            // truncate's new generation invalidated. Re-stamp it here on
+                            // the same terms the restore would have.
+                            adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, anchorMaxTs, anchorCheckpointId);
+                        } else {
                             anchorLvRowPosition = restoreAnchorRoot(
                                     instance,
                                     windowFactory,
@@ -4239,13 +4280,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             retireCheckpointStateOnO3(instance, true);
                             return;
                         }
-                        // The state is in memory now - the timeline is what held it,
-                        // and from here the replay owns correctness of the durable
-                        // output. Preserve the roots below the output floor (the
-                        // anchor among them) instead of retiring the whole timeline
-                        // for one predecessor-resume repair; the marker this writes
-                        // forces a mid-repair crash to rebuild from the applied base.
-                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
                         // Snap the lifetime row counter back to the root's
                         // recorded position: the upcoming REPLACE_RANGE commit
                         // logically truncates rows above replayLowTs, so the
@@ -6653,6 +6687,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$(t).I$();
             return Numbers.LONG_NULL;
+        }
+    }
+
+    /**
+     * Re-stamps the runtime's incremental checkpoint baseline with the generation the
+     * truncate just published, for the resume that reused the runtime rather than
+     * restoring it.
+     * <p>
+     * A restore does this itself: it adopts the root it read whenever that root is the
+     * head of the generation it read it from, which after the truncate the anchor is. A
+     * reused runtime never reads anything, so without this it carries the baseline of a
+     * generation the truncate has moved on from, and the seal that closes the repair
+     * falls back to a complete scan of the live domain - the very cost the reuse exists
+     * to avoid, and at repair cadence the dominant cost of an out-of-order view.
+     * <p>
+     * Three conditions, and any one of them missing leaves the baseline alone:
+     * <ul>
+     *     <li>the truncate published, so there is a generation to stamp;</li>
+     *     <li>the boundary it left as head is the anchor this replay reused the runtime
+     *     for, so the root the next seal builds on top of is the one the runtime
+     *     equals;</li>
+     *     <li>the target is already on the incremental path. Stamping clears the
+     *     full-scan flag, so a target that raised it - a compaction, a reset, a
+     *     function that tracks no dirty keys at all - must keep it.</li>
+     * </ul>
+     * The logical-byte baseline carries over unchanged for the same reason the state
+     * does: nothing has touched either since the seal that recorded it.
+     */
+    private void adoptTruncatedHeadCheckpointBaseline(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long anchorMaxTs,
+            long anchorCheckpointId
+    ) {
+        if (truncatedHeadGeneration == Numbers.LONG_NULL
+                || truncatedHeadMaxTs != anchorMaxTs
+                || truncatedHeadCheckpointId != anchorCheckpointId) {
+            return;
+        }
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        if (anchorWindow != null && !anchorWindow.isCheckpointFullScanRequired()) {
+            anchorWindow.onCheckpointPersisted(anchorWindow.getCheckpointLogicalStateBytes(), truncatedHeadGeneration);
+        }
+        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.isCheckpointFullScanRequired()) {
+                function.onCheckpointPersisted(function.getCheckpointLogicalStateBytes(), truncatedHeadGeneration);
+            }
         }
     }
 

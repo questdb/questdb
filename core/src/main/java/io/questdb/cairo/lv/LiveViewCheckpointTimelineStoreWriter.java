@@ -1013,7 +1013,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     generation,
                     metadataBytesAdded,
                     metaStore.getWalPurgeFloor(),
-                    new LiveViewCheckpointTimelineStats().of(superblock, metadataBytesAdded)
+                    new LiveViewCheckpointTimelineStats().of(superblock, metadataBytesAdded),
+                    probe.maxTimestamp,
+                    probe.checkpointId
             );
         }
     }
@@ -2956,8 +2958,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * nothing was published; every other field is unset.
      */
     public static final class TruncateResult {
-        static final TruncateResult NOT_PUBLISHED = new TruncateResult(-1, 0, -1, null, false);
+        static final TruncateResult NOT_PUBLISHED =
+                new TruncateResult(-1, 0, -1, null, false, Numbers.LONG_NULL, Numbers.LONG_NULL);
         private final long generation;
+        private final long headCheckpointId;
+        private final long headMaxTimestamp;
         private final long metadataBytesAdded;
         private final boolean published;
         private final LiveViewCheckpointTimelineStats stats;
@@ -2968,26 +2973,53 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long metadataBytesAdded,
                 long walPurgeFloor,
                 LiveViewCheckpointTimelineStats stats,
-                boolean published
+                boolean published,
+                long headMaxTimestamp,
+                long headCheckpointId
         ) {
             this.generation = generation;
             this.metadataBytesAdded = metadataBytesAdded;
             this.walPurgeFloor = walPurgeFloor;
             this.stats = stats;
             this.published = published;
+            this.headMaxTimestamp = headMaxTimestamp;
+            this.headCheckpointId = headCheckpointId;
         }
 
         private TruncateResult(
                 long generation,
                 long metadataBytesAdded,
                 long walPurgeFloor,
-                LiveViewCheckpointTimelineStats stats
+                LiveViewCheckpointTimelineStats stats,
+                long headMaxTimestamp,
+                long headCheckpointId
         ) {
-            this(generation, metadataBytesAdded, walPurgeFloor, stats, true);
+            this(generation, metadataBytesAdded, walPurgeFloor, stats, true, headMaxTimestamp, headCheckpointId);
         }
 
         public long getGeneration() {
             return generation;
+        }
+
+        /**
+         * @return the {@code checkpointId} of the newest boundary the truncate kept -
+         * the head of the generation it published - or {@link Numbers#LONG_NULL} when
+         * nothing was published. Paired with {@link #getHeadMaxTimestamp()} it names the
+         * root a post-truncate seal builds on top of, which is what a caller needs to
+         * decide whether the runtime it holds may adopt that root as its incremental
+         * baseline.
+         */
+        public long getHeadCheckpointId() {
+            return headCheckpointId;
+        }
+
+        /**
+         * @return the {@code maxTimestamp} of the newest boundary the truncate kept, or
+         * {@link Numbers#LONG_NULL} when nothing was published. See
+         * {@link #getHeadCheckpointId()}.
+         */
+        public long getHeadMaxTimestamp() {
+            return headMaxTimestamp;
         }
 
         public long getMetadataBytesAdded() {

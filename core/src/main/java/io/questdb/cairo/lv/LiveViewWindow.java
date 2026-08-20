@@ -229,6 +229,7 @@ public class LiveViewWindow implements QuietCloseable {
     // walk, not per key or per row, so a test can hold the seal to a walk count that does
     // not grow with the number of runtime-only members sharing it.
     private long checkpointFreezeScanCount;
+    private long checkpointLastFreezeKeyCount;
     private long checkpointLogicalStateBytes;
     // The plan this window has adopted, or null when it holds none - because the factory
     // compiled none, because the plan's key layout is not this window's, or because
@@ -1069,6 +1070,7 @@ public class LiveViewWindow implements QuietCloseable {
                 }
             }
         }
+        checkpointLastFreezeKeyCount = keysOut.size() + removedKeysOut.size();
     }
 
     /**
@@ -1146,6 +1148,19 @@ public class LiveViewWindow implements QuietCloseable {
     @TestOnly
     public long getCheckpointFreezeScanCount() {
         return checkpointFreezeScanCount;
+    }
+
+    /**
+     * @return how many keys the last freeze imaged - the ones it wrote plus the ones it
+     * removed. This is what separates an incremental seal from a complete one, and
+     * nothing in the published artifacts does: both leave a root naming the whole live
+     * domain, because the incremental one keeps every key it did not touch from its
+     * predecessor. A repair that resumes from a boundary and then seals must land near
+     * the keys its replay touched rather than near the domain size.
+     */
+    @TestOnly
+    public long getCheckpointLastFreezeKeyCount() {
+        return checkpointLastFreezeKeyCount;
     }
 
     /**

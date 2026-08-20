@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -128,6 +129,10 @@ public class LiveViewSteadyStateBenchmark {
         String keyType = "symbol";
         int nullPercent = 0;
         int sumColumns = 0; // extra one-component sum(qN) projections, for the width sweep
+        int commitsPerBatch = 1;
+        double o3Percent = 0; // 0 = strictly forward, every row above the last
+        String o3Lag = "1m";
+        int o3FromBatch = 0; // batches below this one stay strictly forward
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
@@ -165,6 +170,14 @@ public class LiveViewSteadyStateBenchmark {
                 nullPercent = Integer.parseInt(arg.substring(15));
             } else if (arg.startsWith("--sum-columns=")) {
                 sumColumns = Integer.parseInt(arg.substring(14));
+            } else if (arg.startsWith("--commits-per-batch=")) {
+                commitsPerBatch = Integer.parseInt(arg.substring(20));
+            } else if (arg.startsWith("--o3-percent=")) {
+                o3Percent = Double.parseDouble(arg.substring(13));
+            } else if (arg.startsWith("--o3-lag=")) {
+                o3Lag = arg.substring(9);
+            } else if (arg.startsWith("--o3-from-batch=")) {
+                o3FromBatch = Integer.parseInt(arg.substring(16));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -180,6 +193,15 @@ public class LiveViewSteadyStateBenchmark {
         if (sumColumns < 0 || sumColumns > MAX_SUM_COLUMNS) {
             throw new IllegalArgumentException("--sum-columns must be within [0, " + MAX_SUM_COLUMNS + "]: " + sumColumns);
         }
+        if (commitsPerBatch < 1 || commitsPerBatch > batchRows) {
+            throw new IllegalArgumentException("--commits-per-batch must be within [1, " + batchRows + "]: " + commitsPerBatch);
+        }
+        if (o3Percent < 0 || o3Percent > 50) {
+            throw new IllegalArgumentException("--o3-percent must be within [0, 50]: " + o3Percent);
+        }
+        if (o3FromBatch < 0) {
+            throw new IllegalArgumentException("--o3-from-batch must not be negative: " + o3FromBatch);
+        }
         // Only a SYMBOL key has a dictionary to pre-size or an index to build, so both
         // knobs describe nothing on an INT or LONG key. They are forced off and the
         // header line reports what the run actually used.
@@ -194,6 +216,13 @@ public class LiveViewSteadyStateBenchmark {
         // What decides whether a sweep can fire at all: an account falls behind the
         // frontier only once the anchor has advanced two buckets past its last row.
         final long rowsPerBucket = anchorPeriodMicros / TS_STEP_MICROS;
+        // Every o3EveryN-th row of a batch carries a timestamp o3LagMicros below the one
+        // its position would give it, which is what the reported out-of-order workload
+        // looks like on the wire: a forward stream with a minority of late arrivals
+        // sprinkled through it. 0 leaves the generator strictly forward.
+        final long o3EveryN = o3Percent > 0 ? Math.max(2, Math.round(100 / o3Percent)) : 0;
+        final long o3LagMicros = o3EveryN > 0 ? anchorPeriodMicros(o3Lag) : 0;
+        final int commitRows = batchRows / commitsPerBatch;
 
         final Path dbRoot = Files.createTempDirectory("lv-steady-");
         CairoEngine engine = null;
@@ -236,12 +265,15 @@ public class LiveViewSteadyStateBenchmark {
                     Locale.ROOT,
                     "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
-                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d%n",
+                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
+                            + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),
-                    selectShape.name, partitionKeyType.name, nullPercent, sumColumns
+                    selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
+                    commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / TS_STEP_MICROS,
+                    o3FromBatch
             );
 
             engine = new CairoEngine(configuration);
@@ -268,7 +300,7 @@ public class LiveViewSteadyStateBenchmark {
             );
             engine.execute(
                     insertSql(1, seedRows, recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros,
-                            partitionKeyType, nullPercent, sumColumns),
+                            partitionKeyType, nullPercent, sumColumns, 0, 0),
                     sqlCtx
             );
             drainWal(engine);
@@ -303,7 +335,7 @@ public class LiveViewSteadyStateBenchmark {
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
                 segments.sample();
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\trepair");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -315,23 +347,49 @@ public class LiveViewSteadyStateBenchmark {
                 long compactionCountBefore = compactionCount(instance);
                 long compactedPartitionsBefore = compactedPartitionCount(instance);
                 long compactionMicrosBefore = compactionMicros(instance);
+                // The repair counters are cumulative over the view's life, so a batch's own
+                // replay volume is their delta. The seed's own restore work is below the
+                // first reading and stays out of every batch.
+                long o3ScanRowsBefore = instance.getO3ReplayScanRows();
+                long o3ResumeRowsBefore = instance.getO3ResumeReplayRows();
+                long o3BoundaryRowsBefore = instance.getO3BoundaryReplayRows();
+                final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
+                final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
+                long o3ScanRowsTotal = 0;
                 for (int b = 0; b < batches; b++) {
-                    engine.execute(
-                            insertSql(firstRow, batchRows, recycleAccounts, accountWindow, anchorPeriodMicros,
-                                    anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns),
-                            sqlCtx
-                    );
+                    // One INSERT is one WAL commit, and O3 is classified per commit, so
+                    // the split decides how many repairs a batch triggers as much as the
+                    // late-row share does.
+                    // --o3-from-batch keeps the leading batches strictly forward, so the
+                    // view builds the ladder of checkpoint boundaries a real one would hold
+                    // before the first late row arrives. What a repair can resume from
+                    // depends entirely on that ladder.
+                    final long batchO3EveryN = b >= o3FromBatch ? o3EveryN : 0;
+                    for (int c = 0; c < commitsPerBatch; c++) {
+                        final long commitFirstRow = firstRow + (long) c * commitRows;
+                        final int rows = c == commitsPerBatch - 1 ? batchRows - c * commitRows : commitRows;
+                        engine.execute(
+                                insertSql(commitFirstRow, rows, recycleAccounts, accountWindow, anchorPeriodMicros,
+                                        anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns, batchO3EveryN,
+                                        o3LagMicros),
+                                sqlCtx
+                        );
+                    }
                     final long baseStart = System.nanoTime();
                     drainWal(engine);
                     final long baseNanos = System.nanoTime() - baseStart;
 
-                    final long checkpointRootIdBefore = instance.getHeadCheckpointRootId();
+                    // A seal is detected by its write clock, not by the head root id: an O3
+                    // repair retires the timeline and re-opens it, so the fresh head can carry
+                    // the same root id the retired one did, and an id comparison then reports
+                    // no checkpoint for the most expensive seal the view performs.
+                    final long checkpointWrittenUsBefore = instance.getLastCheckpointWrittenUs();
                     sampler.reset();
                     final long refreshStart = System.nanoTime();
                     drainLiveView(engine, instance, job);
                     final long refreshNanos = System.nanoTime() - refreshStart;
                     final double refreshPeakMb = sampler.peakAboveBaseBytes() / (1024.0 * 1024.0);
-                    final boolean isCheckpointWritten = instance.getHeadCheckpointRootId() != checkpointRootIdBefore;
+                    final boolean isCheckpointWritten = instance.getLastCheckpointWrittenUs() != checkpointWrittenUsBefore;
                     final double checkpointMs = isCheckpointWritten ? instance.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
 
                     final long expected = firstRow - 1 + batchRows;
@@ -359,13 +417,28 @@ public class LiveViewSteadyStateBenchmark {
                         }
                     }
 
+                    final long o3ScanRowsAfter = instance.getO3ReplayScanRows();
+                    final long o3ResumeRowsAfter = instance.getO3ResumeReplayRows();
+                    final long o3BoundaryRowsAfter = instance.getO3BoundaryReplayRows();
+                    final long o3ScanRows = o3ScanRowsAfter - o3ScanRowsBefore;
+                    final long o3ResumeRows = o3ResumeRowsAfter - o3ResumeRowsBefore;
+                    final long o3BoundaryRows = o3BoundaryRowsAfter - o3BoundaryRowsBefore;
+                    o3ScanRowsBefore = o3ScanRowsAfter;
+                    o3ResumeRowsBefore = o3ResumeRowsAfter;
+                    o3BoundaryRowsBefore = o3BoundaryRowsAfter;
+                    o3ScanRowsTotal += o3ScanRows;
+                    // What the last repair of the batch decided, and why it read more than a
+                    // localized rebuild would have. Every repair in one batch takes the same
+                    // route in this workload, so the last is representative.
+                    final String repair = repairName(instance);
+
                     final long baseSeqTxn = engine.getTableSequencerAPI()
                             .getTxnTracker(engine.getTableTokenIfExists("mm_transaction_live_created_at"))
                             .getWriterTxn();
                     segments.sample();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -384,9 +457,36 @@ public class LiveViewSteadyStateBenchmark {
                             segments.getAddedMetaSegments(),
                             segments.getAddedDataSegments(),
                             segments.getAddedMetaBytes(),
-                            segments.getAddedDataBytes()
+                            segments.getAddedDataBytes(),
+                            o3ScanRows,
+                            o3ResumeRows,
+                            o3BoundaryRows,
+                            timelineGeneration(instance),
+                            timelineEntries(instance),
+                            instance.getHeadCheckpointRootId(),
+                            headLagRows(instance),
+                            repair
                     );
                     firstRow += batchRows;
+                }
+                if (o3EveryN > 0) {
+                    // Read amplification is the whole story of an out-of-order run: how many
+                    // base rows the repairs re-read for every row the batches ingested. A
+                    // strictly forward run reads each row once, so anything above 1 is what
+                    // lateness costs.
+                    final long ingested = (long) batchRows * Math.max(1, batches - o3FromBatch);
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# o3 ingested=%d scan_rows=%d amplification=%.1fx resume_rows=%d boundary_rows=%d "
+                                    + "rejected=%d repair=%s%n",
+                            ingested,
+                            o3ScanRowsTotal,
+                            (double) o3ScanRowsTotal / ingested,
+                            instance.getO3ResumeReplayRows() - o3ResumeRowsAtStart,
+                            instance.getO3BoundaryReplayRows() - o3BoundaryRowsAtStart,
+                            instance.getO3RejectedCount(),
+                            repairName(instance)
+                    );
                 }
                 reportSweeps(instance, sweptSealMs, sweptSealCount, unsweptSealMs, unsweptSealCount);
                 segments.report();
@@ -405,13 +505,13 @@ public class LiveViewSteadyStateBenchmark {
                     engine.buildViewGraphs();
                     engine.execute(
                             insertSql(firstRow, RESTART_PROBE_ROWS, recycleAccounts, accountWindow, anchorPeriodMicros,
-                                    anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns),
+                                    anchorOffsetMicros, partitionKeyType, nullPercent, sumColumns, 0, 0),
                             sqlCtx
                     );
                     drainWal(engine);
                     final LiveViewInstance restarted = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
                     try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
-                        final long checkpointRootIdBefore = restarted.getHeadCheckpointRootId();
+                        final long checkpointWrittenUsBefore = restarted.getLastCheckpointWrittenUs();
                         sampler.reset();
                         final long restoreStart = System.nanoTime();
                         drainLiveView(engine, restarted, restartJob);
@@ -424,7 +524,7 @@ public class LiveViewSteadyStateBenchmark {
                         // is the head root's logical size after that seal - it must still
                         // account for every restored key, which is what tells an
                         // incremental reseal apart from one that dropped state.
-                        final boolean isCheckpointWritten = restarted.getHeadCheckpointRootId() != checkpointRootIdBefore;
+                        final boolean isCheckpointWritten = restarted.getLastCheckpointWrittenUs() != checkpointWrittenUsBefore;
                         final double checkpointMs = isCheckpointWritten ? restarted.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
                         final long expected = stateRows + RESTART_PROBE_ROWS;
                         if (restarted.getLvRowsTotal() != expected) {
@@ -564,6 +664,59 @@ public class LiveViewSteadyStateBenchmark {
             return accountWindow + (totalRows / rowsPerBucket + 1) * Math.max(1, accountWindow / 2);
         }
         return recycleAccounts > 0 ? recycleAccounts : totalRows;
+    }
+
+    /**
+     * How far the head checkpoint's boundary sits below the rows the view has seen,
+     * counted in rows of the generated stream. A resume replays from the boundary
+     * forward, so this is what one would cost; a head that stops advancing while the
+     * view keeps ingesting is a resume growing without bound.
+     */
+    private static long headLagRows(LiveViewInstance instance) {
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        final long latestSeenTs = instance.getLatestSeenTs();
+        return headMaxTs == Numbers.LONG_NULL || latestSeenTs == Numbers.LONG_NULL
+                ? -1
+                : (latestSeenTs - headMaxTs) / TS_STEP_MICROS;
+    }
+
+    /**
+     * How many logical boundaries the published checkpoint timeline holds. This is what
+     * an out-of-order repair searches for an anchor below the change, so a timeline that
+     * has been retired to nothing is a repair that can only rebuild from the view's own
+     * start - the {@code checkpoint_timeline_entries} column of {@code live_views()}.
+     */
+    private static long timelineEntries(LiveViewInstance instance) {
+        final long[] timeline = instance.getCheckpointTimeline();
+        return timeline.length > 1 ? timeline[1] : 0;
+    }
+
+    /**
+     * The published timeline generation, {@code checkpoint_timeline_generation}. It
+     * advances once per publication, so a batch that sealed nothing leaves it standing.
+     */
+    private static long timelineGeneration(LiveViewInstance instance) {
+        final long[] timeline = instance.getCheckpointTimeline();
+        return timeline.length > 0 ? timeline[0] : 0;
+    }
+
+    /**
+     * What the view's last out-of-order repair decided, rendered as
+     * {@code disposition/denial} - the two fields {@code live_views()} reports as
+     * {@code checkpoint_repair_last_disposition} and {@code checkpoint_repair_last_denial}.
+     * A repair that read exactly its localized interval carries no denial and prints the
+     * disposition alone; {@code none} is a batch whose commits were all in order.
+     */
+    private static String repairName(LiveViewInstance instance) {
+        final String disposition = LiveViewCheckpointRepairPlan.dispositionName(
+                instance.getCheckpointRepairLastDisposition(),
+                instance.getCheckpointRepairLastDenialReason()
+        );
+        if (disposition == null) {
+            return "none";
+        }
+        final String denial = LiveViewCheckpointRepairPlan.denialReasonName(instance.getCheckpointRepairLastDenialReason());
+        return denial == null ? disposition : disposition + "/" + denial;
     }
 
     /**
@@ -777,6 +930,16 @@ public class LiveViewSteadyStateBenchmark {
         }
     }
 
+    /**
+     * One commit's worth of rows. {@code o3EveryN} sprinkles late arrivals through the
+     * otherwise forward stream: every {@code o3EveryN}-th row is stamped
+     * {@code o3LagMicros} below its own position, so the commit's own minimum sits below
+     * the previous commit's maximum and the refresh classifies it as out of order. The
+     * rest of the commit is where it would have been, which is what an ingestion pipeline
+     * emitting mostly fresh rows beside a minority of late ones looks like. A row is only
+     * moved when its position is far enough above {@link #START_TS} for the shift to stay
+     * inside the run, so nothing lands below the view's own lower bound.
+     */
     private static String insertSql(
             long firstRow,
             long rows,
@@ -786,7 +949,9 @@ public class LiveViewSteadyStateBenchmark {
             long anchorOffsetMicros,
             KeyType keyType,
             int nullPercent,
-            int sumColumns
+            int sumColumns,
+            long o3EveryN,
+            long o3LagMicros
     ) {
         final String acct = accountExpression(firstRow, recycleAccounts, accountWindow, anchorPeriodMicros,
                 anchorOffsetMicros, keyType);
@@ -797,9 +962,14 @@ public class LiveViewSteadyStateBenchmark {
         final String nullableAmount = nullPercent > 0
                 ? "case when " + rowIndex + " % 100 < " + nullPercent + " then null::double else " + amount + " end"
                 : amount;
+        final String position = "(" + START_TS + " + " + rowIndex + " * " + TS_STEP_MICROS + ")";
+        final long o3LagRows = o3LagMicros / TS_STEP_MICROS;
+        final String timestamp = o3EveryN > 0
+                ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + rowIndex + " > " + o3LagRows
+                + " then " + position + " - " + o3LagMicros + " else " + position + " end"
+                : position;
         final StringBuilder sql = new StringBuilder("insert into mm_transaction_live_created_at ")
-                .append("select (").append(START_TS).append(" + ").append(rowIndex)
-                .append(" * ").append(TS_STEP_MICROS).append(")::timestamp, ")
+                .append("select (").append(timestamp).append(")::timestamp, ")
                 .append(acct).append(", ")
                 .append(nullableAmount);
         for (int i = 1; i <= sumColumns; i++) {
