@@ -4860,18 +4860,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    // Negative: non-indexed partition key keeps the existing LatestBy light plan (no index to seek).
+    // A non-indexed partition key hoists as well. There is no index to seek, so the gain is not an index
+    // seek per key; the direct table read is what carries the table's designated timestamp, which
+    // LatestBy light does not (see pushLatestByToTableModel).
     @Test
-    public void testLatestOnTrivialSubqueryNonIndexedStaysLight() throws Exception {
+    public void testLatestOnTrivialSubqueryNonIndexedHoistsToTable() throws Exception {
         assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: true
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: a
-                                      intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        LatestByDeferredListValuesFiltered
+                            Interval backward scan on: a
+                              intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
                         """);
     }
 

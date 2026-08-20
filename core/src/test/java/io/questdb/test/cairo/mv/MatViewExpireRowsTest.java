@@ -2229,6 +2229,94 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
     }
 
+    // A scalar EXPIRE ROWS policy rewrites the view reference into a "SELECT * FROM v WHERE <keep>"
+    // sub-query. A LATEST ON written above that sub-query reads a derived cursor, which resolves to
+    // LatestByLightRecordCursorFactory: it emits one row per partition key in map-insertion order and so
+    // publishes no designated timestamp. SqlOptimiser.pushLatestByToTableModel hoists the table read back
+    // up into the LATEST ON model, which restores the direct read, its designated timestamp and its
+    // timestamp ordering - so SAMPLE BY and ASOF JOIN above the LATEST ON compile and read correctly.
+    // The key here is deliberately NOT indexed: the hoist must not depend on an index for this.
+    @Test
+    public void testScalarPoliciedViewCarriesDesignatedTimestampThroughLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 7.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 9.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // v = 1.0 is expired, so the latest kept row per key is A -> 7.0 @ 01-02, B -> 9.0 @ 01-03.
+            assertQuery("select k, v, ts from mv latest on ts partition by k order by k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv\tts
+                            A\t7.0\t2024-01-02T00:00:00.000000Z
+                            B\t9.0\t2024-01-03T00:00:00.000000Z
+                            """);
+
+            // SAMPLE BY above the LATEST ON needs the designated timestamp.
+            assertQuery("select ts, count() c from (select * from mv latest on ts partition by k) sample by 1d")
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tc
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t1
+                            """);
+
+            // ASOF JOIN above the LATEST ON needs it too.
+            execute("create table probe (k symbol, p double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into probe values ('A', 100.0, '2024-01-05T00:00:00.000000Z'),('B', 200.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQuery("select p.k, p.p, l.v from probe p asof join (select * from mv latest on ts partition by k) l on (k) order by p.k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tp\tv
+                            A\t100.0\t7.0
+                            B\t200.0\t9.0
+                            """);
+        });
+    }
+
+    // Known limitation. The relative and window policies rewrite the view reference into a shape the hoist
+    // cannot take (its own LATEST ON, or a projection over a window function), so a LATEST ON above them
+    // still reads a derived cursor through LatestBy light, which carries no designated timestamp. Reading
+    // such a view directly works; only a timestamp-requiring operator ABOVE a LATEST ON of it is refused.
+    // Refusing is the correct outcome while the base is unordered - advertising a timestamp over
+    // key-ordered rows would give silently wrong SAMPLE BY buckets. Update this test if the rewrite
+    // changes to produce a hoistable shape.
+    @Test
+    public void testRelativePoliciedViewRejectsTimestampOperatorAboveLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base2 (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base2 values ('A', 1.0, '2024-01-01T00:00:00.000000Z'),('A', 3.0, '2024-01-02T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv2 as (select * from base2) EXPIRE ROWS KEEP HIGHEST v partition by k");
+            drainWalAndMatViewQueues();
+
+            // Reading the view, and a SAMPLE BY directly over it, both work.
+            assertQuery("select k, v from mv2").noLeakCheck().returns("k\tv\nA\t3.0\n");
+            assertQuery("select ts, count() c from mv2 sample by 1d")
+                    .noRandomAccess().timestamp("ts").noLeakCheck()
+                    .returns("ts\tc\n2024-01-02T00:00:00.000000Z\t1\n");
+
+            // SAMPLE BY above a LATEST ON of it is refused, because LatestBy light has no timestamp.
+            assertExceptionNoLeakCheck(
+                    "select ts, count() from (select * from mv2 latest on ts partition by k) sample by 1d",
+                    25,
+                    "TIMESTAMP column is required but not provided"
+            );
+        });
+    }
+
     private static void awaitOrThrow(CountDownLatch latch, String what) {
         try {
             if (!latch.await(30, TimeUnit.SECONDS)) {

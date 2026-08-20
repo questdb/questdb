@@ -2422,20 +2422,27 @@ public class SqlOptimiser implements Mutable {
      * @param model the starting model.
      */
     // Rewrites `LATEST ON` over a `SELECT * FROM t [WHERE ...]` sub-query so it reads table `t`
-    // directly, dropping the sub-query wrapper. Reading the table directly compiles to the indexed
-    // generateLatestByTableQuery path (one index seek per key) instead of LatestBy light (a full
-    // scan), and returns the same rows in the same column order.
+    // directly, dropping the sub-query wrapper. It returns the same rows in the same column order.
     //
-    // Only rewrites when doing so is provably equivalent and actually faster:
+    // The direct read reaches generateLatestByTableQuery, whose factories keep the table's DESIGNATED
+    // TIMESTAMP and emit in timestamp order. A sub-query base instead produces
+    // LatestByLightRecordCursorFactory, which emits one row per partition key in map-insertion order
+    // and therefore publishes no designated timestamp (see the comment on that class). Anything above
+    // that needs one - SAMPLE BY, ASOF/LT/SPLICE JOIN, ORDER BY-timestamp elision - cannot compile
+    // over the sub-query form and fails with "TIMESTAMP column is required but not provided". The
+    // rewrite is therefore a correctness-visible property of the plan and applies to every equivalent
+    // query, whatever the key type. For an indexed SYMBOL key it is also one index seek per key
+    // instead of a full scan.
+    //
+    // Applies only when the rewrite is provably equivalent:
     //   - the LATEST ON model has no JOIN: with a join, LATEST ON applies to the join output, but the
     //     rewritten form would apply it to the table before the join - a different result when the
     //     join produces more than one row per key;
     //   - the model nests a plain `SELECT * FROM t [WHERE ...]` and nothing else (no projection/rename,
     //     join, aggregation, distinct, window, sampleBy, union, order by, limit, or its own LATEST ON);
-    //   - LATEST ON is on the table's designated timestamp: the indexed path always uses
+    //   - LATEST ON is on the table's designated timestamp: the direct read always uses
     //     metadata.getTimestampIndex(), so any other timestamp would give wrong results;
-    //   - every PARTITION BY column is an indexed SYMBOL - the only case where reading the table
-    //     directly (index seek per key) beats LatestBy light (full scan).
+    //   - every PARTITION BY column resolves to a column of the table.
     // Every other query is left unchanged.
     private void pushLatestByToTableModel(@Nullable IQueryModel model, SqlExecutionContext executionContext) {
         if (model == null || !model.isOptimisable()) {
@@ -2555,8 +2562,8 @@ public class SqlOptimiser implements Mutable {
     //      timestamp column for all the levels above it. The rewrite reads the table directly, so the
     //      query then uses the timestamp column of the table. This changes the column that a SAMPLE BY
     //      clause or an ASOF JOIN clause uses;
-    //   3) every PARTITION BY column is an indexed SYMBOL on the table - the only case that pays off
-    //      (index seek per key vs full scan);
+    //   3) every PARTITION BY column resolves to a column of the table, so the direct read can
+    //      partition by it;
     //   4) every projection layer between the LATEST ON model and the table exposes exactly the table's
     //      columns, each as a plain un-aliased reference, so dropping those layers cannot change which
     //      columns the query returns.
@@ -2586,16 +2593,13 @@ public class SqlOptimiser implements Mutable {
                     break;
                 }
             }
-            // (3) partition-by columns are indexed symbols
+            // (3) every PARTITION BY column resolves to a column of the table
             for (int i = 0, n = latestBy.size(); i < n; i++) {
                 final ExpressionNode col = latestBy.getQuick(i);
                 if (col.type != ExpressionNode.LITERAL) {
                     return false;
                 }
-                final int idx = metadata.getColumnIndexQuiet(col.token);
-                if (idx < 0
-                        || !ColumnType.isSymbol(metadata.getColumnType(idx))
-                        || !metadata.isColumnIndexed(idx)) {
+                if (metadata.getColumnIndexQuiet(col.token) < 0) {
                     return false;
                 }
             }

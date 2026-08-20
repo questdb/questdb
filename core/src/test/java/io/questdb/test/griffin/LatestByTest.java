@@ -326,6 +326,34 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByNonIndexedSubQueryKeepsDesignatedTimestamp() throws Exception {
+        // The hoist also fires when the PARTITION BY key is a non-indexed symbol. There is no index to
+        // seek, so the gain is not speed: the direct table read is what carries the table's designated
+        // timestamp. LatestBy light, which a sub-query base would produce, emits in partition-key order
+        // and therefore publishes no timestamp, and a SAMPLE BY above it cannot compile. The dataset is
+        // arranged so key order (x, y) differs from latest-timestamp order.
+        assertMemoryLeak(() -> {
+            execute("create table nb (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into nb values (1,'x','2024-01-01T00:00:00.000000Z'),"
+                    + "(2,'y','2024-01-02T00:00:00.000000Z'),"
+                    + "(3,'x','2024-01-03T00:00:00.000000Z')");
+            // Same rows as the equivalent same-level query, compared cursor to cursor.
+            assertSqlCursors(
+                    "select i, s, ts from nb latest on ts partition by s order by s",
+                    "select i, s, ts from (select * from nb) latest on ts partition by s order by s"
+            );
+            // The designated timestamp survives, so SAMPLE BY above the LATEST ON compiles and reads it.
+            assertQuery("select ts, count() c from (select * from nb) latest on ts partition by s sample by 1d")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tc\n"
+                            + "2024-01-02T00:00:00.000000Z\t1\n"
+                            + "2024-01-03T00:00:00.000000Z\t1\n");
+        });
+    }
+
+    @Test
     public void testLatestByIndexedSubQueryQualifiedFilterStaysCorrect() throws Exception {
         // A LATEST ON over a `SELECT * FROM t WHERE ...` sub-query is normally rewritten to read table t
         // directly (the indexed fast path). That rewrite must be skipped when the sub-query's WHERE
