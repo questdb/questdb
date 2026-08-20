@@ -47,20 +47,19 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. START HERE, with the question"
-            + " below -- do NOT resume in the O3 merge code, which four commits already instrumented."
-            + " THE QUESTION: which commit path does an ORDERED, same-timestamp dedup commit take on a"
-            + " composite table? Established so far: the second insert's timestamp EQUALS the current"
-            + " max, so the commit is in-order, not O3 -- which is why no 'o3 composite cell task' or"
-            + " dedup-merge line is logged at all. Fast append is correctly excluded"
-            + " (isCompositeSingleCellFastAppendPossible returns -1 under isCommitDedupMode), and"
-            + " processO3BlockComposite documents that every composite dispatch takes the async merge"
-            + " path -- yet nothing logs. Resolve that contradiction first."
-            + " SYMPTOM: cell E0.1 holds correctly-sized files (8/4/8 bytes) with uninitialised content;"
-            + " ts reads back correct, exch and px do not."
+    @Ignore("THE ONE REMAINING DEDUP FAILURE. Keys = TIMESTAMP ONLY. Path question ANSWERED 2026-08-20"
+            + " by instrumenting the dispatch predicate, and it CORRECTS an earlier claim that the"
+            + " composite O3 path was never reached -- it IS reached:"
+            + "   processO3Block [dims=1, dormant=false, composite=true]"
+            + "   o3 composite range [partitionTs=2023-01-01, last=true, srcOooLo=0, srcOooHi=0,"
+            + "                       multiCell=FALSE]"
+            + " So this takes the SINGLE-CELL composite dispatch, not the multi-cell scratch path."
+            + " That is where to look: single-cell O3 range dispatch under dedup, one row, last"
+            + " partition. SYMPTOM: cell E0.1 has correctly-sized files (8/4/8) with uninitialised"
+            + " content; ts reads back correct, exch and px do not."
             + " ELIMINATED by measurement, do not re-check: identical-check bounds; phantom-dir removal;"
-            + " openROFromMemoryColumns; partition nameTxn (partitionIndexRaw IS cell-aware); the"
-            + " open-column job's path builds; and the identical-check's column source.")
+            + " openROFromMemoryColumns; partition nameTxn; the open-column job's path builds; the"
+            + " identical-check's column source; and 'the O3 path is not reached'.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
