@@ -966,7 +966,7 @@ public class LiveViewSteadyStateBenchmark {
         final long o3LagRows = o3LagMicros / TS_STEP_MICROS;
         final String timestamp = o3EveryN > 0
                 ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + rowIndex + " > " + o3LagRows
-                + " then " + position + " - " + o3LagMicros + " else " + position + " end"
+                  + " then " + position + " - " + o3LagMicros + " else " + position + " end"
                 : position;
         final StringBuilder sql = new StringBuilder("insert into mm_transaction_live_created_at ")
                 .append("select (").append(timestamp).append(")::timestamp, ")
