@@ -2222,6 +2222,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
                 ExecutionModel executionModel = null;
                 boolean isRetry = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
                 try {
                     executionModel = compiler.generateExecutionModel(viewSql, executionContext);
                     final IQueryModel queryModel = executionModel.getQueryModel();
@@ -2273,11 +2276,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } catch (TableReferenceOutOfDateException e) {
                     isRetry = true;
                     if (remainingRetries == 0) {
-                        throw SqlException.$(0, e.getFlyweightMessage());
+                        final SqlException sqlException = SqlException.$(0, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
                     }
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
                 } finally {
                     if (isRetry) {
-                        freeTableNameFunctions(executionModel);
+                        freeTableNameFunctions(executionModel, failure);
                     }
                 }
 
@@ -3717,7 +3725,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // A retry re-parses into a fresh explainModel that compileUsingModel's catch cannot
             // reach, so release the current model's table-name functions here. Idempotent when
             // codegen already consumed them or when the model is the one compileUsingModel frees.
-            freeTableNameFunctions(explainModel);
+            freeTableNameFunctionsOnError(explainModel, th);
             throw th;
         }
     }
@@ -3952,7 +3960,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // cannot reach, so release the current model's table-name functions here. Idempotent
             // when codegen already consumed them or when the model is the one compileUsingModel
             // frees.
-            freeTableNameFunctions(executionModel);
+            freeTableNameFunctionsOnError(executionModel, th);
             throw th;
         }
     }
@@ -4405,7 +4413,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // table-name functions here. freeTableNameFunctions() nulls each field, so this is
             // a no-op when codegen already consumed them or when the model is the one that
             // compileUsingModel frees.
-            freeTableNameFunctions(queryModel);
+            freeTableNameFunctionsOnError(queryModel, th);
             throw th;
         }
     }
@@ -4639,7 +4647,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // cannot reach, so release the current model's table-name functions here. Idempotent
             // when codegen already consumed them or when the model is the one compileUsingModel
             // frees.
-            freeTableNameFunctions(updateQueryModel);
+            freeTableNameFunctionsOnError(updateQueryModel, th);
             throw th;
         }
     }
@@ -4779,13 +4787,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(sqlId, executionContext);
             }
         } catch (Throwable th) {
-            try {
-                freeTableNameFunctions(executionModel, th);
-            } catch (Throwable cleanupFailure) {
-                if (cleanupFailure != th) {
-                    th.addSuppressed(cleanupFailure);
-                }
-            }
+            freeTableNameFunctionsOnError(executionModel, th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -4897,6 +4899,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 IQueryModel queryModel = null;
                 RecordCursorFactory factory = null;
                 boolean isRetry = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
@@ -4934,15 +4939,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } catch (TableReferenceOutOfDateException e) {
                     isRetry = true;
                     if (remainingRetries == 0) {
-                        throw SqlException.$(selectTextPosition, e.getFlyweightMessage());
+                        final SqlException sqlException = SqlException.$(selectTextPosition, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
                     }
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
+                    failure = e;
                     throw e;
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
                 } finally {
                     if (isRetry) {
-                        Misc.free(factory);
-                        freeTableNameFunctions(queryModel);
+                        if (failure != null) {
+                            Misc.free(factory, failure);
+                        } else {
+                            Misc.free(factory);
+                        }
+                        freeTableNameFunctions(queryModel, failure);
                     }
                 }
 
@@ -5859,6 +5874,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         SqlCodeGenerator.freeTableNameFunctions(queryModel, null);
     }
 
+    private void freeTableNameFunctions(IQueryModel queryModel, @Nullable Throwable failure) {
+        SqlCodeGenerator.freeTableNameFunctions(queryModel, failure);
+    }
+
+    /**
+     * Releases the table-name functions while an exception is in flight. The exception reaches
+     * {@code Misc.free}, so a close failure attaches to it as a suppressed exception; a failure raised
+     * anywhere else in the walk attaches here. Either way the original exception is the one that
+     * propagates.
+     */
+    private void freeTableNameFunctionsOnError(ExecutionModel executionModel, @NotNull Throwable failure) {
+        try {
+            freeTableNameFunctions(executionModel, failure);
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    private void freeTableNameFunctionsOnError(IQueryModel queryModel, @NotNull Throwable failure) {
+        try {
+            freeTableNameFunctions(queryModel, failure);
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
             IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
@@ -6306,6 +6351,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
                 ExecutionModel executionModel = null;
                 boolean isSuccess = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
                 try {
                     executionModel = compiler.generateExecutionModel(viewSql, executionContext);
                     final IQueryModel queryModel = executionModel.getQueryModel();
@@ -6329,8 +6377,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 } catch (TableReferenceOutOfDateException e) {
                     if (remainingRetries == 0) {
-                        throw SqlException.$(viewSqlPosition, e.getFlyweightMessage());
+                        final SqlException sqlException = SqlException.$(viewSqlPosition, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
                     }
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
                 } finally {
                     // Free the re-parsed model's table-name functions on every exit except a clean
                     // success: on retry (the policy version moved) or on any thrown error the model still
@@ -6339,7 +6392,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // took ownership of the functions and freed them. freeTableNameFunctions() nulls each
                     // field, so it is a no-op wherever codegen already consumed them.
                     if (!isSuccess) {
-                        freeTableNameFunctions(executionModel);
+                        freeTableNameFunctions(executionModel, failure);
                     }
                 }
                 if (--remainingRetries < 0) {
