@@ -748,6 +748,27 @@ public class LiveViewSteadyStateBenchmark {
                             job.keyedReplaySegmentCountForTest(),
                             job.keyedReplayMergedRowsForTest()
                     );
+                    // What a sparse keyed publication would cost to attempt: whether each
+                    // repaired segment's own output carries every (timestamp, projected
+                    // key) pair once. It runs dark - every repair publishes its whole
+                    // replaced range with REPLACE_RANGE either way - so checked minus
+                    // unique is the fallback rate such a publication would run at, and
+                    // duplicate_rows is what it would silently collapse if it did not
+                    // fall back. max_group is the widest equal-timestamp group any repair
+                    // emitted, which is both what the detector's scratch is worth and how
+                    // close the shape sits to a duplicate; unchecked counts repairs whose
+                    // output carries no key the pair could be named through.
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# unique checked=%d unique=%d rows=%d duplicate_rows=%d "
+                                    + "max_group=%d unchecked=%d%n",
+                            job.outputUniquenessCheckedRepairsForTest(),
+                            job.outputUniquenessUniqueRepairsForTest(),
+                            job.outputUniquenessCheckedRowsForTest(),
+                            job.outputUniquenessDuplicateRowsForTest(),
+                            job.outputUniquenessMaxGroupRowsForTest(),
+                            job.outputUniquenessUncheckedRepairsForTest()
+                    );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly
                 // forward run appends, so amplification is 1 and the apply is a rounding

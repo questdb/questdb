@@ -82,6 +82,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointRepairSession.class);
     private final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
     private final LiveViewCheckpointRepairState descriptor;
+    // Whether the qualifying output this repair has emitted so far holds two rows with
+    // the same (timestamp, projected key) pair. It travels with the loop position for the
+    // reason the domain does: a duplicate whose two rows sit on either side of a park is
+    // still a duplicate, and the worker's own detector is re-armed by the next repair it
+    // classifies.
+    private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
     private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
     private final LiveViewRefreshJob owner;
@@ -177,6 +183,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         Misc.free(sealCarryover);
         boundaries.clear();
         segmentLoop.clear();
+        outputUniqueness.clear();
         isSuspended = false;
     }
 
@@ -286,6 +293,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @return the in-RAM copy of the window state the repair took aside before
      * replaying over it
      */
+    /**
+     * @return the {@code (timestamp, projected key)} uniqueness of the output emitted
+     * across every turn of this repair so far, for the turn that resumes it to continue
+     * checking against
+     */
+    public LiveViewCheckpointOutputUniqueness getOutputUniqueness() {
+        return outputUniqueness;
+    }
+
     public LiveViewCheckpointScratchOverlay getOverlay() {
         return overlay;
     }
@@ -464,6 +480,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @param scanRows           base rows read so far
      * @param replayMinTs        lowest output timestamp so far, or {@link Numbers#LONG_NULL}
      * @param replayMaxTs        highest output timestamp so far, or {@link Numbers#LONG_NULL}
+     * @param outputUniqueness   the pairs the replay has emitted so far, copied aside so
+     *                           the turn that resumes compares against them rather than
+     *                           starting the check over
      */
     public void suspend(
             @NotNull TableReader baseReader,
@@ -475,7 +494,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
             long appendedRows,
             long scanRows,
             long replayMinTs,
-            long replayMaxTs
+            long replayMaxTs,
+            @NotNull LiveViewCheckpointOutputUniqueness outputUniqueness
     ) {
         this.baseReader = baseReader;
         this.walWriter = walWriter;
@@ -487,6 +507,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.scanRows = scanRows;
         this.replayMinTs = replayMinTs;
         this.replayMaxTs = replayMaxTs;
+        this.outputUniqueness.copyFrom(outputUniqueness);
         this.isSuspended = true;
         this.turns++;
     }

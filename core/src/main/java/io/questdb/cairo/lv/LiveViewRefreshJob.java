@@ -386,6 +386,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // rows those repairs copied forward from the view's own output instead of recomputing.
     private long keyedReplayMergedRows;
     private long keyedReplaySegmentCount;
+    // Whether a repair's qualifying output carries each (timestamp, projected key) pair
+    // once, which is the identity a sparse keyed publication would stand on. Armed per
+    // repair and carried across a park by the repair session.
+    private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
+    // What the Stage 3 publication is decided on: how many segment repairs had their
+    // output checked, how many of those carried no duplicate pair, and the rows behind
+    // both. Diagnostic only - every repair still publishes its whole replaced range with
+    // REPLACE_RANGE, which needs no such identity.
+    private long outputUniquenessCheckedRepairs;
+    private long outputUniquenessCheckedRows;
+    private long outputUniquenessDuplicateRows;
+    private long outputUniquenessMaxGroupRows;
+    private long outputUniquenessUncheckedRepairs;
+    private long outputUniquenessUniqueRepairs;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
@@ -759,6 +773,61 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long keyedScanWholeRangeRowsForTest() {
         return keyedScanWholeRangeRows;
+    }
+
+    /**
+     * Test-only: number of segment repairs whose qualifying output this worker checked for
+     * duplicate {@code (timestamp, projected key)} pairs. See
+     * {@link LiveViewCheckpointOutputUniqueness}.
+     */
+    @TestOnly
+    public long outputUniquenessCheckedRepairsForTest() {
+        return outputUniquenessCheckedRepairs;
+    }
+
+    /**
+     * Test-only: qualifying output rows those checks walked, summed.
+     */
+    @TestOnly
+    public long outputUniquenessCheckedRowsForTest() {
+        return outputUniquenessCheckedRows;
+    }
+
+    /**
+     * Test-only: rows whose {@code (timestamp, projected key)} pair a row of the same
+     * repair had already taken. A sparse keyed publication would lose exactly these, which
+     * is why it may not be taken over output that holds any.
+     */
+    @TestOnly
+    public long outputUniquenessDuplicateRowsForTest() {
+        return outputUniquenessDuplicateRows;
+    }
+
+    /**
+     * Test-only: rows in the widest equal-timestamp group any checked repair emitted,
+     * which is what the detector's per-group scratch is worth.
+     */
+    @TestOnly
+    public long outputUniquenessMaxGroupRowsForTest() {
+        return outputUniquenessMaxGroupRows;
+    }
+
+    /**
+     * Test-only: number of segment repairs whose output carries no key this detector can
+     * name, and which a sparse publication could therefore not be decided for either way.
+     */
+    @TestOnly
+    public long outputUniquenessUncheckedRepairsForTest() {
+        return outputUniquenessUncheckedRepairs;
+    }
+
+    /**
+     * Test-only: number of checked segment repairs whose output carried every pair once,
+     * which is the population a sparse keyed publication could serve.
+     */
+    @TestOnly
+    public long outputUniquenessUniqueRepairsForTest() {
+        return outputUniquenessUniqueRepairs;
     }
 
     /**
@@ -4724,6 +4793,89 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * The projected partition key's column index in the record a replay emits, which is
+     * the half of {@code (designated timestamp, projected partition key)} that is not the
+     * timestamp.
+     * <p>
+     * Deliberately NOT {@link #keyedScanColumnIndex}, which answers a different question
+     * with the same vocabulary. That one asks whether a repair can <b>read</b> one key's
+     * rows through a posting index, so it turns on the index; this one asks whether a
+     * repair's output can be <b>named</b> by its key, which an index has nothing to do
+     * with. A view whose key column carries no index still publishes rows that carry the
+     * key, and its duplicate rate is exactly as interesting.
+     * <p>
+     * -1 for anything a symbol integer cannot name: a compound or expression PARTITION BY,
+     * a key of another type, or a key the view's SELECT does not carry into its output. A
+     * repair of such a view is counted unchecked rather than denied - nothing reads the
+     * verdict yet, and what it would decide is a publication route rather than a repair.
+     */
+    private static int outputKeyColumnIndex(LiveViewCompiledPlan compiledPlan) {
+        final LiveViewCheckpointKeyProjector projector =
+                compiledPlan.getWindowFactory().getCheckpointKeyProjector();
+        if (projector == null || projector.getPartitionByColumnCount() != 1) {
+            return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+        }
+        final int scanColumnIndex =
+                compiledPlan.traceWindowInputColumnToBaseScan(projector.getPartitionByColumnIndex(0));
+        if (scanColumnIndex < 0) {
+            return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+        }
+        final RecordMetadata outputMetadata = compiledPlan.getOutputMetadata();
+        for (int i = 0, n = outputMetadata.getColumnCount(); i < n; i++) {
+            // The trace is exact rather than a name match, for the reason
+            // traceOutputColumnToBaseScan gives: an alias would defeat the name.
+            if (compiledPlan.traceOutputColumnToBaseScan(i) == scanColumnIndex
+                    && ColumnType.isSymbol(outputMetadata.getColumnType(i))) {
+                return i;
+            }
+        }
+        return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+    }
+
+    /**
+     * Folds one finished segment repair's uniqueness verdict into the run's counters and
+     * reports it.
+     * <p>
+     * Called before the replacement commits, which is where the check has to finish: the
+     * stage that acts on the verdict publishes sparsely on the pair, and a duplicate
+     * admitted to such a commit is collapsed silently. Today it only records - every
+     * repair publishes its whole replaced range either way - so what this produces is the
+     * fallback rate a sparse publication would run at.
+     *
+     * @param isSegmentCandidate whether this repair is the bounded, converging kind a
+     *                           sparse publication could ever serve. An unlocalized
+     *                           rebuild is neither counted nor reported: it rewrites the
+     *                           view rather than a segment of it
+     * @param isKeyedRoute       whether the replay followed its keys, which makes the
+     *                           checked rows exactly the set a sparse commit would carry
+     */
+    private void reportOutputUniqueness(CharSequence viewName, boolean isSegmentCandidate, boolean isKeyedRoute) {
+        if (!isSegmentCandidate) {
+            return;
+        }
+        if (!outputUniqueness.isArmed()) {
+            outputUniquenessUncheckedRepairs++;
+            return;
+        }
+        outputUniquenessCheckedRepairs++;
+        outputUniquenessCheckedRows += outputUniqueness.getCheckedRows();
+        outputUniquenessDuplicateRows += outputUniqueness.getDuplicateRows();
+        if (outputUniqueness.getMaxGroupRows() > outputUniquenessMaxGroupRows) {
+            outputUniquenessMaxGroupRows = outputUniqueness.getMaxGroupRows();
+        }
+        if (outputUniqueness.isUnique()) {
+            outputUniquenessUniqueRepairs++;
+        }
+        LOG.info().$("live view segment repair output uniqueness [view=").$(viewName)
+                .$(", keyed=").$(isKeyedRoute)
+                .$(", rows=").$(outputUniqueness.getCheckedRows())
+                .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
+                .$(", maxGroupRows=").$(outputUniqueness.getMaxGroupRows())
+                .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
+                .$(", unique=").$(outputUniqueness.isUnique()).I$();
+    }
+
+    /**
      * Decomposes one repair's change set into the anchor segments it touches, filling
      * {@link #segmentChangeSet}.
      * <p>
@@ -7379,6 +7531,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
             RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+            // The (designated timestamp, projected key) pairs this repair emits, which is
+            // the identity a sparse keyed publication would have to stand on. It runs dark:
+            // nothing reads the verdict and the replacement below carries the whole
+            // replaced range either way, so what it produces is the rate at which such a
+            // publication would fall back to exactly that. Only a bounded, converging
+            // repair is armed - an unlocalized rebuild rewrites the view rather than a
+            // segment of it, and no sparse commit could describe it.
+            //
+            // A resumed turn continues the check the prior turns left rather than
+            // restarting it: a duplicate whose two rows sit on either side of a park is
+            // still a duplicate, and the group the park stopped inside is the one place
+            // that can happen.
+            if (resuming) {
+                outputUniqueness.copyFrom(resumed.getOutputUniqueness());
+            } else {
+                outputUniqueness.of(localized && finiteHighBound
+                        ? outputKeyColumnIndex(compiledPlan)
+                        : LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
+            }
 
             // Both scans below open the snapshot AT the scan floor rather than scanning up
             // to it, the same inclusive-lower-bound cursor the seed and the forward drain
@@ -7650,6 +7821,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // the same worker cycle is caught against the
                                     // just-rebuilt state.
                                     instance.setLatestSeenTs(ts);
+                                    if (outputUniqueness.isArmed()) {
+                                        // Read off the output record rather than the row
+                                        // about to carry it: the pair a sparse publication
+                                        // would key on is the one the view stores, and the
+                                        // copier is what turns that into a written row.
+                                        outputUniqueness.observe(
+                                                ts,
+                                                outRecord.getInt(outputUniqueness.getKeyColumnIndex())
+                                        );
+                                    }
                                     TableWriter.Row row = walWriter.newRow(ts);
                                     copier.copy(executionContext, outRecord, row);
                                     row.append();
@@ -7738,7 +7919,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     appendedRows,
                                     o3ScanRows,
                                     replayMinTs,
-                                    replayMaxTs
+                                    replayMaxTs,
+                                    outputUniqueness
                             );
                             walWriterRetained = true;
                             timelineCapture = null;
@@ -7781,6 +7963,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             final long replaceHighTs = finiteHighBound
                                     ? plan.getHighTsExclusive()
                                     : Long.MAX_VALUE;
+                            // Before the commit, which is where the check has to finish:
+                            // the stage that acts on the verdict publishes sparsely on the
+                            // pair, and a duplicate admitted to such a commit is collapsed
+                            // silently. This one only records it.
+                            reportOutputUniqueness(viewName, localized && finiteHighBound, keyedRoute);
                             fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
