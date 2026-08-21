@@ -96,6 +96,110 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACorrectionInTheOpenSegmentIsResumedByKeyAndPublishedSparsely() throws Exception {
+        // The route end to end: the resume follows the corrected account through the base's
+        // posting index, leaves every other account's stored rows exactly where they stand,
+        // and the view still matches a from-base recompute afterwards.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
+        // The identity the publication upserts on. It is a CREATE-time schema property, so
+        // it has to be on before the view exists.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the resume must follow the correction's own keys",
+                        1,
+                        job.openSegmentKeyedResumeCountForTest()
+                );
+                Assert.assertEquals(
+                        "and publish only the rows it recomputed",
+                        1,
+                        job.openSegmentSparseResumeCountForTest()
+                );
+                Assert.assertEquals(
+                        "nothing may abandon its attempt on output that names each pair once",
+                        0,
+                        job.sparsePublicationFallbackCountForTest()
+                );
+                Assert.assertTrue(
+                        "the publication must have left the other accounts' rows alone",
+                        job.sparsePublicationRowsKeptForTest() > 0
+                );
+                Assert.assertTrue(
+                        "the corrected keys must be handed back to the primary runtime",
+                        job.transplantedKeyCountForTest() > 0
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeSurvivesARestartAndAFurtherCorrection() throws Exception {
+        // The ladder a keyed resume leaves has to be restorable: its roots hold the
+        // corrected keys' state and every other key's entry exactly as the old root wrote
+        // it, and the row positions count the rows the publication left alone as well as
+        // the ones it wrote. A restart is what reads all of that back.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                commit(row(4, 2, 35, "acct-1"), job);
+                Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
+                assertViewMatchesRecompute();
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                // A second correction, now against the ladder the first one spliced.
+                commit(row(4, 3, 15, "acct-4"), job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAViewWithoutTheDedupKeysNeverResumesByKey() throws Exception {
+        // The publication is an upsert on the view's own identity, so a view CREATEd
+        // without it has nothing to upsert onto - and the block would otherwise have to
+        // carry every stored row above the anchor, which is the whole range and no saving.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.openSegmentSparseResumeCountForTest());
+                // The pricing still runs and still says the keyed read is smaller, which is
+                // what says the identity is what turned the route down.
+                Assert.assertEquals(1, job.openSegmentKeyedCheaperCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testTheOpenSegmentIsNotPricedWithTheRouteDeclined() throws Exception {
         // The switch is what decides whether the decomposition walks every commit's rows at
         // all, so a declined route must leave the resume reading exactly what it always did.
@@ -139,6 +243,16 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    /**
+     * Drops the in-memory view registry and rebuilds it, which is what makes the next
+     * refresh restore its runtime from the checkpoint timeline rather than continue from
+     * the state this process happens to be holding.
+     */
+    private void restartCycle() {
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
     }
 
     private void assertViewMatchesRecompute() throws Exception {
