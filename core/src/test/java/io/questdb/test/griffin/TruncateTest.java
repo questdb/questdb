@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -638,6 +639,41 @@ public class TruncateTest extends AbstractCairoTest {
                     .returns("""
                             count
                             0
+                            """);
+        });
+    }
+
+    @Test
+    public void testTruncateEmptyTableResetsSymbolCounts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT rnd_symbol('a', 'b', 'c') sym, timestamp_sequence(0, 1_000_000) ts
+                                FROM long_sequence(10)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"""
+            );
+            execute("ALTER TABLE x DROP PARTITION LIST '1970-01-01'");
+
+            assertQuery("SELECT count() FROM x")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+
+            execute("TRUNCATE TABLE x");
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(0, reader.getSymbolMapReader(0).getSymbolCount());
+            }
+
+            execute("INSERT INTO x VALUES ('d', '1970-01-02')");
+            assertQuery("SELECT sym FROM x")
+                    .returns("""
+                            sym
+                            d
                             """);
         });
     }

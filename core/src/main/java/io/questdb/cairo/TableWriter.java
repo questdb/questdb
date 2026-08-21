@@ -14938,15 +14938,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void truncate(boolean keepSymbolTables) {
         rollback();
 
+        boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {
             // we do this before size check so that "old" corrupt symbol tables are brought back in line
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                denseSymbolMapWriters.getQuick(i).truncate();
+                MapWriter symbolMapWriter = denseSymbolMapWriters.getQuick(i);
+                hasNonEmptySymbolTables |= symbolMapWriter.getSymbolCount() > 0;
+                symbolMapWriter.truncate();
             }
         }
 
         if (size() == 0) {
-            if (!keepSymbolTables) {
+            if (hasNonEmptySymbolTables) {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);

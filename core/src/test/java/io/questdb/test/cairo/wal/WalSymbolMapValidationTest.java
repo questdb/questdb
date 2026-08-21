@@ -36,12 +36,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class WalSymbolMapValidationTest extends AbstractCairoTest {
-    // Reports "rithmic" at key 1 while the symbol map holds no symbols, which
+    private static final String STALE_SYMBOL = "rithmic";
+    // Reports STALE_SYMBOL at key 1 while the symbol map holds no symbols, which
     // makes the WAL writer emit a sparse symbol diff.
     private static final SymbolMapReader STALE_READER = new EmptySymbolMapReader() {
         @Override
         public int keyOf(CharSequence value) {
-            return value != null && Chars.equals(value, "rithmic") ? 1 : super.keyOf(value);
+            return value != null && Chars.equals(value, STALE_SYMBOL) ? 1 : super.keyOf(value);
         }
     };
 
@@ -54,11 +55,11 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
             final int walId;
             try (WalWriter writer = engine.getWalWriter(tableToken)) {
                 walId = writer.getWalId();
-                commitRithmicRows(writer, 3_600_000_000L, 2);
+                commitSymbolRows(writer, 3_600_000_000L, 2);
                 final SymbolMapReader originalReader = writer.getSymbolMapReader(0);
                 writer.setSymbolMapReader(0, STALE_READER);
                 try {
-                    commitRithmicRows(writer, 3_600_000_002L, 2);
+                    commitSymbolRows(writer, 3_600_000_002L, 2);
                 } finally {
                     writer.setSymbolMapReader(0, originalReader);
                 }
@@ -72,7 +73,10 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n2\n");
+                    .returns("""
+                            count
+                            2
+                            """);
         });
     }
 
@@ -88,7 +92,7 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
                 final SymbolMapReader originalReader = writer.getSymbolMapReader(0);
                 writer.setSymbolMapReader(0, STALE_READER);
                 try {
-                    commitRithmicRows(writer, 3_600_000_000L, 2);
+                    commitSymbolRows(writer, 3_600_000_000L, 2);
                 } finally {
                     writer.setSymbolMapReader(0, originalReader);
                 }
@@ -102,7 +106,10 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n0\n");
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -114,10 +121,10 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
         TestUtils.assertContains(errorMessage, "segmentId=0");
     }
 
-    private static void commitRithmicRows(WalWriter writer, long fromTs, int count) {
+    private static void commitSymbolRows(WalWriter writer, long fromTs, int count) {
         for (int i = 0; i < count; i++) {
             final TableWriter.Row row = writer.newRow(fromTs + i);
-            row.putSym(0, "rithmic");
+            row.putSym(0, STALE_SYMBOL);
             row.append();
             writer.commit();
         }
