@@ -469,9 +469,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testExpireScalarCleanupKeepsNullPredicateRow() throws Exception {
-        // A row whose scalar predicate operand is NULL is KEPT (v < 2.0 is UNKNOWN, not TRUE). Physical
-        // cleanup must not delete it: the partial partition compacts but retains the NULL row. Scalar-WHEN
-        // cleanup uses its own keep-filter (buildRowExpiryKeepFilter), so this guards that path's 3VL.
+        // A row whose scalar predicate operand is NULL is KEPT here: QuestDB comparisons are two-valued,
+        // so "v < 2.0" is FALSE for a NULL v, not TRUE. Physical cleanup must not delete it: the partial
+        // partition compacts but retains the NULL row. Scalar-WHEN cleanup uses its own keep-filter
+        // (buildRowExpiryKeepFilter), so this guards that path's NULL handling. A predicate that IS true
+        // on a NULL operand expires the row instead -- see
+        // testExpireScalarNullRowsFollowPredicateTruthValue.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -660,8 +663,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testExpireScalarKeepsNullPredicateRows() throws Exception {
-        // A row whose predicate evaluates to NULL/UNKNOWN (here a NULL v under "v < 2.0") is KEPT, not
-        // expired: the read filter is CASE WHEN (pred) THEN false ELSE true, so FALSE and NULL both keep.
+        // A row whose predicate is not TRUE (here a NULL v under "v < 2.0", which QuestDB evaluates as
+        // FALSE) is KEPT, not expired: the read filter is CASE WHEN (pred) THEN false ELSE true. This
+        // holds for this predicate, not for every predicate over a NULL operand -- see
+        // testExpireScalarNullRowsFollowPredicateTruthValue.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +
@@ -676,6 +681,68 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     B\t5.0
                     C\tnull
                     """);
+        });
+    }
+
+    @Test
+    public void testExpireScalarNullRowsFollowPredicateTruthValue() throws Exception {
+        // A row expires exactly when its predicate is TRUE. QuestDB comparisons are two-valued -- a
+        // comparison with a NULL operand is FALSE, not UNKNOWN -- so whether a NULL row survives is a
+        // property of the predicate, not of the policy: "v < 2.0" is FALSE for a NULL v and keeps the row,
+        // while "NOT (v >= 2.0)", "v != 5.0" and "NOT (sym = 'BBB')" are TRUE for it and expire it. Two
+        // spellings that read as the same rule therefore differ on NULL rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-06T00:00:00.000000Z'),
+                    (NULL, NULL, '2024-01-07T00:00:00.000000Z'),
+                    ('CCC', 0.5, '2024-01-08T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv_lt AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            execute("CREATE MATERIALIZED VIEW mv_not AS (SELECT * FROM base) EXPIRE ROWS WHEN NOT (v >= 2.0)");
+            execute("CREATE MATERIALIZED VIEW mv_ne AS (SELECT * FROM base) EXPIRE ROWS WHEN v != 5.0");
+            execute("CREATE MATERIALIZED VIEW mv_not_sym AS (SELECT * FROM base) EXPIRE ROWS WHEN NOT (sym = 'BBB')");
+            drainWalAndMatViewQueues();
+
+            // "v < 2.0" is FALSE for the NULL v, so that row is kept.
+            assertQuery("SELECT sym, v FROM mv_lt ORDER BY ts").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t5.0
+                    \tnull
+                    """);
+            // "NULL >= 2.0" is FALSE, so the NOT is TRUE and the NULL row expires.
+            assertQuery("SELECT sym, v FROM mv_not ORDER BY ts").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t5.0
+                    """);
+            // "NULL != 5.0" is TRUE, so the NULL row expires here too.
+            assertQuery("SELECT sym, v FROM mv_ne ORDER BY ts").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t5.0
+                    """);
+            // Same for a negated SYMBOL equality: "NULL = 'BBB'" is FALSE, so the NOT is TRUE.
+            assertQuery("SELECT sym, v FROM mv_not_sym ORDER BY ts").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t5.0
+                    """);
+
+            // The cleanup sweep computes the same keep-filter, so it physically removes the NULL row the
+            // negated predicate expires: the 2024-01-05 and 2024-01-07 partitions go, 2024-01-06 stays, and
+            // the active 2024-01-08 partition is left for a later sweep.
+            final TableToken token = engine.verifyTableName("mv_not");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate);
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv_not')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
         });
     }
 

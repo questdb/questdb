@@ -138,9 +138,15 @@ public final class RowExpiryUtil {
 
     /**
      * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job's scalar-WHEN path:
-     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps rows for which the predicate is
-     * FALSE or NULL. The predicate is wrapped in parentheses so its internal operator precedence cannot
-     * leak. Correct for any predicate shape, including compound ones, {@code IN}, and NULL operands.
+     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps every row whose predicate is
+     * not TRUE. The predicate is wrapped in parentheses so its internal operator precedence cannot
+     * leak. Applies to any predicate shape, including compound ones and {@code IN}, and matches the read
+     * filter the parser builds, so the sweep deletes only rows a read of the view already hides.
+     * <p>
+     * A NULL operand follows QuestDB's two-valued comparison semantics: {@code v < 2.0} is FALSE for a
+     * NULL {@code v} and keeps the row, while {@code NOT (v >= 2.0)}, {@code v != 2.0} and
+     * {@code v IS NULL} are TRUE for it, so this sweep deletes it. Spellings that read as the same rule
+     * can thus differ on NULL rows; see {@code SqlParser.keepFilterWhereText} for the full account.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
         return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
