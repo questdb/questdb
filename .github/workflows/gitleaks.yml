@@ -20,3 +20,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          # Suppress the action's per-finding pull request comment. It tells the
+          # author to paste a four-part <commit>:<file>:<rule-id>:<start-line>
+          # fingerprint, which stops matching once the PR is squash-merged and
+          # then fails the push scan of master. See .gitleaksignore for the form
+          # that survives. Findings still fail the job and appear in its summary.
+          GITLEAKS_ENABLE_COMMENTS: "false"
