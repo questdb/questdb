@@ -128,7 +128,14 @@ stages:
           # iteration never starts and the phase is chosen per RUN rather than per iteration. MIN_ITERATION_MINUTES is the conservative length of the LONGEST iteration measured
           # on the CI agent (crash package ~26m; ordinary fuzz ~12m) so the loop never starts one it cannot
           # finish inside the budget.
-          TOTAL_RUN_MINUTES: 50
+          # 65, not 50. At 50 the crash-sweep iteration NEVER COMPLETED: the template's own test pass
+          # eats 16-23m, leaving ~29m against a crash package that now needs more than that (this branch
+          # added ChecksumArtifacts/MetaChecksum/TxnLogCrcSidecar/PartitionChecksum crash classes), so
+          # every phase-1 soak ended "hit the run budget and was stopped cleanly" -- green, and never a
+          # finished sweep. Worse, build 263283 used 23m on the pass and then started NO iteration at
+          # all (27m needed, ~27m left), fuzzing nothing while reporting success.
+          # 65 leaves 42m+ for the iteration. Utilisation stays ~54% of the 2h slot.
+          TOTAL_RUN_MINUTES: 65
           MIN_ITERATION_MINUTES: 27
           ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
         steps:
