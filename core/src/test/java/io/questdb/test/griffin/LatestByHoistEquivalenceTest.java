@@ -64,6 +64,9 @@ import org.junit.Test;
  *     <li>{@link #NEEDS_HOIST} - the shape need not compile without the rewrite. The direct read
  *     publishes a designated timestamp that the sub-query form does not, so the rewrite is what lets
  *     SAMPLE BY and the timestamp joins compile over it at all.</li>
+ *     <li>{@link #ROWS_MAY_DIFFER} - the rewrite fires and the two forms return different rows. Only an
+ *     unordered LIMIT does this, and both answers are correct; everything except the rows is still
+ *     compared.</li>
  * </ul>
  * Row <b>order</b> is deliberately not invariant: the sub-query form emits one row per partition key
  * in map-insertion order and the direct read emits in timestamp order, so rows are compared as a
@@ -71,7 +74,9 @@ import org.junit.Test;
  * <p>
  * The designated timestamp may appear where there was none, but must never move to another column or
  * disappear. That is the {@code timestamp(ts2)} defect, which changes no row and so is invisible to a
- * result comparison on its own.
+ * result comparison on its own. On the shapes where the un-hoisted form publishes no timestamp at all
+ * there is nothing to compare against, so the check falls back to the column named by
+ * {@code LATEST ON} - the only one the rewrite is allowed to publish.
  * <p>
  * Extending this is one line: a shape the rewrite must handle, or must leave alone, goes in the
  * matching list and is compared against the un-rewritten plan from then on.
@@ -82,6 +87,14 @@ import org.junit.Test;
  * {@code findHoistableTableModel} - joins, latest-by, group-by, sample-by, select-model-type and an
  * intervening WHERE on a layer above the table - are redundant: the identity-projection condition
  * rejects those shapes first, so deleting one changes no plan and no test can isolate it.
+ * <p>
+ * The {@code hasSharedRefs()} guard is redundant for a different reason: only
+ * {@code LateralJoinRewriter} ever creates a shared reference, and no SQL shape puts a {@code LATEST ON}
+ * directly over one of the models it shares. Deleting that guard changes no plan across this test,
+ * {@code LatestByTest}, {@code ParallelLatestByTest}, {@code SqlOptimiserTest} and both lateral-join
+ * suites. It stays as a safeguard: dropping a layer that another part of the tree still points at would
+ * corrupt that other part, and a plain CTE reference does not make a shared reference, so the shape that
+ * looks like it would pin the guard - a CTE referenced twice - is in {@link #HOISTED} instead.
  */
 public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
 
@@ -110,6 +123,29 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             // SAMPLE BY above the LATEST ON reads the designated timestamp the rewrite keeps
             "SELECT ts, count() FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym SAMPLE BY 1d",
             "SELECT ts, count() FROM (SELECT * FROM n) LATEST ON ts PARTITION BY sym SAMPLE BY 1d",
+            // a CTE referenced twice, hoisted in the arm the LATEST ON sits over
+            "WITH c AS (SELECT * FROM t) SELECT * FROM c LATEST ON ts PARTITION BY sym UNION ALL SELECT * FROM c",
+            // an ORDER BY above the LATEST ON decides the row a LIMIT keeps, so both forms agree
+            "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym ORDER BY v LIMIT 1",
+    };
+
+    /**
+     * Shapes the rewrite fires on where it also changes which rows come back. A LIMIT with no ORDER BY
+     * keeps the first N rows in whatever order the factory emits them, and the two forms emit in
+     * different orders: the sub-query form one row per partition key in map-insertion order, the direct
+     * read in timestamp order. Both answers are correct - the query does not ask for an order - so the
+     * rows are deliberately not compared here. Everything else still has to survive: the plan must
+     * change, and the projection, the row count and the designated timestamp must not.
+     * <p>
+     * This is the one place where upgrading to the rewrite is visible to a caller as a different answer
+     * rather than a different plan. A LIMIT lands on the model above the LATEST ON
+     * ({@code SqlParser.parseDml0} moves it up out of the FROM clause), so no guard in
+     * {@code findHoistableTableModel} can see it.
+     */
+    private static final String[] ROWS_MAY_DIFFER = {
+            "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym LIMIT 1",
+            "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym LIMIT 2",
+            "SELECT * FROM (SELECT * FROM n) LATEST ON ts PARTITION BY sym LIMIT 1",
     };
 
     /**
@@ -186,9 +222,20 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
                         plain.plan, hoisted.plan);
                 Assert.assertEquals("projection changed: " + sql, plain.columns, hoisted.columns);
                 Assert.assertEquals("rows changed: " + sql, plain.rows.toString(), hoisted.rows.toString());
-                if (plain.tsColumn != null) {
-                    Assert.assertEquals("designated timestamp changed: " + sql, plain.tsColumn, hoisted.tsColumn);
-                }
+                assertTimestampSurvives(sql, plain, hoisted);
+            }
+
+            for (String sql : ROWS_MAY_DIFFER) {
+                final Outcome hoisted = run(sql, true);
+                final Outcome plain = run(sql, false);
+                Assert.assertNull("the hoist broke a query: " + sql + "\n  " + hoisted.error, hoisted.error);
+                Assert.assertNull("does not compile un-hoisted, so it belongs in NEEDS_HOIST: " + sql
+                        + "\n  " + plain.error, plain.error);
+                Assert.assertNotEquals("no longer hoisted, so this shape now covers nothing: " + sql,
+                        plain.plan, hoisted.plan);
+                Assert.assertEquals("projection changed: " + sql, plain.columns, hoisted.columns);
+                Assert.assertEquals("row count changed: " + sql, plain.rows.size(), hoisted.rows.size());
+                assertTimestampSurvives(sql, plain, hoisted);
             }
 
             for (String sql : NOT_HOISTED) {
@@ -205,6 +252,22 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
                 Assert.assertNull("does not compile even with the hoist: " + sql + "\n  " + hoisted.error, hoisted.error);
             }
         });
+    }
+
+    /**
+     * The un-hoisted form publishes no designated timestamp for many of these shapes - that is what the
+     * rewrite is for - so there is nothing to compare against on those. The rewrite fires only when
+     * {@code LATEST ON} names the table's designated timestamp, so that column is the only one the
+     * direct read may publish. Checking it that way covers the shapes a plain comparison says nothing
+     * about, which is where a {@code timestamp(ts2)} defect would otherwise hide: it changes no row.
+     */
+    private static void assertTimestampSurvives(String sql, Outcome plain, Outcome hoisted) {
+        if (plain.tsColumn != null) {
+            Assert.assertEquals("designated timestamp changed: " + sql, plain.tsColumn, hoisted.tsColumn);
+        } else if (hoisted.tsColumn != null) {
+            Assert.assertEquals("the hoist published a timestamp on the wrong column: " + sql,
+                    latestOnColumn(sql), hoisted.tsColumn);
+        }
     }
 
     private static void createFixture() throws Exception {
@@ -237,6 +300,17 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
         // a join partner sharing no column name with t, so `ts` and `sym` stay unambiguous
         execute("CREATE TABLE j (jsym SYMBOL, w DOUBLE)");
         execute("INSERT INTO j VALUES ('BB', 20.0), ('CC', 40.0)");
+    }
+
+    /** The column named by the query's first {@code LATEST ON}. */
+    private static String latestOnColumn(String sql) {
+        final int lo = sql.indexOf("LATEST ON ") + "LATEST ON ".length();
+        Assert.assertTrue("no LATEST ON in: " + sql, lo > "LATEST ON ".length() - 1);
+        int hi = lo;
+        while (hi < sql.length() && sql.charAt(hi) != ' ') {
+            hi++;
+        }
+        return sql.substring(lo, hi);
     }
 
     private static Outcome run(String sql, boolean isHoist) {
