@@ -130,6 +130,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBypassWalFdCache() {
+        return getDelegate().getBypassWalFdCache();
+    }
+
+    @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return getDelegate().getCairoSqlLegacyOperatorPrecedence();
     }
@@ -730,6 +735,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getO3LagDecreaseFactor() {
+        return getDelegate().getO3LagDecreaseFactor();
+    }
+
+    @Override
+    public double getO3LagIncreaseFactor() {
+        return getDelegate().getO3LagIncreaseFactor();
+    }
+
+    @Override
     public int getO3LastPartitionMaxSplits() {
         return getDelegate().getO3LastPartitionMaxSplits();
     }
@@ -907,6 +922,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPostingIndexAdaptiveDeltaAtOrAbove() {
         return getDelegate().getPostingIndexAdaptiveDeltaAtOrAbove();
+    }
+
+    @Override
+    public double getPostingIndexAlignedBitWidthThreshold() {
+        return getDelegate().getPostingIndexAlignedBitWidthThreshold();
+    }
+
+    @Override
+    public byte getPostingIndexRowIdEncoding() {
+        return getDelegate().getPostingIndexRowIdEncoding();
     }
 
     @Override
@@ -1705,6 +1730,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewRefreshEnabled() {
+        return getDelegate().isLiveViewRefreshEnabled();
+    }
+
+    @Override
     public boolean isMatViewCoveringIndexEnabled() {
         return getDelegate().isMatViewCoveringIndexEnabled();
     }
@@ -1847,6 +1877,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
+    }
+
+    @Override
+    public boolean isTtlWallClockEnabled() {
+        return getDelegate().isTtlWallClockEnabled();
     }
 
     @Override
