@@ -117,6 +117,7 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
         if (createdCount >= capacity) {
             return null;
         }
+
         T task = null;
         try {
             final Runnable hook = beforeNewTaskForTesting;
