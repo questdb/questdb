@@ -440,7 +440,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 continue;
             }
 
-            final long adjustedLo = Math.max(partitionLo, targetGroupStart);
+            // Bound the frame by the row-group start and by the page-frame row limit (walking back
+            // from the top), so a row group larger than pageFrameMaxRows yields several bounded
+            // sub-frames (matching the native path).
+            final long frameLimitedLo = reenterPageFrameRowLimit > 0 ? partitionHi - reenterPageFrameRowLimit : Long.MIN_VALUE;
+            final long adjustedLo = Math.max(Math.max(partitionLo, targetGroupStart), frameLimitedLo);
             if (adjustedLo > partitionLo) {
                 this.reenterPartitionLo = partitionLo;
                 this.reenterPartitionHi = adjustedLo;
@@ -474,7 +478,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (format == PartitionFormat.PARQUET) {
             clearAddresses();
             reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
-            reenterPageFrameRowLimit = 0;
+            // Honour the page-frame row limit on parquet too, so a row group larger than
+            // pageFrameMaxRows is split into bounded sub-frames (matching the native path).
+            reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
             cachedRowGroupIndex = -1;
             cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;
